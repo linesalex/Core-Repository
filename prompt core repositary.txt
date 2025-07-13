@@ -1,0 +1,20 @@
+I am looking to create a repositary of information for multiple purposes.  We will work on these repositaries one at a time.  
+1) i operate a gloabl telecommunications network - currently i am struggling to keep up to date with my core routes, and the information surrounding them.  I would like to create a database table which allows me to capture and store information about these core network routes.  This is a global database of connectivity with regionalised datasets in APAC, EMEA and AMERs. 
+I want to be able to store and display information about:
+Number of outage tickets raised in last 30 days
+Number of maintenance tickets raised in last 30 days
+a file store for KMZ file 
+Live latency - this data will be pulled from a network monitoring suite
+Expected latency - this will be manually entered data 
+Link to test results 
+Cable System
+Whether the route is ULL or a classed as special - this will be a yes or no checkbox
+Underlying carrier of the route
+Cost - this data will not be displayed on the table but is neccessary for next steps
+Currency - likewise this data will not be displayed but neccessary for next steps
+Location A 
+Location B
+Circuit ID (UCN) 
+Bandwidth
+
+Using the screenshot prompt for an example of how this will look - do you have enough data to start work on this project
