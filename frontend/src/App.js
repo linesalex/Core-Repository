@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Box, CssBaseline, Drawer, List, ListItem, ListItemIcon, ListItemText, AppBar, Toolbar, Typography, Button, Container, Paper, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse, Menu, MenuItem } from '@mui/material';
+import {
+  Box, CssBaseline, Drawer, List, ListItem, ListItemIcon, ListItemText, AppBar, Toolbar, Typography, Button, Container, Paper, 
+  Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse, Menu, MenuItem, IconButton, Chip, CircularProgress,
+  Alert, Divider, Avatar
+} from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -10,11 +14,22 @@ import DesignServicesIcon from '@mui/icons-material/DesignServices';
 import CurrencyExchangeIcon from '@mui/icons-material/CurrencyExchange';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import WarningIcon from '@mui/icons-material/Warning';
+import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import LogoutIcon from '@mui/icons-material/Logout';
+import HistoryIcon from '@mui/icons-material/History';
+import PeopleIcon from '@mui/icons-material/People';
+import BusinessIcon from '@mui/icons-material/Business';
+import DataObjectIcon from '@mui/icons-material/DataObject';
+import { AuthProvider, useAuth } from './AuthContext';
+import LoginForm from './LoginForm';
 import NetworkRoutesTable from './NetworkRoutesTable';
 import NetworkDesignTool from './NetworkDesignTool';
 import ExchangeRatesManager from './ExchangeRatesManager';
 import LocationDataManager from './LocationDataManager';
+import UserManagement from './UserManagement';
+import ChangeLogsViewer from './ChangeLogsViewer';
 import CoreOutagesTable from './CoreOutagesTable';
+import CarriersManager from './CarriersManager';
 import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults } from './api';
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
@@ -22,14 +37,17 @@ import DarkFiberModal from './DarkFiberModal';
 
 const drawerWidth = 280;
 
-function App() {
+// Main authenticated application component
+function AuthenticatedApp() {
+  const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, hasPermission } = useAuth();
+  
   const [openDetails, setOpenDetails] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
-  const [formMode, setFormMode] = useState('add'); // 'add' or 'edit'
+  const [formMode, setFormMode] = useState('add');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsRow, setDetailsRow] = useState(null);
@@ -41,20 +59,40 @@ function App() {
   const [currentTab, setCurrentTab] = useState('network-routes');
   const [networkDesignOpen, setNetworkDesignOpen] = useState(false);
   const [exchangeRatesOpen, setExchangeRatesOpen] = useState(false);
-  const [locationDataOpen, setLocationDataOpen] = useState(false);
-
+  const [networkDataOpen, setNetworkDataOpen] = useState(false);
+  
+  // User menu state
+  const [userMenuAnchor, setUserMenuAnchor] = useState(null);
+  
+  // Load network routes data - moved before early returns to follow Rules of Hooks
   useEffect(() => {
-    setLoading(true);
-    fetchRoutes()
-      .then(data => {
-        setRows(data);
-        setLoading(false);
-      })
-      .catch(err => {
-        setError('Failed to fetch data');
-        setLoading(false);
-      });
-  }, []);
+    if (isAuthenticated && hasModuleAccess('network_routes')) {
+      setLoading(true);
+      fetchRoutes()
+        .then(data => {
+          setRows(data);
+          setLoading(false);
+        })
+        .catch(err => {
+          setError('Failed to fetch data');
+          setLoading(false);
+        });
+    }
+  }, [isAuthenticated, hasModuleAccess]);
+  
+  // Show loading spinner while checking authentication
+  if (authLoading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+        <CircularProgress size={60} />
+      </Box>
+    );
+  }
+  
+  // Show login form if not authenticated
+  if (!isAuthenticated) {
+    return <LoginForm />;
+  }
 
   const handleMoreDetails = (row) => {
     setDetailsRow(row);
@@ -62,6 +100,8 @@ function App() {
   };
 
   const handleSearch = (filters) => {
+    if (!hasPermission('network_routes', 'view')) return;
+    
     setLoading(true);
     searchRoutes(filters)
       .then(data => {
@@ -75,38 +115,52 @@ function App() {
   };
 
   const handleExport = () => {
-    exportRoutesCSV().then(res => {
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', 'network_routes.csv');
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    });
+    if (!hasPermission('network_routes', 'view')) return;
+    
+    exportRoutesCSV()
+      .then(response => {
+        const blob = new Blob([response.data], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'network_routes.csv';
+        a.click();
+        window.URL.revokeObjectURL(url);
+      })
+      .catch(err => {
+        setError('Failed to export');
+      });
   };
 
   const handleAdd = () => {
+    if (!hasPermission('network_routes', 'create')) return;
+    
     setFormMode('add');
     setSelectedRow(null);
     setFormOpen(true);
   };
 
   const handleEdit = () => {
+    if (!hasPermission('network_routes', 'edit')) return;
+    
     setFormMode('edit');
     setFormOpen(true);
   };
 
   const handleDelete = () => {
+    if (!hasPermission('network_routes', 'delete')) return;
+    
     setDeleteConfirmOpen(true);
   };
 
   const handleFormClose = () => {
     setFormOpen(false);
+    setSelectedRow(null);
   };
 
   const handleFormSubmit = async (values, file, testResultsFiles) => {
     setLoading(true);
+    
     try {
       let uploadedFiles = 0;
       if (formMode === 'add') {
@@ -125,15 +179,12 @@ function App() {
         }
       }
       
-      // Refresh the data to show updated status
       await refreshData();
       setFormOpen(false);
       setSelectedRow(null);
       
-      // Show success notification
       if (uploadedFiles > 0) {
-        setError(''); // Clear any previous errors
-        // We'll add a success message state
+        setError('');
         alert(`✅ Successfully uploaded ${uploadedFiles} test results file${uploadedFiles > 1 ? 's' : ''}!`);
       }
     } catch (err) {
@@ -153,34 +204,27 @@ function App() {
   };
 
   const handleFileDeleted = () => {
-    // Refresh the table data when a file is deleted
     refreshData();
   };
 
   const handleDeleteConfirm = async () => {
-    setLoading(true);
     try {
       await deleteRoute(selectedRow.circuit_id);
       await refreshData();
-      setSelectedRow(null);
       setDeleteConfirmOpen(false);
     } catch (err) {
-      setError('Failed to delete');
+      setError('Failed to delete route');
     }
-    setLoading(false);
   };
 
   const handleDetailsSave = async (values) => {
-    setLoading(true);
     try {
-      await editRoute(detailsRow.circuit_id, { ...detailsRow, more_details: values.more_details });
+      await editRoute(detailsRow.circuit_id, values);
       await refreshData();
       setDetailsOpen(false);
-      setDetailsRow(null);
     } catch (err) {
       setError('Failed to save details');
     }
-    setLoading(false);
   };
 
   const handleOpenDarkFiber = (circuitId) => {
@@ -188,16 +232,151 @@ function App() {
     setDarkFiberOpen(true);
   };
 
+  const handleUserMenuClick = (event) => {
+    setUserMenuAnchor(event.currentTarget);
+  };
+
+  const handleUserMenuClose = () => {
+    setUserMenuAnchor(null);
+  };
+
+  const handleLogout = () => {
+    logout();
+    setUserMenuAnchor(null);
+  };
+
+  const renderMainContent = () => {
+    switch (currentTab) {
+      case 'network-routes':
+        return hasModuleAccess('network_routes') ? (
+          <NetworkRoutesTable
+            rows={rows}
+            loading={loading}
+            error={error}
+            onMoreDetails={handleMoreDetails}
+            onSelectRow={setSelectedRow}
+            selectedRow={selectedRow}
+            onOpenDarkFiber={handleOpenDarkFiber}
+            hasPermission={hasPermission}
+          />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'network-design':
+        return hasModuleAccess('network_design') ? (
+          <NetworkDesignTool />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'exchange-rates':
+        return hasModuleAccess('exchange_rates') ? (
+          <ExchangeRatesManager />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'location-data':
+        return hasModuleAccess('locations') ? (
+          <LocationDataManager />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+        
+      case 'carriers':
+        return hasModuleAccess('carriers') ? (
+          <CarriersManager />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'change-logs':
+        return hasModuleAccess('change_logs') ? (
+          <ChangeLogsViewer />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'user-management':
+        return hasModuleAccess('user_management') ? (
+          <UserManagement />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'core-outages':
+        return hasModuleAccess('network_routes') ? (
+          <CoreOutagesTable />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      default:
+        return (
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="h5" gutterBottom>Welcome to Network Inventory</Typography>
+            <Typography>Select a module from the sidebar to get started.</Typography>
+          </Paper>
+        );
+    }
+  };
+
   return (
     <Box sx={{ display: 'flex' }}>
       <CssBaseline />
-      <AppBar position="fixed" sx={{ zIndex: 1201 }}>
+      
+      {/* App Bar */}
+      <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
         <Toolbar>
-          <Typography variant="h6" noWrap component="div">
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
           </Typography>
+          
+          {/* User Info */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Chip
+              icon={<AccountCircleIcon />}
+              label={user?.username}
+              variant="outlined"
+              color="primary"
+              size="small"
+            />
+            <IconButton
+              color="inherit"
+              onClick={handleUserMenuClick}
+              aria-label="user menu"
+            >
+              <AccountCircleIcon />
+            </IconButton>
+          </Box>
+          
+          {/* User Menu */}
+          <Menu
+            anchorEl={userMenuAnchor}
+            open={Boolean(userMenuAnchor)}
+            onClose={handleUserMenuClose}
+          >
+            <MenuItem disabled>
+              <Typography variant="body2">
+                {user?.full_name || user?.username}
+              </Typography>
+            </MenuItem>
+            <MenuItem disabled>
+              <Typography variant="caption" color="text.secondary">
+                Role: {user?.role}
+              </Typography>
+            </MenuItem>
+            <Divider />
+            <MenuItem onClick={handleLogout}>
+              <LogoutIcon sx={{ mr: 1 }} />
+              Logout
+            </MenuItem>
+          </Menu>
         </Toolbar>
       </AppBar>
+
+      {/* Sidebar */}
       <Drawer
         variant="permanent"
         sx={{
@@ -209,161 +388,201 @@ function App() {
         <Toolbar />
         <Box sx={{ overflow: 'auto' }}>
           <List>
-            {/* Network Routes Repository Tab */}
-            <ListItem button onClick={() => setNetworkRoutesOpen(!networkRoutesOpen)}>
-              <ListItemIcon><RouterIcon /></ListItemIcon>
-              <ListItemText primary="Network Routes Repository" />
-              {networkRoutesOpen ? <ExpandLess /> : <ExpandMore />}
-            </ListItem>
-            <Collapse in={networkRoutesOpen} timeout="auto" unmountOnExit>
-              <List component="div" disablePadding>
-                <ListItem 
-                  button 
-                  onClick={() => setCurrentTab('network-routes')} 
-                  sx={{ pl: 4, backgroundColor: currentTab === 'network-routes' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                >
+            {/* Network Routes Repository */}
+            {hasModuleAccess('network_routes') && (
+              <>
+                <ListItem button onClick={() => setNetworkRoutesOpen(!networkRoutesOpen)}>
                   <ListItemIcon><RouterIcon /></ListItemIcon>
-                  <ListItemText primary="View Routes" />
+                  <ListItemText primary="Network Routes Repository" />
+                  {networkRoutesOpen ? <ExpandLess /> : <ExpandMore />}
                 </ListItem>
-                <ListItem button onClick={handleAdd} sx={{ pl: 4 }}>
-                  <ListItemIcon><AddIcon /></ListItemIcon>
-                  <ListItemText primary="Add Route" />
-                </ListItem>
-                <ListItem button onClick={handleEdit} disabled={!selectedRow} sx={{ pl: 4 }}>
-                  <ListItemIcon><EditIcon /></ListItemIcon>
-                  <ListItemText primary="Edit Route" />
-                </ListItem>
-                <ListItem button onClick={handleDelete} disabled={!selectedRow} sx={{ pl: 4 }}>
-                  <ListItemIcon><DeleteIcon /></ListItemIcon>
-                  <ListItemText primary="Delete Route" />
-                </ListItem>
-                <ListItem 
-                  button 
-                  onClick={() => setCurrentTab('core-outages')} 
-                  sx={{ pl: 4, backgroundColor: currentTab === 'core-outages' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                >
-                  <ListItemIcon><WarningIcon /></ListItemIcon>
-                  <ListItemText primary="Core Outages" />
-                </ListItem>
-              </List>
-            </Collapse>
+                <Collapse in={networkRoutesOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('network-routes')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'network-routes' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><RouterIcon /></ListItemIcon>
+                      <ListItemText primary="Network Routes" />
+                    </ListItem>
+                    
+                    {/* Action buttons under Network Routes */}
+                    {currentTab === 'network-routes' && hasPermission('network_routes', 'create') && (
+                      <ListItem 
+                        button 
+                        onClick={handleAdd}
+                        sx={{ pl: 6 }}
+                      >
+                        <ListItemIcon><AddIcon /></ListItemIcon>
+                        <ListItemText primary="Add Route" />
+                      </ListItem>
+                    )}
+                    {currentTab === 'network-routes' && hasPermission('network_routes', 'edit') && (
+                      <ListItem 
+                        button 
+                        onClick={handleEdit}
+                        sx={{ pl: 6 }}
+                        disabled={!selectedRow}
+                      >
+                        <ListItemIcon><EditIcon /></ListItemIcon>
+                        <ListItemText primary="Edit Route" />
+                      </ListItem>
+                    )}
+                    {currentTab === 'network-routes' && hasPermission('network_routes', 'delete') && (
+                      <ListItem 
+                        button 
+                        onClick={handleDelete}
+                        sx={{ pl: 6 }}
+                        disabled={!selectedRow}
+                      >
+                        <ListItemIcon><DeleteIcon /></ListItemIcon>
+                        <ListItemText primary="Delete Route" />
+                      </ListItem>
+                    )}
+                    
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('core-outages')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'core-outages' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><WarningIcon /></ListItemIcon>
+                      <ListItemText primary="Core Outages" />
+                    </ListItem>
+                  </List>
+                </Collapse>
+              </>
+            )}
 
-            {/* Network Design & Pricing Tool Tab */}
-            <ListItem button onClick={() => setNetworkDesignOpen(!networkDesignOpen)}>
-              <ListItemIcon><DesignServicesIcon /></ListItemIcon>
-              <ListItemText primary="Network Design & Pricing" />
-              {networkDesignOpen ? <ExpandLess /> : <ExpandMore />}
-            </ListItem>
-            <Collapse in={networkDesignOpen} timeout="auto" unmountOnExit>
-              <List component="div" disablePadding>
-                <ListItem 
-                  button 
-                  onClick={() => setCurrentTab('network-design')} 
-                  sx={{ pl: 4, backgroundColor: currentTab === 'network-design' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                >
+            {/* Network Design Tool */}
+            {hasModuleAccess('network_design') && (
+              <>
+                <ListItem button onClick={() => setNetworkDesignOpen(!networkDesignOpen)}>
                   <ListItemIcon><DesignServicesIcon /></ListItemIcon>
-                  <ListItemText primary="Design Tool" />
+                  <ListItemText primary="Network Design & Pricing Tool" />
+                  {networkDesignOpen ? <ExpandLess /> : <ExpandMore />}
                 </ListItem>
-              </List>
-            </Collapse>
+                <Collapse in={networkDesignOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('network-design')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'network-design' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><DesignServicesIcon /></ListItemIcon>
+                      <ListItemText primary="Design & Pricing" />
+                    </ListItem>
+                  </List>
+                </Collapse>
+              </>
+            )}
 
-            {/* Exchange Rates Management Tab */}
-            <ListItem button onClick={() => setExchangeRatesOpen(!exchangeRatesOpen)}>
-              <ListItemIcon><CurrencyExchangeIcon /></ListItemIcon>
-              <ListItemText primary="Exchange Rates" />
-              {exchangeRatesOpen ? <ExpandLess /> : <ExpandMore />}
-            </ListItem>
-            <Collapse in={exchangeRatesOpen} timeout="auto" unmountOnExit>
-              <List component="div" disablePadding>
-                <ListItem 
-                  button 
-                  onClick={() => setCurrentTab('exchange-rates')} 
-                  sx={{ pl: 4, backgroundColor: currentTab === 'exchange-rates' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                >
+            {/* Exchange Rates */}
+            {hasModuleAccess('exchange_rates') && (
+              <>
+                <ListItem button onClick={() => setExchangeRatesOpen(!exchangeRatesOpen)}>
                   <ListItemIcon><CurrencyExchangeIcon /></ListItemIcon>
-                  <ListItemText primary="Manage Rates" />
+                  <ListItemText primary="Exchange Rates" />
+                  {exchangeRatesOpen ? <ExpandLess /> : <ExpandMore />}
                 </ListItem>
-              </List>
-            </Collapse>
+                <Collapse in={exchangeRatesOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('exchange-rates')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'exchange-rates' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><CurrencyExchangeIcon /></ListItemIcon>
+                      <ListItemText primary="Manage Exchange Rates" />
+                    </ListItem>
+                  </List>
+                </Collapse>
+              </>
+            )}
 
-            {/* Location Data Management Tab */}
-            <ListItem button onClick={() => setLocationDataOpen(!locationDataOpen)}>
-              <ListItemIcon><LocationOnIcon /></ListItemIcon>
-              <ListItemText primary="Location Data" />
-              {locationDataOpen ? <ExpandLess /> : <ExpandMore />}
-            </ListItem>
-            <Collapse in={locationDataOpen} timeout="auto" unmountOnExit>
-              <List component="div" disablePadding>
-                <ListItem 
-                  button 
-                  onClick={() => setCurrentTab('location-data')} 
-                  sx={{ pl: 4, backgroundColor: currentTab === 'location-data' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                >
-                  <ListItemIcon><LocationOnIcon /></ListItemIcon>
-                  <ListItemText primary="Manage Locations" />
+            {/* Network Data */}
+            {(hasModuleAccess('locations') || hasModuleAccess('carriers')) && (
+              <>
+                <ListItem button onClick={() => setNetworkDataOpen(!networkDataOpen)}>
+                  <ListItemIcon><DataObjectIcon /></ListItemIcon>
+                  <ListItemText primary="Network Data" />
+                  {networkDataOpen ? <ExpandLess /> : <ExpandMore />}
                 </ListItem>
-              </List>
-            </Collapse>
+                <Collapse in={networkDataOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding>
+                    {hasModuleAccess('locations') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('location-data')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'location-data' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><LocationOnIcon /></ListItemIcon>
+                        <ListItemText primary="Manage Locations" />
+                      </ListItem>
+                    )}
+                    {hasModuleAccess('carriers') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('carriers')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'carriers' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><BusinessIcon /></ListItemIcon>
+                        <ListItemText primary="Manage Carriers" />
+                      </ListItem>
+                    )}
+                  </List>
+                </Collapse>
+              </>
+            )}
+
+            {/* Change Logs */}
+            {hasModuleAccess('change_logs') && (
+              <ListItem 
+                button 
+                onClick={() => setCurrentTab('change-logs')} 
+                sx={{ backgroundColor: currentTab === 'change-logs' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+              >
+                <ListItemIcon><HistoryIcon /></ListItemIcon>
+                <ListItemText primary="Change Logs" />
+              </ListItem>
+            )}
+
+            {/* User Management */}
+            {hasModuleAccess('user_management') && (
+              <ListItem 
+                button 
+                onClick={() => setCurrentTab('user-management')} 
+                sx={{ backgroundColor: currentTab === 'user-management' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+              >
+                <ListItemIcon><PeopleIcon /></ListItemIcon>
+                <ListItemText primary="User Management" />
+              </ListItem>
+            )}
           </List>
         </Box>
       </Drawer>
-      <Box component="main" sx={{ flexGrow: 1, bgcolor: 'background.default', p: 3 }}>
+
+      {/* Main Content */}
+      <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
         <Toolbar />
-        <Container maxWidth="xl">
-          {/* Network Routes Repository Tab */}
-          {currentTab === 'network-routes' && (
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="h5" gutterBottom>Network Routes Repository</Typography>
-              <SearchExportBar onSearch={handleSearch} onExport={handleExport} />
-              {loading ? (
-                <div>Loading...</div>
-              ) : error ? (
-                <div style={{ color: 'red' }}>{error}</div>
-              ) : (
-                <NetworkRoutesTable
-                  rows={rows}
-                  onMoreDetails={handleMoreDetails}
-                  onSelectRow={setSelectedRow}
-                  selectedRow={selectedRow}
-                  onOpenDarkFiber={handleOpenDarkFiber}
-                />
-              )}
-              {openDetails && (
-                <div>More Details Popup for {selectedRow.circuit_id} (to be implemented)</div>
-              )}
-            </Paper>
-          )}
+        
+        {/* Search Bar for Network Routes */}
+        {currentTab === 'network-routes' && hasModuleAccess('network_routes') && (
+          <Box sx={{ mb: 2 }}>
+            <SearchExportBar 
+              onSearch={handleSearch}
+              onExport={handleExport}
+              hasPermission={hasPermission}
+            />
+          </Box>
+        )}
 
-          {/* Core Outages Tab */}
-          {currentTab === 'core-outages' && (
-            <CoreOutagesTable />
-          )}
-
-          {/* Network Design & Pricing Tool Tab */}
-          {currentTab === 'network-design' && (
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="h5" gutterBottom>Network Design & Pricing Tool</Typography>
-              <NetworkDesignTool />
-            </Paper>
-          )}
-
-          {/* Exchange Rates Management Tab */}
-          {currentTab === 'exchange-rates' && (
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="h5" gutterBottom>Exchange Rates Management</Typography>
-              <ExchangeRatesManager />
-            </Paper>
-          )}
-
-          {/* Location Data Management Tab */}
-          {currentTab === 'location-data' && (
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="h5" gutterBottom>Location Data Management</Typography>
-              <LocationDataManager />
-            </Paper>
-          )}
+        <Container maxWidth={false}>
+          {renderMainContent()}
         </Container>
       </Box>
+
+      {/* Dialogs */}
       <RouteFormDialog
         open={formOpen}
         onClose={handleFormClose}
@@ -372,8 +591,16 @@ function App() {
         isEdit={formMode === 'edit'}
         onFileDeleted={handleFileDeleted}
       />
-      <Dialog open={detailsOpen} onClose={() => setDetailsOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>More Details</DialogTitle>
+
+              <Dialog 
+          open={detailsOpen} 
+          onClose={() => setDetailsOpen(false)} 
+          maxWidth="sm" 
+          fullWidth
+          disableRestoreFocus
+          aria-labelledby="details-dialog-title"
+        >
+          <DialogTitle id="details-dialog-title">More Details</DialogTitle>
         <DialogContent>
           <TextField
             label="Notes"
@@ -390,8 +617,14 @@ function App() {
           <Button onClick={() => setDetailsOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
-      <Dialog open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)}>
-        <DialogTitle>Delete Route</DialogTitle>
+
+              <Dialog 
+          open={deleteConfirmOpen} 
+          onClose={() => setDeleteConfirmOpen(false)}
+          disableRestoreFocus
+          aria-labelledby="delete-route-dialog-title"
+        >
+          <DialogTitle id="delete-route-dialog-title">Delete Route</DialogTitle>
         <DialogContent>
           Are you sure you want to delete {selectedRow?.circuit_id}?
           <br />
@@ -404,12 +637,22 @@ function App() {
           <Button onClick={handleDeleteConfirm} color="error" variant="contained">Delete</Button>
         </DialogActions>
       </Dialog>
+
       <DarkFiberModal
         open={darkFiberOpen}
         onClose={() => setDarkFiberOpen(false)}
         circuitId={darkFiberCircuitId}
       />
     </Box>
+  );
+}
+
+// Main App component with AuthProvider
+function App() {
+  return (
+    <AuthProvider>
+      <AuthenticatedApp />
+    </AuthProvider>
   );
 }
 

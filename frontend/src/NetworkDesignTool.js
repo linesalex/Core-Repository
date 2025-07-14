@@ -4,7 +4,7 @@ import {
   Chip, Alert, CircularProgress, Accordion, AccordionSummary, AccordionDetails, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, Card, CardContent, CardHeader, Divider,
   Switch, FormControlLabel, Dialog, DialogTitle, DialogContent, DialogActions, List, ListItem,
-  ListItemText, ListItemIcon, Checkbox, Tooltip, IconButton, Snackbar
+  ListItemText, ListItemIcon, Checkbox, Tooltip, IconButton, Snackbar, Tabs, Tab, Autocomplete
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchIcon from '@mui/icons-material/Search';
@@ -12,9 +12,31 @@ import RouteIcon from '@mui/icons-material/Route';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import MapIcon from '@mui/icons-material/Map';
 import SaveIcon from '@mui/icons-material/Save';
+import HistoryIcon from '@mui/icons-material/History';
 import LoadingButton from '@mui/lab/LoadingButton';
 import { networkDesignApi } from './api';
 import { getCarriers } from './api';
+
+// Tab panel component
+function TabPanel(props) {
+  const { children, value, index, ...other } = props;
+
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`simple-tabpanel-${index}`}
+      aria-labelledby={`simple-tab-${index}`}
+      {...other}
+    >
+      {value === index && (
+        <Box sx={{ p: 3 }}>
+          {children}
+        </Box>
+      )}
+    </div>
+  );
+}
 
 const NetworkDesignTool = () => {
   // Form state
@@ -24,7 +46,7 @@ const NetworkDesignTool = () => {
     bandwidth: '',
     includeULL: false,
     protectionRequired: false,
-    maxLatency: '',
+    mtuRequired: '', // Changed from maxLatency to mtuRequired
     carrierAvoidance: [],
     outputCurrency: 'USD',
     contractTerm: 12,
@@ -45,6 +67,7 @@ const NetworkDesignTool = () => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [expandedAccordion, setExpandedAccordion] = useState('search');
+  const [currentTab, setCurrentTab] = useState(0); // Tab state
 
   // Currency options
   const currencies = [
@@ -99,7 +122,9 @@ const NetworkDesignTool = () => {
     }));
   };
 
-
+  const handleTabChange = (event, newValue) => {
+    setCurrentTab(newValue);
+  };
 
   const handleSearch = async () => {
     if (!formData.source || !formData.destination) {
@@ -122,7 +147,7 @@ const NetworkDesignTool = () => {
         customer_name: formData.customerName,
         constraints: {
           protection_required: formData.protectionRequired,
-          max_latency: formData.maxLatency ? parseFloat(formData.maxLatency) : undefined,
+          mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500, // Default to 1500 if not specified
           carrier_avoidance: formData.carrierAvoidance.length > 0 ? formData.carrierAvoidance : undefined
         }
       };
@@ -159,8 +184,6 @@ const NetworkDesignTool = () => {
       setLoading(false);
     }
   };
-
-
 
   const handleGenerateKMZ = async () => {
     if (!searchResults) {
@@ -206,423 +229,413 @@ const NetworkDesignTool = () => {
 
   return (
     <Box sx={{ width: '100%' }}>
-      {/* Search Parameters */}
-      <Accordion expanded={expandedAccordion === 'search'} onChange={() => setExpandedAccordion(expandedAccordion === 'search' ? '' : 'search')}>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <SearchIcon sx={{ mr: 1 }} />
-            <Typography variant="h6">Search Parameters</Typography>
-          </Box>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Grid container spacing={3}>
-            {/* Source and Destination */}
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Source Location</InputLabel>
-                <Select
-                  value={formData.source}
-                  onChange={(e) => handleInputChange('source', e.target.value)}
-                  label="Source Location"
-                >
-                  {locations.map((location) => (
-                    <MenuItem key={location.location_code} value={location.location_code}>
-                      {location.location_code} - {location.city}, {location.country}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
+      {/* Tab Navigation */}
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+        <Tabs value={currentTab} onChange={handleTabChange} aria-label="network design tabs">
+          <Tab icon={<SearchIcon />} label="Network Design" />
+          <Tab icon={<HistoryIcon />} label="Pricing Logs" />
+        </Tabs>
+      </Box>
 
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Destination Location</InputLabel>
-                <Select
-                  value={formData.destination}
-                  onChange={(e) => handleInputChange('destination', e.target.value)}
-                  label="Destination Location"
-                >
-                  {locations.map((location) => (
-                    <MenuItem key={location.location_code} value={location.location_code}>
-                      {location.location_code} - {location.city}, {location.country}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-
-            {/* Quote Request ID */}
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Quote Request ID"
-                value={formData.quoteRequestId}
-                onChange={(e) => handleInputChange('quoteRequestId', e.target.value)}
-                helperText="Reference ID for this quote request"
-              />
-            </Grid>
-
-            {/* Customer Name */}
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Customer Name"
-                value={formData.customerName}
-                onChange={(e) => handleInputChange('customerName', e.target.value)}
-                helperText="Customer or organization name"
-              />
-            </Grid>
-
-            {/* Bandwidth Requirements */}
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Bandwidth Required (Mbps)"
-                type="number"
-                value={formData.bandwidth}
-                onChange={(e) => handleInputChange('bandwidth', e.target.value)}
-                helperText="All bandwidth values are in Mbps"
-                InputProps={{
-                  endAdornment: <Typography variant="body2" color="text.secondary">Mbps</Typography>
-                }}
-              />
-            </Grid>
-
-            {/* Max Latency */}
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Max Latency (ms)"
-                type="number"
-                value={formData.maxLatency}
-                onChange={(e) => handleInputChange('maxLatency', e.target.value)}
-                helperText="Leave empty for no latency constraint"
-              />
-            </Grid>
-
-            {/* Switches */}
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={formData.protectionRequired}
-                    onChange={(e) => handleInputChange('protectionRequired', e.target.checked)}
-                  />
-                }
-                label="Protection Required (Diverse Path)"
-              />
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={formData.includeULL}
-                    onChange={(e) => handleInputChange('includeULL', e.target.checked)}
-                  />
-                }
-                label="Include ULL Routes"
-              />
-            </Grid>
-
-            {/* Carrier Avoidance */}
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Carrier Avoidance</InputLabel>
-                <Select
-                  multiple
-                  value={formData.carrierAvoidance}
-                  onChange={(e) => handleInputChange('carrierAvoidance', e.target.value)}
-                  label="Carrier Avoidance"
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
-                  )}
-                >
-                  {carriers.map((carrier) => (
-                    <MenuItem key={carrier} value={carrier}>
-                      <Checkbox checked={formData.carrierAvoidance.includes(carrier)} />
-                      <ListItemText primary={carrier} />
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-
-            {/* Pricing Options */}
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Output Currency</InputLabel>
-                <Select
-                  value={formData.outputCurrency}
-                  onChange={(e) => handleInputChange('outputCurrency', e.target.value)}
-                  label="Output Currency"
-                >
-                  {currencies.map((currency) => (
-                    <MenuItem key={currency.code} value={currency.code}>
-                      {currency.code} - {currency.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Contract Term</InputLabel>
-                <Select
-                  value={formData.contractTerm}
-                  onChange={(e) => handleInputChange('contractTerm', e.target.value)}
-                  label="Contract Term"
-                >
-                  {contractTerms.map((term) => (
-                    <MenuItem key={term.value} value={term.value}>
-                      {term.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-
-            {/* Action Buttons */}
-            <Grid item xs={12}>
-              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                <LoadingButton
-                  variant="contained"
-                  startIcon={<SearchIcon />}
-                  onClick={handleSearch}
-                  loading={loading}
-                  disabled={!formData.source || !formData.destination}
-                >
-                  Find Route
-                </LoadingButton>
-
-
-              </Box>
-            </Grid>
-          </Grid>
-        </AccordionDetails>
-      </Accordion>
-
-      {/* Search Results */}
-      {searchResults && (
-        <Accordion expanded={expandedAccordion === 'results'} onChange={() => setExpandedAccordion(expandedAccordion === 'results' ? '' : 'results')} sx={{ mt: 2 }}>
+      {/* Network Design Tab */}
+      <TabPanel value={currentTab} index={0}>
+        {/* Search Parameters */}
+        <Accordion expanded={expandedAccordion === 'search'} onChange={() => setExpandedAccordion(expandedAccordion === 'search' ? '' : 'search')}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <RouteIcon sx={{ mr: 1 }} />
-              <Typography variant="h6">Route Results</Typography>
-              <Chip 
-                label={`${formatLatency(searchResults.primaryPath.totalLatency)}ms`} 
-                color="primary" 
-                size="small" 
-                sx={{ ml: 2 }} 
-              />
-              <Chip 
-                label={`${searchResults.primaryPath.hops} hops`} 
-                color="secondary" 
-                size="small" 
-                sx={{ ml: 1 }} 
-              />
+              <SearchIcon sx={{ mr: 1 }} />
+              <Typography variant="h6">Search Parameters</Typography>
             </Box>
           </AccordionSummary>
           <AccordionDetails>
             <Grid container spacing={3}>
-              {/* Primary Path */}
-              <Grid item xs={12} md={searchResults.diversePath ? 6 : 12}>
-                <Card>
-                  <CardHeader 
-                    title="Primary Path" 
-                    subheader={`${searchResults.primaryPath.path.join(' → ')}`}
-                  />
-                  <CardContent>
-                    <TableContainer>
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Segment</TableCell>
-                            <TableCell>Latency</TableCell>
-                            <TableCell>Carrier</TableCell>
-                            <TableCell>Cost</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {searchResults.primaryPath.route.map((segment, index) => (
-                            <TableRow key={index}>
-                              <TableCell>{segment.from} → {segment.to}</TableCell>
-                              <TableCell>{formatLatency(segment.latency)}ms</TableCell>
-                              <TableCell>{segment.carrier || 'N/A'}</TableCell>
-                              <TableCell>{formatCurrency(segment.cost, segment.currency)}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  </CardContent>
-                </Card>
+              {/* Source and Destination - Now searchable */}
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  options={locations}
+                  getOptionLabel={(option) => `${option.location_code} - ${option.city}, ${option.country}`}
+                  value={locations.find(loc => loc.location_code === formData.source) || null}
+                  onChange={(event, newValue) => {
+                    handleInputChange('source', newValue ? newValue.location_code : '');
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Source Location" fullWidth />
+                  )}
+                />
               </Grid>
 
-              {/* Diverse Path */}
-              {searchResults.diversePath && (
-                <Grid item xs={12} md={6}>
-                  <Card>
-                    <CardHeader 
-                      title="Diverse Path" 
-                      subheader={`${searchResults.diversePath.path.join(' → ')}`}
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  options={locations}
+                  getOptionLabel={(option) => `${option.location_code} - ${option.city}, ${option.country}`}
+                  value={locations.find(loc => loc.location_code === formData.destination) || null}
+                  onChange={(event, newValue) => {
+                    handleInputChange('destination', newValue ? newValue.location_code : '');
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Destination Location" fullWidth />
+                  )}
+                />
+              </Grid>
+
+              {/* Bandwidth */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Bandwidth (Mbps)"
+                  type="number"
+                  value={formData.bandwidth}
+                  onChange={(e) => handleInputChange('bandwidth', e.target.value)}
+                />
+              </Grid>
+
+              {/* MTU Required - New field */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="MTU Required (minimum)"
+                  type="number"
+                  value={formData.mtuRequired}
+                  onChange={(e) => handleInputChange('mtuRequired', e.target.value)}
+                  helperText="Default: 1500 if not specified"
+                />
+              </Grid>
+
+              {/* Carrier Avoidance - Now searchable */}
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  multiple
+                  options={carriers}
+                  getOptionLabel={(option) => option.carrier_name}
+                  value={carriers.filter(carrier => formData.carrierAvoidance.includes(carrier.carrier_name))}
+                  onChange={(event, newValue) => {
+                    handleInputChange('carrierAvoidance', newValue.map(carrier => carrier.carrier_name));
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Carrier Avoidance" />
+                  )}
+                />
+              </Grid>
+
+              {/* Output Currency - Now searchable */}
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  options={currencies}
+                  getOptionLabel={(option) => `${option.code} - ${option.name}`}
+                  value={currencies.find(curr => curr.code === formData.outputCurrency) || null}
+                  onChange={(event, newValue) => {
+                    handleInputChange('outputCurrency', newValue ? newValue.code : 'USD');
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Output Currency" />
+                  )}
+                />
+              </Grid>
+
+              {/* Protection Required */}
+              <Grid item xs={12} md={6}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.protectionRequired}
+                      onChange={(e) => handleInputChange('protectionRequired', e.target.checked)}
                     />
-                    <CardContent>
-                      <Typography variant="body2">
-                        Latency: {formatLatency(searchResults.diversePath.totalLatency)}ms
-                      </Typography>
-                      <Typography variant="body2">
-                        Hops: {searchResults.diversePath.hops}
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-              )}
+                  }
+                  label="Protection Required"
+                />
+              </Grid>
+
+              {/* Include ULL */}
+              <Grid item xs={12} md={6}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.includeULL}
+                      onChange={(e) => handleInputChange('includeULL', e.target.checked)}
+                    />
+                  }
+                  label="Include ULL"
+                />
+              </Grid>
+
+              {/* Contract Term */}
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Contract Term</InputLabel>
+                  <Select
+                    value={formData.contractTerm}
+                    onChange={(e) => handleInputChange('contractTerm', e.target.value)}
+                    label="Contract Term"
+                  >
+                    {contractTerms.map((term) => (
+                      <MenuItem key={term.value} value={term.value}>
+                        {term.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              {/* Quote Request ID */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Quote Request ID"
+                  value={formData.quoteRequestId}
+                  onChange={(e) => handleInputChange('quoteRequestId', e.target.value)}
+                />
+              </Grid>
+
+              {/* Customer Name */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Customer Name"
+                  value={formData.customerName}
+                  onChange={(e) => handleInputChange('customerName', e.target.value)}
+                />
+              </Grid>
 
               {/* Action Buttons */}
               <Grid item xs={12}>
                 <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                  <Button
-                    variant="outlined"
-                    startIcon={<MapIcon />}
-                    onClick={handleGenerateKMZ}
+                  <LoadingButton
+                    variant="contained"
+                    startIcon={<SearchIcon />}
+                    onClick={handleSearch}
+                    loading={loading}
+                    disabled={!formData.source || !formData.destination}
                   >
-                    Generate KMZ
-                  </Button>
+                    Find Route
+                  </LoadingButton>
                 </Box>
               </Grid>
             </Grid>
           </AccordionDetails>
         </Accordion>
-      )}
 
-      {/* Pricing Results */}
-      {pricingResults && (
-        <Accordion expanded={expandedAccordion === 'pricing'} onChange={() => setExpandedAccordion(expandedAccordion === 'pricing' ? '' : 'pricing')} sx={{ mt: 2 }}>
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <AttachMoneyIcon sx={{ mr: 1 }} />
-              <Typography variant="h6">Pricing Analysis</Typography>
-            </Box>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Grid container spacing={3}>
-              {pricingResults.results.map((result, index) => (
-                <Grid item xs={12} md={6} key={index}>
+        {/* Search Results */}
+        {searchResults && (
+          <Accordion expanded={expandedAccordion === 'results'} onChange={() => setExpandedAccordion(expandedAccordion === 'results' ? '' : 'results')} sx={{ mt: 2 }}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <RouteIcon sx={{ mr: 1 }} />
+                <Typography variant="h6">Search Results</Typography>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Grid container spacing={3}>
+                {/* Primary Path */}
+                <Grid item xs={12} md={searchResults.diversePath ? 6 : 12}>
                   <Card>
                     <CardHeader 
-                      title={index === 0 ? 'Primary Path Pricing' : 'Diverse Path Pricing'}
-                      subheader={`${result.path.join(' → ')}`}
+                      title="Primary Path" 
+                      subheader={`${searchResults.primaryPath.path.join(' → ')}`}
                     />
                     <CardContent>
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <Typography variant="body2">Monthly Cost:</Typography>
-                          <Typography variant="body2" fontWeight="bold">
-                            {formatCurrency(result.pricing.monthlyCost, result.pricing.currency)}
-                          </Typography>
-                        </Box>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <Typography variant="body2">Setup Cost:</Typography>
-                          <Typography variant="body2" fontWeight="bold">
-                            {formatCurrency(result.pricing.setupCost, result.pricing.currency)}
-                          </Typography>
-                        </Box>
-                        <Divider />
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <Typography variant="body1">Total Contract Value:</Typography>
-                          <Typography variant="body1" fontWeight="bold" color="primary">
-                            {formatCurrency(result.pricing.totalContractValue, result.pricing.currency)}
-                          </Typography>
-                        </Box>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <Typography variant="caption">Term Discount:</Typography>
-                          <Typography variant="caption">{result.pricing.termDiscount}%</Typography>
-                        </Box>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <Typography variant="caption">Contract Term:</Typography>
-                          <Typography variant="caption">{result.pricing.contractTerm} months</Typography>
-                        </Box>
+                      <TableContainer>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>Circuit ID</TableCell>
+                              <TableCell>Segment</TableCell>
+                              <TableCell>Latency</TableCell>
+                              <TableCell>Carrier</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {searchResults.primaryPath.route.map((segment, index) => (
+                              <TableRow key={index}>
+                                <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
+                                <TableCell>{segment.from} → {segment.to}</TableCell>
+                                <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                                <TableCell>{segment.carrier || 'N/A'}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                      <Box sx={{ mt: 2 }}>
+                        <Typography variant="body2">
+                          <strong>Total Latency:</strong> {formatLatency(searchResults.primaryPath.totalLatency)}ms
+                        </Typography>
+                        <Typography variant="body2">
+                          <strong>Total Hops:</strong> {searchResults.primaryPath.hops}
+                        </Typography>
                       </Box>
                     </CardContent>
                   </Card>
                 </Grid>
-              ))}
-            </Grid>
-          </AccordionDetails>
-        </Accordion>
-      )}
 
-      {/* Audit Logs */}
-      <Accordion expanded={expandedAccordion === 'logs'} onChange={() => setExpandedAccordion(expandedAccordion === 'logs' ? '' : 'logs')} sx={{ mt: 2 }}>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <SearchIcon sx={{ mr: 1 }} />
-            <Typography variant="h6">Search & Pricing Logs</Typography>
-            <Chip 
-              label={`${auditLogs.length} entries`} 
-              color="info" 
-              size="small" 
-              sx={{ ml: 2 }} 
-            />
-          </Box>
-        </AccordionSummary>
-        <AccordionDetails>
-          <TableContainer>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell><strong>Timestamp</strong></TableCell>
-                  <TableCell><strong>Action</strong></TableCell>
-                  <TableCell><strong>Parameters</strong></TableCell>
-                  <TableCell><strong>Execution Time</strong></TableCell>
-                  <TableCell><strong>Results</strong></TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {auditLogs.map((log) => (
-                  <TableRow key={log.id}>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {new Date(log.timestamp).toLocaleString()}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip 
-                        label={log.action_type} 
-                        color={log.action_type === 'PATH_SEARCH' ? 'primary' : 'secondary'} 
-                        size="small" 
+                {/* Diverse Path */}
+                {searchResults.diversePath && (
+                  <Grid item xs={12} md={6}>
+                    <Card>
+                      <CardHeader 
+                        title="Secondary Path" 
+                        subheader={`${searchResults.diversePath.path.join(' → ')}`}
                       />
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" component="pre" sx={{ fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {log.parameters ? JSON.stringify(log.parameters, null, 2) : 'N/A'}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {log.execution_time ? `${log.execution_time}ms` : 'N/A'}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" component="pre" sx={{ fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {log.results ? JSON.stringify(log.results, null, 2) : log.pricing_data ? JSON.stringify(log.pricing_data, null, 2) : 'N/A'}
-                      </Typography>
-                    </TableCell>
-                  </TableRow>
+                      <CardContent>
+                        <TableContainer>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>Circuit ID</TableCell>
+                                <TableCell>Segment</TableCell>
+                                <TableCell>Latency</TableCell>
+                                <TableCell>Carrier</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {searchResults.diversePath.route.map((segment, index) => (
+                                <TableRow key={index}>
+                                  <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
+                                  <TableCell>{segment.from} → {segment.to}</TableCell>
+                                  <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                                  <TableCell>{segment.carrier || 'N/A'}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                        <Box sx={{ mt: 2 }}>
+                          <Typography variant="body2">
+                            <strong>Total Latency:</strong> {formatLatency(searchResults.diversePath.totalLatency)}ms
+                          </Typography>
+                          <Typography variant="body2">
+                            <strong>Total Hops:</strong> {searchResults.diversePath.hops}
+                          </Typography>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                )}
+
+                {/* Action Buttons */}
+                <Grid item xs={12}>
+                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                    <Button
+                      variant="outlined"
+                      startIcon={<MapIcon />}
+                      onClick={handleGenerateKMZ}
+                    >
+                      Generate KMZ
+                    </Button>
+                  </Box>
+                </Grid>
+              </Grid>
+            </AccordionDetails>
+          </Accordion>
+        )}
+
+        {/* Pricing Results */}
+        {pricingResults && (
+          <Accordion expanded={expandedAccordion === 'pricing'} onChange={() => setExpandedAccordion(expandedAccordion === 'pricing' ? '' : 'pricing')} sx={{ mt: 2 }}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <AttachMoneyIcon sx={{ mr: 1 }} />
+                <Typography variant="h6">Pricing Results</Typography>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Grid container spacing={3}>
+                {pricingResults.results.map((result, index) => (
+                  <Grid item xs={12} md={6} key={index}>
+                    <Card>
+                      <CardHeader title={`${index === 0 ? 'Primary' : 'Secondary'} Path Pricing`} />
+                      <CardContent>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body2">Monthly Cost:</Typography>
+                            <Typography variant="body2" fontWeight="bold">
+                              {formatCurrency(result.pricing.monthlyCost, result.pricing.currency)}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body2">Setup Cost:</Typography>
+                            <Typography variant="body2">
+                              {formatCurrency(result.pricing.setupCost, result.pricing.currency)}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body2">Total Contract Value:</Typography>
+                            <Typography variant="body2" fontWeight="bold">
+                              {formatCurrency(result.pricing.totalContractValue, result.pricing.currency)}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="caption">Contract Term:</Typography>
+                            <Typography variant="caption">{result.pricing.contractTerm} months</Typography>
+                          </Box>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
                 ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </AccordionDetails>
-      </Accordion>
+              </Grid>
+            </AccordionDetails>
+          </Accordion>
+        )}
+      </TabPanel>
 
-
+      {/* Pricing Logs Tab */}
+      <TabPanel value={currentTab} index={1}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+          <Typography variant="h6">Pricing Logs</Typography>
+          <Chip 
+            label={`${auditLogs.length} entries`} 
+            color="info" 
+            size="small"
+          />
+        </Box>
+        
+        <TableContainer component={Paper}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell><strong>Timestamp</strong></TableCell>
+                <TableCell><strong>Action</strong></TableCell>
+                <TableCell><strong>Parameters</strong></TableCell>
+                <TableCell><strong>Execution Time</strong></TableCell>
+                <TableCell><strong>Results</strong></TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {auditLogs.map((log) => (
+                <TableRow key={log.id}>
+                  <TableCell>
+                    <Typography variant="body2">
+                      {new Date(log.timestamp).toLocaleString()}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Chip 
+                      label={log.action_type} 
+                      color={log.action_type === 'PATH_SEARCH' ? 'primary' : 'secondary'} 
+                      size="small" 
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" component="pre" sx={{ fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {log.parameters ? JSON.stringify(log.parameters, null, 2) : 'N/A'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2">
+                      {log.execution_time ? `${log.execution_time}ms` : 'N/A'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" component="pre" sx={{ fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {log.results ? JSON.stringify(log.results, null, 2) : log.pricing_data ? JSON.stringify(log.pricing_data, null, 2) : 'N/A'}
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </TabPanel>
 
       {/* Error/Success Messages */}
       <Snackbar

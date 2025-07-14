@@ -29,8 +29,15 @@ function DarkFiberFormDialog({ open, onClose, onSubmit, initialData, mode }) {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{mode === 'add' ? 'Add' : 'Edit'} Dark Fiber Detail</DialogTitle>
+    <Dialog 
+      open={open} 
+      onClose={onClose} 
+      maxWidth="sm" 
+      fullWidth
+      disableRestoreFocus
+      aria-labelledby="dark-fiber-form-dialog-title"
+    >
+      <DialogTitle id="dark-fiber-form-dialog-title">{mode === 'add' ? 'Add' : 'Edit'} Dark Fiber Detail</DialogTitle>
       <DialogContent>
         <TextField
           label="DWDM Wavelength"
@@ -192,8 +199,15 @@ function DarkFiberModal({ open, onClose, circuitId }) {
 
   return (
     <>
-      <Dialog open={open} onClose={onClose} maxWidth="xl" fullWidth>
-        <DialogTitle>
+      <Dialog 
+        open={open} 
+        onClose={onClose} 
+        maxWidth="xl" 
+        fullWidth
+        disableRestoreFocus
+        aria-labelledby="dark-fiber-modal-title"
+      >
+        <DialogTitle id="dark-fiber-modal-title">
           <Box>
             <Box component="span" sx={{ display: 'block', fontSize: '1.25rem', fontWeight: 500 }}>
               Dark Fiber Details for {circuitId}

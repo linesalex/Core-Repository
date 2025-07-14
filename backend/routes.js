@@ -6,6 +6,16 @@ const path = require('path');
 const fs = require('fs');
 const { Parser } = require('json2csv');
 const archiver = require('archiver');
+const { 
+  hashPassword, 
+  comparePassword, 
+  generateToken, 
+  authenticateToken, 
+  authorizeRole, 
+  authorizePermission, 
+  getUserPermissions, 
+  logUserActivity 
+} = require('./auth');
 
 // Regex for circuit_id: 6 uppercase letters + 6 digits
 const CIRCUIT_ID_REGEX = /^[A-Z]{6}[0-9]{6}$/;
@@ -50,6 +60,521 @@ if (!fs.existsSync(testResultsDir)) {
   fs.mkdirSync(testResultsDir);
 }
 
+// Helper function to log changes
+const logChange = (userId, tableName, recordId, action, oldValues, newValues, req) => {
+  const changes = [];
+  if (oldValues && newValues) {
+    Object.keys(newValues).forEach(key => {
+      if (oldValues[key] !== newValues[key]) {
+        changes.push(`${key}: ${oldValues[key]} → ${newValues[key]}`);
+      }
+    });
+  }
+  
+  const changesSummary = changes.length > 0 ? changes.join(', ') : `${action} operation`;
+  const ipAddress = req.ip || req.connection.remoteAddress || 'Unknown';
+  const userAgent = req.get('User-Agent') || 'Unknown';
+  
+  db.run(
+    'INSERT INTO change_logs (user_id, table_name, record_id, action, old_values, new_values, changes_summary, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [userId, tableName, recordId, action, JSON.stringify(oldValues), JSON.stringify(newValues), changesSummary, ipAddress, userAgent],
+    function(err) {
+      if (err) {
+        console.error('Failed to log change:', err);
+      }
+    }
+  );
+};
+
+// ====================================
+// AUTHENTICATION ENDPOINTS
+// ====================================
+
+// Login endpoint
+router.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+  
+  try {
+    db.get('SELECT * FROM users WHERE username = ? AND status = "active"', [username], async (err, user) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+      
+      if (!user) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+      
+      const validPassword = await comparePassword(password, user.password_hash);
+      if (!validPassword) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+      
+      // Update last login
+      db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+      
+      // Generate token
+      const token = generateToken(user);
+      
+      // Get user permissions
+      getUserPermissions(user.id, (err, permissions) => {
+        if (err) {
+          return res.status(500).json({ error: 'Failed to get permissions' });
+        }
+        
+        // Log login activity
+        logUserActivity(user.id, 'LOGIN', {
+          ipAddress: req.ip || req.connection.remoteAddress,
+          userAgent: req.get('User-Agent')
+        });
+        
+        res.json({
+          token,
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            full_name: user.full_name,
+            role: user.user_role
+          },
+          permissions
+        });
+      });
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Get current user info
+router.get('/me', authenticateToken, (req, res) => {
+  db.get('SELECT id, username, email, full_name, user_role FROM users WHERE id = ?', [req.user.id], (err, user) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    getUserPermissions(user.id, (err, permissions) => {
+      if (err) return res.status(500).json({ error: 'Failed to get permissions' });
+      
+      res.json({
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          full_name: user.full_name,
+          role: user.user_role
+        },
+        permissions
+      });
+    });
+  });
+});
+
+// Change password
+router.put('/change-password', authenticateToken, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current password and new password are required' });
+  }
+  
+  try {
+    db.get('SELECT password_hash FROM users WHERE id = ?', [req.user.id], async (err, user) => {
+      if (err) return res.status(500).json({ error: 'Database error' });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      
+      const validPassword = await comparePassword(currentPassword, user.password_hash);
+      if (!validPassword) {
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+      
+      const hashedNewPassword = await hashPassword(newPassword);
+      
+      db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hashedNewPassword, req.user.id], function(err) {
+        if (err) return res.status(500).json({ error: 'Failed to update password' });
+        
+        logUserActivity(req.user.id, 'PASSWORD_CHANGE', {
+          ipAddress: req.ip || req.connection.remoteAddress,
+          userAgent: req.get('User-Agent')
+        });
+        
+        res.json({ message: 'Password updated successfully' });
+      });
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Password change failed' });
+  }
+});
+
+// ====================================
+// USER MANAGEMENT ENDPOINTS
+// ====================================
+
+// Get all users (admin only)
+router.get('/users', authenticateToken, authorizePermission('user_management', 'view'), (req, res) => {
+  db.all('SELECT id, username, email, full_name, user_role, status, created_at, last_login FROM users ORDER BY username', [], (err, users) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(users);
+  });
+});
+
+// Create user (admin only)
+router.post('/users', authenticateToken, authorizePermission('user_management', 'create'), (req, res) => {
+  const { username, password, email, full_name, user_role } = req.body;
+
+  if (!username || !password || !user_role) {
+    return res.status(400).json({ error: 'Username, password, and role are required' });
+  }
+
+  const trimmedUsername = username.trim();
+  const normalizedUsername = trimmedUsername.toLowerCase();
+
+  db.get('SELECT id FROM users WHERE LOWER(username) = ?', [normalizedUsername], async (err, existingUser) => {
+    if (err) {
+      console.error('Error checking for existing user:', err);
+      return res.status(500).json({ error: 'Database error while checking for user.' });
+    }
+
+    if (existingUser) {
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+
+    try {
+      const hashedPassword = await hashPassword(password);
+      db.run(
+        'INSERT INTO users (username, password_hash, email, full_name, user_role) VALUES (?, ?, ?, ?, ?)',
+        [trimmedUsername, hashedPassword, email || null, full_name || null, user_role],
+        function (err) {
+          if (err) {
+            console.error('Error creating user:', err);
+            if (err.code === 'SQLITE_CONSTRAINT' && err.message.includes('users.email')) {
+                return res.status(400).json({ error: 'Email address already exists.' });
+            }
+            return res.status(500).json({ error: 'Failed to create user.' });
+          }
+          logChange(req.user.id, 'users', this.lastID, 'CREATE', null, { username: trimmedUsername, email, full_name, user_role }, req);
+          res.status(201).json({ id: this.lastID, username: trimmedUsername, message: 'User created successfully' });
+        }
+      );
+    } catch (error) {
+      console.error('Error hashing password:', error);
+      res.status(500).json({ error: 'User creation failed due to a server error.' });
+    }
+  });
+});
+
+// Update user (admin only)
+router.put('/users/:id', authenticateToken, authorizePermission('user_management', 'edit'), (req, res) => {
+  const { email, full_name, user_role, status } = req.body;
+  const userId = req.params.id;
+  
+  // Get current user data for change logging
+  db.get('SELECT * FROM users WHERE id = ?', [userId], (err, oldUser) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldUser) return res.status(404).json({ error: 'User not found' });
+    
+    db.run(
+      'UPDATE users SET email = ?, full_name = ?, user_role = ?, status = ? WHERE id = ?',
+      [email, full_name, user_role, status, userId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
+        
+        logChange(req.user.id, 'users', userId, 'UPDATE', oldUser, { email, full_name, user_role, status }, req);
+        
+        res.json({ message: 'User updated successfully' });
+      }
+    );
+  });
+});
+
+// Delete user (admin only)
+router.delete('/users/:id', authenticateToken, authorizePermission('user_management', 'delete'), (req, res) => {
+  const userId = req.params.id;
+  
+  // Prevent deleting own account
+  if (userId == req.user.id) {
+    return res.status(400).json({ error: 'Cannot delete your own account' });
+  }
+  
+  // Get user data for change logging
+  db.get('SELECT * FROM users WHERE id = ?', [userId], (err, user) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    db.run('DELETE FROM users WHERE id = ?', [userId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
+      
+      logChange(req.user.id, 'users', userId, 'DELETE', user, null, req);
+      
+      res.json({ message: 'User deleted successfully' });
+    });
+  });
+});
+
+// ====================================
+// CHANGE LOGS ENDPOINTS
+// ====================================
+
+// Get change logs (admin and provisioner can view)
+router.get('/change-logs', authenticateToken, authorizePermission('change_logs', 'view'), (req, res) => {
+  const { table_name, user_id, limit = 100, offset = 0 } = req.query;
+  
+  let query = `
+    SELECT cl.*, u.username, u.full_name 
+    FROM change_logs cl 
+    LEFT JOIN users u ON cl.user_id = u.id
+  `;
+  let params = [];
+  let conditions = [];
+  
+  if (table_name) {
+    conditions.push('cl.table_name = ?');
+    params.push(table_name);
+  }
+  
+  if (user_id) {
+    conditions.push('cl.user_id = ?');
+    params.push(user_id);
+  }
+  
+  if (conditions.length > 0) {
+    query += ' WHERE ' + conditions.join(' AND ');
+  }
+  
+  query += ' ORDER BY cl.timestamp DESC LIMIT ? OFFSET ?';
+  params.push(limit, offset);
+  
+  db.all(query, params, (err, logs) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(logs);
+  });
+});
+
+// ====================================
+// CARRIERS ENDPOINTS
+// ====================================
+
+// Get all carriers
+router.get('/carriers', authenticateToken, authorizePermission('carriers', 'view'), (req, res) => {
+  db.all('SELECT * FROM carriers ORDER BY carrier_name', [], (err, carriers) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    // Map database region values back to frontend values
+    const regionMapping = {
+      'North America': 'AMERs',
+      'Asia Pacific': 'APAC',
+      'Europe': 'EMEA'
+    };
+    
+    const mappedCarriers = carriers.map(carrier => ({
+      ...carrier,
+      region: regionMapping[carrier.region] || carrier.region
+    }));
+    
+    res.json(mappedCarriers);
+  });
+});
+
+// Search carriers for underlying carrier selection
+router.get('/carriers/search', authenticateToken, (req, res) => {
+  const { q } = req.query;
+  
+  if (!q || q.length < 2) {
+    return res.json([]);
+  }
+  
+  db.all(
+    'SELECT id, carrier_name FROM carriers WHERE carrier_name LIKE ? AND status = "active" ORDER BY carrier_name LIMIT 10',
+    [`%${q}%`],
+    (err, carriers) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(carriers);
+    }
+  );
+});
+
+// Create carrier
+router.post('/carriers', authenticateToken, authorizePermission('carriers', 'create'), (req, res) => {
+  const { carrier_name, previously_known_as, status, region } = req.body;
+  
+  if (!carrier_name) {
+    return res.status(400).json({ error: 'Carrier name is required' });
+  }
+  
+  // Map frontend region values to database values
+  const regionMapping = {
+    'AMERs': 'North America',
+    'APAC': 'Asia Pacific', 
+    'EMEA': 'Europe'
+  };
+  
+  const dbRegion = regionMapping[region] || region;
+  
+  db.run(
+    'INSERT INTO carriers (carrier_name, previously_known_as, status, region, created_by) VALUES (?, ?, ?, ?, ?)',
+    [carrier_name, previously_known_as, status || 'active', dbRegion, req.user.id],
+    function(err) {
+      if (err) {
+        if (err.message.includes('UNIQUE constraint failed')) {
+          return res.status(400).json({ error: 'Carrier name already exists' });
+        }
+        return res.status(500).json({ error: err.message });
+      }
+      
+      logChange(req.user.id, 'carriers', this.lastID, 'CREATE', null, { carrier_name, previously_known_as, status, region }, req);
+      
+      res.status(201).json({ id: this.lastID, carrier_name, message: 'Carrier created successfully' });
+    }
+  );
+});
+
+// Update carrier
+router.put('/carriers/:id', authenticateToken, authorizePermission('carriers', 'edit'), (req, res) => {
+  const { carrier_name, previously_known_as, status, region } = req.body;
+  const carrierId = req.params.id;
+  
+  // Map frontend region values to database values
+  const regionMapping = {
+    'AMERs': 'North America',
+    'APAC': 'Asia Pacific', 
+    'EMEA': 'Europe'
+  };
+  
+  const dbRegion = regionMapping[region] || region;
+  
+  // Get current carrier data for change logging
+  db.get('SELECT * FROM carriers WHERE id = ?', [carrierId], (err, oldCarrier) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldCarrier) return res.status(404).json({ error: 'Carrier not found' });
+    
+    db.run(
+      'UPDATE carriers SET carrier_name = ?, previously_known_as = ?, status = ?, region = ?, updated_by = ? WHERE id = ?',
+      [carrier_name, previously_known_as, status, dbRegion, req.user.id, carrierId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Carrier not found' });
+        
+        logChange(req.user.id, 'carriers', carrierId, 'UPDATE', oldCarrier, { carrier_name, previously_known_as, status, region }, req);
+        
+        res.json({ message: 'Carrier updated successfully' });
+      }
+    );
+  });
+});
+
+// Delete carrier
+router.delete('/carriers/:id', authenticateToken, authorizePermission('carriers', 'delete'), (req, res) => {
+  const carrierId = req.params.id;
+  
+  // Check if carrier has contacts
+  db.get('SELECT COUNT(*) as count FROM carrier_contacts WHERE carrier_id = ?', [carrierId], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    if (result.count > 0) {
+      return res.status(400).json({ 
+        error: 'Cannot delete carrier with existing contacts. Please delete all contacts first.' 
+      });
+    }
+    
+    // Get carrier data for change logging
+    db.get('SELECT * FROM carriers WHERE id = ?', [carrierId], (err, carrier) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!carrier) return res.status(404).json({ error: 'Carrier not found' });
+      
+      db.run('DELETE FROM carriers WHERE id = ?', [carrierId], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Carrier not found' });
+        
+        logChange(req.user.id, 'carriers', carrierId, 'DELETE', carrier, null, req);
+        
+        res.json({ message: 'Carrier deleted successfully' });
+      });
+    });
+  });
+});
+
+// ====================================
+// CARRIER CONTACTS ENDPOINTS
+// ====================================
+
+// Get all contacts for a carrier
+router.get('/carriers/:id/contacts', authenticateToken, authorizePermission('carriers', 'view'), (req, res) => {
+  const carrierId = req.params.id;
+  db.all('SELECT * FROM carrier_contacts WHERE carrier_id = ? ORDER BY contact_name', [carrierId], (err, contacts) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(contacts);
+  });
+});
+
+// Create carrier contact
+router.post('/carriers/:id/contacts', authenticateToken, authorizePermission('carriers', 'create'), (req, res) => {
+  const carrierId = req.params.id;
+  const { contact_type, contact_level, contact_name, contact_function, contact_email, contact_phone, notes } = req.body;
+  
+  db.run(
+    'INSERT INTO carrier_contacts (carrier_id, contact_type, contact_level, contact_name, contact_function, contact_email, contact_phone, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [carrierId, contact_type, contact_level, contact_name, contact_function, contact_email, contact_phone, notes, req.user.id],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      logChange(req.user.id, 'carrier_contacts', this.lastID, 'CREATE', null, { carrier_id: carrierId, contact_type, contact_level, contact_name, contact_function, contact_email, contact_phone, notes }, req);
+      
+      res.status(201).json({ id: this.lastID, message: 'Contact created successfully' });
+    }
+  );
+});
+
+// Update carrier contact
+router.put('/carriers/:id/contacts/:contactId', authenticateToken, authorizePermission('carriers', 'edit'), (req, res) => {
+  const carrierId = req.params.id;
+  const contactId = req.params.contactId;
+  const { contact_type, contact_level, contact_name, contact_function, contact_email, contact_phone, notes } = req.body;
+  
+  // Get current contact data for change logging
+  db.get('SELECT * FROM carrier_contacts WHERE id = ? AND carrier_id = ?', [contactId, carrierId], (err, oldContact) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldContact) return res.status(404).json({ error: 'Contact not found' });
+    
+    db.run(
+      'UPDATE carrier_contacts SET contact_type = ?, contact_level = ?, contact_name = ?, contact_function = ?, contact_email = ?, contact_phone = ?, notes = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND carrier_id = ?',
+      [contact_type, contact_level, contact_name, contact_function, contact_email, contact_phone, notes, req.user.id, contactId, carrierId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
+        
+        logChange(req.user.id, 'carrier_contacts', contactId, 'UPDATE', oldContact, { contact_type, contact_level, contact_name, contact_function, contact_email, contact_phone, notes }, req);
+        
+        res.json({ message: 'Contact updated successfully' });
+      }
+    );
+  });
+});
+
+// Delete carrier contact
+router.delete('/carriers/:id/contacts/:contactId', authenticateToken, authorizePermission('carriers', 'delete'), (req, res) => {
+  const carrierId = req.params.id;
+  const contactId = req.params.contactId;
+  
+  // Get contact data for change logging
+  db.get('SELECT * FROM carrier_contacts WHERE id = ? AND carrier_id = ?', [contactId, carrierId], (err, contact) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!contact) return res.status(404).json({ error: 'Contact not found' });
+    
+    db.run('DELETE FROM carrier_contacts WHERE id = ? AND carrier_id = ?', [contactId, carrierId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
+      
+      logChange(req.user.id, 'carrier_contacts', contactId, 'DELETE', contact, null, req);
+      
+      res.json({ message: 'Contact deleted successfully' });
+    });
+  });
+});
+
 // Repository Types endpoints
 router.get('/repository_types', (req, res) => {
   db.all('SELECT * FROM repository_types ORDER BY name', [], (err, rows) => {
@@ -58,8 +583,8 @@ router.get('/repository_types', (req, res) => {
   });
 });
 
-// Get unique carriers from network routes
-router.get('/carriers', (req, res) => {
+// Get unique carriers from network routes (legacy endpoint - for backward compatibility)
+router.get('/carriers-legacy', (req, res) => {
   db.all('SELECT DISTINCT underlying_carrier FROM network_routes WHERE underlying_carrier IS NOT NULL AND underlying_carrier != "" ORDER BY underlying_carrier', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows.map(row => row.underlying_carrier));
@@ -172,6 +697,22 @@ function isValidBandwidth(bandwidth) {
   return !isNaN(numericValue) && numericValue > 0;
 }
 
+// Validate underlying carrier field
+function validateUnderlyingCarrier(carrierName, callback) {
+  if (!carrierName) {
+    return callback(null, true); // Allow empty carrier
+  }
+  
+  db.get(
+    'SELECT id FROM carriers WHERE carrier_name = ? AND status = "active"',
+    [carrierName],
+    (err, row) => {
+      if (err) return callback(err);
+      callback(null, !!row); // Return true if carrier exists
+    }
+  );
+}
+
 // Create new route
 router.post('/network_routes', (req, res) => {
   const data = req.body;
@@ -182,19 +723,28 @@ router.post('/network_routes', (req, res) => {
   if (!isValidBandwidth(data.bandwidth)) {
     return res.status(400).json({ error: 'Bandwidth must be either "Dark Fiber" or a numeric value' });
   }
-  const fields = [
-    'circuit_id','repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency'
-  ];
-  const placeholders = fields.map(() => '?').join(',');
-  const values = fields.map(f => data[f] ?? (f === 'repository_type_id' ? 1 : null));
-  db.run(
-    `INSERT INTO network_routes (${fields.join(',')}) VALUES (${placeholders})`,
-    values,
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({ circuit_id: data.circuit_id });
+  
+  // Validate underlying carrier
+  validateUnderlyingCarrier(data.underlying_carrier, (err, isValid) => {
+    if (err) return res.status(500).json({ error: 'Database error validating carrier' });
+    if (!isValid) {
+      return res.status(400).json({ error: 'Invalid underlying carrier. Please select a valid carrier from the database.' });
     }
-  );
+    
+    const fields = [
+      'circuit_id','repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency'
+    ];
+    const placeholders = fields.map(() => '?').join(',');
+    const values = fields.map(f => data[f] ?? (f === 'repository_type_id' ? 1 : null));
+    db.run(
+      `INSERT INTO network_routes (${fields.join(',')}) VALUES (${placeholders})`,
+      values,
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(201).json({ circuit_id: data.circuit_id });
+      }
+    );
+  });
 });
 
 // Update route
@@ -208,21 +758,30 @@ router.put('/network_routes/:circuit_id', (req, res) => {
   if (!isValidBandwidth(data.bandwidth)) {
     return res.status(400).json({ error: 'Bandwidth must be either "Dark Fiber" or a numeric value' });
   }
-  const fields = [
-    'repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency'
-  ];
-  const setClause = fields.map(f => `${f} = ?`).join(', ');
-  const values = fields.map(f => data[f] ?? null);
-  values.push(circuit_id);
-  db.run(
-    `UPDATE network_routes SET ${setClause} WHERE circuit_id = ?`,
-    values,
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
-      res.json({ message: 'Updated' });
+  
+  // Validate underlying carrier
+  validateUnderlyingCarrier(data.underlying_carrier, (err, isValid) => {
+    if (err) return res.status(500).json({ error: 'Database error validating carrier' });
+    if (!isValid) {
+      return res.status(400).json({ error: 'Invalid underlying carrier. Please select a valid carrier from the database.' });
     }
-  );
+    
+    const fields = [
+      'repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency'
+    ];
+    const setClause = fields.map(f => `${f} = ?`).join(', ');
+    const values = fields.map(f => data[f] ?? null);
+    values.push(circuit_id);
+    db.run(
+      `UPDATE network_routes SET ${setClause} WHERE circuit_id = ?`,
+      values,
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
+        res.json({ message: 'Updated' });
+      }
+    );
+  });
 });
 
 // Delete route
@@ -271,12 +830,25 @@ router.get('/network_routes_search', (req, res) => {
   const allowedFields = ['circuit_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency'];
   const filters = [];
   const values = [];
+  
   for (const key of allowedFields) {
     if (req.query[key]) {
-      filters.push(`${key} LIKE ?`);
-      values.push(`%${req.query[key]}%`);
+      // Special handling for location fields - search both location_a and location_b
+      if (key === 'location_a' || key === 'location_b') {
+        // Check if we already added a location filter
+        const existingLocationFilter = filters.find(f => f.includes('location_a') || f.includes('location_b'));
+        if (!existingLocationFilter) {
+          filters.push(`(location_a LIKE ? OR location_b LIKE ?)`);
+          values.push(`%${req.query[key]}%`);
+          values.push(`%${req.query[key]}%`);
+        }
+      } else {
+        filters.push(`${key} LIKE ?`);
+        values.push(`%${req.query[key]}%`);
+      }
     }
   }
+  
   const where = filters.length ? 'WHERE ' + filters.join(' AND ') : '';
   db.all(`SELECT * FROM network_routes ${where}`, values, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -533,44 +1105,167 @@ router.delete('/test_results_files/:id', (req, res) => {
 // NETWORK DESIGN & PRICING TOOL APIs
 // ====================================
 
-// Location Reference Management
-router.get('/locations', (req, res) => {
+// ====================================
+// LOCATION REFERENCE MANAGEMENT
+// ====================================
+
+// Get all locations
+router.get('/locations', authenticateToken, authorizePermission('locations', 'view'), (req, res) => {
   db.all('SELECT * FROM location_reference ORDER BY location_code', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
 });
 
-router.post('/locations', (req, res) => {
-  const { location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type } = req.body;
+// Create location
+router.post('/locations', authenticateToken, authorizePermission('locations', 'create'), (req, res) => {
+  const { location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info } = req.body;
+  
+  if (!location_code || !city || !country) {
+    return res.status(400).json({ error: 'Location code, city, and country are required' });
+  }
+  
   db.run(
-    'INSERT INTO location_reference (location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type],
+    'INSERT INTO location_reference (location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type || 'Tier 1', status || 'Active', provider, access_info, req.user.id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
+      
+      logChange(req.user.id, 'location_reference', this.lastID, 'CREATE', null, { location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info }, req);
+      
       res.status(201).json({ id: this.lastID, location_code });
     }
   );
 });
 
-router.put('/locations/:id', (req, res) => {
-  const { city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status } = req.body;
-  db.run(
-    'UPDATE location_reference SET city = ?, country = ?, datacenter_name = ?, datacenter_address = ?, latitude = ?, longitude = ?, time_zone = ?, pop_type = ?, status = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?',
-    [city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, req.params.id],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
-      res.json({ message: 'Location updated' });
-    }
-  );
+// Update location
+router.put('/locations/:id', authenticateToken, authorizePermission('locations', 'edit'), (req, res) => {
+  const { city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info } = req.body;
+  const locationId = req.params.id;
+  
+  // Get current location data for change logging
+  db.get('SELECT * FROM location_reference WHERE id = ?', [locationId], (err, oldLocation) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldLocation) return res.status(404).json({ error: 'Location not found' });
+    
+    db.run(
+      'UPDATE location_reference SET city = ?, country = ?, datacenter_name = ?, datacenter_address = ?, latitude = ?, longitude = ?, time_zone = ?, pop_type = ?, status = ?, provider = ?, access_info = ?, updated_by = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?',
+      [city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, req.user.id, locationId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
+        
+        logChange(req.user.id, 'location_reference', locationId, 'UPDATE', oldLocation, { city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info }, req);
+        
+        res.json({ message: 'Location updated' });
+      }
+    );
+  });
 });
 
-router.delete('/locations/:id', (req, res) => {
-  db.run('DELETE FROM location_reference WHERE id = ?', [req.params.id], function(err) {
+// Delete location
+router.delete('/locations/:id', authenticateToken, authorizePermission('locations', 'delete'), (req, res) => {
+  const locationId = req.params.id;
+  
+  // Get location data for change logging
+  db.get('SELECT * FROM location_reference WHERE id = ?', [locationId], (err, location) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
-    res.json({ message: 'Location deleted' });
+    if (!location) return res.status(404).json({ error: 'Location not found' });
+    
+    db.run('DELETE FROM location_reference WHERE id = ?', [locationId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
+      
+      logChange(req.user.id, 'location_reference', locationId, 'DELETE', location, null, req);
+      
+      res.json({ message: 'Location deleted' });
+    });
+  });
+});
+
+// ====================================
+// POP CAPABILITIES MANAGEMENT
+// ====================================
+
+// Get POP capabilities for a location
+router.get('/locations/:id/capabilities', authenticateToken, authorizePermission('locations', 'view'), (req, res) => {
+  db.get('SELECT * FROM pop_capabilities WHERE location_id = ?', [req.params.id], (err, capabilities) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!capabilities) {
+      // Return default capabilities if none exist
+      res.json({
+        location_id: req.params.id,
+        cnx_extranet_wan: false,
+        cnx_ethernet: false,
+        cnx_voice: false,
+        tdm_gateway: false,
+        cnx_unigy: false,
+        cnx_alpha: false,
+        cnx_chrono: false,
+        cnx_sdwan: false,
+        csp_on_ramp: false,
+        exchange_on_ramp: false,
+        internet_on_ramp: false,
+        transport_only_pop: false
+      });
+    } else {
+      res.json(capabilities);
+    }
+  });
+});
+
+// Create or update POP capabilities
+router.post('/locations/:id/capabilities', authenticateToken, authorizePermission('locations', 'edit'), (req, res) => {
+  const locationId = req.params.id;
+  const capabilities = req.body;
+  
+  // Get current capabilities for change logging
+  db.get('SELECT * FROM pop_capabilities WHERE location_id = ?', [locationId], (err, oldCapabilities) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    if (oldCapabilities) {
+      // Update existing capabilities
+      db.run(
+        `UPDATE pop_capabilities SET 
+         cnx_extranet_wan = ?, cnx_ethernet = ?, cnx_voice = ?, tdm_gateway = ?, 
+         cnx_unigy = ?, cnx_alpha = ?, cnx_chrono = ?, cnx_sdwan = ?, 
+         csp_on_ramp = ?, exchange_on_ramp = ?, internet_on_ramp = ?, transport_only_pop = ?,
+         updated_by = ? WHERE location_id = ?`,
+        [
+          capabilities.cnx_extranet_wan, capabilities.cnx_ethernet, capabilities.cnx_voice, capabilities.tdm_gateway,
+          capabilities.cnx_unigy, capabilities.cnx_alpha, capabilities.cnx_chrono, capabilities.cnx_sdwan,
+          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop,
+          req.user.id, locationId
+        ],
+        function(err) {
+          if (err) return res.status(500).json({ error: err.message });
+          
+          logChange(req.user.id, 'pop_capabilities', locationId, 'UPDATE', oldCapabilities, capabilities, req);
+          
+          res.json({ message: 'POP capabilities updated' });
+        }
+      );
+    } else {
+      // Create new capabilities
+      db.run(
+        `INSERT INTO pop_capabilities (location_id, cnx_extranet_wan, cnx_ethernet, cnx_voice, tdm_gateway, 
+         cnx_unigy, cnx_alpha, cnx_chrono, cnx_sdwan, csp_on_ramp, exchange_on_ramp, internet_on_ramp, transport_only_pop, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          locationId, capabilities.cnx_extranet_wan, capabilities.cnx_ethernet, capabilities.cnx_voice, capabilities.tdm_gateway,
+          capabilities.cnx_unigy, capabilities.cnx_alpha, capabilities.cnx_chrono, capabilities.cnx_sdwan,
+          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop,
+          req.user.id
+        ],
+        function(err) {
+          if (err) return res.status(500).json({ error: err.message });
+          
+          logChange(req.user.id, 'pop_capabilities', this.lastID, 'CREATE', null, capabilities, req);
+          
+          res.status(201).json({ id: this.lastID, message: 'POP capabilities created' });
+        }
+      );
+    }
   });
 });
 
@@ -675,6 +1370,16 @@ router.post('/network_design/find_path', (req, res) => {
       if (constraints.carrier_avoidance && underlying_carrier && 
           constraints.carrier_avoidance.includes(underlying_carrier)) {
         if (isRelevant) console.log(`  SKIPPED: Carrier avoided (${underlying_carrier})`);
+        routesSkipped++;
+        return;
+      }
+
+      // Skip routes that don't meet MTU requirements
+      const mtuRequired = constraints.mtu_required || 1500; // Default to 1500 if not specified
+      const routeMtu = route.mtu || 9212; // Default to 9212 if not specified in route
+      
+      if (routeMtu < mtuRequired) {
+        if (isRelevant) console.log(`  SKIPPED: MTU too low (${routeMtu} < ${mtuRequired})`);
         routesSkipped++;
         return;
       }

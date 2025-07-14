@@ -21,7 +21,7 @@ const SmallTextField = styled(TextField)(({ theme }) => ({
   },
 }));
 
-function SearchExportBar({ onSearch, onExport }) {
+function SearchExportBar({ onSearch, onExport, hasPermission }) {
   const [filters, setFilters] = useState(initialFilters);
 
   const handleChange = (e) => {
@@ -91,7 +91,7 @@ function SearchExportBar({ onSearch, onExport }) {
             value={filters.is_special}
             onChange={handleChange}
             variant="outlined"
-            style={{ minWidth: 120 }}
+            sx={{ minWidth: 120 }}
           >
             <MenuItem value="">Any</MenuItem>
             <MenuItem value="1">Yes</MenuItem>

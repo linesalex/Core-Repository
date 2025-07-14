@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, Button, Grid, Checkbox, FormControlLabel, Typography, Box, Chip, Stack, Divider, Alert,
-  Select, MenuItem, FormControl, InputLabel
+  Select, MenuItem, FormControl, InputLabel, Autocomplete
 } from '@mui/material';
 import { uploadTestResults, getTestResultsFiles, deleteTestResultsFile } from './api';
+import axios from 'axios';
 
 const CIRCUIT_ID_REGEX = /^[A-Z]{6}[0-9]{6}$/;
 
@@ -32,11 +33,23 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
   const [existingFiles, setExistingFiles] = useState([]);
   const [error, setError] = useState('');
   const [fileLoading, setFileLoading] = useState(false);
+  const [carrierOptions, setCarrierOptions] = useState([]);
+  const [carrierInputValue, setCarrierInputValue] = useState('');
+  const [selectedCarrier, setSelectedCarrier] = useState(null);
 
   useEffect(() => {
     if (isEdit && initialValues && Object.keys(initialValues).length > 0) {
       // When editing, populate with existing values
       setValues({ ...defaultValues, ...initialValues });
+      
+      // Set the selected carrier based on underlying_carrier value
+      if (initialValues.underlying_carrier) {
+        setSelectedCarrier({ 
+          carrier_name: initialValues.underlying_carrier,
+          id: null // We don't have the ID from the initial values
+        });
+        setCarrierInputValue(initialValues.underlying_carrier);
+      }
       
       // Load existing test results files
       loadExistingFiles(initialValues.circuit_id);
@@ -44,6 +57,8 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
       // When adding, ensure all fields are blank
       setValues(defaultValues);
       setExistingFiles([]);
+      setSelectedCarrier(null);
+      setCarrierInputValue('');
     }
     setFile(null);
     setTestResultsFiles([]);
@@ -68,6 +83,59 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     setValues(v => ({ ...v, [name]: type === 'checkbox' ? checked : value }));
+  };
+
+  const searchCarriers = async (inputValue) => {
+    if (inputValue.length < 2) {
+      setCarrierOptions([]);
+      return;
+    }
+    
+    try {
+      const response = await axios.get(`http://localhost:4000/carriers/search?q=${inputValue}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      setCarrierOptions(response.data);
+    } catch (error) {
+      console.error('Error searching carriers:', error);
+      setCarrierOptions([]);
+    }
+  };
+
+  const handleCarrierChange = (event, newValue) => {
+    setSelectedCarrier(newValue);
+    if (newValue) {
+      setValues({ ...values, underlying_carrier: newValue.carrier_name });
+    } else {
+      setValues({ ...values, underlying_carrier: '' });
+    }
+  };
+
+  const handleCarrierInputChange = (event, newInputValue) => {
+    setCarrierInputValue(newInputValue);
+    searchCarriers(newInputValue);
+    
+    // Reset selected carrier if input doesn't match any option
+    if (!newInputValue) {
+      setSelectedCarrier(null);
+      setValues({ ...values, underlying_carrier: '' });
+    } else {
+      // Check if the input matches any existing carrier option
+      const matchingCarrier = carrierOptions.find(option => 
+        option.carrier_name.toLowerCase() === newInputValue.toLowerCase()
+      );
+      
+      if (matchingCarrier && matchingCarrier !== selectedCarrier) {
+        setSelectedCarrier(matchingCarrier);
+        setValues({ ...values, underlying_carrier: matchingCarrier.carrier_name });
+      } else if (!matchingCarrier && selectedCarrier) {
+        // Input doesn't match any carrier, clear selection
+        setSelectedCarrier(null);
+        setValues({ ...values, underlying_carrier: '' });
+      }
+    }
   };
 
   const handleFileChange = (e) => {
@@ -127,13 +195,26 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
       return;
     }
     
+    // Validate underlying carrier - must be from database or empty
+    if (values.underlying_carrier && !selectedCarrier) {
+      setError('Please select a valid carrier from the list or leave empty');
+      return;
+    }
+    
     setError('');
     onSubmit({ ...values }, file, testResultsFiles);
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{isEdit ? 'Edit' : 'Add'} Network Route</DialogTitle>
+    <Dialog 
+      open={open} 
+      onClose={onClose} 
+      maxWidth="sm" 
+      fullWidth
+      disableRestoreFocus
+      aria-labelledby="route-form-dialog-title"
+    >
+      <DialogTitle id="route-form-dialog-title">{isEdit ? 'Edit' : 'Add'} Network Route</DialogTitle>
       <DialogContent>
         <Grid container spacing={3} sx={{ mt: 1 }}>
           <Grid item xs={12}>
@@ -267,12 +348,25 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              label="Underlying Carrier"
-              name="underlying_carrier"
-              value={values.underlying_carrier}
-              onChange={handleChange}
-              fullWidth
+            <Autocomplete
+              options={carrierOptions}
+              getOptionLabel={(option) => option.carrier_name}
+              value={selectedCarrier}
+              onChange={handleCarrierChange}
+              inputValue={carrierInputValue}
+              onInputChange={handleCarrierInputChange}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Underlying Carrier"
+                  placeholder="Search carriers..."
+                  fullWidth
+                />
+              )}
+              clearOnBlur
+              selectOnFocus
+              handleHomeEndKeys
+              noOptionsText="No carriers found - type at least 2 characters to search"
             />
           </Grid>
           <Grid item xs={12}>

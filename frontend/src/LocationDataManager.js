@@ -2,14 +2,18 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, Paper, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, IconButton, Chip,
-  Alert, Snackbar, Tooltip, Grid, Card, CardContent, Select, MenuItem, FormControl, InputLabel
+  Alert, Snackbar, Tooltip, Grid, Card, CardContent, Select, MenuItem, FormControl, InputLabel,
+  List, ListItem, ListItemText, ListItemIcon, Checkbox, FormControlLabel
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
-import MapIcon from '@mui/icons-material/Map';
+import InfoIcon from '@mui/icons-material/Info';
+import SettingsIcon from '@mui/icons-material/Settings';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
 import { locationDataApi } from './api';
 
 const LocationDataManager = () => {
@@ -23,6 +27,10 @@ const LocationDataManager = () => {
   const [dialogMode, setDialogMode] = useState('add'); // 'add' or 'edit'
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [accessInfoDialogOpen, setAccessInfoDialogOpen] = useState(false);
+  const [popCapabilitiesDialogOpen, setPopCapabilitiesDialogOpen] = useState(false);
+  const [currentAccessInfo, setCurrentAccessInfo] = useState('');
+  const [currentCapabilities, setCurrentCapabilities] = useState({});
   
   // Form data
   const [formData, setFormData] = useState({
@@ -31,16 +39,32 @@ const LocationDataManager = () => {
     country: '',
     datacenter_name: '',
     datacenter_address: '',
-    latitude: '',
-    longitude: '',
-    time_zone: '',
-    pop_type: 'Primary',
-    status: 'Active'
+    pop_type: 'Tier 1',
+    status: 'Active',
+    provider: '',
+    access_info: ''
   });
+
+  // POP Capabilities structure
+  const popCapabilitiesFields = [
+    { key: 'cnx_extranet_wan', label: 'CNX Extranet / WAN' },
+    { key: 'cnx_ethernet', label: 'CNX Ethernet' },
+    { key: 'cnx_voice', label: 'CNX Voice' },
+    { key: 'tdm_gateway', label: 'TDM Gateway' },
+    { key: 'cnx_unigy', label: 'CNX Unigy' },
+    { key: 'cnx_alpha', label: 'CNX Alpha' },
+    { key: 'cnx_chrono', label: 'CNX Chrono' },
+    { key: 'cnx_sdwan', label: 'CNX SDWAN' },
+    { key: 'csp_on_ramp', label: 'CSP On Ramp' },
+    { key: 'exchange_on_ramp', label: 'Exchange On Ramp' },
+    { key: 'internet_on_ramp', label: 'Internet On Ramp' },
+    { key: 'transport_only_pop', label: 'Transport Only POP' }
+  ];
 
   // Filter states
   const [filterCountry, setFilterCountry] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [searchText, setSearchText] = useState('');
 
   // Load locations on component mount
   useEffect(() => {
@@ -59,6 +83,16 @@ const LocationDataManager = () => {
     }
   };
 
+  const loadCapabilities = async (locationId) => {
+    try {
+      const capabilities = await locationDataApi.getCapabilities(locationId);
+      return capabilities;
+    } catch (err) {
+      console.error('Failed to load capabilities:', err);
+      return {};
+    }
+  };
+
   const handleAdd = () => {
     setDialogMode('add');
     setSelectedLocation(null);
@@ -68,11 +102,10 @@ const LocationDataManager = () => {
       country: '',
       datacenter_name: '',
       datacenter_address: '',
-      latitude: '',
-      longitude: '',
-      time_zone: '',
-      pop_type: 'Primary',
-      status: 'Active'
+      pop_type: 'Tier 1',
+      status: 'Active',
+      provider: '',
+      access_info: ''
     });
     setDialogOpen(true);
   };
@@ -86,11 +119,10 @@ const LocationDataManager = () => {
       country: location.country,
       datacenter_name: location.datacenter_name || '',
       datacenter_address: location.datacenter_address || '',
-      latitude: location.latitude ? location.latitude.toString() : '',
-      longitude: location.longitude ? location.longitude.toString() : '',
-      time_zone: location.time_zone || '',
-      pop_type: location.pop_type || 'Primary',
-      status: location.status || 'Active'
+      pop_type: location.pop_type || 'Tier 1',
+      status: location.status || 'Active',
+      provider: location.provider || '',
+      access_info: location.access_info || ''
     });
     setDialogOpen(true);
   };
@@ -102,29 +134,16 @@ const LocationDataManager = () => {
 
   const handleSubmit = async () => {
     try {
-      if (!formData.location_code || !formData.city || !formData.country) {
-        setError('Please fill in all required fields');
-        return;
-      }
-
-      const submitData = {
-        location_code: formData.location_code.toUpperCase(),
-        city: formData.city,
-        country: formData.country,
-        datacenter_name: formData.datacenter_name,
-        datacenter_address: formData.datacenter_address,
-        latitude: formData.latitude ? parseFloat(formData.latitude) : null,
-        longitude: formData.longitude ? parseFloat(formData.longitude) : null,
-        time_zone: formData.time_zone,
-        pop_type: formData.pop_type,
-        status: formData.status
-      };
-
       if (dialogMode === 'add') {
-        await locationDataApi.addLocation(submitData);
-        setSuccess('Location added successfully');
+        if (!formData.location_code || !formData.city || !formData.country) {
+          setError('Please fill in all required fields (POP Code, City, Country)');
+          return;
+        }
+
+        await locationDataApi.createLocation(formData);
+        setSuccess('Location created successfully');
       } else {
-        await locationDataApi.updateLocation(selectedLocation.id, submitData);
+        await locationDataApi.updateLocation(selectedLocation.id, formData);
         setSuccess('Location updated successfully');
       }
 
@@ -154,64 +173,101 @@ const LocationDataManager = () => {
     }));
   };
 
+  const handleAccessInfoClick = (location) => {
+    setSelectedLocation(location);
+    setCurrentAccessInfo(location.access_info || '');
+    setAccessInfoDialogOpen(true);
+  };
+
+  const handleAccessInfoSave = async () => {
+    try {
+      await locationDataApi.updateLocation(selectedLocation.id, {
+        ...selectedLocation,
+        access_info: currentAccessInfo
+      });
+      setSuccess('Access info updated successfully');
+      setAccessInfoDialogOpen(false);
+      await loadLocations();
+    } catch (err) {
+      setError('Failed to update access info: ' + err.message);
+    }
+  };
+
+  const handlePopCapabilitiesClick = async (location) => {
+    setSelectedLocation(location);
+    const capabilities = await loadCapabilities(location.id);
+    setCurrentCapabilities(capabilities);
+    setPopCapabilitiesDialogOpen(true);
+  };
+
+  const handleCapabilityChange = (key, value) => {
+    setCurrentCapabilities(prev => ({
+      ...prev,
+      [key]: value
+    }));
+  };
+
+  const handleCapabilitiesSave = async () => {
+    try {
+      await locationDataApi.updateCapabilities(selectedLocation.id, currentCapabilities);
+      setSuccess('POP capabilities updated successfully');
+      setPopCapabilitiesDialogOpen(false);
+      await loadLocations();
+    } catch (err) {
+      setError('Failed to update POP capabilities: ' + err.message);
+    }
+  };
+
   const getStatusChip = (status) => {
     const colors = {
       'Active': 'success',
-      'Inactive': 'error',
-      'Maintenance': 'warning'
+      'Under Decommission': 'warning',
+      'Under Construction': 'info'
     };
     return <Chip label={status} color={colors[status] || 'default'} size="small" />;
   };
 
   const getPOPTypeChip = (popType) => {
     const colors = {
-      'Primary': 'primary',
-      'Secondary': 'secondary',
-      'Tertiary': 'default'
+      'Tier 1': 'error',
+      'Tier 2': 'warning',
+      'Tier 3': 'info',
+      'Exchange': 'success'
     };
     return <Chip label={popType} color={colors[popType] || 'default'} size="small" />;
   };
 
-  // Get unique countries for filtering
-  const uniqueCountries = [...new Set(locations.map(loc => loc.country))].sort();
-
-  // Filter locations based on selected filters
-  const filteredLocations = locations.filter(location => {
-    const matchesCountry = !filterCountry || location.country === filterCountry;
-    const matchesStatus = !filterStatus || location.status === filterStatus;
-    return matchesCountry && matchesStatus;
-  });
-
-  // Stats for overview cards
-  const stats = {
-    total: locations.length,
-    active: locations.filter(loc => loc.status === 'Active').length,
-    countries: uniqueCountries.length,
-    primary: locations.filter(loc => loc.pop_type === 'Primary').length
+  const getCapabilitiesSummary = async (locationId) => {
+    try {
+      const capabilities = await loadCapabilities(locationId);
+      const enabledCount = Object.values(capabilities).filter(Boolean).length;
+      return `${enabledCount}/${popCapabilitiesFields.length}`;
+    } catch (err) {
+      return '0/12';
+    }
   };
 
-  // Common timezones for quick selection
-  const commonTimezones = [
-    'UTC',
-    'America/New_York',
-    'America/Chicago',
-    'America/Denver',
-    'America/Los_Angeles',
-    'Europe/London',
-    'Europe/Paris',
-    'Europe/Berlin',
-    'Asia/Tokyo',
-    'Asia/Singapore',
-    'Asia/Hong_Kong',
-    'Australia/Sydney'
-  ];
+  const filteredLocations = locations.filter(location => {
+    const matchesCountry = !filterCountry || location.country.toLowerCase().includes(filterCountry.toLowerCase());
+    const matchesStatus = !filterStatus || location.status === filterStatus;
+    const matchesSearch = !searchText || 
+      location.location_code.toLowerCase().includes(searchText.toLowerCase()) ||
+      location.city.toLowerCase().includes(searchText.toLowerCase()) ||
+      location.country.toLowerCase().includes(searchText.toLowerCase()) ||
+      (location.provider && location.provider.toLowerCase().includes(searchText.toLowerCase())) ||
+      (location.datacenter_name && location.datacenter_name.toLowerCase().includes(searchText.toLowerCase()));
+    return matchesCountry && matchesStatus && matchesSearch;
+  });
+
+  const uniqueCountries = [...new Set(locations.map(loc => loc.country))].sort();
+  const uniqueStatuses = [...new Set(locations.map(loc => loc.status))].sort();
 
   return (
     <Box sx={{ width: '100%' }}>
       {/* Header with Actions */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h6" component="h2">
-          Location Data Management
+          Manage Locations
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button
@@ -231,114 +287,58 @@ const LocationDataManager = () => {
         </Box>
       </Box>
 
-      {/* Overview Cards */}
-      <Grid container spacing={3} sx={{ mb: 3 }}>
-        <Grid item xs={12} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" color="primary">
-                {stats.total}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Total Locations
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        
-        <Grid item xs={12} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" color="success.main">
-                {stats.active}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Active Locations
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" color="info.main">
-                {stats.countries}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Countries
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" color="secondary.main">
-                {stats.primary}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Primary POPs
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
-
       {/* Filters */}
-      <Paper sx={{ p: 2, mb: 3 }}>
-        <Typography variant="subtitle1" gutterBottom>
-          Filters
-        </Typography>
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={6}>
-            <FormControl fullWidth>
-              <InputLabel>Country</InputLabel>
-              <Select
-                value={filterCountry}
-                onChange={(e) => setFilterCountry(e.target.value)}
-                label="Country"
-              >
-                <MenuItem value="">All Countries</MenuItem>
-                {uniqueCountries.map((country) => (
-                  <MenuItem key={country} value={country}>
-                    {country}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <FormControl fullWidth>
-              <InputLabel>Status</InputLabel>
-              <Select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                label="Status"
-              >
-                <MenuItem value="">All Status</MenuItem>
-                <MenuItem value="Active">Active</MenuItem>
-                <MenuItem value="Inactive">Inactive</MenuItem>
-                <MenuItem value="Maintenance">Maintenance</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-        </Grid>
-      </Paper>
+      <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
+        <TextField
+          size="small"
+          label="Search"
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          placeholder="Search by POP code, city, country, provider..."
+          sx={{ minWidth: 300 }}
+        />
+        <FormControl size="small" sx={{ minWidth: 120 }}>
+          <InputLabel>Country</InputLabel>
+          <Select
+            value={filterCountry}
+            onChange={(e) => setFilterCountry(e.target.value)}
+            label="Country"
+          >
+            <MenuItem value="">All Countries</MenuItem>
+            {uniqueCountries.map(country => (
+              <MenuItem key={country} value={country}>{country}</MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <FormControl size="small" sx={{ minWidth: 120 }}>
+          <InputLabel>Status</InputLabel>
+          <Select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            label="Status"
+          >
+            <MenuItem value="">All Statuses</MenuItem>
+            {uniqueStatuses.map(status => (
+              <MenuItem key={status} value={status}>{status}</MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      </Box>
 
       {/* Locations Table */}
       <TableContainer component={Paper}>
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell>Location Code</TableCell>
+              <TableCell>POP Code</TableCell>
               <TableCell>City</TableCell>
               <TableCell>Country</TableCell>
-              <TableCell>Datacenter</TableCell>
-              <TableCell>Coordinates</TableCell>
+              <TableCell>Address</TableCell>
+              <TableCell>Provider</TableCell>
               <TableCell>POP Type</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell align="center">POP Capabilities</TableCell>
+              <TableCell align="center">Access Info</TableCell>
               <TableCell align="center">Actions</TableCell>
             </TableRow>
           </TableHead>
@@ -350,39 +350,29 @@ const LocationDataManager = () => {
                     {location.location_code}
                   </Typography>
                 </TableCell>
-                <TableCell>
-                  {location.city}
+                <TableCell>{location.city}</TableCell>
+                <TableCell>{location.country}</TableCell>
+                <TableCell>{location.datacenter_address || 'N/A'}</TableCell>
+                <TableCell>{location.provider || 'N/A'}</TableCell>
+                <TableCell>{getPOPTypeChip(location.pop_type)}</TableCell>
+                <TableCell>{getStatusChip(location.status)}</TableCell>
+                <TableCell align="center">
+                  <Button
+                    size="small"
+                    startIcon={<SettingsIcon />}
+                    onClick={() => handlePopCapabilitiesClick(location)}
+                  >
+                    View/Edit
+                  </Button>
                 </TableCell>
-                <TableCell>
-                  {location.country}
-                </TableCell>
-                <TableCell>
-                  <Typography variant="body2">
-                    {location.datacenter_name || 'N/A'}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {location.datacenter_address || 'No address'}
-                  </Typography>
-                </TableCell>
-                <TableCell>
-                  {location.latitude && location.longitude ? (
-                    <Tooltip title={`${location.latitude}, ${location.longitude}`}>
-                      <Chip
-                        icon={<LocationOnIcon />}
-                        label="Available"
-                        size="small"
-                        variant="outlined"
-                      />
-                    </Tooltip>
-                  ) : (
-                    <Chip label="Not Set" size="small" color="warning" />
-                  )}
-                </TableCell>
-                <TableCell>
-                  {getPOPTypeChip(location.pop_type)}
-                </TableCell>
-                <TableCell>
-                  {getStatusChip(location.status)}
+                <TableCell align="center">
+                  <Button
+                    size="small"
+                    startIcon={<InfoIcon />}
+                    onClick={() => handleAccessInfoClick(location)}
+                  >
+                    View/Edit
+                  </Button>
                 </TableCell>
                 <TableCell align="center">
                   <Tooltip title="Edit">
@@ -409,43 +399,65 @@ const LocationDataManager = () => {
         </Table>
       </TableContainer>
 
-      {/* Add/Edit Dialog */}
+      {/* Add/Edit Location Dialog */}
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>
-          {dialogMode === 'add' ? 'Add Location' : 'Edit Location'}
+          {dialogMode === 'add' ? 'Add New Location' : 'Edit Location'}
         </DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
-                label="Location Code"
-                value={formData.location_code}
-                onChange={(e) => handleInputChange('location_code', e.target.value.toUpperCase())}
                 fullWidth
-                required
+                label="POP Code *"
+                value={formData.location_code}
+                onChange={(e) => handleInputChange('location_code', e.target.value)}
                 disabled={dialogMode === 'edit'}
-                helperText="Unique identifier for this location"
               />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
-                label="City"
+                fullWidth
+                label="City *"
                 value={formData.city}
                 onChange={(e) => handleInputChange('city', e.target.value)}
-                fullWidth
-                required
               />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
-                label="Country"
+                fullWidth
+                label="Country *"
                 value={formData.country}
                 onChange={(e) => handleInputChange('country', e.target.value)}
-                fullWidth
-                required
               />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Provider"
+                value={formData.provider}
+                onChange={(e) => handleInputChange('provider', e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Datacenter Name"
+                value={formData.datacenter_name}
+                onChange={(e) => handleInputChange('datacenter_name', e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Address"
+                value={formData.datacenter_address}
+                onChange={(e) => handleInputChange('datacenter_address', e.target.value)}
+                multiline
+                rows={2}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
                 <InputLabel>POP Type</InputLabel>
                 <Select
@@ -453,67 +465,14 @@ const LocationDataManager = () => {
                   onChange={(e) => handleInputChange('pop_type', e.target.value)}
                   label="POP Type"
                 >
-                  <MenuItem value="Primary">Primary</MenuItem>
-                  <MenuItem value="Secondary">Secondary</MenuItem>
-                  <MenuItem value="Tertiary">Tertiary</MenuItem>
+                  <MenuItem value="Tier 1">Tier 1</MenuItem>
+                  <MenuItem value="Tier 2">Tier 2</MenuItem>
+                  <MenuItem value="Tier 3">Tier 3</MenuItem>
+                  <MenuItem value="Exchange">Exchange</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12}>
-              <TextField
-                label="Datacenter Name"
-                value={formData.datacenter_name}
-                onChange={(e) => handleInputChange('datacenter_name', e.target.value)}
-                fullWidth
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                label="Datacenter Address"
-                value={formData.datacenter_address}
-                onChange={(e) => handleInputChange('datacenter_address', e.target.value)}
-                fullWidth
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                label="Latitude"
-                type="number"
-                value={formData.latitude}
-                onChange={(e) => handleInputChange('latitude', e.target.value)}
-                fullWidth
-                inputProps={{ step: 0.0001 }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                label="Longitude"
-                type="number"
-                value={formData.longitude}
-                onChange={(e) => handleInputChange('longitude', e.target.value)}
-                fullWidth
-                inputProps={{ step: 0.0001 }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Time Zone</InputLabel>
-                <Select
-                  value={formData.time_zone}
-                  onChange={(e) => handleInputChange('time_zone', e.target.value)}
-                  label="Time Zone"
-                >
-                  {commonTimezones.map((tz) => (
-                    <MenuItem key={tz} value={tz}>
-                      {tz}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
                 <InputLabel>Status</InputLabel>
                 <Select
@@ -522,10 +481,21 @@ const LocationDataManager = () => {
                   label="Status"
                 >
                   <MenuItem value="Active">Active</MenuItem>
-                  <MenuItem value="Inactive">Inactive</MenuItem>
-                  <MenuItem value="Maintenance">Maintenance</MenuItem>
+                  <MenuItem value="Under Decommission">Under Decommission</MenuItem>
+                  <MenuItem value="Under Construction">Under Construction</MenuItem>
                 </Select>
               </FormControl>
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Access Info"
+                value={formData.access_info}
+                onChange={(e) => handleInputChange('access_info', e.target.value)}
+                multiline
+                rows={3}
+                placeholder="Enter access information, instructions, or notes..."
+              />
             </Grid>
           </Grid>
         </DialogContent>
@@ -537,45 +507,103 @@ const LocationDataManager = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
-        <DialogTitle>Delete Location</DialogTitle>
+      {/* Access Info Dialog */}
+      <Dialog open={accessInfoDialogOpen} onClose={() => setAccessInfoDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          Access Info - {selectedLocation?.location_code}
+        </DialogTitle>
         <DialogContent>
-          <Typography>
-            Are you sure you want to delete location <strong>{selectedLocation?.location_code}</strong>?
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            This action cannot be undone.
-          </Typography>
+          <TextField
+            fullWidth
+            multiline
+            rows={8}
+            value={currentAccessInfo}
+            onChange={(e) => setCurrentAccessInfo(e.target.value)}
+            placeholder="Enter access information, instructions, or notes..."
+            sx={{ mt: 2 }}
+          />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleDeleteConfirm} color="error" variant="contained">
-            Delete
+          <Button onClick={() => setAccessInfoDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleAccessInfoSave} variant="contained">
+            Save
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Error/Success Messages */}
-      <Snackbar
-        open={!!error}
-        autoHideDuration={6000}
-        onClose={() => setError(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      {/* POP Capabilities Dialog */}
+      <Dialog open={popCapabilitiesDialogOpen} onClose={() => setPopCapabilitiesDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          POP Capabilities - {selectedLocation?.location_code}
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 2 }}>
+            <Grid container spacing={2}>
+              {popCapabilitiesFields.map((field) => (
+                <Grid item xs={12} sm={6} key={field.key}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    {currentCapabilities[field.key] ? (
+                      <CheckCircleIcon color="success" />
+                    ) : (
+                      <CancelIcon color="error" />
+                    )}
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={Boolean(currentCapabilities[field.key])}
+                          onChange={(e) => handleCapabilityChange(field.key, e.target.checked)}
+                        />
+                      }
+                      label={field.label}
+                    />
+                  </Box>
+                </Grid>
+              ))}
+            </Grid>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPopCapabilitiesDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleCapabilitiesSave} variant="contained">
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+        <DialogTitle>Delete Location</DialogTitle>
+        <DialogContent>
+          Are you sure you want to delete location {selectedLocation?.location_code}?
+          <br />
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            City: {selectedLocation?.city}, Country: {selectedLocation?.country}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleDeleteConfirm} color="error" variant="contained">Delete</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Success/Error Messages */}
+      <Snackbar 
+        open={!!success} 
+        autoHideDuration={6000} 
+        onClose={() => setSuccess(null)}
       >
-        <Alert severity="error" onClose={() => setError(null)}>
-          {error}
+        <Alert onClose={() => setSuccess(null)} severity="success">
+          {success}
         </Alert>
       </Snackbar>
-
-      <Snackbar
-        open={!!success}
-        autoHideDuration={4000}
-        onClose={() => setSuccess(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      
+      <Snackbar 
+        open={!!error} 
+        autoHideDuration={6000} 
+        onClose={() => setError(null)}
       >
-        <Alert severity="success" onClose={() => setSuccess(null)}>
-          {success}
+        <Alert onClose={() => setError(null)} severity="error">
+          {error}
         </Alert>
       </Snackbar>
     </Box>
