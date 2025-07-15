@@ -420,7 +420,7 @@ router.post('/carriers', authenticateToken, authorizePermission('carriers', 'cre
     function(err) {
       if (err) {
         if (err.message.includes('UNIQUE constraint failed')) {
-          return res.status(400).json({ error: 'Carrier name already exists' });
+          return res.status(400).json({ error: `Carrier '${carrier_name}' already exists in region '${region || dbRegion}'. Same carrier names are allowed in different regions.` });
         }
         return res.status(500).json({ error: err.message });
       }
@@ -455,7 +455,12 @@ router.put('/carriers/:id', authenticateToken, authorizePermission('carriers', '
       'UPDATE carriers SET carrier_name = ?, previously_known_as = ?, status = ?, region = ?, updated_by = ? WHERE id = ?',
       [carrier_name, previously_known_as, status, dbRegion, req.user.id, carrierId],
       function(err) {
-        if (err) return res.status(500).json({ error: err.message });
+        if (err) {
+          if (err.message.includes('UNIQUE constraint failed')) {
+            return res.status(400).json({ error: `Carrier '${carrier_name}' already exists in region '${region || dbRegion}'. Same carrier names are allowed in different regions.` });
+          }
+          return res.status(500).json({ error: err.message });
+        }
         if (this.changes === 0) return res.status(404).json({ error: 'Carrier not found' });
         
         logChange(req.user.id, 'carriers', carrierId, 'UPDATE', oldCarrier, { carrier_name, previously_known_as, status, region }, req);
@@ -732,7 +737,7 @@ router.post('/network_routes', (req, res) => {
     }
     
     const fields = [
-      'circuit_id','repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency'
+      'circuit_id','repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'
     ];
     const placeholders = fields.map(() => '?').join(',');
     const values = fields.map(f => data[f] ?? (f === 'repository_type_id' ? 1 : null));
@@ -767,7 +772,7 @@ router.put('/network_routes/:circuit_id', (req, res) => {
     }
     
     const fields = [
-      'repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency'
+      'repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'
     ];
     const setClause = fields.map(f => `${f} = ?`).join(', ');
     const values = fields.map(f => data[f] ?? null);
@@ -814,9 +819,9 @@ router.post('/network_routes/:circuit_id/upload_kmz', upload.single('kmz_file'),
 
 // Export network_routes as CSV
 router.get('/network_routes_export', (req, res) => {
-  db.all('SELECT circuit_id, outage_tickets_last_30d, maintenance_tickets_last_30d, kmz_file_path, live_latency, expected_latency, test_results_link, cable_system, is_special, underlying_carrier, location_a, location_b, bandwidth, more_details, mtu, sla_latency FROM network_routes', [], (err, rows) => {
+  db.all('SELECT circuit_id, outage_tickets_last_30d, maintenance_tickets_last_30d, kmz_file_path, live_latency, expected_latency, test_results_link, cable_system, is_special, underlying_carrier, location_a, location_b, bandwidth, more_details, mtu, sla_latency, capacity_usage_percent FROM network_routes', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    const fields = ['circuit_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency'];
+    const fields = ['circuit_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
     const parser = new Parser({ fields });
     const csv = parser.parse(rows);
     res.header('Content-Type', 'text/csv');
@@ -827,7 +832,7 @@ router.get('/network_routes_export', (req, res) => {
 
 // Search/filter network_routes by query params (visible fields only)
 router.get('/network_routes_search', (req, res) => {
-  const allowedFields = ['circuit_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency'];
+  const allowedFields = ['circuit_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
   const filters = [];
   const values = [];
   
@@ -1119,19 +1124,21 @@ router.get('/locations', authenticateToken, authorizePermission('locations', 'vi
 
 // Create location
 router.post('/locations', authenticateToken, authorizePermission('locations', 'create'), (req, res) => {
-  const { location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info } = req.body;
+  const { location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, 
+          min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus } = req.body;
   
   if (!location_code || !city || !country) {
     return res.status(400).json({ error: 'Location code, city, and country are required' });
   }
   
   db.run(
-    'INSERT INTO location_reference (location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type || 'Tier 1', status || 'Active', provider, access_info, req.user.id],
+    'INSERT INTO location_reference (location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type || 'Tier 1', status || 'Active', provider, access_info, 
+     min_price_under_100mb || 0, min_price_100_to_999mb || 0, min_price_1000_to_2999mb || 0, min_price_3000mb_plus || 0, req.user.id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
-      logChange(req.user.id, 'location_reference', this.lastID, 'CREATE', null, { location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info }, req);
+      logChange(req.user.id, 'location_reference', this.lastID, 'CREATE', null, { location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus }, req);
       
       res.status(201).json({ id: this.lastID, location_code });
     }
@@ -1140,7 +1147,8 @@ router.post('/locations', authenticateToken, authorizePermission('locations', 'c
 
 // Update location
 router.put('/locations/:id', authenticateToken, authorizePermission('locations', 'edit'), (req, res) => {
-  const { city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info } = req.body;
+  const { city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info,
+          min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus } = req.body;
   const locationId = req.params.id;
   
   // Get current location data for change logging
@@ -1149,13 +1157,14 @@ router.put('/locations/:id', authenticateToken, authorizePermission('locations',
     if (!oldLocation) return res.status(404).json({ error: 'Location not found' });
     
     db.run(
-      'UPDATE location_reference SET city = ?, country = ?, datacenter_name = ?, datacenter_address = ?, latitude = ?, longitude = ?, time_zone = ?, pop_type = ?, status = ?, provider = ?, access_info = ?, updated_by = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?',
-      [city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, req.user.id, locationId],
+      'UPDATE location_reference SET city = ?, country = ?, datacenter_name = ?, datacenter_address = ?, latitude = ?, longitude = ?, time_zone = ?, pop_type = ?, status = ?, provider = ?, access_info = ?, min_price_under_100mb = ?, min_price_100_to_999mb = ?, min_price_1000_to_2999mb = ?, min_price_3000mb_plus = ?, updated_by = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?',
+      [city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, 
+       min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus, req.user.id, locationId],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
         
-        logChange(req.user.id, 'location_reference', locationId, 'UPDATE', oldLocation, { city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info }, req);
+        logChange(req.user.id, 'location_reference', locationId, 'UPDATE', oldLocation, { city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus }, req);
         
         res.json({ message: 'Location updated' });
       }
@@ -1180,6 +1189,39 @@ router.delete('/locations/:id', authenticateToken, authorizePermission('location
       
       res.json({ message: 'Location deleted' });
     });
+  });
+});
+
+// Update minimum pricing for a location (admin only)
+router.put('/locations/:id/minimum-pricing', authenticateToken, (req, res) => {
+  // Check if user is admin
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  const { min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus } = req.body;
+  const locationId = req.params.id;
+  
+  // Get current location data for change logging
+  db.get('SELECT * FROM location_reference WHERE id = ?', [locationId], (err, oldLocation) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldLocation) return res.status(404).json({ error: 'Location not found' });
+    
+    db.run(
+      'UPDATE location_reference SET min_price_under_100mb = ?, min_price_100_to_999mb = ?, min_price_1000_to_2999mb = ?, min_price_3000mb_plus = ?, updated_by = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?',
+      [min_price_under_100mb || 0, min_price_100_to_999mb || 0, min_price_1000_to_2999mb || 0, min_price_3000mb_plus || 0, req.user.id, locationId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
+        
+        logChange(req.user.id, 'location_reference', locationId, 'UPDATE_PRICING', 
+          { min_price_under_100mb: oldLocation.min_price_under_100mb, min_price_100_to_999mb: oldLocation.min_price_100_to_999mb, 
+            min_price_1000_to_2999mb: oldLocation.min_price_1000_to_2999mb, min_price_3000mb_plus: oldLocation.min_price_3000mb_plus }, 
+          { min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus }, req);
+        
+        res.json({ message: 'Minimum pricing updated successfully' });
+      }
+    );
   });
 });
 
@@ -1310,25 +1352,63 @@ router.put('/exchange_rates/:id', (req, res) => {
 
 // Network Design Path Finding with Dijkstra Algorithm
 router.post('/network_design/find_path', (req, res) => {
-  const { source, destination, bandwidth, bandwidth_unit, constraints = {} } = req.body;
+  const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false } = req.body;
   const startTime = Date.now();
   
-  // Validate inputs
+    // Validate inputs
   if (!source || !destination) {
     return res.status(400).json({ error: 'Source and destination are required' });
   }
-  
+
   if (source === destination) {
     return res.status(400).json({ error: 'Source and destination cannot be the same' });
   }
-  
-  // Get all network routes to build graph
-  db.all('SELECT * FROM network_routes WHERE location_a IS NOT NULL AND location_b IS NOT NULL', [], (err, routes) => {
+
+  // Track exclusion reasons
+  const exclusionReasons = {
+    bandwidth: { count: 0, routes: [] },
+    carrier_avoidance: { count: 0, routes: [], carriers: [] },
+    mtu_requirement: { count: 0, routes: [] },
+    ull_restriction: { count: 0, routes: [] },
+    decommission_pop: { count: 0, routes: [] },
+    total_routes_available: 0,
+    total_routes_excluded: 0
+  };
+
+  // First, get count of routes excluded due to decommissioned POPs
+  db.all(`SELECT nr.circuit_id, nr.location_a, nr.location_b, lr_a.status as status_a, lr_b.status as status_b 
+          FROM network_routes nr
+          LEFT JOIN location_reference lr_a ON nr.location_a = lr_a.location_code
+          LEFT JOIN location_reference lr_b ON nr.location_b = lr_b.location_code
+          WHERE nr.location_a IS NOT NULL AND nr.location_b IS NOT NULL
+          AND (lr_a.status = 'Under Decommission' OR lr_b.status = 'Under Decommission')`, [], (err, decommissionedRoutes) => {
     if (err) return res.status(500).json({ error: err.message });
     
-    console.log(`\n=== PATH FINDING DEBUG ===`);
-    console.log(`Source: ${source}, Destination: ${destination}`);
-    console.log(`Total routes found: ${routes.length}`);
+    // Track decommissioned route exclusions
+    decommissionedRoutes.forEach(route => {
+      exclusionReasons.decommission_pop.count++;
+      exclusionReasons.decommission_pop.routes.push({
+        circuit_id: route.circuit_id,
+        route: `${route.location_a} <-> ${route.location_b}`,
+        decommissioned_location: route.status_a === 'Under Decommission' ? route.location_a : route.location_b
+      });
+    });
+
+    // Get all network routes to build graph, excluding routes through decommissioned POPs
+    db.all(`SELECT nr.* FROM network_routes nr
+            LEFT JOIN location_reference lr_a ON nr.location_a = lr_a.location_code
+            LEFT JOIN location_reference lr_b ON nr.location_b = lr_b.location_code
+            WHERE nr.location_a IS NOT NULL AND nr.location_b IS NOT NULL
+            AND (lr_a.status IS NULL OR lr_a.status != 'Under Decommission')
+            AND (lr_b.status IS NULL OR lr_b.status != 'Under Decommission')`, [], (err, routes) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      console.log(`\n=== PATH FINDING DEBUG ===`);
+      console.log(`Source: ${source}, Destination: ${destination}`);
+      console.log(`Total routes found: ${routes.length}`);
+      console.log(`Routes excluded due to decommissioned POPs: ${exclusionReasons.decommission_pop.count}`);
+    
+    exclusionReasons.total_routes_available = routes.length;
     
     // Build graph from routes
     const graph = {};
@@ -1359,9 +1439,15 @@ router.post('/network_design/find_path', (req, res) => {
       }
       
       // Skip routes that don't meet bandwidth requirements (now all in Mbps)
-      let bandwidthWarning = false;
       if (bandwidth && routeBandwidthMbps && parseFloat(routeBandwidthMbps) < parseFloat(bandwidth)) {
         if (isRelevant) console.log(`  SKIPPED: Bandwidth too low (${routeBandwidthMbps} Mbps < ${bandwidth} Mbps)`);
+        exclusionReasons.bandwidth.count++;
+        exclusionReasons.bandwidth.routes.push({
+          circuit_id,
+          route: `${location_a} <-> ${location_b}`,
+          available_bandwidth: routeBandwidthMbps,
+          required_bandwidth: bandwidth
+        });
         routesSkipped++;
         return;
       }
@@ -1370,6 +1456,15 @@ router.post('/network_design/find_path', (req, res) => {
       if (constraints.carrier_avoidance && underlying_carrier && 
           constraints.carrier_avoidance.includes(underlying_carrier)) {
         if (isRelevant) console.log(`  SKIPPED: Carrier avoided (${underlying_carrier})`);
+        exclusionReasons.carrier_avoidance.count++;
+        exclusionReasons.carrier_avoidance.routes.push({
+          circuit_id,
+          route: `${location_a} <-> ${location_b}`,
+          carrier: underlying_carrier
+        });
+        if (!exclusionReasons.carrier_avoidance.carriers.includes(underlying_carrier)) {
+          exclusionReasons.carrier_avoidance.carriers.push(underlying_carrier);
+        }
         routesSkipped++;
         return;
       }
@@ -1380,6 +1475,26 @@ router.post('/network_design/find_path', (req, res) => {
       
       if (routeMtu < mtuRequired) {
         if (isRelevant) console.log(`  SKIPPED: MTU too low (${routeMtu} < ${mtuRequired})`);
+        exclusionReasons.mtu_requirement.count++;
+        exclusionReasons.mtu_requirement.routes.push({
+          circuit_id,
+          route: `${location_a} <-> ${location_b}`,
+          available_mtu: routeMtu,
+          required_mtu: mtuRequired
+        });
+        routesSkipped++;
+        return;
+      }
+      
+      // Skip Special/ULL routes if not including ULL
+      if (!include_ull && route.is_special) {
+        if (isRelevant) console.log(`  SKIPPED: Special/ULL route excluded (Include ULL: ${include_ull})`);
+        exclusionReasons.ull_restriction.count++;
+        exclusionReasons.ull_restriction.routes.push({
+          circuit_id,
+          route: `${location_a} <-> ${location_b}`,
+          is_special: route.is_special
+        });
         routesSkipped++;
         return;
       }
@@ -1414,10 +1529,13 @@ router.post('/network_design/find_path', (req, res) => {
       };
     });
     
+    exclusionReasons.total_routes_excluded = routesSkipped;
+    
     console.log(`\n=== GRAPH CONSTRUCTION COMPLETE ===`);
     console.log(`Routes processed: ${routesProcessed}, Routes skipped: ${routesSkipped}`);
     console.log(`Total locations in graph: ${Object.keys(graph).length}`);
     console.log(`All locations: ${Object.keys(graph).join(', ')}`);
+    console.log(`Exclusion reasons:`, JSON.stringify(exclusionReasons, null, 2));
     
     // Check if source and destination are in graph
     console.log(`\nSource (${source}) in graph: ${graph[source] ? 'YES' : 'NO'}`);
@@ -1432,11 +1550,21 @@ router.post('/network_design/find_path', (req, res) => {
     
     // Validate source and destination exist in graph
     if (!graph[source]) {
-      return res.status(404).json({ error: `Source location ${source} not found in network` });
+      console.log(`Returning 404 for source not found. Exclusion reasons:`, exclusionReasons);
+      return res.status(404).json({ 
+        error: `Source location ${source} not found in network`,
+        exclusionReasons,
+        details: 'No routes available from source location after applying constraints'
+      });
     }
     
     if (!graph[destination]) {
-      return res.status(404).json({ error: `Destination location ${destination} not found in network` });
+      console.log(`Returning 404 for destination not found. Exclusion reasons:`, exclusionReasons);
+      return res.status(404).json({ 
+        error: `Destination location ${destination} not found in network`,
+        exclusionReasons,
+        details: 'No routes available to destination location after applying constraints'
+      });
     }
     
     // Dijkstra's algorithm implementation
@@ -1511,7 +1639,12 @@ router.post('/network_design/find_path', (req, res) => {
     const primaryPath = dijkstra(graph, source, destination);
     
     if (!primaryPath) {
-      return res.status(404).json({ error: 'No route found between source and destination' });
+      console.log(`Returning 404 for no path found. Exclusion reasons:`, exclusionReasons);
+      return res.status(404).json({ 
+        error: 'No possible route found between source and destination',
+        exclusionReasons,
+        details: 'No connected path exists between locations after applying routing constraints'
+      });
     }
     
     // Calculate route details
@@ -1541,6 +1674,8 @@ router.post('/network_design/find_path', (req, res) => {
     
     // Find diverse path (if protection required)
     let diversePath = null;
+    let protectionFailureReasons = null;
+
     if (constraints.protection_required) {
       // Create modified graph without primary path edges
       const modifiedGraph = JSON.parse(JSON.stringify(graph));
@@ -1552,7 +1687,73 @@ router.post('/network_design/find_path', (req, res) => {
         delete modifiedGraph[to][from];
       }
       
-      diversePath = dijkstra(modifiedGraph, source, destination);
+      // Check if source and destination still exist in modified graph
+      const sourceStillConnected = modifiedGraph[source] && Object.keys(modifiedGraph[source]).length > 0;
+      const destStillConnected = modifiedGraph[destination] && Object.keys(modifiedGraph[destination]).length > 0;
+      
+      console.log(`Protection route analysis:`);
+      console.log(`  Source (${source}) connections after removing primary path: ${sourceStillConnected ? Object.keys(modifiedGraph[source]).length : 0}`);
+      console.log(`  Destination (${destination}) connections after removing primary path: ${destStillConnected ? Object.keys(modifiedGraph[destination]).length : 0}`);
+      
+      const diversePathResult = dijkstra(modifiedGraph, source, destination);
+      
+      if (diversePathResult) {
+        // Calculate route details for diverse path
+        const diverseRouteDetails = [];
+        let diverseTotalCost = 0;
+        const diverseCurrencies = new Set();
+        
+        for (let i = 0; i < diversePathResult.path.length - 1; i++) {
+          const from = diversePathResult.path[i];
+          const to = diversePathResult.path[i + 1];
+          const edge = graph[from][to]; // Use original graph for edge details
+          
+          if (edge) {
+            diverseRouteDetails.push({
+              from,
+              to,
+              latency: edge.weight,
+              cost: edge.cost,
+              currency: edge.currency,
+              bandwidth: edge.bandwidth,
+              carrier: edge.carrier,
+              circuit_id: edge.circuit_id
+            });
+            
+            diverseTotalCost += edge.cost;
+            if (edge.currency) diverseCurrencies.add(edge.currency);
+          }
+        }
+        
+        diversePath = {
+          ...diversePathResult,
+          route: diverseRouteDetails,
+          totalCost: diverseTotalCost,
+          currencies: Array.from(diverseCurrencies)
+        };
+        console.log(`  Protection route found: ${diversePathResult.path.join(' → ')}`);
+      } else {
+        // Analyze why protection route failed
+        protectionFailureReasons = {
+          primary_path_blocked: primaryPath.path.join(' → '),
+          remaining_routes_analysis: {
+            source_isolated: !sourceStillConnected,
+            destination_isolated: !destStillConnected,
+            total_remaining_edges: Object.keys(modifiedGraph).reduce((sum, node) => 
+              sum + Object.keys(modifiedGraph[node] || {}).length, 0) / 2, // Divide by 2 since edges are bidirectional
+            affected_constraints: {
+              bandwidth_still_excluding: exclusionReasons.bandwidth.count,
+              carrier_avoidance_still_excluding: exclusionReasons.carrier_avoidance.count,
+              mtu_still_excluding: exclusionReasons.mtu_requirement.count,
+              ull_still_excluding: exclusionReasons.ull_restriction.count
+            }
+          },
+          suggestion: sourceStillConnected && destStillConnected 
+            ? "Insufficient alternative routes available with current constraints. Consider relaxing bandwidth, MTU, or carrier avoidance requirements."
+            : "No alternative connection paths available after removing primary route segments. Network topology limits protection options."
+        };
+        console.log(`  Protection route failed:`, protectionFailureReasons);
+      }
     }
     
     const executionTime = Date.now() - startTime;
@@ -1562,7 +1763,7 @@ router.post('/network_design/find_path', (req, res) => {
       'INSERT INTO audit_logs (action_type, parameters, results, execution_time) VALUES (?, ?, ?, ?)',
       [
         'PATH_SEARCH',
-        JSON.stringify({ source, destination, bandwidth, bandwidth_unit, constraints }),
+        JSON.stringify({ source, destination, bandwidth, bandwidth_unit, constraints, include_ull }),
         JSON.stringify({ primaryPath, diversePath, totalCost }),
         executionTime
       ],
@@ -1571,13 +1772,14 @@ router.post('/network_design/find_path', (req, res) => {
       }
     );
     
-    res.json({
+    const response = {
       request: {
         source,
         destination,
         bandwidth,
         bandwidth_unit,
-        constraints
+        constraints,
+        include_ull
       },
       primaryPath: {
         ...primaryPath,
@@ -1586,90 +1788,198 @@ router.post('/network_design/find_path', (req, res) => {
         currencies: Array.from(currencies)
       },
       diversePath,
+      exclusionReasons,
+      protectionStatus: constraints.protection_required ? {
+        required: true,
+        available: diversePath !== null,
+        message: diversePath ? 'Protection route found' : 'No protection route available - consider relaxing constraints',
+        failureReasons: protectionFailureReasons
+      } : {
+        required: false,
+        available: null,
+        message: 'Protection not requested'
+      },
       executionTime,
       timestamp: new Date().toISOString()
+    };
+    
+
+    res.json(response);
     });
   });
 });
 
-// Network Design with Pricing
+// Network Design with Enhanced Pricing
 router.post('/network_design/calculate_pricing', (req, res) => {
-  const { paths, contract_term = 12, output_currency = 'USD', include_ull = false } = req.body;
+  const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, bandwidth, source, destination, protection_required = false } = req.body;
   
   if (!paths || !Array.isArray(paths)) {
     return res.status(400).json({ error: 'Paths array is required' });
   }
+
+  if (!bandwidth || !source || !destination) {
+    return res.status(400).json({ error: 'Bandwidth, source, and destination are required for enhanced pricing' });
+  }
   
-  // Get exchange rates
-  db.all('SELECT * FROM exchange_rates WHERE status = "Active"', [], (err, rates) => {
-    if (err) return res.status(500).json({ error: err.message });
-    
+  // Get exchange rates and location minimum prices
+  const queries = [
+    new Promise((resolve, reject) => {
+      db.all('SELECT * FROM exchange_rates WHERE status = "Active"', [], (err, rates) => {
+        if (err) reject(err);
+        else resolve(rates);
+      });
+    }),
+    new Promise((resolve, reject) => {
+      db.all('SELECT location_code, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus FROM location_reference WHERE location_code IN (?, ?)', [source, destination], (err, locations) => {
+        if (err) reject(err);
+        else resolve(locations);
+      });
+    })
+  ];
+
+  Promise.all(queries).then(([rates, locations]) => {
     const exchangeRates = {};
     rates.forEach(rate => {
       exchangeRates[rate.currency_code] = rate.exchange_rate;
     });
-    
-    // Calculate pricing for each path
-    const pricingResults = paths.map(path => {
-      let totalMonthlyCost = 0;
-      let totalSetupCost = 0;
+
+    // Helper function to convert currency
+    const convertCurrency = (amount, fromCurrency, toCurrency) => {
+      if (fromCurrency === toCurrency) return amount;
+      
+      let usdAmount = amount;
+      if (fromCurrency !== 'USD' && exchangeRates[fromCurrency]) {
+        usdAmount = amount / exchangeRates[fromCurrency];
+      }
+      
+      if (toCurrency !== 'USD' && exchangeRates[toCurrency]) {
+        return usdAmount * exchangeRates[toCurrency];
+      }
+      
+      return usdAmount;
+    };
+
+    // Helper function to get minimum price for bandwidth tier
+    const getMinimumPrice = (bandwidthMbps, locations) => {
+      let tierField;
+      if (bandwidthMbps < 100) {
+        tierField = 'min_price_under_100mb';
+      } else if (bandwidthMbps < 1000) {
+        tierField = 'min_price_100_to_999mb';
+      } else if (bandwidthMbps < 3000) {
+        tierField = 'min_price_1000_to_2999mb';
+      } else {
+        tierField = 'min_price_3000mb_plus';
+      }
+
+      let maxMinPrice = 0;
+      locations.forEach(location => {
+        const minPrice = parseFloat(location[tierField]) || 0;
+        maxMinPrice = Math.max(maxMinPrice, minPrice);
+      });
+
+      return convertCurrency(maxMinPrice, 'USD', output_currency);
+    };
+
+    // Helper function to calculate enhanced pricing for a path
+    const calculatePathPricing = (path, isProtection = false) => {
+      let totalAllocatedCost = 0;
       
       if (path.route) {
         path.route.forEach(segment => {
           let segmentCost = parseFloat(segment.cost) || 0;
           const segmentCurrency = segment.currency || 'USD';
+          const segmentBandwidth = parseFloat(segment.bandwidth) || 1000; // Default 1000 if not specified
           
-          // Convert to output currency
-          if (segmentCurrency !== output_currency && exchangeRates[segmentCurrency]) {
-            segmentCost = segmentCost / exchangeRates[segmentCurrency];
-            if (output_currency !== 'USD' && exchangeRates[output_currency]) {
-              segmentCost = segmentCost * exchangeRates[output_currency];
-            }
-          }
+          // Convert segment cost to output currency
+          segmentCost = convertCurrency(segmentCost, segmentCurrency, output_currency);
           
-          totalMonthlyCost += segmentCost;
-          totalSetupCost += segmentCost * 0.5; // Assume 50% setup cost
+          // Calculate allocated cost based on bandwidth utilization
+          const utilizationFactor = isProtection ? 1.0 : 0.9; // 90% for primary, 100% for protection
+          const allocationRatio = bandwidth / (segmentBandwidth * utilizationFactor);
+          const allocatedCost = segmentCost * allocationRatio;
+          
+          totalAllocatedCost += allocatedCost;
         });
       }
-      
+
       // Apply ULL charges if requested
       if (include_ull) {
-        totalMonthlyCost += totalMonthlyCost * 0.15; // 15% ULL premium
-        totalSetupCost += totalMonthlyCost * 0.25; // 25% ULL setup
+        totalAllocatedCost += totalAllocatedCost * 0.15; // 15% ULL premium
       }
-      
-      // Apply contract term discounts
-      let termDiscount = 0;
-      if (contract_term >= 36) termDiscount = 0.20; // 20% discount for 3+ years
-      else if (contract_term >= 24) termDiscount = 0.15; // 15% discount for 2+ years
-      else if (contract_term >= 12) termDiscount = 0.10; // 10% discount for 1+ year
-      
-      const discountedMonthlyCost = totalMonthlyCost * (1 - termDiscount);
-      const totalContractValue = discountedMonthlyCost * contract_term + totalSetupCost;
-      
+
+      // Calculate pricing with 40% and 60% margins
+      const minPrice40 = totalAllocatedCost / 0.6; // 40% margin: revenue = cost / (1 - 0.4)
+      const suggestedPrice60 = totalAllocatedCost / 0.4; // 60% margin: revenue = cost / (1 - 0.6)
+
+      // Get location-based minimum price
+      const locationMinPrice = getMinimumPrice(bandwidth, locations);
+
+      // Apply minimum price enforcement
+      const finalMinPrice = Math.max(minPrice40, locationMinPrice);
+      const finalSuggestedPrice = Math.max(suggestedPrice60, locationMinPrice);
+
+      // Calculate actual margins
+      const actualMinMargin = ((finalMinPrice - totalAllocatedCost) / finalMinPrice) * 100;
+      const actualSuggestedMargin = ((finalSuggestedPrice - totalAllocatedCost) / finalSuggestedPrice) * 100;
+
+      return {
+        allocatedCost: Math.round(totalAllocatedCost * 100) / 100,
+        minimumPrice: Math.round(finalMinPrice * 100) / 100,
+        suggestedPrice: Math.round(finalSuggestedPrice * 100) / 100,
+        minimumMargin: Math.round(actualMinMargin * 10) / 10,
+        suggestedMargin: Math.round(actualSuggestedMargin * 10) / 10,
+        locationMinimum: Math.round(locationMinPrice * 100) / 100,
+        marginEnforced: finalMinPrice > minPrice40 || finalSuggestedPrice > suggestedPrice60
+      };
+    };
+
+    // Calculate pricing for each path
+    const pricingResults = paths.map((path, index) => {
+      const isProtection = index > 0; // First path is primary, others are protection
+      const pathPricing = calculatePathPricing(path, isProtection);
+
       return {
         path: path.path,
         totalLatency: path.totalLatency,
         hops: path.hops,
+        pathType: isProtection ? 'protection' : 'primary',
         pricing: {
-          monthlyCost: Math.round(discountedMonthlyCost * 100) / 100,
-          setupCost: Math.round(totalSetupCost * 100) / 100,
-          totalContractValue: Math.round(totalContractValue * 100) / 100,
+          ...pathPricing,
           currency: output_currency,
-          termDiscount: termDiscount * 100,
-          contractTerm: contract_term,
+          bandwidth: bandwidth,
           includeULL: include_ull
         }
       };
     });
+
+    // Calculate protection pricing if required
+    let protectionPricing = null;
+    if (protection_required && pricingResults.length >= 2) {
+      const primaryPricing = pricingResults[0].pricing;
+      const secondaryPricing = pricingResults[1].pricing;
+      
+      const protectedMinPrice = primaryPricing.minimumPrice + (secondaryPricing.minimumPrice * 0.7);
+      const protectedSuggestedPrice = primaryPricing.suggestedPrice + (secondaryPricing.suggestedPrice * 0.7);
+      const protectedAllocatedCost = primaryPricing.allocatedCost + (secondaryPricing.allocatedCost * 0.7);
+
+      protectionPricing = {
+        minimumPrice: Math.round(protectedMinPrice * 100) / 100,
+        suggestedPrice: Math.round(protectedSuggestedPrice * 100) / 100,
+        allocatedCost: Math.round(protectedAllocatedCost * 100) / 100,
+        minimumMargin: Math.round(((protectedMinPrice - protectedAllocatedCost) / protectedMinPrice) * 1000) / 10,
+        suggestedMargin: Math.round(((protectedSuggestedPrice - protectedAllocatedCost) / protectedSuggestedPrice) * 1000) / 10,
+        currency: output_currency
+      };
+    }
     
     // Log pricing calculation
     db.run(
       'INSERT INTO audit_logs (action_type, parameters, pricing_data) VALUES (?, ?, ?)',
       [
-        'PRICING_CALCULATION',
-        JSON.stringify({ contract_term, output_currency, include_ull }),
-        JSON.stringify(pricingResults)
+        'ENHANCED_PRICING_CALCULATION',
+        JSON.stringify({ contract_term, output_currency, include_ull, bandwidth, source, destination, protection_required }),
+        JSON.stringify({ individual: pricingResults, protection: protectionPricing })
       ],
       function(err) {
         if (err) console.error('Failed to log pricing calculation:', err);
@@ -1678,9 +1988,22 @@ router.post('/network_design/calculate_pricing', (req, res) => {
     
     res.json({
       results: pricingResults,
+      protectionPricing: protectionPricing,
       exchangeRates: exchangeRates,
+      parameters: {
+        bandwidth,
+        source,
+        destination,
+        output_currency,
+        include_ull,
+        protection_required
+      },
       timestamp: new Date().toISOString()
     });
+
+  }).catch(err => {
+    console.error('Error in pricing calculation:', err);
+    res.status(500).json({ error: 'Failed to calculate pricing: ' + err.message });
   });
 });
 

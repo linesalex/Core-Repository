@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Box, TextField, Button, Grid, MenuItem } from '@mui/material';
+import { Box, TextField, Button, Grid, MenuItem, Checkbox, FormControlLabel } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import DownloadIcon from '@mui/icons-material/Download';
 import { styled } from '@mui/material/styles';
@@ -9,7 +9,7 @@ const initialFilters = {
   location: '', // Will search both location_a and location_b
   cable_system: '',
   bandwidth: '',
-  is_special: '',
+  is_special: false, // Default to "No" (false)
 };
 
 const SmallTextField = styled(TextField)(({ theme }) => ({
@@ -25,7 +25,8 @@ function SearchExportBar({ onSearch, onExport, hasPermission }) {
   const [filters, setFilters] = useState(initialFilters);
 
   const handleChange = (e) => {
-    setFilters({ ...filters, [e.target.name]: e.target.value });
+    const { name, value, type, checked } = e.target;
+    setFilters({ ...filters, [name]: type === 'checkbox' ? checked : value });
   };
 
   const handleSearch = () => {
@@ -36,6 +37,12 @@ function SearchExportBar({ onSearch, onExport, hasPermission }) {
       params.location_b = filters.location;
     }
     delete params.location;
+    
+    // Convert checkbox value to backend format
+    if (typeof params.is_special === 'boolean') {
+      params.is_special = params.is_special ? '1' : '0';
+    }
+    
     onSearch(params);
   };
 
@@ -83,20 +90,22 @@ function SearchExportBar({ onSearch, onExport, hasPermission }) {
           />
         </Grid>
         <Grid item>
-          <SmallTextField
-            select
-            size="small"
+          <FormControlLabel
+            control={
+              <Checkbox
+                name="is_special"
+                checked={filters.is_special}
+                onChange={handleChange}
+                size="small"
+              />
+            }
             label="Special/ULL"
-            name="is_special"
-            value={filters.is_special}
-            onChange={handleChange}
-            variant="outlined"
-            sx={{ minWidth: 120 }}
-          >
-            <MenuItem value="">Any</MenuItem>
-            <MenuItem value="1">Yes</MenuItem>
-            <MenuItem value="0">No</MenuItem>
-          </SmallTextField>
+            sx={{ 
+              '& .MuiFormControlLabel-label': { 
+                fontSize: '0.75rem' 
+              } 
+            }}
+          />
         </Grid>
         <Grid item>
           <Button variant="contained" color="primary" startIcon={<SearchIcon />} onClick={handleSearch}>

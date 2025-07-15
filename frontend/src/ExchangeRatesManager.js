@@ -9,7 +9,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { exchangeRatesApi } from './api';
 
-const ExchangeRatesManager = () => {
+const ExchangeRatesManager = ({ hasPermission }) => {
   const [exchangeRates, setExchangeRates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -146,13 +146,15 @@ const ExchangeRatesManager = () => {
           Exchange Rates Management
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={handleAdd}
-          >
-            Add Rate
-          </Button>
+          {hasPermission && hasPermission('exchange_rates', 'create') && (
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={handleAdd}
+            >
+              Add Rate
+            </Button>
+          )}
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
@@ -276,17 +278,21 @@ const ExchangeRatesManager = () => {
                   {rate.updated_by}
                 </TableCell>
                 <TableCell align="center">
-                  <Tooltip title={rate.currency_code === 'USD' ? 'USD is the base currency and cannot be edited' : 'Edit'}>
-                    <span>
-                      <IconButton 
-                        size="small" 
-                        onClick={() => handleEdit(rate)}
-                        disabled={rate.currency_code === 'USD'}
-                      >
-                        <EditIcon />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
+                  {hasPermission && hasPermission('exchange_rates', 'edit') ? (
+                    <Tooltip title={rate.currency_code === 'USD' ? 'USD is the base currency and cannot be edited' : 'Edit'}>
+                      <span>
+                        <IconButton 
+                          size="small" 
+                          onClick={() => handleEdit(rate)}
+                          disabled={rate.currency_code === 'USD'}
+                        >
+                          <EditIcon />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">-</Typography>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

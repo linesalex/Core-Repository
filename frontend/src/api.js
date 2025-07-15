@@ -107,7 +107,8 @@ export const locationDataApi = {
   updateLocation: (id, data) => api.put(`${API_BASE_URL}/locations/${id}`, data),
   deleteLocation: (id) => api.delete(`${API_BASE_URL}/locations/${id}`),
   getCapabilities: (id) => api.get(`${API_BASE_URL}/locations/${id}/capabilities`).then(res => res.data),
-  updateCapabilities: (id, data) => api.post(`${API_BASE_URL}/locations/${id}/capabilities`, data)
+  updateCapabilities: (id, data) => api.post(`${API_BASE_URL}/locations/${id}/capabilities`, data),
+  updateMinimumPricing: (id, data) => api.put(`${API_BASE_URL}/locations/${id}/minimum-pricing`, data)
 };
 
 // Exchange Rates Management

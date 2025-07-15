@@ -152,7 +152,9 @@ const NetworkDesignTool = () => {
         }
       };
 
+      console.log('Sending search request:', searchParams);
       const results = await networkDesignApi.findPath(searchParams);
+      console.log('Received search results:', results);
       setSearchResults(results);
       setExpandedAccordion('results');
 
@@ -164,7 +166,11 @@ const NetworkDesignTool = () => {
         paths,
         contract_term: formData.contractTerm,
         output_currency: formData.outputCurrency,
-        include_ull: formData.includeULL
+        include_ull: formData.includeULL,
+        bandwidth: parseFloat(formData.bandwidth),
+        source: formData.source,
+        destination: formData.destination,
+        protection_required: formData.protectionRequired
       };
 
       const pricing = await networkDesignApi.calculatePricing(pricingParams);
@@ -179,7 +185,54 @@ const NetworkDesignTool = () => {
       }
 
     } catch (err) {
-      setError('Search failed: ' + err.message);
+      console.error('Search error:', err);
+      console.error('Error response:', err.response);
+      console.error('Error response data:', err.response?.data);
+      
+      // Check if the error has exclusion reasons (from 404 response)
+      if (err.response && err.response.status === 404 && err.response.data && err.response.data.exclusionReasons) {
+        const exclusionData = err.response.data.exclusionReasons;
+        
+        let errorMessage = 'No route available with current parameters.\n\n';
+        const reasons = [];
+        
+        if (exclusionData.bandwidth.count > 0) {
+          const requiredBw = exclusionData.bandwidth.routes[0]?.required_bandwidth;
+          const availableBw = exclusionData.bandwidth.routes[0]?.available_bandwidth;
+          reasons.push(`Bandwidth: ${exclusionData.bandwidth.count} routes excluded (required: ${requiredBw} Mbps, highest available: ${availableBw} Mbps)`);
+        }
+        
+        if (exclusionData.carrier_avoidance.count > 0) {
+          const carriers = exclusionData.carrier_avoidance.carriers.join(', ');
+          reasons.push(`Carrier avoidance: ${exclusionData.carrier_avoidance.count} routes excluded (avoiding: ${carriers})`);
+        }
+        
+        if (exclusionData.mtu_requirement.count > 0) {
+          const requiredMtu = exclusionData.mtu_requirement.routes[0]?.required_mtu;
+          const availableMtu = exclusionData.mtu_requirement.routes[0]?.available_mtu;
+          reasons.push(`MTU requirements: ${exclusionData.mtu_requirement.count} routes excluded (required: ${requiredMtu}, available: ${availableMtu})`);
+        }
+        
+        if (exclusionData.ull_restriction.count > 0) {
+          reasons.push(`ULL restriction: ${exclusionData.ull_restriction.count} Special/ULL routes excluded (Include ULL disabled)`);
+        }
+        
+        if (exclusionData.decommission_pop && exclusionData.decommission_pop.count > 0) {
+          const decommissionedLocations = [...new Set(exclusionData.decommission_pop.routes.map(r => r.decommissioned_location))];
+          reasons.push(`Decommissioned POPs: ${exclusionData.decommission_pop.count} routes excluded (locations: ${decommissionedLocations.join(', ')})`);
+        }
+        
+        if (reasons.length > 0) {
+          errorMessage += 'Constraints that prevented routing:\n• ' + reasons.join('\n• ');
+          errorMessage += '\n\nSuggested actions:\n• Reduce bandwidth requirements\n• Remove carrier avoidance restrictions\n• Lower MTU requirements\n• Enable "Include ULL" if Special/ULL routes are acceptable\n• Try different source/destination locations';
+        }
+        
+        errorMessage += `\n\nRoute analysis: ${exclusionData.total_routes_available} total routes, ${exclusionData.total_routes_excluded} excluded by constraints`;
+        
+        setError(errorMessage);
+      } else {
+        setError('Search failed: ' + (err.response?.data?.error || err.message));
+      }
     } finally {
       setLoading(false);
     }
@@ -249,6 +302,26 @@ const NetworkDesignTool = () => {
           </AccordionSummary>
           <AccordionDetails>
             <Grid container spacing={3}>
+              {/* Customer Name */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Customer Name"
+                  value={formData.customerName}
+                  onChange={(e) => handleInputChange('customerName', e.target.value)}
+                />
+              </Grid>
+
+              {/* Quote Request ID */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Quote Request ID"
+                  value={formData.quoteRequestId}
+                  onChange={(e) => handleInputChange('quoteRequestId', e.target.value)}
+                />
+              </Grid>
+
               {/* Source and Destination - Now searchable */}
               <Grid item xs={12} md={6}>
                 <Autocomplete
@@ -376,26 +449,6 @@ const NetworkDesignTool = () => {
                 </FormControl>
               </Grid>
 
-              {/* Quote Request ID */}
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Quote Request ID"
-                  value={formData.quoteRequestId}
-                  onChange={(e) => handleInputChange('quoteRequestId', e.target.value)}
-                />
-              </Grid>
-
-              {/* Customer Name */}
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Customer Name"
-                  value={formData.customerName}
-                  onChange={(e) => handleInputChange('customerName', e.target.value)}
-                />
-              </Grid>
-
               {/* Action Buttons */}
               <Grid item xs={12}>
                 <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
@@ -444,7 +497,7 @@ const NetworkDesignTool = () => {
                             </TableRow>
                           </TableHead>
                           <TableBody>
-                            {searchResults.primaryPath.route.map((segment, index) => (
+                            {searchResults.primaryPath.route?.map((segment, index) => (
                               <TableRow key={index}>
                                 <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                 <TableCell>{segment.from} → {segment.to}</TableCell>
@@ -487,7 +540,7 @@ const NetworkDesignTool = () => {
                               </TableRow>
                             </TableHead>
                             <TableBody>
-                              {searchResults.diversePath.route.map((segment, index) => (
+                              {searchResults.diversePath.route?.map((segment, index) => (
                                 <TableRow key={index}>
                                   <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                   <TableCell>{segment.from} → {segment.to}</TableCell>
@@ -511,6 +564,151 @@ const NetworkDesignTool = () => {
                   </Grid>
                 )}
 
+                {/* Route Information Summary */}
+                <Grid item xs={12}>
+                  <Card variant="outlined">
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom>Route Information</Typography>
+                      
+                      {/* Protection Status */}
+                      {searchResults.protectionStatus && (
+                        <Box sx={{ mb: 2 }}>
+                          <Typography variant="subtitle2" gutterBottom>
+                            Protection Status:
+                          </Typography>
+                          <Chip 
+                            label={searchResults.protectionStatus.message}
+                            color={searchResults.protectionStatus.available === false && searchResults.protectionStatus.required ? 'warning' : 'success'}
+                            size="small"
+                            sx={{ mr: 1 }}
+                          />
+                          
+                          {/* Show alert when protection is required but not available */}
+                          {searchResults.protectionStatus.required && !searchResults.protectionStatus.available && (
+                            <Alert severity="warning" sx={{ mt: 1 }}>
+                              <Typography variant="body2">
+                                <strong>Protection Route Not Available:</strong> No diverse path could be found with the current constraints. 
+                                The primary route is available, but protection requirements cannot be met.
+                              </Typography>
+                              
+                              {/* Show detailed failure reasons if available */}
+                              {searchResults.protectionStatus.failureReasons && (
+                                <Box sx={{ mt: 2 }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>
+                                    Protection Failure Analysis:
+                                  </Typography>
+                                  
+                                  <Typography variant="body2" sx={{ mb: 1 }}>
+                                    • Primary path using: {searchResults.protectionStatus.failureReasons.primary_path_blocked}
+                                  </Typography>
+                                  
+                                  {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.source_isolated && (
+                                    <Typography variant="body2" sx={{ mb: 1, color: 'error.main' }}>
+                                      • Source location has no alternative connections after removing primary path
+                                    </Typography>
+                                  )}
+                                  
+                                  {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.destination_isolated && (
+                                    <Typography variant="body2" sx={{ mb: 1, color: 'error.main' }}>
+                                      • Destination location has no alternative connections after removing primary path
+                                    </Typography>
+                                  )}
+                                  
+                                  <Typography variant="body2" sx={{ mb: 1 }}>
+                                    • Alternative routes remaining: {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.total_remaining_edges}
+                                  </Typography>
+                                  
+                                  {(searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.bandwidth_still_excluding > 0 ||
+                                    searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.carrier_avoidance_still_excluding > 0 ||
+                                    searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.mtu_still_excluding > 0 ||
+                                    searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.ull_still_excluding > 0) && (
+                                    <Box sx={{ mt: 1 }}>
+                                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                                        Constraints still limiting protection routes:
+                                      </Typography>
+                                      {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.bandwidth_still_excluding > 0 && (
+                                        <Typography variant="body2">
+                                          • Bandwidth constraints excluding {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.bandwidth_still_excluding} additional routes
+                                        </Typography>
+                                      )}
+                                      {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.carrier_avoidance_still_excluding > 0 && (
+                                        <Typography variant="body2">
+                                          • Carrier avoidance excluding {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.carrier_avoidance_still_excluding} additional routes
+                                        </Typography>
+                                      )}
+                                      {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.mtu_still_excluding > 0 && (
+                                        <Typography variant="body2">
+                                          • MTU requirements excluding {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.mtu_still_excluding} additional routes
+                                        </Typography>
+                                      )}
+                                      {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.ull_still_excluding > 0 && (
+                                        <Typography variant="body2">
+                                          • ULL restrictions excluding {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.ull_still_excluding} additional routes
+                                        </Typography>
+                                      )}
+                                    </Box>
+                                  )}
+                                  
+                                  <Typography variant="body2" sx={{ mt: 2, fontStyle: 'italic', color: 'text.secondary' }}>
+                                    Suggestion: {searchResults.protectionStatus.failureReasons.suggestion}
+                                  </Typography>
+                                </Box>
+                              )}
+                            </Alert>
+                          )}
+                        </Box>
+                      )}
+                      
+                      {/* Exclusion Reasons Summary */}
+                      {searchResults.exclusionReasons && (
+                        <Box sx={{ mb: 2 }}>
+                          <Typography variant="subtitle2" gutterBottom>
+                            Route Filtering Summary:
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            Total routes available: {searchResults.exclusionReasons.total_routes_available}, 
+                            Excluded: {searchResults.exclusionReasons.total_routes_excluded}
+                          </Typography>
+                          
+                          {(searchResults.exclusionReasons.bandwidth.count > 0 || 
+                            searchResults.exclusionReasons.carrier_avoidance.count > 0 || 
+                            searchResults.exclusionReasons.mtu_requirement.count > 0 ||
+                            searchResults.exclusionReasons.ull_restriction.count > 0) && (
+                            <Box sx={{ mt: 1 }}>
+                              <Typography variant="body2" color="text.secondary">
+                                Exclusion reasons:
+                              </Typography>
+                              <Box component="ul" sx={{ m: 0, pl: 2 }}>
+                                {searchResults.exclusionReasons.bandwidth.count > 0 && (
+                                  <Typography component="li" variant="body2" color="text.secondary">
+                                    {searchResults.exclusionReasons.bandwidth.count} routes excluded due to insufficient bandwidth
+                                  </Typography>
+                                )}
+                                {searchResults.exclusionReasons.carrier_avoidance.count > 0 && (
+                                  <Typography component="li" variant="body2" color="text.secondary">
+                                    {searchResults.exclusionReasons.carrier_avoidance.count} routes excluded due to carrier avoidance 
+                                    ({searchResults.exclusionReasons.carrier_avoidance.carriers.join(', ')})
+                                  </Typography>
+                                )}
+                                {searchResults.exclusionReasons.mtu_requirement.count > 0 && (
+                                  <Typography component="li" variant="body2" color="text.secondary">
+                                    {searchResults.exclusionReasons.mtu_requirement.count} routes excluded due to MTU requirements
+                                  </Typography>
+                                )}
+                                {searchResults.exclusionReasons.ull_restriction.count > 0 && (
+                                  <Typography component="li" variant="body2" color="text.secondary">
+                                    {searchResults.exclusionReasons.ull_restriction.count} Special/ULL routes excluded (Include ULL disabled)
+                                  </Typography>
+                                )}
+                              </Box>
+                            </Box>
+                          )}
+                        </Box>
+                      )}
+                    </CardContent>
+                  </Card>
+                </Grid>
+
                 {/* Action Buttons */}
                 <Grid item xs={12}>
                   <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
@@ -528,50 +726,134 @@ const NetworkDesignTool = () => {
           </Accordion>
         )}
 
-        {/* Pricing Results */}
+        {/* Enhanced Pricing Results */}
         {pricingResults && (
           <Accordion expanded={expandedAccordion === 'pricing'} onChange={() => setExpandedAccordion(expandedAccordion === 'pricing' ? '' : 'pricing')} sx={{ mt: 2 }}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <AttachMoneyIcon sx={{ mr: 1 }} />
-                <Typography variant="h6">Pricing Results</Typography>
+                <Typography variant="h6">Enhanced Pricing Results</Typography>
               </Box>
             </AccordionSummary>
             <AccordionDetails>
               <Grid container spacing={3}>
+                {/* Individual Path Pricing */}
                 {pricingResults.results.map((result, index) => (
                   <Grid item xs={12} md={6} key={index}>
-                    <Card>
-                      <CardHeader title={`${index === 0 ? 'Primary' : 'Secondary'} Path Pricing`} />
+                    <Card sx={{ height: '100%' }}>
+                      <CardHeader 
+                        title={`${result.pathType === 'primary' ? 'Primary' : 'Protection'} Path`}
+                        subheader={`${result.hops} hops, ${formatLatency(result.totalLatency)}ms latency`}
+                      />
                       <CardContent>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <Typography variant="body2">Monthly Cost:</Typography>
-                            <Typography variant="body2" fontWeight="bold">
-                              {formatCurrency(result.pricing.monthlyCost, result.pricing.currency)}
-                            </Typography>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                          {/* Price Range */}
+                          <Box sx={{ bgcolor: 'grey.50', p: 2, borderRadius: 1 }}>
+                            <Typography variant="subtitle2" gutterBottom>Price Range</Typography>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                              <Typography variant="body2" color="success.main">Minimum (40% margin):</Typography>
+                              <Typography variant="body2" fontWeight="bold" color="success.main">
+                                {formatCurrency(result.pricing.minimumPrice, result.pricing.currency)}
+                              </Typography>
+                            </Box>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <Typography variant="body2" color="warning.main">Suggested (60% margin):</Typography>
+                              <Typography variant="body2" fontWeight="bold" color="warning.main">
+                                {formatCurrency(result.pricing.suggestedPrice, result.pricing.currency)}
+                              </Typography>
+                            </Box>
                           </Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <Typography variant="body2">Setup Cost:</Typography>
-                            <Typography variant="body2">
-                              {formatCurrency(result.pricing.setupCost, result.pricing.currency)}
-                            </Typography>
+
+                          {/* Cost Breakdown */}
+                          <Box>
+                            <Typography variant="subtitle2" gutterBottom>Cost Analysis</Typography>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                              <Typography variant="body2">Allocated Cost:</Typography>
+                              <Typography variant="body2">
+                                {formatCurrency(result.pricing.allocatedCost, result.pricing.currency)}
+                              </Typography>
+                            </Box>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                              <Typography variant="body2">Location Minimum:</Typography>
+                              <Typography variant="body2">
+                                {formatCurrency(result.pricing.locationMinimum, result.pricing.currency)}
+                              </Typography>
+                            </Box>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <Typography variant="body2">Bandwidth:</Typography>
+                              <Typography variant="body2">{result.pricing.bandwidth} Mbps</Typography>
+                            </Box>
                           </Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <Typography variant="body2">Total Contract Value:</Typography>
-                            <Typography variant="body2" fontWeight="bold">
-                              {formatCurrency(result.pricing.totalContractValue, result.pricing.currency)}
+
+                          {/* Margin Information */}
+                          <Box sx={{ bgcolor: 'info.50', p: 1.5, borderRadius: 1 }}>
+                            <Typography variant="caption" display="block">
+                              Actual Margins: {result.pricing.minimumMargin}% - {result.pricing.suggestedMargin}%
                             </Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <Typography variant="caption">Contract Term:</Typography>
-                            <Typography variant="caption">{result.pricing.contractTerm} months</Typography>
+                            {result.pricing.marginEnforced && (
+                              <Typography variant="caption" color="warning.main" display="block">
+                                ⚠ Minimum price enforced by location requirements
+                              </Typography>
+                            )}
                           </Box>
                         </Box>
                       </CardContent>
                     </Card>
                   </Grid>
                 ))}
+
+                {/* Protection Pricing (if applicable) */}
+                {pricingResults.protectionPricing && (
+                  <Grid item xs={12}>
+                    <Card sx={{ bgcolor: 'primary.50' }}>
+                      <CardHeader 
+                        title="Protected Service Pricing"
+                        subheader="100% Primary + 70% Protection"
+                      />
+                      <CardContent>
+                        <Grid container spacing={3}>
+                          <Grid item xs={12} md={6}>
+                            <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1 }}>
+                              <Typography variant="subtitle2" gutterBottom>Protected Price Range</Typography>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                <Typography variant="body1" color="success.main">Minimum (40% margin):</Typography>
+                                <Typography variant="h6" fontWeight="bold" color="success.main">
+                                  {formatCurrency(pricingResults.protectionPricing.minimumPrice, pricingResults.protectionPricing.currency)}
+                                </Typography>
+                              </Box>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <Typography variant="body1" color="warning.main">Suggested (60% margin):</Typography>
+                                <Typography variant="h6" fontWeight="bold" color="warning.main">
+                                  {formatCurrency(pricingResults.protectionPricing.suggestedPrice, pricingResults.protectionPricing.currency)}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </Grid>
+                          <Grid item xs={12} md={6}>
+                            <Box>
+                              <Typography variant="subtitle2" gutterBottom>Protection Analysis</Typography>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                                <Typography variant="body2">Combined Allocated Cost:</Typography>
+                                <Typography variant="body2">
+                                  {formatCurrency(pricingResults.protectionPricing.allocatedCost, pricingResults.protectionPricing.currency)}
+                                </Typography>
+                              </Box>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                                <Typography variant="body2">Actual Margins:</Typography>
+                                <Typography variant="body2">
+                                  {pricingResults.protectionPricing.minimumMargin}% - {pricingResults.protectionPricing.suggestedMargin}%
+                                </Typography>
+                              </Box>
+                              <Typography variant="caption" color="text.secondary">
+                                Provides full redundancy with backup path
+                              </Typography>
+                            </Box>
+                          </Grid>
+                        </Grid>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                )}
               </Grid>
             </AccordionDetails>
           </Accordion>

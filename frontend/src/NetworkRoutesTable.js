@@ -7,20 +7,21 @@ import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import { downloadTestResults } from './api';
 
 const columns = [
-  { id: 'location_a', label: 'Location A' },
-  { id: 'location_b', label: 'Location B' },
+  { id: 'location_a', label: 'Location\nA', vertical: true },
+  { id: 'location_b', label: 'Location\nB', vertical: true },
   { id: 'circuit_id', label: 'UCN' },
-  { id: 'expected_latency', label: 'Expected Latency (ms)' },
-  { id: 'live_latency', label: 'Live Latency (ms)' },
+  { id: 'expected_latency', label: 'Expected\nLatency\n(ms)', vertical: true },
+  { id: 'live_latency', label: 'Live\nLatency\n(ms)', vertical: true },
   { id: 'bandwidth', label: 'Bandwidth' },
-  { id: 'underlying_carrier', label: 'Underlying Carrier' },
-  { id: 'cable_system', label: 'Cable System' },
-  { id: 'is_special', label: 'Special/ULL' },
-  { id: 'kmz_file_path', label: 'KMZ File', align: 'center' },
-  { id: 'test_results_file', label: 'Test Results', align: 'center' },
+  { id: 'underlying_carrier', label: 'Underlying\nCarrier', vertical: true },
+  { id: 'cable_system', label: 'Cable\nSystem', vertical: true },
+  { id: 'is_special', label: 'Special/\nULL', vertical: true },
+  { id: 'capacity_usage_percent', label: 'Capacity\nUsage %', vertical: true },
+  { id: 'kmz_file_path', label: 'KMZ\nFile', align: 'center', vertical: true },
+  { id: 'test_results_file', label: 'Test\nResults', align: 'center', vertical: true },
   { id: 'mtu', label: 'MTU' },
-  { id: 'sla_latency', label: 'SLA Latency (ms)' },
-  { id: 'more_details', label: 'More Details' },
+  { id: 'sla_latency', label: 'SLA\nLatency\n(ms)', vertical: true },
+  { id: 'more_details', label: 'More\nDetails', vertical: true, align: 'center' },
 ];
 
 const textCellStyle = {
@@ -41,6 +42,16 @@ const SmallTableHeaderCell = styled(TableCell)(({ theme }) => ({
   fontSize: '0.8125rem', // ~13px, 2pt smaller than default header
   fontWeight: 600,
   padding: '6px 8px',
+}));
+
+const VerticalHeaderCell = styled(TableCell)(({ theme }) => ({
+  fontSize: '0.8125rem',
+  fontWeight: 600,
+  padding: '6px 4px',
+  whiteSpace: 'pre-line',
+  textAlign: 'center',
+  lineHeight: 1.2,
+  minWidth: '60px',
 }));
 
 const compactButtonStyle = {
@@ -84,9 +95,14 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
       <Table size="small">
         <TableHead>
           <TableRow>
-            {columns.map(col => (
-              <SmallTableHeaderCell key={col.id} align={col.align || 'left'}>{col.label}</SmallTableHeaderCell>
-            ))}
+            {columns.map(col => {
+              const HeaderCell = col.vertical ? VerticalHeaderCell : SmallTableHeaderCell;
+              return (
+                <HeaderCell key={col.id} align={col.align || 'left'}>
+                  {col.label}
+                </HeaderCell>
+              );
+            })}
           </TableRow>
         </TableHead>
         <TableBody>
@@ -116,7 +132,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
                 }
                 if (col.id === 'bandwidth' && row.bandwidth === 'Dark Fiber') {
                   return (
-                    <SmallTableCell key={col.id} style={{ ...textCellStyle, verticalAlign: 'middle', whiteSpace: 'nowrap' }} align="center">
+                    <SmallTableCell key={col.id} style={{ ...textCellStyle, verticalAlign: 'middle' }} align="left">
                       <span
                         style={darkFiberLinkStyle}
                         onClick={e => { e.stopPropagation(); onOpenDarkFiber(row.circuit_id); }}
@@ -166,7 +182,9 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
                 ];
                 return (
                   <SmallTableCell key={col.id} style={textHeavy.includes(col.id) ? textCellStyle : {}} align={col.align || 'left'}>
-                    {col.id === 'is_special' ? (row[col.id] ? 'Yes' : 'No') : row[col.id]}
+                    {col.id === 'is_special' ? (row[col.id] ? 'Yes' : 'No') :
+                     col.id === 'capacity_usage_percent' && row[col.id] ? `${row[col.id]}%` :
+                     row[col.id]}
                   </SmallTableCell>
                 );
               })}

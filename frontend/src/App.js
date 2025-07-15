@@ -272,21 +272,21 @@ function AuthenticatedApp() {
       
       case 'exchange-rates':
         return hasModuleAccess('exchange_rates') ? (
-          <ExchangeRatesManager />
+          <ExchangeRatesManager hasPermission={hasPermission} />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
       case 'location-data':
         return hasModuleAccess('locations') ? (
-          <LocationDataManager />
+          <LocationDataManager hasPermission={hasPermission} />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
         
       case 'carriers':
         return hasModuleAccess('carriers') ? (
-          <CarriersManager />
+          <CarriersManager hasPermission={hasPermission} />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );

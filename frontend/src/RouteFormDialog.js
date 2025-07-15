@@ -23,6 +23,7 @@ const defaultValues = {
   location_a: '',
   location_b: '',
   bandwidth: '',
+  capacity_usage_percent: '',
   more_details: ''
 };
 
@@ -395,6 +396,20 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
               onChange={handleChange}
               fullWidth
               helperText="Enter numeric value (Mbps) or 'Dark Fiber'"
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              label="Capacity Usage %"
+              name="capacity_usage_percent"
+              value={values.capacity_usage_percent}
+              onChange={handleChange}
+              type="number"
+              step="0.1"
+              min="0"
+              max="1000"
+              fullWidth
+              helperText="Percentage value (0-1000%)"
             />
           </Grid>
           <Grid item xs={12} md={6}>

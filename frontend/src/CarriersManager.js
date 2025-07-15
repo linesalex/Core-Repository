@@ -14,7 +14,7 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import axios from 'axios';
 
-const CarriersManager = () => {
+const CarriersManager = ({ hasPermission }) => {
   const [carriers, setCarriers] = useState([]);
   const [contacts, setContacts] = useState({});
   const [loading, setLoading] = useState(true);
@@ -287,13 +287,15 @@ const CarriersManager = () => {
           Manage Carriers
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={handleAddCarrier}
-          >
-            Add Carrier
-          </Button>
+          {hasPermission && hasPermission('carriers', 'create') && (
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={handleAddCarrier}
+            >
+              Add Carrier
+            </Button>
+          )}
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
@@ -342,29 +344,36 @@ const CarriersManager = () => {
                   </TableCell>
                   <TableCell>{getStatusChip(carrier.status)}</TableCell>
                   <TableCell align="center">
-                    <Tooltip title="Edit">
-                      <IconButton 
-                        size="small" 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleEditCarrier(carrier);
-                        }}
-                      >
-                        <EditIcon />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Delete">
-                      <IconButton 
-                        size="small" 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteCarrier(carrier);
-                        }}
-                        color="error"
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    </Tooltip>
+                    {hasPermission && hasPermission('carriers', 'edit') && (
+                      <Tooltip title="Edit">
+                        <IconButton 
+                          size="small" 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditCarrier(carrier);
+                          }}
+                        >
+                          <EditIcon />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {hasPermission && hasPermission('carriers', 'delete') && (
+                      <Tooltip title="Delete">
+                        <IconButton 
+                          size="small" 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteCarrier(carrier);
+                          }}
+                          color="error"
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {(!hasPermission || (!hasPermission('carriers', 'edit') && !hasPermission('carriers', 'delete'))) && (
+                      <Typography variant="body2" color="text.secondary">-</Typography>
+                    )}
                   </TableCell>
                 </TableRow>
                 

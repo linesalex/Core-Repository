@@ -230,6 +230,52 @@ const migrations = [
         UPDATE pop_capabilities SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
       END;
     `
+  },
+  {
+    name: 'Add Minimum Pricing to Location Reference',
+    sql: `
+      -- Add minimum pricing columns to location_reference table
+      ALTER TABLE location_reference ADD COLUMN min_price_under_100mb DECIMAL DEFAULT 0;
+      ALTER TABLE location_reference ADD COLUMN min_price_100_to_999mb DECIMAL DEFAULT 0;
+      ALTER TABLE location_reference ADD COLUMN min_price_1000_to_2999mb DECIMAL DEFAULT 0;
+      ALTER TABLE location_reference ADD COLUMN min_price_3000mb_plus DECIMAL DEFAULT 0;
+    `
+  },
+  {
+    name: 'Fix Carriers Unique Constraint for Regional Duplicates',
+    sql: `
+      -- Create new carriers table with proper constraints
+      CREATE TABLE IF NOT EXISTS carriers_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        carrier_name TEXT NOT NULL,
+        previously_known_as TEXT,
+        status TEXT NOT NULL DEFAULT 'active', -- 'active', 'inactive'
+        region TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER,
+        updated_by INTEGER,
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        FOREIGN KEY (updated_by) REFERENCES users(id),
+        UNIQUE(carrier_name, region) -- Allow same carrier in different regions
+      );
+      
+      -- Copy data from old table
+      INSERT INTO carriers_new (id, carrier_name, previously_known_as, status, region, created_at, updated_at, created_by, updated_by)
+      SELECT id, carrier_name, previously_known_as, status, region, created_at, updated_at, created_by, updated_by
+      FROM carriers;
+      
+      -- Drop old table and rename new one
+      DROP TABLE carriers;
+      ALTER TABLE carriers_new RENAME TO carriers;
+      
+      -- Recreate the update trigger
+      CREATE TRIGGER IF NOT EXISTS update_carriers_timestamp 
+      AFTER UPDATE ON carriers
+      BEGIN
+        UPDATE carriers SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END;
+    `
   }
 ];
 
