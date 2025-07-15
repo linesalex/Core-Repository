@@ -1,146 +1,293 @@
-# Network Inventory
+# Network Inventory Management System
 
-A comprehensive full-stack application for managing global telecommunications network inventory across multiple repositories, including network routes, dark fiber details, DWDM channel reservations, and more.
+A comprehensive enterprise-grade application for managing global telecommunications network infrastructure, featuring advanced pricing calculations, user authentication, and multi-tier location management.
 
-## Features
+## 🚀 Quick Start
 
-### Core Functionality
-- **Multiple Repository Support**: Expandable architecture supporting different types of network inventories
-- **Network Routes Repository**: Add, edit, delete, and view network routes with advanced filtering
-- **Search & Export**: Powerful search functionality and CSV export capabilities
-- **File Management**: KMZ file uploads and multiple test results file handling with ZIP downloads
+**For detailed Windows setup instructions, see [SETUP_GUIDE.md](SETUP_GUIDE.md)**
 
-### Advanced Features
-- **Dark Fiber Management**: Comprehensive DWDM channel tracking with wavelength and equipment details
-- **Reservation System**: 60-day reservation system for DWDM UCNs with automatic expiry
-- **Real-time Notifications**: Popup notifications for reservation actions and status updates
-- **Circuit ID Management**: Strict validation and non-editable circuit IDs (UCN format: 6 letters + 6 digits)
-
-### User Interface
-- **Modern React UI**: Clean, responsive interface with Material-UI components
-- **Sidebar Navigation**: Organized repository structure with expandable sections
-- **Enhanced Modals**: Large, clear displays for detailed information and actions
-- **Status Indicators**: Visual chips and indicators for reservation status and expiry dates
-
-## Technical Stack
-- **Frontend**: React 18, Material-UI, Axios
-- **Backend**: Node.js, Express, SQLite3
-- **Features**: Multiple file uploads, ZIP archive creation, reservation tracking
-
-## Requirements
-- Node.js (v16 or later)
-- npm
-- SQLite3
-
-## Database Schema
-The application supports a multi-repository architecture with:
-- **Repository Types**: Extensible repository management
-- **Network Routes**: Core network route data with timestamps
-- **Dark Fiber Details**: DWDM channel management with reservation system
-- **File Management**: KMZ and test results file tracking
-- **Reservation Logs**: Complete audit trail of reservation activities
-
-## Installation & Setup
-
-### 1. Backend Setup
 ```bash
+# Backend Setup
 cd backend
 npm install
-node init_db.js  # Initialize database with new schema
-npm run dev      # Start development server on port 5000
-```
+node init_db.js
+npm start
 
-### 2. Frontend Setup
-```bash
+# Frontend Setup (new terminal)
 cd frontend
 npm install
-npm start        # Start development server on port 3000
+npm start
 ```
 
-### 3. Database Migration
-If upgrading from the previous version, run the database initialization script to update the schema:
-```bash
-cd backend
-node init_db.js
+**Default Login**: Username: `admin`, Password: `admin123`
+
+## ✨ Key Features
+
+### 🔐 Authentication & Authorization
+- **Role-based Access Control**: Administrator, Provisioner, and Read-only roles
+- **Permission System**: Granular permissions for each module and action
+- **User Management**: Complete user lifecycle management with activity logging
+- **Secure Authentication**: JWT-based authentication with session management
+
+### 🌐 Network Design & Pricing Tool
+- **Advanced Path Finding**: Intelligent routing with protection path calculations
+- **Dynamic Pricing Engine**: 
+  - Layer 2 pricing with bandwidth allocation
+  - Minimum price enforcement by location and bandwidth tier
+  - 40% minimum and 60% suggested margin calculations
+  - Multi-currency support with real-time exchange rates
+- **Location Management**: Comprehensive POP database with capabilities tracking
+- **Carrier Management**: Multi-regional carrier database with contact management
+
+### 🔧 Network Routes Management
+- **CRUD Operations**: Full lifecycle management of network routes
+- **Advanced Search**: Multi-criteria filtering and search capabilities
+- **File Management**: KMZ uploads and test results file handling
+- **CSV Export**: Comprehensive data export functionality
+- **Dark Fiber Support**: DWDM channel management with reservation system
+
+### 📊 Core Outages & Monitoring
+- **Outage Tracking**: Incident management and tracking
+- **Status Monitoring**: Real-time status updates and notifications
+- **Reporting**: Comprehensive outage reporting and analytics
+
+### 💰 Exchange Rates Management
+- **Multi-currency Support**: Real-time currency conversion
+- **Rate Management**: Administrative control over exchange rates
+- **Pricing Integration**: Seamless integration with pricing calculations
+
+### 📋 Advanced Data Management
+- **Location Reference**: 
+  - POP capabilities matrix (12 different service types)
+  - Minimum pricing tiers (4 bandwidth categories)
+  - Access information and provider details
+- **Change Auditing**: Complete audit trail of all system changes
+- **Data Validation**: Strict validation rules and format enforcement
+
+## 🛠 Technical Architecture
+
+### Frontend Stack
+- **React 18**: Modern component-based UI framework
+- **Material-UI v5**: Enterprise-grade UI component library
+- **Axios**: HTTP client for API communication
+- **React Router**: Client-side routing and navigation
+
+### Backend Stack
+- **Node.js**: Server runtime environment
+- **Express.js**: Web application framework
+- **SQLite3**: Embedded database engine
+- **JWT**: JSON Web Token authentication
+- **Multer**: File upload handling
+- **Bcrypt**: Password hashing and security
+
+### Key Integrations
+- **CSV Export**: Advanced data export capabilities
+- **KMZ File Handling**: Geographic data management
+- **Multi-file Uploads**: Batch file processing
+- **Real-time Validation**: Client and server-side validation
+
+## 📁 Project Structure
+
+```
+network-inventory/
+├── backend/                 # Node.js/Express API server
+│   ├── routes.js           # Main API routes and endpoints
+│   ├── auth.js             # Authentication middleware
+│   ├── db.js               # Database connection and utilities
+│   ├── init_db.js          # Database initialization script
+│   ├── migration_script.js # Database migration utilities
+│   └── package.json        # Backend dependencies
+├── frontend/               # React application
+│   ├── src/
+│   │   ├── api.js          # API integration layer
+│   │   ├── App.js          # Main application component
+│   │   ├── AuthContext.js  # Authentication state management
+│   │   ├── NetworkDesignTool.js     # Pricing and path finding
+│   │   ├── LocationDataManager.js  # Location management
+│   │   ├── NetworkRoutesTable.js   # Routes management
+│   │   └── [other components]
+│   └── package.json        # Frontend dependencies
+├── SETUP_GUIDE.md          # Comprehensive Windows setup guide
+└── README.md               # This file
 ```
 
-## New Features Added
+## 🔑 Default Permissions Matrix
 
-### 1. Application Rebranding
-- Renamed from "Network Routes Repository" to "Network Inventory"
-- Updated sidebar navigation with expandable repository sections
+| Role          | Network Routes | Locations | Pricing | Users | Change Logs |
+|---------------|----------------|-----------|---------|-------|-------------|
+| Administrator | Full Access    | Full      | Full    | Full  | View        |
+| Provisioner   | Create/Edit    | Create/Edit| View   | None  | View        |
+| Read Only     | View Only      | View      | View    | None  | None        |
 
-### 2. Enhanced Circuit ID Management
-- Circuit ID (UCN) shown as non-editable field during editing
-- Clear visual indication that Circuit ID cannot be changed
-- Blank fields ensured when adding new entries
+## 🎯 Core Business Logic
 
-### 3. Dark Fiber Enhancements
-- **DWDM UCN Field**: Individual circuit ID for distinguishing DWDM channels
-- **Reservation System**: 60-day reservation capability with one-click booking
-- **Status Tracking**: Visual indicators for reserved, expired, and available channels
-- **Larger Modal**: Expanded view for better data visibility
+### Pricing Calculation Engine
+- **Bandwidth Allocation**: Utilizes 90% capacity factor for cost distribution
+- **Tiered Minimums**: 4-tier minimum pricing (<100Mb, 100-999Mb, 1000-2999Mb, 3000Mb+)
+- **Protection Pricing**: 100% primary + 70% secondary path costs
+- **Margin Enforcement**: Automatic enforcement of minimum margins by location
 
-### 4. File Management Improvements
-- **Multiple File Upload**: Support for uploading multiple test results files
-- **ZIP Downloads**: Automatic ZIP file creation for downloading all test results
-- **File Management**: Individual file deletion and management capabilities
+### Location Management
+- **POP Capabilities**: 12 service capability flags per location
+- **Status Tracking**: Active, Under Construction, Under Decommission
+- **Provider Integration**: Full provider and access information tracking
+- **Geographic Organization**: Country and city-based organization
 
-### 5. Database Architecture
-- **Multi-Repository Support**: Ready for additional repository types
-- **Reservation Tracking**: Complete audit trail with automatic expiry handling
-- **Enhanced Schema**: Timestamps, foreign key relationships, and data integrity
+### Security Features
+- **Password Encryption**: Bcrypt with salt rounds for secure storage
+- **Session Management**: JWT with configurable expiration
+- **Permission Validation**: Server-side permission checking on all endpoints
+- **Activity Logging**: Comprehensive audit trail of user actions
 
-## Usage
+## 🚦 API Endpoints
 
-### Adding Network Routes
-1. Navigate to Network Routes Repository in the sidebar
-2. Click "Add" to create a new route
-3. All fields will be blank for new entries
-4. Circuit ID must follow UCN format (6 letters + 6 digits)
-
-### Managing Dark Fiber
-1. Click "More Details" on any network route
-2. Access the Dark Fiber modal for DWDM channel management
-3. Add DWDM UCN for individual channel identification
-4. Use one-click reservation system for 60-day bookings
-
-### File Management
-1. Upload multiple test results files during route creation/editing
-2. Download all test results as a ZIP file using the download button
-3. Individual file management available in the interface
-
-## API Endpoints
+### Authentication
+- `POST /login` - User authentication
+- `GET /me` - Current user profile
+- `PUT /change-password` - Password modification
 
 ### Network Routes
-- `GET /api/network_routes` - List all routes
-- `POST /api/network_routes` - Create new route
-- `PUT /api/network_routes/:id` - Update route
-- `DELETE /api/network_routes/:id` - Delete route
+- `GET /network_routes` - List all routes
+- `POST /network_routes` - Create new route
+- `PUT /network_routes/:id` - Update route
+- `DELETE /network_routes/:id` - Delete route
 
-### Dark Fiber & Reservations
-- `GET /api/dark_fiber_details/:circuit_id` - Get dark fiber details
-- `POST /api/dark_fiber_details/:id/reserve` - Reserve DWDM UCN
-- `POST /api/dark_fiber_details/:id/release` - Release reservation
+### Network Design
+- `POST /network_design/find_path` - Path finding algorithm
+- `POST /network_design/calculate_pricing` - Pricing calculations
+- `POST /network_design/generate_kmz` - KMZ file generation
 
-### File Management
-- `POST /api/network_routes/:id/upload_test_results` - Upload multiple files
-- `GET /api/network_routes/:id/download_test_results` - Download ZIP archive
-- `DELETE /api/test_results_files/:id` - Delete individual file
+### Locations & Pricing
+- `GET /locations` - List all locations
+- `PUT /locations/:id/minimum-pricing` - Update minimum pricing (Admin only)
+- `GET /locations/:id/capabilities` - Get POP capabilities
 
-## Development Notes
+## 📊 Database Schema
 
-### Future Expansion
-The architecture supports easy addition of new repository types:
-1. Add new repository type to database
-2. Create corresponding UI components
-3. Add to sidebar navigation structure
+### Core Tables
+- **users**: User accounts and roles
+- **role_permissions**: Permission matrix
+- **network_routes**: Network route inventory
+- **location_reference**: POP database with pricing tiers
+- **carriers**: Carrier information with regional support
+- **exchange_rates**: Currency conversion rates
+- **change_logs**: Complete audit trail
 
-### Reservation System
-- Automatic expiry after 60 days
-- Complete audit trail in reservation_logs table
-- Real-time status updates and notifications
+### Enhanced Features
+- **Minimum Pricing**: 4-tier pricing structure per location
+- **POP Capabilities**: 12-field capability matrix
+- **Regional Carriers**: Support for same carrier in different regions
+- **Flexible Capacity**: 0-1000% capacity usage range
+
+## 🔧 Development
+
+### Prerequisites
+- Node.js v16+ (v18+ recommended)
+- npm v8+
+- Modern web browser
+- Windows 10+ (for production deployment)
+
+### Development Setup
+```bash
+# Clone repository
+git clone [repo-url]
+cd network-inventory
+
+# Backend development
+cd backend
+npm install
+npm run dev  # Development server with auto-reload
+
+# Frontend development
+cd frontend
+npm install
+npm start    # React development server
+```
+
+### Build for Production
+```bash
+# Frontend production build
+cd frontend
+npm run build
+
+# Backend production mode
+cd backend
+NODE_ENV=production npm start
+```
+
+## 🛡 Security Considerations
+
+### Authentication Security
+- JWT tokens with secure expiration
+- Bcrypt password hashing (10 salt rounds)
+- Role-based access control on all endpoints
+- Session invalidation on logout
+
+### Data Protection
+- Input validation and sanitization
+- SQL injection prevention
+- File upload restrictions and validation
+- Cross-origin resource sharing (CORS) configuration
+
+### Production Security
+- Environment variable configuration
+- Secure database file permissions
+- Regular security updates for dependencies
+- Audit logging for compliance
+
+## 📈 Performance & Scalability
+
+### Current Capacity
+- SQLite database (suitable for thousands of records)
+- File-based storage for uploads
+- In-memory session management
+
+### Optimization Features
+- Database indexing on key fields
+- Efficient query patterns
+- Client-side data caching
+- Compressed file uploads
+
+### Scaling Considerations
+- Database migration path to PostgreSQL/MySQL
+- File storage migration to cloud services
+- Load balancing for multiple instances
+- Redis integration for session management
+
+## 🔄 Maintenance & Updates
+
+### Regular Maintenance
+- Database optimization and cleanup
+- File storage management
+- Security patches and updates
+- User access reviews
+
+### Monitoring
+- Application logs and error tracking
+- Database performance monitoring
+- File storage capacity tracking
+- User activity analysis
+
+## 📞 Support & Documentation
+
+### Getting Help
+1. Check [SETUP_GUIDE.md](SETUP_GUIDE.md) for installation issues
+2. Review component-specific README files in `/backend` and `/frontend`
+3. Check application logs for error details
+4. Consult the troubleshooting section in setup guide
+
+### Documentation
+- **Backend API**: See `/backend/README.md`
+- **Frontend Components**: See `/frontend/README.md`
+- **Database Schema**: See `network_routes_schema.sql`
+- **Windows Setup**: See `SETUP_GUIDE.md`
+
+## 📄 License & Usage
+
+This is an enterprise network inventory management system designed for telecommunications infrastructure management. Ensure proper backup and security measures are in place before production deployment.
 
 ---
 
-**Network Inventory** - Comprehensive telecommunications network management solution 
+**Version**: 2.0  
+**Last Updated**: January 2025  
+**Compatibility**: Windows 10+, Node.js 16+, Modern Browsers 
