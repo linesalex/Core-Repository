@@ -20,6 +20,8 @@ import HistoryIcon from '@mui/icons-material/History';
 import PeopleIcon from '@mui/icons-material/People';
 import BusinessIcon from '@mui/icons-material/Business';
 import DataObjectIcon from '@mui/icons-material/DataObject';
+import TableRowsIcon from '@mui/icons-material/TableRows';
+import ContactsIcon from '@mui/icons-material/Contacts';
 import { AuthProvider, useAuth } from './AuthContext';
 import LoginForm from './LoginForm';
 import NetworkRoutesTable from './NetworkRoutesTable';
@@ -30,6 +32,7 @@ import UserManagement from './UserManagement';
 import ChangeLogsViewer from './ChangeLogsViewer';
 import CoreOutagesTable from './CoreOutagesTable';
 import CarriersManager from './CarriersManager';
+import ExchangeDataManager from './ExchangeDataManager';
 import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults } from './api';
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
@@ -58,6 +61,7 @@ function AuthenticatedApp() {
   // New state for tab management
   const [currentTab, setCurrentTab] = useState('network-routes');
   const [networkDesignOpen, setNetworkDesignOpen] = useState(false);
+  const [exchangeDataOpen, setExchangeDataOpen] = useState(false);
   const [exchangeRatesOpen, setExchangeRatesOpen] = useState(false);
   const [networkDataOpen, setNetworkDataOpen] = useState(false);
   
@@ -291,6 +295,20 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'exchange-feeds':
+        return hasModuleAccess('exchange_data') ? (
+          <ExchangeDataManager hasPermission={hasPermission} initialTab={0} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'exchange-contacts':
+        return hasModuleAccess('exchange_data') ? (
+          <ExchangeDataManager hasPermission={hasPermission} initialTab={1} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'change-logs':
         return hasModuleAccess('change_logs') ? (
           <ChangeLogsViewer />
@@ -471,6 +489,37 @@ function AuthenticatedApp() {
                     >
                       <ListItemIcon><DesignServicesIcon /></ListItemIcon>
                       <ListItemText primary="Design & Pricing" />
+                    </ListItem>
+                  </List>
+                </Collapse>
+              </>
+            )}
+
+            {/* Exchange Data */}
+            {hasModuleAccess('exchange_data') && (
+              <>
+                <ListItem button onClick={() => setExchangeDataOpen(!exchangeDataOpen)}>
+                  <ListItemIcon><DataObjectIcon /></ListItemIcon>
+                  <ListItemText primary="Exchange Data" />
+                  {exchangeDataOpen ? <ExpandLess /> : <ExpandMore />}
+                </ListItem>
+                <Collapse in={exchangeDataOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('exchange-feeds')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'exchange-feeds' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><TableRowsIcon /></ListItemIcon>
+                      <ListItemText primary="Exchange Feeds" />
+                    </ListItem>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('exchange-contacts')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'exchange-contacts' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><ContactsIcon /></ListItemIcon>
+                      <ListItemText primary="Exchange Contacts" />
                     </ListItem>
                   </List>
                 </Collapse>

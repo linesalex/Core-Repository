@@ -276,6 +276,116 @@ const migrations = [
         UPDATE carriers SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
       END;
     `
+  },
+  {
+    name: 'Create Exchange Data Tables',
+    sql: `
+      -- Create exchanges table for main exchange information
+      CREATE TABLE IF NOT EXISTS exchanges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        exchange_name TEXT NOT NULL,
+        region TEXT NOT NULL, -- 'AMERs', 'APAC', 'EMEA'
+        available BOOLEAN DEFAULT 1, -- YES/NO
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER,
+        updated_by INTEGER,
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        FOREIGN KEY (updated_by) REFERENCES users(id),
+        UNIQUE(exchange_name, region) -- Allow same exchange in different regions
+      );
+      
+      -- Create exchange_feeds table for individual feed details
+      CREATE TABLE IF NOT EXISTS exchange_feeds (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        exchange_id INTEGER NOT NULL,
+        feed_name TEXT NOT NULL,
+        isf_a TEXT,
+        isf_b TEXT,
+        dr_available BOOLEAN DEFAULT 0,
+        bandwidth_1ms TEXT,
+        available_now BOOLEAN DEFAULT 0,
+        quick_quote BOOLEAN DEFAULT 0,
+        pass_through_fees INTEGER DEFAULT 0, -- Amount in base currency units
+        pass_through_currency TEXT DEFAULT 'USD',
+        design_file_path TEXT, -- PDF file path
+        more_info TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER,
+        updated_by INTEGER,
+        FOREIGN KEY (exchange_id) REFERENCES exchanges(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        FOREIGN KEY (updated_by) REFERENCES users(id)
+      );
+      
+      -- Create exchange_contacts table for exchange contact information
+      CREATE TABLE IF NOT EXISTS exchange_contacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        exchange_id INTEGER NOT NULL,
+        contact_name TEXT NOT NULL,
+        job_title TEXT,
+        country TEXT,
+        phone_number TEXT,
+        email TEXT,
+        contact_type TEXT, -- Free text field
+        daily_contact BOOLEAN DEFAULT 0,
+        more_info TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER,
+        updated_by INTEGER,
+        FOREIGN KEY (exchange_id) REFERENCES exchanges(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        FOREIGN KEY (updated_by) REFERENCES users(id)
+      );
+      
+      -- Create exchange_files table for PDF design files
+      CREATE TABLE IF NOT EXISTS exchange_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        exchange_feed_id INTEGER NOT NULL,
+        filename TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        file_size INTEGER,
+        uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (exchange_feed_id) REFERENCES exchange_feeds(id) ON DELETE CASCADE
+      );
+      
+      -- Create triggers for timestamp updates
+      CREATE TRIGGER IF NOT EXISTS update_exchanges_timestamp 
+      AFTER UPDATE ON exchanges
+      BEGIN
+        UPDATE exchanges SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END;
+      
+      CREATE TRIGGER IF NOT EXISTS update_exchange_feeds_timestamp 
+      AFTER UPDATE ON exchange_feeds
+      BEGIN
+        UPDATE exchange_feeds SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END;
+      
+      CREATE TRIGGER IF NOT EXISTS update_exchange_contacts_timestamp 
+      AFTER UPDATE ON exchange_contacts
+      BEGIN
+        UPDATE exchange_contacts SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END;
+    `
+  },
+  {
+    name: 'Add Exchange Data Permissions',
+    sql: `
+      -- Administrator permissions for exchange data
+      INSERT OR IGNORE INTO role_permissions (role_name, module_name, can_view, can_create, can_edit, can_delete) VALUES
+      ('administrator', 'exchange_data', 1, 1, 1, 1);
+      
+      -- Provisioner permissions (can only manage feeds and contacts, not exchanges)
+      INSERT OR IGNORE INTO role_permissions (role_name, module_name, can_view, can_create, can_edit, can_delete) VALUES
+      ('provisioner', 'exchange_data', 1, 0, 1, 0);
+      
+      -- Read-only permissions
+      INSERT OR IGNORE INTO role_permissions (role_name, module_name, can_view, can_create, can_edit, can_delete) VALUES
+      ('read_only', 'exchange_data', 1, 0, 0, 0);
+    `
   }
 ];
 

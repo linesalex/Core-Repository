@@ -2214,4 +2214,456 @@ function generateKMLFromPaths(paths, locationMap, metadata) {
   return kmlContent;
 }
 
+// ====================================
+// EXCHANGE DATA ENDPOINTS
+// ====================================
+
+// Configure multer for PDF uploads
+const exchangeStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadDir = path.join(__dirname, 'exchange_files');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'exchange_design_' + uniqueSuffix + '.pdf');
+  }
+});
+
+const exchangeUpload = multer({ 
+  storage: exchangeStorage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB limit
+  fileFilter: function (req, file, cb) {
+    if (file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF files are allowed'), false);
+    }
+  }
+});
+
+// Get all exchanges
+router.get('/exchanges', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+  const { search, region, available } = req.query;
+  
+  let sql = 'SELECT * FROM exchanges WHERE 1=1';
+  let params = [];
+  
+  if (search) {
+    sql += ' AND exchange_name LIKE ?';
+    params.push(`%${search}%`);
+  }
+  
+  if (region) {
+    sql += ' AND region = ?';
+    params.push(region);
+  }
+  
+  if (available !== undefined) {
+    sql += ' AND available = ?';
+    params.push(available === 'true' ? 1 : 0);
+  }
+  
+  sql += ' ORDER BY region, exchange_name';
+  
+  db.all(sql, params, (err, exchanges) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(exchanges);
+  });
+});
+
+// Create exchange (admin only)
+router.post('/exchanges', authenticateToken, authorizePermission('exchange_data', 'create'), (req, res) => {
+  const { exchange_name, region, available } = req.body;
+  
+  if (!exchange_name || !region) {
+    return res.status(400).json({ error: 'Exchange name and region are required' });
+  }
+  
+  db.run(
+    'INSERT INTO exchanges (exchange_name, region, available, created_by) VALUES (?, ?, ?, ?)',
+    [exchange_name, region, available !== false ? 1 : 0, req.user.id],
+    function(err) {
+      if (err) {
+        if (err.message.includes('UNIQUE constraint failed')) {
+          return res.status(400).json({ error: `Exchange '${exchange_name}' already exists in region '${region}'` });
+        }
+        return res.status(500).json({ error: err.message });
+      }
+      
+      logChange(req.user.id, 'exchanges', this.lastID, 'CREATE', null, { exchange_name, region, available }, req);
+      
+      res.status(201).json({ id: this.lastID, exchange_name, message: 'Exchange created successfully' });
+    }
+  );
+});
+
+// Update exchange (admin only)
+router.put('/exchanges/:id', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+  const { exchange_name, region, available } = req.body;
+  const exchangeId = req.params.id;
+  
+  // Check if exchange has feeds or contacts (prevent deletion if it does)
+  db.get('SELECT COUNT(*) as feed_count FROM exchange_feeds WHERE exchange_id = ?', [exchangeId], (err, feedResult) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    db.get('SELECT COUNT(*) as contact_count FROM exchange_contacts WHERE exchange_id = ?', [exchangeId], (err, contactResult) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      // Get current exchange data for change logging
+      db.get('SELECT * FROM exchanges WHERE id = ?', [exchangeId], (err, oldExchange) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!oldExchange) return res.status(404).json({ error: 'Exchange not found' });
+        
+        db.run(
+          'UPDATE exchanges SET exchange_name = ?, region = ?, available = ?, updated_by = ? WHERE id = ?',
+          [exchange_name, region, available !== false ? 1 : 0, req.user.id, exchangeId],
+          function(err) {
+            if (err) {
+              if (err.message.includes('UNIQUE constraint failed')) {
+                return res.status(400).json({ error: `Exchange '${exchange_name}' already exists in region '${region}'` });
+              }
+              return res.status(500).json({ error: err.message });
+            }
+            if (this.changes === 0) return res.status(404).json({ error: 'Exchange not found' });
+            
+            logChange(req.user.id, 'exchanges', exchangeId, 'UPDATE', oldExchange, { exchange_name, region, available }, req);
+            
+            res.json({ message: 'Exchange updated successfully' });
+          }
+        );
+      });
+    });
+  });
+});
+
+// Delete exchange (admin only, only if no feeds or contacts)
+router.delete('/exchanges/:id', authenticateToken, authorizePermission('exchange_data', 'delete'), (req, res) => {
+  const exchangeId = req.params.id;
+  
+  // Check if exchange has feeds or contacts
+  db.get('SELECT COUNT(*) as feed_count FROM exchange_feeds WHERE exchange_id = ?', [exchangeId], (err, feedResult) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    db.get('SELECT COUNT(*) as contact_count FROM exchange_contacts WHERE exchange_id = ?', [exchangeId], (err, contactResult) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      if (feedResult.feed_count > 0 || contactResult.contact_count > 0) {
+        return res.status(400).json({ 
+          error: 'Cannot delete exchange with existing feeds or contacts',
+          details: `Exchange has ${feedResult.feed_count} feeds and ${contactResult.contact_count} contacts`
+        });
+      }
+      
+      // Get current exchange data for change logging
+      db.get('SELECT * FROM exchanges WHERE id = ?', [exchangeId], (err, oldExchange) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!oldExchange) return res.status(404).json({ error: 'Exchange not found' });
+        
+        db.run('DELETE FROM exchanges WHERE id = ?', [exchangeId], function(err) {
+          if (err) return res.status(500).json({ error: err.message });
+          if (this.changes === 0) return res.status(404).json({ error: 'Exchange not found' });
+          
+          logChange(req.user.id, 'exchanges', exchangeId, 'DELETE', oldExchange, null, req);
+          
+          res.json({ message: 'Exchange deleted successfully' });
+        });
+      });
+    });
+  });
+});
+
+// Get exchange feeds for a specific exchange
+router.get('/exchanges/:id/feeds', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+  const exchangeId = req.params.id;
+  const { search } = req.query;
+  
+  let sql = 'SELECT * FROM exchange_feeds WHERE exchange_id = ?';
+  let params = [exchangeId];
+  
+  if (search) {
+    sql += ' AND feed_name LIKE ?';
+    params.push(`%${search}%`);
+  }
+  
+  sql += ' ORDER BY feed_name';
+  
+  db.all(sql, params, (err, feeds) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(feeds);
+  });
+});
+
+// Create exchange feed
+router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exchange_data', 'edit'), exchangeUpload.single('design_file'), (req, res) => {
+  const exchangeId = req.params.id;
+  const {
+    feed_name, isf_a, isf_b, dr_available, bandwidth_1ms, available_now,
+    quick_quote, pass_through_fees, pass_through_currency, more_info
+  } = req.body;
+  
+  if (!feed_name) {
+    return res.status(400).json({ error: 'Feed name is required' });
+  }
+  
+  const designFilePath = req.file ? req.file.filename : null;
+  
+  db.run(
+    `INSERT INTO exchange_feeds (
+      exchange_id, feed_name, isf_a, isf_b, dr_available, bandwidth_1ms,
+      available_now, quick_quote, pass_through_fees, pass_through_currency,
+      design_file_path, more_info, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      exchangeId, feed_name, isf_a, isf_b, dr_available === 'true' ? 1 : 0,
+      bandwidth_1ms, available_now === 'true' ? 1 : 0, quick_quote === 'true' ? 1 : 0,
+      parseInt(pass_through_fees) || 0, pass_through_currency || 'USD',
+      designFilePath, more_info, req.user.id
+    ],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      // If file was uploaded, record it in exchange_files table
+      if (req.file) {
+        db.run(
+          'INSERT INTO exchange_files (exchange_feed_id, filename, original_name, file_size) VALUES (?, ?, ?, ?)',
+          [this.lastID, req.file.filename, req.file.originalname, req.file.size],
+          (err) => {
+            if (err) console.error('Failed to record file upload:', err);
+          }
+        );
+      }
+      
+      logChange(req.user.id, 'exchange_feeds', this.lastID, 'CREATE', null, {
+        exchange_id: exchangeId, feed_name, isf_a, isf_b, dr_available, bandwidth_1ms,
+        available_now, quick_quote, pass_through_fees, pass_through_currency, more_info
+      }, req);
+      
+      res.status(201).json({ id: this.lastID, feed_name, message: 'Exchange feed created successfully' });
+    }
+  );
+});
+
+// Update exchange feed
+router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizePermission('exchange_data', 'edit'), exchangeUpload.single('design_file'), (req, res) => {
+  const { exchangeId, feedId } = req.params;
+  const {
+    feed_name, isf_a, isf_b, dr_available, bandwidth_1ms, available_now,
+    quick_quote, pass_through_fees, pass_through_currency, more_info
+  } = req.body;
+  
+  // Get current feed data for change logging
+  db.get('SELECT * FROM exchange_feeds WHERE id = ? AND exchange_id = ?', [feedId, exchangeId], (err, oldFeed) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldFeed) return res.status(404).json({ error: 'Exchange feed not found' });
+    
+    let designFilePath = oldFeed.design_file_path;
+    
+    // Handle new file upload
+    if (req.file) {
+      // Delete old file if it exists
+      if (oldFeed.design_file_path) {
+        const oldFilePath = path.join(__dirname, 'exchange_files', oldFeed.design_file_path);
+        if (fs.existsSync(oldFilePath)) {
+          fs.unlinkSync(oldFilePath);
+        }
+      }
+      designFilePath = req.file.filename;
+      
+      // Record new file
+      db.run(
+        'INSERT INTO exchange_files (exchange_feed_id, filename, original_name, file_size) VALUES (?, ?, ?, ?)',
+        [feedId, req.file.filename, req.file.originalname, req.file.size],
+        (err) => {
+          if (err) console.error('Failed to record file upload:', err);
+        }
+      );
+    }
+    
+    db.run(
+      `UPDATE exchange_feeds SET 
+        feed_name = ?, isf_a = ?, isf_b = ?, dr_available = ?, bandwidth_1ms = ?,
+        available_now = ?, quick_quote = ?, pass_through_fees = ?, pass_through_currency = ?,
+        design_file_path = ?, more_info = ?, updated_by = ?
+      WHERE id = ? AND exchange_id = ?`,
+      [
+        feed_name, isf_a, isf_b, dr_available === 'true' ? 1 : 0, bandwidth_1ms,
+        available_now === 'true' ? 1 : 0, quick_quote === 'true' ? 1 : 0,
+        parseInt(pass_through_fees) || 0, pass_through_currency || 'USD',
+        designFilePath, more_info, req.user.id, feedId, exchangeId
+      ],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Exchange feed not found' });
+        
+        logChange(req.user.id, 'exchange_feeds', feedId, 'UPDATE', oldFeed, {
+          feed_name, isf_a, isf_b, dr_available, bandwidth_1ms, available_now,
+          quick_quote, pass_through_fees, pass_through_currency, more_info
+        }, req);
+        
+        res.json({ message: 'Exchange feed updated successfully' });
+      }
+    );
+  });
+});
+
+// Delete exchange feed
+router.delete('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+  const { exchangeId, feedId } = req.params;
+  
+  // Get current feed data for change logging and file cleanup
+  db.get('SELECT * FROM exchange_feeds WHERE id = ? AND exchange_id = ?', [feedId, exchangeId], (err, oldFeed) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldFeed) return res.status(404).json({ error: 'Exchange feed not found' });
+    
+    // Delete associated file if it exists
+    if (oldFeed.design_file_path) {
+      const filePath = path.join(__dirname, 'exchange_files', oldFeed.design_file_path);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    }
+    
+    db.run('DELETE FROM exchange_feeds WHERE id = ? AND exchange_id = ?', [feedId, exchangeId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Exchange feed not found' });
+      
+      logChange(req.user.id, 'exchange_feeds', feedId, 'DELETE', oldFeed, null, req);
+      
+      res.json({ message: 'Exchange feed deleted successfully' });
+    });
+  });
+});
+
+// Download exchange design file
+router.get('/exchanges/:exchangeId/feeds/:feedId/download', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+  const { exchangeId, feedId } = req.params;
+  
+  db.get('SELECT design_file_path FROM exchange_feeds WHERE id = ? AND exchange_id = ?', [feedId, exchangeId], (err, feed) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!feed || !feed.design_file_path) {
+      return res.status(404).json({ error: 'Design file not found' });
+    }
+    
+    const filePath = path.join(__dirname, 'exchange_files', feed.design_file_path);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Design file not found on server' });
+    }
+    
+    res.download(filePath, `exchange_design_${feedId}.pdf`);
+  });
+});
+
+// Get exchange contacts for a specific exchange
+router.get('/exchanges/:id/contacts', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+  const exchangeId = req.params.id;
+  
+  db.all('SELECT * FROM exchange_contacts WHERE exchange_id = ? ORDER BY contact_name', [exchangeId], (err, contacts) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(contacts);
+  });
+});
+
+// Create exchange contact
+router.post('/exchanges/:id/contacts', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+  const exchangeId = req.params.id;
+  const {
+    contact_name, job_title, country, phone_number, email,
+    contact_type, daily_contact, more_info
+  } = req.body;
+  
+  if (!contact_name) {
+    return res.status(400).json({ error: 'Contact name is required' });
+  }
+  
+  db.run(
+    `INSERT INTO exchange_contacts (
+      exchange_id, contact_name, job_title, country, phone_number, email,
+      contact_type, daily_contact, more_info, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      exchangeId, contact_name, job_title, country, phone_number, email,
+      contact_type, daily_contact === 'true' ? 1 : 0, more_info, req.user.id
+    ],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      logChange(req.user.id, 'exchange_contacts', this.lastID, 'CREATE', null, {
+        exchange_id: exchangeId, contact_name, job_title, country, phone_number,
+        email, contact_type, daily_contact, more_info
+      }, req);
+      
+      res.status(201).json({ id: this.lastID, contact_name, message: 'Exchange contact created successfully' });
+    }
+  );
+});
+
+// Update exchange contact
+router.put('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+  const { exchangeId, contactId } = req.params;
+  const {
+    contact_name, job_title, country, phone_number, email,
+    contact_type, daily_contact, more_info
+  } = req.body;
+  
+  // Get current contact data for change logging
+  db.get('SELECT * FROM exchange_contacts WHERE id = ? AND exchange_id = ?', [contactId, exchangeId], (err, oldContact) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldContact) return res.status(404).json({ error: 'Exchange contact not found' });
+    
+    db.run(
+      `UPDATE exchange_contacts SET 
+        contact_name = ?, job_title = ?, country = ?, phone_number = ?, email = ?,
+        contact_type = ?, daily_contact = ?, more_info = ?, updated_by = ?
+      WHERE id = ? AND exchange_id = ?`,
+      [
+        contact_name, job_title, country, phone_number, email,
+        contact_type, daily_contact === 'true' ? 1 : 0, more_info, req.user.id, contactId, exchangeId
+      ],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Exchange contact not found' });
+        
+        logChange(req.user.id, 'exchange_contacts', contactId, 'UPDATE', oldContact, {
+          contact_name, job_title, country, phone_number, email,
+          contact_type, daily_contact, more_info
+        }, req);
+        
+        res.json({ message: 'Exchange contact updated successfully' });
+      }
+    );
+  });
+});
+
+// Delete exchange contact
+router.delete('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+  const { exchangeId, contactId } = req.params;
+  
+  // Get current contact data for change logging
+  db.get('SELECT * FROM exchange_contacts WHERE id = ? AND exchange_id = ?', [contactId, exchangeId], (err, oldContact) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldContact) return res.status(404).json({ error: 'Exchange contact not found' });
+    
+    db.run('DELETE FROM exchange_contacts WHERE id = ? AND exchange_id = ?', [contactId, exchangeId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Exchange contact not found' });
+      
+      logChange(req.user.id, 'exchange_contacts', contactId, 'DELETE', oldContact, null, req);
+      
+      res.json({ message: 'Exchange contact deleted successfully' });
+    });
+  });
+});
+
+// Get available currencies from exchange_rates table
+router.get('/exchange-currencies', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+  db.all('SELECT currency_code, currency_name FROM exchange_rates ORDER BY currency_code', [], (err, currencies) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(currencies);
+  });
+});
+
 module.exports = router; 
