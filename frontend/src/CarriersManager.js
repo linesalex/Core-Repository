@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, Paper, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, IconButton, Chip,
-  Alert, Snackbar, Tooltip, Grid, FormControl, InputLabel, Select, MenuItem, Collapse
+  Alert, Snackbar, Tooltip, Grid, FormControl, InputLabel, Select, MenuItem, Collapse,
+  Tabs, Tab, Badge
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -12,15 +13,21 @@ import BusinessIcon from '@mui/icons-material/Business';
 import ContactsIcon from '@mui/icons-material/Contacts';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import CheckIcon from '@mui/icons-material/Check';
+import WarningIcon from '@mui/icons-material/Warning';
 import axios from 'axios';
+import { useAuth } from './AuthContext';
 
 const CarriersManager = ({ hasPermission }) => {
+  const { user } = useAuth();
   const [carriers, setCarriers] = useState([]);
   const [contacts, setContacts] = useState({});
+  const [overdueContacts, setOverdueContacts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [expandedCarrier, setExpandedCarrier] = useState(null);
+  const [currentTab, setCurrentTab] = useState(0);
   
   // Dialog states
   const [carrierDialogOpen, setCarrierDialogOpen] = useState(false);
@@ -55,7 +62,17 @@ const CarriersManager = ({ hasPermission }) => {
   // Load carriers on component mount
   useEffect(() => {
     loadCarriers();
+    if (currentTab === 1) {
+      loadOverdueContacts();
+    }
   }, []);
+
+  // Load overdue contacts when switching to overdue tab
+  useEffect(() => {
+    if (currentTab === 1) {
+      loadOverdueContacts();
+    }
+  }, [currentTab]);
 
   const loadCarriers = async () => {
     try {
@@ -70,6 +87,22 @@ const CarriersManager = ({ hasPermission }) => {
       setError('Failed to load carriers: ' + err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+
+
+  const loadOverdueContacts = async () => {
+    try {
+      const response = await axios.get('http://localhost:4000/carriers/overdue-contacts', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      setOverdueContacts(response.data);
+    } catch (err) {
+      setError('Failed to load overdue contacts: ' + err.message);
+      setOverdueContacts([]);
     }
   };
 
@@ -243,9 +276,31 @@ const CarriersManager = ({ hasPermission }) => {
       setSuccess('Contact deleted successfully');
       setDeleteContactDialogOpen(false);
       await loadContacts(selectedCarrier.id);
+      // Refresh overdue contacts if on that tab
+      if (currentTab === 1) {
+        await loadOverdueContacts();
+      }
     } catch (err) {
       setError('Failed to delete contact: ' + (err.response?.data?.error || err.message));
     }
+  };
+
+  const handleApproveContact = async (carrierId, contactId) => {
+    try {
+      await axios.post(`http://localhost:4000/carriers/${carrierId}/contacts/${contactId}/approve`, {}, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      setSuccess('Contact yearly update approved successfully');
+      await loadOverdueContacts();
+    } catch (err) {
+      setError('Failed to approve contact: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleTabChange = (event, newValue) => {
+    setCurrentTab(newValue);
   };
 
   const handleCarrierInputChange = (field, value) => {
@@ -279,6 +334,26 @@ const CarriersManager = ({ hasPermission }) => {
     return <Chip label={region} color={colors[region] || 'default'} size="small" />;
   };
 
+  const canViewOverdueContacts = () => {
+    return user?.role === 'administrator' || user?.role === 'provisioner';
+  };
+
+  const formatLastUpdated = (lastUpdated) => {
+    if (!lastUpdated) return 'Never';
+    const date = new Date(lastUpdated);
+    return date.toLocaleDateString();
+  };
+
+  const getDaysOverdueChip = (daysOverdue) => {
+    if (daysOverdue >= 730) { // 2+ years
+      return <Chip label={`${Math.floor(daysOverdue / 365)} years overdue`} color="error" size="small" />;
+    } else if (daysOverdue >= 365) { // 1+ year
+      return <Chip label={`${Math.floor(daysOverdue / 365)} year overdue`} color="warning" size="small" />;
+    } else {
+      return <Chip label={`${daysOverdue} days overdue`} color="info" size="small" />;
+    }
+  };
+
   return (
     <Box sx={{ width: '100%' }}>
       {/* Header with Actions */}
@@ -299,16 +374,42 @@ const CarriersManager = ({ hasPermission }) => {
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
-            onClick={loadCarriers}
+            onClick={currentTab === 0 ? loadCarriers : loadOverdueContacts}
           >
             Refresh
           </Button>
         </Box>
       </Box>
 
-      {/* Carriers Table */}
-      <TableContainer component={Paper}>
-        <Table>
+      {/* Tab Navigation */}
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+        <Tabs value={currentTab} onChange={handleTabChange} aria-label="carrier management tabs">
+          <Tab 
+            icon={<BusinessIcon />} 
+            label="All Carriers" 
+            id="carriers-tab-0"
+            aria-controls="carriers-tabpanel-0"
+          />
+          {canViewOverdueContacts() && (
+            <Tab 
+              icon={
+                <Badge badgeContent={overdueContacts.length} color="error">
+                  <WarningIcon />
+                </Badge>
+              } 
+              label="Overdue Contacts" 
+              id="carriers-tab-1"
+              aria-controls="carriers-tabpanel-1"
+            />
+          )}
+        </Tabs>
+      </Box>
+
+      {/* All Carriers Tab */}
+      {currentTab === 0 && (
+        <Box role="tabpanel" id="carriers-tabpanel-0" aria-labelledby="carriers-tab-0">
+          <TableContainer component={Paper}>
+            <Table>
           <TableHead>
             <TableRow>
               <TableCell>Region</TableCell>
@@ -407,6 +508,7 @@ const CarriersManager = ({ hasPermission }) => {
                                   <TableCell>Function</TableCell>
                                   <TableCell>Email</TableCell>
                                   <TableCell>Phone</TableCell>
+                                  <TableCell>Last Updated</TableCell>
                                   <TableCell>Notes</TableCell>
                                   <TableCell align="center">Actions</TableCell>
                                 </TableRow>
@@ -420,6 +522,16 @@ const CarriersManager = ({ hasPermission }) => {
                                     <TableCell>{contact.contact_function}</TableCell>
                                     <TableCell>{contact.contact_email}</TableCell>
                                     <TableCell>{contact.contact_phone}</TableCell>
+                                    <TableCell>
+                                      <Typography variant="body2">
+                                        {formatLastUpdated(contact.last_updated)}
+                                      </Typography>
+                                      {contact.last_updated && (
+                                        <Typography variant="caption" color="text.secondary">
+                                          {Math.floor((new Date() - new Date(contact.last_updated)) / (1000 * 60 * 60 * 24))} days ago
+                                        </Typography>
+                                      )}
+                                    </TableCell>
                                     <TableCell>{contact.notes}</TableCell>
                                     <TableCell align="center">
                                       <Tooltip title="Edit">
@@ -459,6 +571,89 @@ const CarriersManager = ({ hasPermission }) => {
           </TableBody>
         </Table>
       </TableContainer>
+        </Box>
+      )}
+
+      {/* Overdue Contacts Tab */}
+      {currentTab === 1 && canViewOverdueContacts() && (
+        <Box role="tabpanel" id="carriers-tabpanel-1" aria-labelledby="carriers-tab-1">
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Contacts that haven't been updated in 365+ days. Approve contacts after verifying their information is current.
+            </Typography>
+          </Box>
+          
+          {overdueContacts.length > 0 ? (
+            <TableContainer component={Paper}>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Carrier</TableCell>
+                    <TableCell>Region</TableCell>
+                    <TableCell>Contact Name</TableCell>
+                    <TableCell>Contact Function</TableCell>
+                    <TableCell>Email</TableCell>
+                    <TableCell>Phone</TableCell>
+                    <TableCell>Last Updated</TableCell>
+                    <TableCell>Days Overdue</TableCell>
+                    <TableCell align="center">Actions</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {overdueContacts.map((contact) => (
+                    <TableRow key={`${contact.carrier_id}-${contact.id}`} hover>
+                      <TableCell>
+                        <Typography variant="body2" fontWeight="bold">
+                          {contact.carrier_name}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>{getRegionChip(contact.region)}</TableCell>
+                      <TableCell>{contact.contact_name}</TableCell>
+                      <TableCell>{contact.contact_function || '-'}</TableCell>
+                      <TableCell>{contact.contact_email || '-'}</TableCell>
+                      <TableCell>{contact.contact_phone || '-'}</TableCell>
+                      <TableCell>{formatLastUpdated(contact.last_updated)}</TableCell>
+                      <TableCell>{getDaysOverdueChip(contact.days_since_update)}</TableCell>
+                      <TableCell align="center">
+                        <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
+                          <Tooltip title="Approve yearly update">
+                            <IconButton
+                              size="small"
+                              color="success"
+                              onClick={() => handleApproveContact(contact.carrier_id, contact.id)}
+                            >
+                              <CheckIcon />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Delete contact">
+                            <IconButton
+                              size="small"
+                              color="error"
+                              onClick={() => {
+                                setSelectedCarrier({ id: contact.carrier_id, carrier_name: contact.carrier_name });
+                                setSelectedContact(contact);
+                                setDeleteContactDialogOpen(true);
+                              }}
+                            >
+                              <DeleteIcon />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          ) : (
+            <Paper sx={{ p: 3, textAlign: 'center' }}>
+              <Typography variant="body1" color="text.secondary">
+                No overdue contacts found. All carrier contacts are up to date!
+              </Typography>
+            </Paper>
+          )}
+        </Box>
+      )}
 
       {/* Add/Edit Carrier Dialog */}
       <Dialog open={carrierDialogOpen} onClose={() => setCarrierDialogOpen(false)} maxWidth="md" fullWidth>

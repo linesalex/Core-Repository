@@ -142,6 +142,57 @@ const getUserPermissions = (userId, callback) => {
   });
 };
 
+// Get user permissions with module visibility
+const getUserPermissionsWithVisibility = (userId, callback) => {
+  db.get('SELECT user_role FROM users WHERE id = ?', [userId], (err, user) => {
+    if (err) return callback(err);
+    if (!user) return callback(new Error('User not found'));
+
+    // Get role-based permissions
+    db.all(
+      'SELECT module_name, can_view, can_create, can_edit, can_delete FROM role_permissions WHERE role_name = ?',
+      [user.user_role],
+      (err, permissions) => {
+        if (err) return callback(err);
+        
+        // Get user-specific module visibility settings
+        db.all(
+          'SELECT module_name, is_visible FROM user_module_visibility WHERE user_id = ?',
+          [userId],
+          (err, visibilitySettings) => {
+            if (err) return callback(err);
+            
+            const permissionMap = {};
+            const visibilityMap = {};
+            
+            // Build permission map
+            permissions.forEach(perm => {
+              permissionMap[perm.module_name] = {
+                can_view: perm.can_view,
+                can_create: perm.can_create,
+                can_edit: perm.can_edit,
+                can_delete: perm.can_delete
+              };
+            });
+            
+            // Build visibility map - default all modules to visible
+            permissions.forEach(perm => {
+              visibilityMap[perm.module_name] = true; // Default to visible
+            });
+            
+            // Override with user-specific visibility settings
+            visibilitySettings.forEach(vis => {
+              visibilityMap[vis.module_name] = !!vis.is_visible;
+            });
+            
+            callback(null, { permissions: permissionMap, visibility: visibilityMap });
+          }
+        );
+      }
+    );
+  });
+};
+
 // Log user activity
 const logUserActivity = (userId, action, details = {}) => {
   const userAgent = details.userAgent || 'Unknown';
@@ -166,5 +217,6 @@ module.exports = {
   authorizeRole,
   authorizePermission,
   getUserPermissions,
+  getUserPermissionsWithVisibility,
   logUserActivity
 }; 

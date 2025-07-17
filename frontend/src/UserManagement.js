@@ -2,13 +2,15 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, Paper, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, IconButton, Chip,
-  Alert, Snackbar, Grid, FormControl, InputLabel, Select, MenuItem, Tooltip
+  Alert, Snackbar, Grid, FormControl, InputLabel, Select, MenuItem, Tooltip, 
+  Switch, FormControlLabel, Divider
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import PersonIcon from '@mui/icons-material/Person';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
 
@@ -23,6 +25,20 @@ const UserManagement = () => {
   const [dialogMode, setDialogMode] = useState('add'); // 'add' or 'edit'
   const [selectedUser, setSelectedUser] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [visibilityDialogOpen, setVisibilityDialogOpen] = useState(false);
+  
+  // Module visibility state
+  const [moduleVisibility, setModuleVisibility] = useState({});
+  const [availableModules] = useState([
+    { key: 'network_routes', label: 'Network Routes' },
+    { key: 'network_design', label: 'Network Design & Pricing' },
+    { key: 'locations', label: 'Manage Locations' },
+    { key: 'carriers', label: 'Manage Carriers' },
+    { key: 'exchange_rates', label: 'Exchange Rates' },
+    { key: 'exchange_data', label: 'Exchange Data' },
+    { key: 'change_logs', label: 'Change Logs' },
+    { key: 'user_management', label: 'User Management' }
+  ]);
   
   // Form data
   const [formData, setFormData] = useState({
@@ -137,6 +153,34 @@ const UserManagement = () => {
     }));
   };
 
+  const handleManageVisibility = async (user) => {
+    setSelectedUser(user);
+    try {
+      const response = await axios.get(`http://localhost:4000/users/${user.id}/module-visibility`);
+      setModuleVisibility(response.data);
+      setVisibilityDialogOpen(true);
+    } catch (err) {
+      setError('Failed to load module visibility settings: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleVisibilityChange = (module, isVisible) => {
+    setModuleVisibility(prev => ({
+      ...prev,
+      [module]: isVisible
+    }));
+  };
+
+  const handleSaveVisibility = async () => {
+    try {
+      await axios.put(`http://localhost:4000/users/${selectedUser.id}/module-visibility`, moduleVisibility);
+      setSuccess('Module visibility updated successfully');
+      setVisibilityDialogOpen(false);
+    } catch (err) {
+      setError('Failed to update module visibility: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
   const getRoleChip = (role) => {
     const colors = {
       'administrator': 'error',
@@ -237,6 +281,15 @@ const UserManagement = () => {
                       onClick={() => handleEdit(user)}
                     >
                       <EditIcon />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Module Visibility">
+                    <IconButton 
+                      size="small" 
+                      onClick={() => handleManageVisibility(user)}
+                      color="primary"
+                    >
+                      <VisibilityIcon />
                     </IconButton>
                   </Tooltip>
                   {user.id !== currentUser.id && (
@@ -377,6 +430,48 @@ const UserManagement = () => {
           <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
           <Button onClick={handleDeleteConfirm} color="error" variant="contained">
             Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Module Visibility Dialog */}
+      <Dialog 
+        open={visibilityDialogOpen} 
+        onClose={() => setVisibilityDialogOpen(false)} 
+        maxWidth="md" 
+        fullWidth
+        disableRestoreFocus
+        aria-labelledby="visibility-dialog-title"
+      >
+        <DialogTitle id="visibility-dialog-title">
+          Manage Module Visibility - {selectedUser?.username}
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Control which modules are visible to this user. This affects UI visibility only and does not change user permissions.
+          </Typography>
+          <Divider sx={{ mb: 2 }} />
+          <Grid container spacing={2}>
+            {availableModules.map((module) => (
+              <Grid item xs={12} sm={6} key={module.key}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={moduleVisibility[module.key] !== false}
+                      onChange={(e) => handleVisibilityChange(module.key, e.target.checked)}
+                      color="primary"
+                    />
+                  }
+                  label={module.label}
+                />
+              </Grid>
+            ))}
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setVisibilityDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleSaveVisibility} variant="contained" color="primary">
+            Save Changes
           </Button>
         </DialogActions>
       </Dialog>

@@ -736,6 +736,48 @@ const NetworkDesignTool = () => {
               </Box>
             </AccordionSummary>
             <AccordionDetails>
+              {/* Contract Term Summary */}
+              {pricingResults.contractTermDetails && (
+                <Grid item xs={12} sx={{ mb: 3 }}>
+                  <Card sx={{ bgcolor: 'grey.50' }}>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom>
+                        Contract Term Pricing Model
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        Applied Rule: {pricingResults.contractTermDetails.appliedRule}
+                      </Typography>
+                      <Grid container spacing={2}>
+                        {Object.entries(pricingResults.contractTermDetails.rules).map(([term, rules]) => (
+                          <Grid item xs={12} md={4} key={term}>
+                            <Box sx={{ 
+                              p: 2, 
+                              border: term == pricingResults.contractTermDetails.term ? '2px solid' : '1px solid',
+                              borderColor: term == pricingResults.contractTermDetails.term ? 'primary.main' : 'grey.300',
+                              borderRadius: 1,
+                              bgcolor: term == pricingResults.contractTermDetails.term ? 'primary.50' : 'white'
+                            }}>
+                              <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>
+                                {term} Months {term == pricingResults.contractTermDetails.term ? '(Selected)' : ''}
+                              </Typography>
+                              <Typography variant="body2" sx={{ mb: 0.5 }}>
+                                Min Margin: {rules.minMargin}
+                              </Typography>
+                              <Typography variant="body2" sx={{ mb: 0.5 }}>
+                                Suggested Margin: {rules.suggestedMargin}
+                              </Typography>
+                              <Typography variant="body2" color={rules.nrc > 0 ? 'info.main' : 'success.main'} fontWeight="bold">
+                                Setup Fee: {rules.nrc > 0 ? formatCurrency(rules.nrc, pricingResults.contractTermDetails.currency) : 'FREE'}
+                              </Typography>
+                            </Box>
+                          </Grid>
+                        ))}
+                      </Grid>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              )}
+
               <Grid container spacing={3}>
                 {/* Individual Path Pricing */}
                 {pricingResults.results.map((result, index) => (
@@ -749,20 +791,51 @@ const NetworkDesignTool = () => {
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                           {/* Price Range */}
                           <Box sx={{ bgcolor: 'grey.50', p: 2, borderRadius: 1 }}>
-                            <Typography variant="subtitle2" gutterBottom>Price Range</Typography>
+                            <Typography variant="subtitle2" gutterBottom>
+                              Monthly Price Range ({result.pricing.contractTerm}-month term)
+                            </Typography>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                              <Typography variant="body2" color="success.main">Minimum (40% margin):</Typography>
+                              <Typography variant="body2" color="success.main">
+                                Minimum ({result.pricing.targetMinMargin}% margin):
+                              </Typography>
                               <Typography variant="body2" fontWeight="bold" color="success.main">
                                 {formatCurrency(result.pricing.minimumPrice, result.pricing.currency)}
                               </Typography>
                             </Box>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                              <Typography variant="body2" color="warning.main">Suggested (60% margin):</Typography>
+                              <Typography variant="body2" color="warning.main">
+                                Suggested ({result.pricing.targetSuggestedMargin}% margin):
+                              </Typography>
                               <Typography variant="body2" fontWeight="bold" color="warning.main">
                                 {formatCurrency(result.pricing.suggestedPrice, result.pricing.currency)}
                               </Typography>
                             </Box>
                           </Box>
+
+                          {/* NRC Charges */}
+                          {result.pricing.nrcCharge > 0 && (
+                            <Box sx={{ bgcolor: 'info.50', p: 2, borderRadius: 1 }}>
+                              <Typography variant="subtitle2" gutterBottom>Non-Recurring Charges (NRC)</Typography>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <Typography variant="body2">Setup Fee ({result.pricing.contractTerm}-month term):</Typography>
+                                <Typography variant="body2" fontWeight="bold" color="info.main">
+                                  {formatCurrency(result.pricing.nrcCharge, result.pricing.currency)}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          )}
+
+                          {result.pricing.nrcCharge === 0 && (
+                            <Box sx={{ bgcolor: 'success.50', p: 2, borderRadius: 1 }}>
+                              <Typography variant="subtitle2" gutterBottom>Non-Recurring Charges (NRC)</Typography>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <Typography variant="body2">Setup Fee ({result.pricing.contractTerm}-month term):</Typography>
+                                <Typography variant="body2" fontWeight="bold" color="success.main">
+                                  FREE
+                                </Typography>
+                              </Box>
+                            </Box>
+                          )}
 
                           {/* Cost Breakdown */}
                           <Box>
@@ -814,17 +887,36 @@ const NetworkDesignTool = () => {
                         <Grid container spacing={3}>
                           <Grid item xs={12} md={6}>
                             <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1 }}>
-                              <Typography variant="subtitle2" gutterBottom>Protected Price Range</Typography>
+                              <Typography variant="subtitle2" gutterBottom>
+                                Protected Monthly Price Range ({pricingResults.protectionPricing.contractTerm}-month term)
+                              </Typography>
                               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                <Typography variant="body1" color="success.main">Minimum (40% margin):</Typography>
+                                <Typography variant="body1" color="success.main">
+                                  Minimum ({pricingResults.contractTermDetails?.rules[pricingResults.protectionPricing.contractTerm]?.minMargin || 'N/A'} margin):
+                                </Typography>
                                 <Typography variant="h6" fontWeight="bold" color="success.main">
                                   {formatCurrency(pricingResults.protectionPricing.minimumPrice, pricingResults.protectionPricing.currency)}
                                 </Typography>
                               </Box>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <Typography variant="body1" color="warning.main">Suggested (60% margin):</Typography>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                                <Typography variant="body1" color="warning.main">
+                                  Suggested ({pricingResults.contractTermDetails?.rules[pricingResults.protectionPricing.contractTerm]?.suggestedMargin || 'N/A'} margin):
+                                </Typography>
                                 <Typography variant="h6" fontWeight="bold" color="warning.main">
                                   {formatCurrency(pricingResults.protectionPricing.suggestedPrice, pricingResults.protectionPricing.currency)}
+                                </Typography>
+                              </Box>
+                              
+                              {/* NRC for Protection */}
+                              <Box sx={{ bgcolor: pricingResults.protectionPricing.nrcCharge > 0 ? 'info.50' : 'success.50', p: 1.5, borderRadius: 1 }}>
+                                <Typography variant="body2" sx={{ mb: 0.5 }}>
+                                  <strong>Setup Fee (One-time):</strong>
+                                </Typography>
+                                <Typography variant="body1" fontWeight="bold" color={pricingResults.protectionPricing.nrcCharge > 0 ? 'info.main' : 'success.main'}>
+                                  {pricingResults.protectionPricing.nrcCharge > 0 
+                                    ? formatCurrency(pricingResults.protectionPricing.nrcCharge, pricingResults.protectionPricing.currency)
+                                    : 'FREE'
+                                  }
                                 </Typography>
                               </Box>
                             </Box>

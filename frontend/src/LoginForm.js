@@ -31,7 +31,7 @@ const LoginForm = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   
-  const { login } = useAuth();
+  const { login, connectionError, clearConnectionError } = useAuth();
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -40,8 +40,9 @@ const LoginForm = () => {
       [name]: value
     }));
     
-    // Clear error when user starts typing
+    // Clear errors when user starts typing
     if (error) setError('');
+    if (connectionError) clearConnectionError();
   };
 
   const handleSubmit = async (e) => {
@@ -101,9 +102,9 @@ const LoginForm = () => {
           
           <CardContent>
             <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1 }}>
-              {error && (
+              {(connectionError || error) && (
                 <Alert severity="error" sx={{ mb: 2 }}>
-                  {error}
+                  {connectionError || error}
                 </Alert>
               )}
               

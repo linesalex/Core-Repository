@@ -22,6 +22,7 @@ import BusinessIcon from '@mui/icons-material/Business';
 import DataObjectIcon from '@mui/icons-material/DataObject';
 import TableRowsIcon from '@mui/icons-material/TableRows';
 import ContactsIcon from '@mui/icons-material/Contacts';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import { AuthProvider, useAuth } from './AuthContext';
 import LoginForm from './LoginForm';
 import NetworkRoutesTable from './NetworkRoutesTable';
@@ -33,6 +34,7 @@ import ChangeLogsViewer from './ChangeLogsViewer';
 import CoreOutagesTable from './CoreOutagesTable';
 import CarriersManager from './CarriersManager';
 import ExchangeDataManager from './ExchangeDataManager';
+import BulkUpload from './BulkUpload';
 import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults } from './api';
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
@@ -42,7 +44,7 @@ const drawerWidth = 280;
 
 // Main authenticated application component
 function AuthenticatedApp() {
-  const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, hasPermission } = useAuth();
+  const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, hasPermission, permissions, connectionError } = useAuth();
   
   const [openDetails, setOpenDetails] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
@@ -59,7 +61,7 @@ function AuthenticatedApp() {
   const [networkRoutesOpen, setNetworkRoutesOpen] = useState(true);
   
   // New state for tab management
-  const [currentTab, setCurrentTab] = useState('network-routes');
+  const [currentTab, setCurrentTab] = useState('welcome');
   const [networkDesignOpen, setNetworkDesignOpen] = useState(false);
   const [exchangeDataOpen, setExchangeDataOpen] = useState(false);
   const [exchangeRatesOpen, setExchangeRatesOpen] = useState(false);
@@ -83,6 +85,45 @@ function AuthenticatedApp() {
         });
     }
   }, [isAuthenticated, hasModuleAccess]);
+
+  // Auto-select first available module when user logs in
+  useEffect(() => {
+    if (isAuthenticated && currentTab === 'welcome') {
+      // List of modules in order of preference
+      const modulePreferences = [
+        'network-routes',
+        'network-design', 
+        'location-data',
+        'carriers',
+        'exchange-rates',
+        'exchange-feeds',
+        'exchange-contacts',
+        'change-logs',
+        'user-management'
+      ];
+      
+      // Find the first module the user has access to
+      const firstAvailableModule = modulePreferences.find(module => {
+        const moduleMap = {
+          'network-routes': 'network_routes',
+          'network-design': 'network_design',
+          'location-data': 'locations',
+          'carriers': 'carriers',
+          'exchange-rates': 'exchange_rates',
+          'exchange-feeds': 'exchange_data',
+          'exchange-contacts': 'exchange_data',
+          'change-logs': 'change_logs',
+          'user-management': 'user_management'
+        };
+        return hasModuleAccess(moduleMap[module]);
+      });
+      
+      // If we found an available module, switch to it
+      if (firstAvailableModule) {
+        setCurrentTab(firstAvailableModule);
+      }
+    }
+  }, [isAuthenticated, hasModuleAccess, currentTab]);
   
   // Show loading spinner while checking authentication
   if (authLoading) {
@@ -323,6 +364,13 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'bulk-upload':
+        return hasModuleAccess('user_management') ? (
+          <BulkUpload />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'core-outages':
         return hasModuleAccess('network_routes') ? (
           <CoreOutagesTable />
@@ -330,11 +378,24 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'welcome':
       default:
         return (
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h5" gutterBottom>Welcome to Network Inventory</Typography>
-            <Typography>Select a module from the sidebar to get started.</Typography>
+          <Paper sx={{ p: 3 }}>
+            <Typography variant="h4" gutterBottom color="primary">
+              Welcome to Network Inventory
+            </Typography>
+            <Typography variant="h6" gutterBottom color="text.secondary">
+              Hello, {user?.full_name || user?.username}!
+            </Typography>
+            <Typography variant="body1" sx={{ mt: 2, mb: 2 }}>
+              Select a module from the sidebar to get started with managing your network infrastructure.
+            </Typography>
+            {Object.keys(permissions || {}).length === 0 && (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                You don't have access to any modules yet. Please contact your administrator to grant you the necessary permissions.
+              </Alert>
+            )}
           </Paper>
         );
     }
@@ -526,29 +587,6 @@ function AuthenticatedApp() {
               </>
             )}
 
-            {/* Exchange Rates */}
-            {hasModuleAccess('exchange_rates') && (
-              <>
-                <ListItem button onClick={() => setExchangeRatesOpen(!exchangeRatesOpen)}>
-                  <ListItemIcon><CurrencyExchangeIcon /></ListItemIcon>
-                  <ListItemText primary="Exchange Rates" />
-                  {exchangeRatesOpen ? <ExpandLess /> : <ExpandMore />}
-                </ListItem>
-                <Collapse in={exchangeRatesOpen} timeout="auto" unmountOnExit>
-                  <List component="div" disablePadding>
-                    <ListItem 
-                      button 
-                      onClick={() => setCurrentTab('exchange-rates')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'exchange-rates' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                    >
-                      <ListItemIcon><CurrencyExchangeIcon /></ListItemIcon>
-                      <ListItemText primary="Manage Exchange Rates" />
-                    </ListItem>
-                  </List>
-                </Collapse>
-              </>
-            )}
-
             {/* Network Data */}
             {(hasModuleAccess('locations') || hasModuleAccess('carriers')) && (
               <>
@@ -584,6 +622,29 @@ function AuthenticatedApp() {
               </>
             )}
 
+            {/* Exchange Rates */}
+            {hasModuleAccess('exchange_rates') && (
+              <>
+                <ListItem button onClick={() => setExchangeRatesOpen(!exchangeRatesOpen)}>
+                  <ListItemIcon><CurrencyExchangeIcon /></ListItemIcon>
+                  <ListItemText primary="Exchange Rates" />
+                  {exchangeRatesOpen ? <ExpandLess /> : <ExpandMore />}
+                </ListItem>
+                <Collapse in={exchangeRatesOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('exchange-rates')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'exchange-rates' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><CurrencyExchangeIcon /></ListItemIcon>
+                      <ListItemText primary="Manage Exchange Rates" />
+                    </ListItem>
+                  </List>
+                </Collapse>
+              </>
+            )}
+
             {/* Change Logs */}
             {hasModuleAccess('change_logs') && (
               <ListItem 
@@ -607,6 +668,18 @@ function AuthenticatedApp() {
                 <ListItemText primary="User Management" />
               </ListItem>
             )}
+
+            {/* Bulk Upload (Admin Only) */}
+            {hasModuleAccess('user_management') && (
+              <ListItem 
+                button 
+                onClick={() => setCurrentTab('bulk-upload')} 
+                sx={{ backgroundColor: currentTab === 'bulk-upload' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+              >
+                <ListItemIcon><CloudUploadIcon /></ListItemIcon>
+                <ListItemText primary="Bulk Upload" />
+              </ListItem>
+            )}
           </List>
         </Box>
       </Drawer>
@@ -614,6 +687,13 @@ function AuthenticatedApp() {
       {/* Main Content */}
       <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
         <Toolbar />
+        
+        {/* Connection Error Alert */}
+        {connectionError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            <strong>Connection Error:</strong> {connectionError}
+          </Alert>
+        )}
         
         {/* Search Bar for Network Routes */}
         {currentTab === 'network-routes' && hasModuleAccess('network_routes') && (

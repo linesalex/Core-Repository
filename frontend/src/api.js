@@ -141,4 +141,67 @@ export const networkDesignApi = {
   // Convenience methods for accessing location and exchange rate data
   getLocations: () => locationDataApi.getLocations(),
   getExchangeRates: () => exchangeRatesApi.getExchangeRates()
+};
+
+// ====================================
+// BULK UPLOAD API FUNCTIONS
+// ====================================
+
+// Get list of available modules for bulk upload
+export const getBulkUploadModules = () => {
+  return Promise.resolve([
+    { id: 'network_routes', name: 'Network Routes', description: 'Bulk upload network route data' },
+    { id: 'exchange_feeds', name: 'Exchange Feeds', description: 'Bulk upload exchange feed data' },
+    { id: 'exchange_contacts', name: 'Exchange Contacts', description: 'Bulk upload exchange contact data' },
+    { id: 'exchange_rates', name: 'Exchange Rates', description: 'Bulk upload exchange rate data' },
+    { id: 'locations', name: 'Manage Locations', description: 'Bulk upload location reference data' },
+    { id: 'carriers', name: 'Manage Carriers', description: 'Bulk upload carrier data' },
+    { id: 'users', name: 'User Management', description: 'Bulk upload user account data' }
+  ]);
+};
+
+// Download CSV template for a module
+export const downloadBulkUploadTemplate = (module) => {
+  return api.get(`${API_BASE_URL}/bulk-upload/template/${module}`, {
+    responseType: 'blob'
+  }).then(response => {
+    const blob = new Blob([response.data], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${module}_template.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    return response;
+  });
+};
+
+// Download database export for a module
+export const downloadBulkUploadDatabase = (module, limit = 100) => {
+  return api.get(`${API_BASE_URL}/bulk-upload/database/${module}?limit=${limit}`, {
+    responseType: 'blob'
+  }).then(response => {
+    const blob = new Blob([response.data], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${module}_database_export.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    return response;
+  });
+};
+
+// Upload CSV file for bulk import
+export const uploadBulkData = (module, file) => {
+  const formData = new FormData();
+  formData.append('csv_file', file);
+  return api.post(`${API_BASE_URL}/bulk-upload/${module}`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
+};
+
+// Get bulk upload history
+export const getBulkUploadHistory = (page = 1, limit = 50) => {
+  return api.get(`${API_BASE_URL}/bulk-upload/history?page=${page}&limit=${limit}`);
 }; 

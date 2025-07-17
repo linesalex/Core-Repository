@@ -3,7 +3,7 @@ import {
   Box, Paper, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, IconButton, Chip,
   Alert, Snackbar, Tooltip, Grid, FormControl, InputLabel, Select, MenuItem, Collapse,
-  Tabs, Tab, FormControlLabel, Switch, Autocomplete, DialogContentText
+  FormControlLabel, Switch, Autocomplete, DialogContentText
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -20,25 +20,9 @@ import AttachFileIcon from '@mui/icons-material/AttachFile';
 import InfoIcon from '@mui/icons-material/Info';
 import axios from 'axios';
 
-// Tab Panel Component
-function TabPanel(props) {
-  const { children, value, index, ...other } = props;
-  return (
-    <div
-      role="tabpanel"
-      hidden={value !== index}
-      id={`exchange-data-tabpanel-${index}`}
-      aria-labelledby={`exchange-data-tab-${index}`}
-      {...other}
-    >
-      {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
-    </div>
-  );
-}
+
 
 const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
-  // Tab state
-  const [currentTab, setCurrentTab] = useState(initialTab);
   
   // Data states
   const [exchanges, setExchanges] = useState([]);
@@ -86,6 +70,8 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
 
   const [feedFormData, setFeedFormData] = useState({
     feed_name: '',
+    feed_delivery: 'Unicast',
+    feed_type: 'equities',
     isf_a: '',
     isf_b: '',
     dr_available: false,
@@ -94,6 +80,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     quick_quote: false,
     pass_through_fees: '',
     pass_through_currency: 'USD',
+    pass_through_fees_info: '',
     more_info: '',
     design_file: null
   });
@@ -138,7 +125,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     }
   };
 
-  const loadCurrencies = async () => {
+  const loadCurrencies = async (showSuccess = false) => {
     try {
       const response = await axios.get('http://localhost:4000/exchange-currencies', {
         headers: {
@@ -146,9 +133,18 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
         }
       });
       setCurrencies(response.data);
+      if (showSuccess) {
+        setSuccess('Currency list synchronized with Exchange Rates');
+      }
     } catch (err) {
       console.error('Failed to load currencies:', err);
+      setError('Failed to load currencies. Please refresh the page.');
     }
+  };
+
+  // Refresh currencies manually
+  const refreshCurrencies = async () => {
+    await loadCurrencies(true);
   };
 
   const loadFeeds = async (exchangeId) => {
@@ -187,19 +183,14 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
   };
 
   // Handlers
-  const handleTabChange = (event, newValue) => {
-    setCurrentTab(newValue);
-    setExpandedExchange(null);
-  };
-
   const handleExchangeRowClick = async (exchange) => {
     if (expandedExchange === exchange.id) {
       setExpandedExchange(null);
     } else {
       setExpandedExchange(exchange.id);
-      if (currentTab === 0 && !feeds[exchange.id]) {
+      if (initialTab === 0 && !feeds[exchange.id]) {
         await loadFeeds(exchange.id);
-      } else if (currentTab === 1 && !contacts[exchange.id]) {
+      } else if (initialTab === 1 && !contacts[exchange.id]) {
         await loadContacts(exchange.id);
       }
     }
@@ -262,12 +253,14 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
   };
 
   // Feed handlers
-  const handleAddFeed = (exchange) => {
+  const handleAddFeed = async (exchange) => {
     setFeedDialogMode('add');
     setSelectedExchange(exchange);
     setSelectedFeed(null);
     setFeedFormData({
       feed_name: '',
+      feed_delivery: 'Unicast',
+      feed_type: 'equities',
       isf_a: '',
       isf_b: '',
       dr_available: false,
@@ -279,15 +272,20 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       more_info: '',
       design_file: null
     });
+    
+    // Refresh currencies to ensure sync with Exchange Rates
+    await loadCurrencies();
     setFeedDialogOpen(true);
   };
 
-  const handleEditFeed = (exchange, feed) => {
+  const handleEditFeed = async (exchange, feed) => {
     setFeedDialogMode('edit');
     setSelectedExchange(exchange);
     setSelectedFeed(feed);
     setFeedFormData({
       feed_name: feed.feed_name || '',
+      feed_delivery: feed.feed_delivery || 'Unicast',
+      feed_type: feed.feed_type || 'equities',
       isf_a: feed.isf_a || '',
       isf_b: feed.isf_b || '',
       dr_available: Boolean(feed.dr_available),
@@ -296,9 +294,13 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       quick_quote: Boolean(feed.quick_quote),
       pass_through_fees: feed.pass_through_fees?.toString() || '',
       pass_through_currency: feed.pass_through_currency || 'USD',
+      pass_through_fees_info: feed.pass_through_fees_info || '',
       more_info: feed.more_info || '',
       design_file: null
     });
+    
+    // Refresh currencies to ensure sync with Exchange Rates
+    await loadCurrencies();
     setFeedDialogOpen(true);
   };
 
@@ -312,6 +314,16 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     try {
       if (!feedFormData.feed_name) {
         setError('Feed name is required');
+        return;
+      }
+      
+      if (!feedFormData.feed_delivery) {
+        setError('Feed delivery is required');
+        return;
+      }
+      
+      if (!feedFormData.feed_type) {
+        setError('Feed type is required');
         return;
       }
 
@@ -581,17 +593,12 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
         </Box>
       </Box>
 
-      {/* Tabs */}
+      {/* Content based on sidebar navigation */}
       <Box sx={{ width: '100%' }}>
-        <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-          <Tabs value={currentTab} onChange={handleTabChange} aria-label="exchange data tabs">
-            <Tab label="Exchange Feeds" id="exchange-data-tab-0" />
-            <Tab label="Exchange Contacts" id="exchange-data-tab-1" />
-          </Tabs>
-        </Box>
 
-        {/* Exchange Feeds Tab */}
-        <TabPanel value={currentTab} index={0}>
+        {/* Exchange Feeds */}
+        {initialTab === 0 && (
+          <Box sx={{ p: 3 }}>
           {/* Search and Filter */}
           <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
             <TextField
@@ -729,6 +736,8 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                 <TableHead>
                                   <TableRow>
                                     <TableCell>Feed Name</TableCell>
+                                    <TableCell>Feed Delivery</TableCell>
+                                    <TableCell>Feed Type</TableCell>
                                     <TableCell>ISF A</TableCell>
                                     <TableCell>ISF B</TableCell>
                                     <TableCell>DR Available</TableCell>
@@ -747,6 +756,8 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                     .map((feed) => (
                                     <TableRow key={feed.id}>
                                       <TableCell>{feed.feed_name}</TableCell>
+                                      <TableCell>{feed.feed_delivery || 'Unicast'}</TableCell>
+                                      <TableCell>{feed.feed_type || 'equities'}</TableCell>
                                       <TableCell>{feed.isf_a || '-'}</TableCell>
                                       <TableCell>{feed.isf_b || '-'}</TableCell>
                                       <TableCell>{getStatusChip(feed.dr_available)}</TableCell>
@@ -754,7 +765,33 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                       <TableCell>{getStatusChip(feed.available_now)}</TableCell>
                                       <TableCell>{getStatusChip(feed.quick_quote)}</TableCell>
                                       <TableCell>
-                                        {feed.pass_through_fees ? `${feed.pass_through_fees} ${feed.pass_through_currency}` : '-'}
+                                        {feed.pass_through_fees ? (
+                                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <Typography variant="body2">
+                                              {`${feed.pass_through_fees} ${feed.pass_through_currency}`}
+                                            </Typography>
+                                            {currencies.find(curr => curr.currency_code === feed.pass_through_currency) ? (
+                                              <Tooltip title="Currency available in Exchange Rates">
+                                                <CheckCircleIcon sx={{ color: 'green', fontSize: 16 }} />
+                                              </Tooltip>
+                                            ) : (
+                                              <Tooltip title="Currency not found in Exchange Rates - may need to be added">
+                                                <CancelIcon sx={{ color: 'orange', fontSize: 16 }} />
+                                              </Tooltip>
+                                            )}
+                                            {feed.pass_through_fees_info && (
+                                              <Tooltip title="Additional fees information available">
+                                                <IconButton 
+                                                  size="small" 
+                                                  onClick={() => handleMoreInfo(feed.pass_through_fees_info)}
+                                                  sx={{ p: 0.5 }}
+                                                >
+                                                  <InfoIcon sx={{ fontSize: 16, color: 'primary.main' }} />
+                                                </IconButton>
+                                              </Tooltip>
+                                            )}
+                                          </Box>
+                                        ) : '-'}
                                       </TableCell>
                                       <TableCell>{renderDesignFileCell(feed, exchange.id)}</TableCell>
                                       <TableCell>
@@ -802,10 +839,12 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
               </TableBody>
             </Table>
           </TableContainer>
-        </TabPanel>
+          </Box>
+        )}
 
-        {/* Exchange Contacts Tab */}
-        <TabPanel value={currentTab} index={1}>
+        {/* Exchange Contacts */}
+        {initialTab === 1 && (
+          <Box sx={{ p: 3 }}>
           {/* Search and Filter (same as feeds tab) */}
           <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
             <TextField
@@ -970,7 +1009,8 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
               </TableBody>
             </Table>
           </TableContainer>
-        </TabPanel>
+          </Box>
+        )}
       </Box>
 
       {/* Exchange Dialog */}
@@ -1039,6 +1079,40 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
               />
             </Grid>
             <Grid item xs={12} sm={6}>
+              <FormControl fullWidth>
+                <InputLabel>Feed Delivery *</InputLabel>
+                <Select
+                  value={feedFormData.feed_delivery}
+                  onChange={(e) => handleFeedInputChange('feed_delivery', e.target.value)}
+                  label="Feed Delivery *"
+                >
+                  <MenuItem value="Unicast">Unicast</MenuItem>
+                  <MenuItem value="Multicast">Multicast</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth>
+                <InputLabel>Feed Type *</InputLabel>
+                <Select
+                  value={feedFormData.feed_type}
+                  onChange={(e) => handleFeedInputChange('feed_type', e.target.value)}
+                  label="Feed Type *"
+                >
+                  <MenuItem value="equities">Equities</MenuItem>
+                  <MenuItem value="futures">Futures</MenuItem>
+                  <MenuItem value="options">Options</MenuItem>
+                  <MenuItem value="ETFs">ETFs</MenuItem>
+                  <MenuItem value="indices">Indices</MenuItem>
+                  <MenuItem value="crypto">Crypto</MenuItem>
+                  <MenuItem value="commodities">Commodities</MenuItem>
+                  <MenuItem value="Forex">Forex</MenuItem>
+                  <MenuItem value="mutual funds">Mutual Funds</MenuItem>
+                  <MenuItem value="treasuries">Treasuries</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 label="ISF A"
@@ -1073,16 +1147,40 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <Autocomplete
-                options={currencies}
-                getOptionLabel={(option) => `${option.currency_code} - ${option.currency_name}`}
-                value={currencies.find(curr => curr.currency_code === feedFormData.pass_through_currency) || null}
-                onChange={(event, newValue) => {
-                  handleFeedInputChange('pass_through_currency', newValue ? newValue.currency_code : 'USD');
-                }}
-                renderInput={(params) => (
-                  <TextField {...params} label="Currency" />
-                )}
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+                <Autocomplete
+                  options={currencies}
+                  getOptionLabel={(option) => `${option.currency_code} - ${option.currency_name}`}
+                  value={currencies.find(curr => curr.currency_code === feedFormData.pass_through_currency) || null}
+                  onChange={(event, newValue) => {
+                    handleFeedInputChange('pass_through_currency', newValue ? newValue.currency_code : 'USD');
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Currency" helperText="Synced with Exchange Rates" />
+                  )}
+                  sx={{ flex: 1 }}
+                />
+                <Tooltip title="Refresh currencies from Exchange Rates">
+                  <IconButton 
+                    onClick={refreshCurrencies}
+                    sx={{ mt: 1 }}
+                    size="small"
+                  >
+                    <RefreshIcon />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Pass Through Fees - Additional Info"
+                multiline
+                rows={2}
+                value={feedFormData.pass_through_fees_info}
+                onChange={(e) => handleFeedInputChange('pass_through_fees_info', e.target.value)}
+                helperText="Optional additional information about pass through fees (displayed as popup)"
+                placeholder="Enter details about pass through fees, terms, conditions, etc."
               />
             </Grid>
             <Grid item xs={12} sm={6}>

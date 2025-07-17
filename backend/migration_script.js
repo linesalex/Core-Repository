@@ -386,6 +386,57 @@ const migrations = [
       INSERT OR IGNORE INTO role_permissions (role_name, module_name, can_view, can_create, can_edit, can_delete) VALUES
       ('read_only', 'exchange_data', 1, 0, 0, 0);
     `
+  },
+  {
+    name: 'Create User Module Visibility Table',
+    sql: `
+      CREATE TABLE IF NOT EXISTS user_module_visibility (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        module_name TEXT NOT NULL,
+        is_visible BOOLEAN DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER,
+        updated_by INTEGER,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        FOREIGN KEY (updated_by) REFERENCES users(id),
+        UNIQUE(user_id, module_name)
+      );
+    `
+  },
+  {
+    name: 'Add Feed Delivery and Feed Type to Exchange Feeds',
+    sql: `
+      -- Add Feed Delivery field (Unicast or Multicast)
+      ALTER TABLE exchange_feeds ADD COLUMN feed_delivery TEXT DEFAULT 'Unicast' CHECK(feed_delivery IN ('Unicast', 'Multicast'));
+      
+      -- Add Feed Type field with multiple options
+      ALTER TABLE exchange_feeds ADD COLUMN feed_type TEXT DEFAULT 'equities' CHECK(feed_type IN ('equities', 'futures', 'options', 'ETFs', 'indices', 'crypto', 'commodities', 'Forex', 'mutual funds', 'treasuries'));
+    `
+  },
+  {
+    name: 'Add Pass Through Fees Info to Exchange Feeds',
+    sql: `
+      -- Add Pass Through Fees Info field for additional fee details
+      ALTER TABLE exchange_feeds ADD COLUMN pass_through_fees_info TEXT;
+    `
+  },
+  {
+    name: 'Add Last Updated Tracking to Carrier Contacts',
+    sql: `
+      -- Add last_updated field to track yearly contact updates
+      ALTER TABLE carrier_contacts ADD COLUMN last_updated DATETIME DEFAULT CURRENT_TIMESTAMP;
+      
+      -- Add needs_yearly_update computed status (will be calculated in application)
+      -- Add approval tracking
+      ALTER TABLE carrier_contacts ADD COLUMN approved_by INTEGER;
+      ALTER TABLE carrier_contacts ADD COLUMN approved_at DATETIME;
+      
+      -- Add foreign key for approved_by (enforced in application logic for SQLite)
+      -- FOREIGN KEY (approved_by) REFERENCES users(id)
+    `
   }
 ];
 
