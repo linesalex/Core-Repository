@@ -3,7 +3,7 @@ import {
   Box, Paper, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, IconButton, Chip,
   Alert, Snackbar, Tooltip, Grid, FormControl, InputLabel, Select, MenuItem, Collapse,
-  FormControlLabel, Switch, Autocomplete, DialogContentText
+  FormControlLabel, Switch, Autocomplete, DialogContentText, Tabs, Tab, Badge
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -18,6 +18,8 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import DownloadIcon from '@mui/icons-material/Download';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import InfoIcon from '@mui/icons-material/Info';
+import WarningIcon from '@mui/icons-material/Warning';
+import CheckIcon from '@mui/icons-material/Check';
 import axios from 'axios';
 
 
@@ -28,6 +30,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
   const [exchanges, setExchanges] = useState([]);
   const [feeds, setFeeds] = useState({});
   const [contacts, setContacts] = useState({});
+  const [overdueContacts, setOverdueContacts] = useState([]);
   const [currencies, setCurrencies] = useState([]);
   
   // UI states
@@ -41,6 +44,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
   const [feedDialogOpen, setFeedDialogOpen] = useState(false);
   const [contactDialogOpen, setContactDialogOpen] = useState(false);
   const [moreInfoDialogOpen, setMoreInfoDialogOpen] = useState(false);
+  const [isfInfoDialogOpen, setISFInfoDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   
   // Dialog modes
@@ -52,6 +56,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
   const [selectedExchange, setSelectedExchange] = useState(null);
   const [selectedFeed, setSelectedFeed] = useState(null);
   const [selectedContact, setSelectedContact] = useState(null);
+  const [selectedISFData, setSelectedISFData] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [moreInfoContent, setMoreInfoContent] = useState('');
   
@@ -60,20 +65,32 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
   const [filterRegion, setFilterRegion] = useState('');
   const [filterAvailable, setFilterAvailable] = useState('');
   const [feedSearchText, setFeedSearchText] = useState('');
+  const [currentTab, setCurrentTab] = useState(0);
   
   // Form data
   const [exchangeFormData, setExchangeFormData] = useState({
     exchange_name: '',
     region: 'AMERs',
+    salesperson_assigned: '',
     available: true
   });
 
   const [feedFormData, setFeedFormData] = useState({
     feed_name: '',
     feed_delivery: 'Unicast',
-    feed_type: 'equities',
+    feed_type: 'Equities',
+    isf_enabled: false,
     isf_a: '',
     isf_b: '',
+    isf_site_code_a: '',
+    isf_site_code_b: '',
+    isf_dr_a: '',
+    isf_dr_b: '',
+    isf_dr_site_code_a: '',
+    isf_dr_site_code_b: '',
+    dr_type: '',
+    order_entry_isf: '',
+    unicast_isf: '',
     dr_available: false,
     bandwidth_1ms: '',
     available_now: false,
@@ -102,6 +119,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
   useEffect(() => {
     loadExchanges();
     loadCurrencies();
+    loadOverdueContacts();
   }, []);
 
   const loadExchanges = async () => {
@@ -182,6 +200,33 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     }
   };
 
+  const loadOverdueContacts = async () => {
+    try {
+      const response = await axios.get('http://localhost:4000/exchanges/overdue-contacts', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      setOverdueContacts(response.data);
+    } catch (err) {
+      console.error('Failed to load overdue contacts:', err);
+    }
+  };
+
+  const handleApproveContact = async (contactId) => {
+    try {
+      await axios.post(`http://localhost:4000/exchanges/contacts/${contactId}/approve`, {}, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      setSuccess('Contact approved successfully');
+      await loadOverdueContacts();
+    } catch (err) {
+      setError('Failed to approve contact: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
   // Handlers
   const handleExchangeRowClick = async (exchange) => {
     if (expandedExchange === exchange.id) {
@@ -214,6 +259,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     setExchangeFormData({
       exchange_name: exchange.exchange_name,
       region: exchange.region,
+      salesperson_assigned: exchange.salesperson_assigned || '',
       available: Boolean(exchange.available)
     });
     setExchangeDialogOpen(true);
@@ -261,8 +307,18 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       feed_name: '',
       feed_delivery: 'Unicast',
       feed_type: 'equities',
+      isf_enabled: false,
       isf_a: '',
       isf_b: '',
+      isf_site_code_a: '',
+      isf_site_code_b: '',
+      isf_dr_a: '',
+      isf_dr_b: '',
+      isf_dr_site_code_a: '',
+      isf_dr_site_code_b: '',
+      dr_type: '',
+      order_entry_isf: '',
+      unicast_isf: '',
       dr_available: false,
       bandwidth_1ms: '',
       available_now: false,
@@ -285,9 +341,19 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     setFeedFormData({
       feed_name: feed.feed_name || '',
       feed_delivery: feed.feed_delivery || 'Unicast',
-      feed_type: feed.feed_type || 'equities',
+      feed_type: feed.feed_type || 'Equities',
+      isf_enabled: Boolean(feed.isf_enabled),
       isf_a: feed.isf_a || '',
       isf_b: feed.isf_b || '',
+      isf_site_code_a: feed.isf_site_code_a || '',
+      isf_site_code_b: feed.isf_site_code_b || '',
+      isf_dr_a: feed.isf_dr_a || '',
+      isf_dr_b: feed.isf_dr_b || '',
+      isf_dr_site_code_a: feed.isf_dr_site_code_a || '',
+      isf_dr_site_code_b: feed.isf_dr_site_code_b || '',
+      dr_type: feed.dr_type || '',
+      order_entry_isf: feed.order_entry_isf || '',
+      unicast_isf: feed.unicast_isf || '',
       dr_available: Boolean(feed.dr_available),
       bandwidth_1ms: feed.bandwidth_1ms || '',
       available_now: Boolean(feed.available_now),
@@ -325,6 +391,21 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       if (!feedFormData.feed_type) {
         setError('Feed type is required');
         return;
+      }
+
+      // ISF validation: if enabled, at least one field must be filled
+      if (feedFormData.isf_enabled) {
+        const isfFields = [
+          feedFormData.isf_a, feedFormData.isf_b, feedFormData.isf_site_code_a, feedFormData.isf_site_code_b,
+          feedFormData.isf_dr_a, feedFormData.isf_dr_b, feedFormData.isf_dr_site_code_a, feedFormData.isf_dr_site_code_b,
+          feedFormData.order_entry_isf, feedFormData.unicast_isf
+        ];
+        const hasISFData = isfFields.some(field => field && field.trim() !== '');
+        
+        if (!hasISFData) {
+          setError('Please enter ISF details or disable ISF');
+          return;
+        }
       }
 
       const formData = new FormData();
@@ -521,6 +602,11 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     setMoreInfoDialogOpen(true);
   };
 
+  const handleISFInfoOpen = (feed) => {
+    setSelectedISFData(feed);
+    setISFInfoDialogOpen(true);
+  };
+
   const getStatusChip = (available) => {
     return available ? (
       <CheckCircleIcon sx={{ color: 'green', fontSize: 20 }} />
@@ -595,11 +681,8 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
 
       {/* Content based on sidebar navigation */}
       <Box sx={{ width: '100%' }}>
-
-        {/* Exchange Feeds */}
-        {initialTab === 0 && (
-          <Box sx={{ p: 3 }}>
-          {/* Search and Filter */}
+        {/* Search and Filter */}
+        <Box sx={{ p: 3, borderBottom: 1, borderColor: 'divider' }}>
           <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
             <TextField
               size="small"
@@ -634,7 +717,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                 <MenuItem value="false">Not Available</MenuItem>
               </Select>
             </FormControl>
-            {expandedExchange && (
+            {expandedExchange && initialTab === 0 && (
               <TextField
                 size="small"
                 label="Search Feeds"
@@ -646,13 +729,35 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
             )}
           </Box>
 
-          {/* Exchanges Table with Feeds */}
+          {/* Tabs only for Exchange Contacts module */}
+          {initialTab === 1 && (
+            <Box sx={{ borderBottom: 1, borderColor: 'divider', mt: 2 }}>
+              <Tabs value={currentTab} onChange={(e, newValue) => setCurrentTab(newValue)}>
+                <Tab label="Exchange Contacts" />
+                <Tab 
+                  label={
+                    <Badge badgeContent={overdueContacts.length} color="warning">
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <WarningIcon fontSize="small" />
+                        Overdue Contacts
+                      </Box>
+                    </Badge>
+                  }
+                />
+              </Tabs>
+            </Box>
+          )}
+        </Box>
+
+        {/* Exchange Feeds View (initialTab === 0) */}
+        {initialTab === 0 && (
           <TableContainer component={Paper}>
             <Table>
               <TableHead>
                 <TableRow>
                   <TableCell>Region</TableCell>
                   <TableCell>Exchange</TableCell>
+                  <TableCell>Salesperson</TableCell>
                   <TableCell>Available</TableCell>
                   <TableCell align="center">Actions</TableCell>
                 </TableRow>
@@ -674,6 +779,11 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                           </Typography>
                           {expandedExchange === exchange.id ? <ExpandLessIcon /> : <ExpandMoreIcon />}
                         </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {exchange.salesperson_assigned || '-'}
+                        </Typography>
                       </TableCell>
                       <TableCell>{getStatusChip(exchange.available)}</TableCell>
                       <TableCell align="center">
@@ -725,7 +835,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
 
                     {/* Expanded Feeds Table */}
                     <TableRow>
-                      <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={4}>
+                      <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={5}>
                         <Collapse in={expandedExchange === exchange.id} timeout="auto" unmountOnExit>
                           <Box sx={{ margin: 1 }}>
                             <Typography variant="h6" gutterBottom component="div">
@@ -738,8 +848,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                     <TableCell>Feed Name</TableCell>
                                     <TableCell>Feed Delivery</TableCell>
                                     <TableCell>Feed Type</TableCell>
-                                    <TableCell>ISF A</TableCell>
-                                    <TableCell>ISF B</TableCell>
+                                    <TableCell>ISF</TableCell>
                                     <TableCell>DR Available</TableCell>
                                     <TableCell>Bandwidth (1ms)</TableCell>
                                     <TableCell>Available Now</TableCell>
@@ -757,9 +866,22 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                     <TableRow key={feed.id}>
                                       <TableCell>{feed.feed_name}</TableCell>
                                       <TableCell>{feed.feed_delivery || 'Unicast'}</TableCell>
-                                      <TableCell>{feed.feed_type || 'equities'}</TableCell>
-                                      <TableCell>{feed.isf_a || '-'}</TableCell>
-                                      <TableCell>{feed.isf_b || '-'}</TableCell>
+                                      <TableCell>{feed.feed_type || 'Equities'}</TableCell>
+                                      <TableCell>
+                                        {feed.isf_enabled ? (
+                                          <Tooltip title="Click to view ISF details">
+                                            <IconButton 
+                                              size="small" 
+                                              onClick={() => handleISFInfoOpen(feed)}
+                                              sx={{ color: 'green' }}
+                                            >
+                                              <CheckCircleIcon sx={{ fontSize: 20 }} />
+                                            </IconButton>
+                                          </Tooltip>
+                                        ) : (
+                                          <Typography variant="body2" color="text.secondary">-</Typography>
+                                        )}
+                                      </TableCell>
                                       <TableCell>{getStatusChip(feed.dr_available)}</TableCell>
                                       <TableCell>{feed.bandwidth_1ms || '-'}</TableCell>
                                       <TableCell>{getStatusChip(feed.available_now)}</TableCell>
@@ -770,15 +892,6 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                             <Typography variant="body2">
                                               {`${feed.pass_through_fees} ${feed.pass_through_currency}`}
                                             </Typography>
-                                            {currencies.find(curr => curr.currency_code === feed.pass_through_currency) ? (
-                                              <Tooltip title="Currency available in Exchange Rates">
-                                                <CheckCircleIcon sx={{ color: 'green', fontSize: 16 }} />
-                                              </Tooltip>
-                                            ) : (
-                                              <Tooltip title="Currency not found in Exchange Rates - may need to be added">
-                                                <CancelIcon sx={{ color: 'orange', fontSize: 16 }} />
-                                              </Tooltip>
-                                            )}
                                             {feed.pass_through_fees_info && (
                                               <Tooltip title="Additional fees information available">
                                                 <IconButton 
@@ -839,177 +952,210 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
               </TableBody>
             </Table>
           </TableContainer>
-          </Box>
         )}
 
-        {/* Exchange Contacts */}
+        {/* Exchange Contacts View (initialTab === 1) */}
         {initialTab === 1 && (
-          <Box sx={{ p: 3 }}>
-          {/* Search and Filter (same as feeds tab) */}
-          <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-            <TextField
-              size="small"
-              label="Search Exchange"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              placeholder="Search by exchange name..."
-              sx={{ minWidth: 200 }}
-            />
-            <FormControl size="small" sx={{ minWidth: 120 }}>
-              <InputLabel>Region</InputLabel>
-              <Select
-                value={filterRegion}
-                onChange={(e) => setFilterRegion(e.target.value)}
-                label="Region"
-              >
-                <MenuItem value="">All Regions</MenuItem>
-                {regions.map(region => (
-                  <MenuItem key={region} value={region}>{region}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl size="small" sx={{ minWidth: 120 }}>
-              <InputLabel>Available</InputLabel>
-              <Select
-                value={filterAvailable}
-                onChange={(e) => setFilterAvailable(e.target.value)}
-                label="Available"
-              >
-                <MenuItem value="">All</MenuItem>
-                <MenuItem value="true">Available</MenuItem>
-                <MenuItem value="false">Not Available</MenuItem>
-              </Select>
-            </FormControl>
-          </Box>
+          <>
+            {/* Exchange Contacts Tab */}
+            {currentTab === 0 && (
+              <TableContainer component={Paper}>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Region</TableCell>
+                      <TableCell>Exchange</TableCell>
+                      <TableCell>Available</TableCell>
+                      <TableCell align="center">Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {filteredExchanges.map((exchange) => (
+                      <React.Fragment key={exchange.id}>
+                        <TableRow 
+                          hover
+                          onClick={() => handleExchangeRowClick(exchange)}
+                          sx={{ cursor: 'pointer' }}
+                        >
+                          <TableCell>{getRegionChip(exchange.region)}</TableCell>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <ContactsIcon />
+                              <Typography variant="body1" fontWeight="bold">
+                                {exchange.exchange_name}
+                              </Typography>
+                              {expandedExchange === exchange.id ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                            </Box>
+                          </TableCell>
+                          <TableCell>{getStatusChip(exchange.available)}</TableCell>
+                          <TableCell align="center">
+                            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
+                              {hasPermission && hasPermission('exchange_data', 'edit') && (
+                                <Tooltip title="Add Contact">
+                                  <IconButton
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleAddContact(exchange);
+                                    }}
+                                  >
+                                    <AddIcon />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
+                            </Box>
+                          </TableCell>
+                        </TableRow>
 
-          {/* Exchanges Table with Contacts */}
-          <TableContainer component={Paper}>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Region</TableCell>
-                  <TableCell>Exchange</TableCell>
-                  <TableCell>Available</TableCell>
-                  <TableCell align="center">Actions</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {filteredExchanges.map((exchange) => (
-                  <React.Fragment key={exchange.id}>
-                    <TableRow 
-                      hover
-                      onClick={() => handleExchangeRowClick(exchange)}
-                      sx={{ cursor: 'pointer' }}
-                    >
-                      <TableCell>{getRegionChip(exchange.region)}</TableCell>
-                      <TableCell>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <ContactsIcon />
-                          <Typography variant="body1" fontWeight="bold">
-                            {exchange.exchange_name}
+                        {/* Expanded Contacts Table */}
+                        <TableRow>
+                          <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={4}>
+                            <Collapse in={expandedExchange === exchange.id} timeout="auto" unmountOnExit>
+                              <Box sx={{ margin: 1 }}>
+                                <Typography variant="h6" gutterBottom component="div">
+                                  Exchange Contacts
+                                </Typography>
+                                {contacts[exchange.id] && contacts[exchange.id].length > 0 ? (
+                                  <Table size="small">
+                                    <TableHead>
+                                      <TableRow>
+                                        <TableCell>Name</TableCell>
+                                        <TableCell>Job Title</TableCell>
+                                        <TableCell>Country</TableCell>
+                                        <TableCell>Phone Number</TableCell>
+                                        <TableCell>Email</TableCell>
+                                        <TableCell>Contact Type</TableCell>
+                                        <TableCell>Daily Contact</TableCell>
+                                        <TableCell>Last Updated</TableCell>
+                                        <TableCell>More Info</TableCell>
+                                        <TableCell align="center">Actions</TableCell>
+                                      </TableRow>
+                                    </TableHead>
+                                    <TableBody>
+                                      {contacts[exchange.id].map((contact) => (
+                                        <TableRow key={contact.id}>
+                                          <TableCell>{contact.contact_name}</TableCell>
+                                          <TableCell>{contact.job_title || '-'}</TableCell>
+                                          <TableCell>{contact.country || '-'}</TableCell>
+                                          <TableCell>{contact.phone_number || '-'}</TableCell>
+                                          <TableCell>{contact.email || '-'}</TableCell>
+                                          <TableCell>{contact.contact_type || '-'}</TableCell>
+                                          <TableCell>{getStatusChip(contact.daily_contact)}</TableCell>
+                                          <TableCell>
+                                            {contact.last_updated ? 
+                                              new Date(contact.last_updated).toLocaleDateString() : 
+                                              (contact.created_at ? new Date(contact.created_at).toLocaleDateString() : '-')
+                                            }
+                                          </TableCell>
+                                          <TableCell>
+                                            {contact.more_info ? (
+                                              <IconButton size="small" onClick={() => handleMoreInfo(contact.more_info)}>
+                                                <InfoIcon />
+                                              </IconButton>
+                                            ) : '-'}
+                                          </TableCell>
+                                          <TableCell align="center">
+                                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                              {hasPermission && hasPermission('exchange_data', 'edit') && (
+                                                <IconButton
+                                                  size="small"
+                                                  onClick={() => handleEditContact(exchange, contact)}
+                                                >
+                                                  <EditIcon />
+                                                </IconButton>
+                                              )}
+                                              {hasPermission && hasPermission('exchange_data', 'edit') && (
+                                                <IconButton
+                                                  size="small"
+                                                  onClick={() => handleDeleteContact(exchange, contact)}
+                                                >
+                                                  <DeleteIcon />
+                                                </IconButton>
+                                              )}
+                                            </Box>
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                ) : (
+                                  <Typography variant="body2" color="text.secondary">
+                                    No contacts found for this exchange.
+                                  </Typography>
+                                )}
+                              </Box>
+                            </Collapse>
+                          </TableCell>
+                        </TableRow>
+                      </React.Fragment>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+
+            {/* Overdue Contacts Tab */}
+            {currentTab === 1 && (
+              <TableContainer component={Paper} sx={{ mt: 2 }}>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Exchange</TableCell>
+                      <TableCell>Contact Name</TableCell>
+                      <TableCell>Email</TableCell>
+                      <TableCell>Phone</TableCell>
+                      <TableCell>Role</TableCell>
+                      <TableCell>Days Overdue</TableCell>
+                      <TableCell>Last Updated</TableCell>
+                      <TableCell align="center">Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {overdueContacts.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} align="center">
+                          <Typography variant="body2" color="text.secondary" sx={{ py: 4 }}>
+                            No overdue contacts found
                           </Typography>
-                          {expandedExchange === exchange.id ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                        </Box>
-                      </TableCell>
-                      <TableCell>{getStatusChip(exchange.available)}</TableCell>
-                      <TableCell align="center">
-                        <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
-                          {hasPermission && hasPermission('exchange_data', 'edit') && (
-                            <Tooltip title="Add Contact">
-                              <IconButton
-                                size="small"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAddContact(exchange);
-                                }}
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      overdueContacts.map((contact) => (
+                        <TableRow key={contact.id}>
+                          <TableCell>{contact.exchange_name}</TableCell>
+                          <TableCell>{contact.contact_name}</TableCell>
+                          <TableCell>{contact.email}</TableCell>
+                          <TableCell>{contact.phone || '-'}</TableCell>
+                          <TableCell>{contact.role || '-'}</TableCell>
+                          <TableCell>
+                            <Chip 
+                              label={`${contact.days_overdue} days`}
+                              color="warning" 
+                              size="small"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            {new Date(contact.last_contact_updated).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell align="center">
+                            <Tooltip title="Mark as updated (approve for another year)">
+                              <IconButton 
+                                size="small" 
+                                onClick={() => handleApproveContact(contact.id)}
+                                sx={{ color: 'green' }}
                               >
-                                <AddIcon />
+                                <CheckIcon />
                               </IconButton>
                             </Tooltip>
-                          )}
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-
-                    {/* Expanded Contacts Table */}
-                    <TableRow>
-                      <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={4}>
-                        <Collapse in={expandedExchange === exchange.id} timeout="auto" unmountOnExit>
-                          <Box sx={{ margin: 1 }}>
-                            <Typography variant="h6" gutterBottom component="div">
-                              Exchange Contacts
-                            </Typography>
-                            {contacts[exchange.id] && contacts[exchange.id].length > 0 ? (
-                              <Table size="small">
-                                <TableHead>
-                                  <TableRow>
-                                    <TableCell>Name</TableCell>
-                                    <TableCell>Job Title</TableCell>
-                                    <TableCell>Country</TableCell>
-                                    <TableCell>Phone Number</TableCell>
-                                    <TableCell>Email</TableCell>
-                                    <TableCell>Contact Type</TableCell>
-                                    <TableCell>Daily Contact</TableCell>
-                                    <TableCell>More Info</TableCell>
-                                    <TableCell align="center">Actions</TableCell>
-                                  </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                  {contacts[exchange.id].map((contact) => (
-                                    <TableRow key={contact.id}>
-                                      <TableCell>{contact.contact_name}</TableCell>
-                                      <TableCell>{contact.job_title || '-'}</TableCell>
-                                      <TableCell>{contact.country || '-'}</TableCell>
-                                      <TableCell>{contact.phone_number || '-'}</TableCell>
-                                      <TableCell>{contact.email || '-'}</TableCell>
-                                      <TableCell>{contact.contact_type || '-'}</TableCell>
-                                      <TableCell>{getStatusChip(contact.daily_contact)}</TableCell>
-                                      <TableCell>
-                                        {contact.more_info ? (
-                                          <IconButton size="small" onClick={() => handleMoreInfo(contact.more_info)}>
-                                            <InfoIcon />
-                                          </IconButton>
-                                        ) : '-'}
-                                      </TableCell>
-                                      <TableCell align="center">
-                                        <Box sx={{ display: 'flex', gap: 1 }}>
-                                          {hasPermission && hasPermission('exchange_data', 'edit') && (
-                                            <IconButton
-                                              size="small"
-                                              onClick={() => handleEditContact(exchange, contact)}
-                                            >
-                                              <EditIcon />
-                                            </IconButton>
-                                          )}
-                                          {hasPermission && hasPermission('exchange_data', 'edit') && (
-                                            <IconButton
-                                              size="small"
-                                              onClick={() => handleDeleteContact(exchange, contact)}
-                                            >
-                                              <DeleteIcon />
-                                            </IconButton>
-                                          )}
-                                        </Box>
-                                      </TableCell>
-                                    </TableRow>
-                                  ))}
-                                </TableBody>
-                              </Table>
-                            ) : (
-                              <Typography variant="body2" color="text.secondary">
-                                No contacts found for this exchange.
-                              </Typography>
-                            )}
-                          </Box>
-                        </Collapse>
-                      </TableCell>
-                    </TableRow>
-                  </React.Fragment>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-          </Box>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </>
         )}
       </Box>
 
@@ -1026,6 +1172,14 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                 label="Exchange Name *"
                 value={exchangeFormData.exchange_name}
                 onChange={(e) => handleExchangeInputChange('exchange_name', e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Salesperson Assigned"
+                value={exchangeFormData.salesperson_assigned}
+                onChange={(e) => handleExchangeInputChange('salesperson_assigned', e.target.value)}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -1099,35 +1253,138 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                   onChange={(e) => handleFeedInputChange('feed_type', e.target.value)}
                   label="Feed Type *"
                 >
-                  <MenuItem value="equities">Equities</MenuItem>
-                  <MenuItem value="futures">Futures</MenuItem>
-                  <MenuItem value="options">Options</MenuItem>
+                  <MenuItem value="Equities">Equities</MenuItem>
+                  <MenuItem value="Futures">Futures</MenuItem>
+                  <MenuItem value="Options">Options</MenuItem>
+                  <MenuItem value="Fixed Income">Fixed Income</MenuItem>
+                  <MenuItem value="FX">FX</MenuItem>
+                  <MenuItem value="Commodities">Commodities</MenuItem>
+                  <MenuItem value="Indices">Indices</MenuItem>
                   <MenuItem value="ETFs">ETFs</MenuItem>
-                  <MenuItem value="indices">Indices</MenuItem>
-                  <MenuItem value="crypto">Crypto</MenuItem>
-                  <MenuItem value="commodities">Commodities</MenuItem>
-                  <MenuItem value="Forex">Forex</MenuItem>
-                  <MenuItem value="mutual funds">Mutual Funds</MenuItem>
-                  <MenuItem value="treasuries">Treasuries</MenuItem>
+                  <MenuItem value="Alternative Data">Alternative Data</MenuItem>
+                  <MenuItem value="Reference Data">Reference Data</MenuItem>
+                  <MenuItem value="Mixed">Mixed</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="ISF A"
-                value={feedFormData.isf_a}
-                onChange={(e) => handleFeedInputChange('isf_a', e.target.value)}
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={feedFormData.isf_enabled}
+                    onChange={(e) => handleFeedInputChange('isf_enabled', e.target.checked)}
+                  />
+                }
+                label="ISF Enabled"
               />
             </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="ISF B"
-                value={feedFormData.isf_b}
-                onChange={(e) => handleFeedInputChange('isf_b', e.target.value)}
-              />
-            </Grid>
+            {feedFormData.isf_enabled && (
+              <>
+                {/* Multicast ISF Fields */}
+                {feedFormData.feed_delivery === 'Multicast' && (
+                  <>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="ISF A"
+                        value={feedFormData.isf_a}
+                        onChange={(e) => handleFeedInputChange('isf_a', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Site Code A"
+                        value={feedFormData.isf_site_code_a}
+                        onChange={(e) => handleFeedInputChange('isf_site_code_a', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="ISF B"
+                        value={feedFormData.isf_b}
+                        onChange={(e) => handleFeedInputChange('isf_b', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Site Code B"
+                        value={feedFormData.isf_site_code_b}
+                        onChange={(e) => handleFeedInputChange('isf_site_code_b', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="ISF DR A"
+                        value={feedFormData.isf_dr_a}
+                        onChange={(e) => handleFeedInputChange('isf_dr_a', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Site Code ISF A"
+                        value={feedFormData.isf_dr_site_code_a}
+                        onChange={(e) => handleFeedInputChange('isf_dr_site_code_a', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="ISF DR B"
+                        value={feedFormData.isf_dr_b}
+                        onChange={(e) => handleFeedInputChange('isf_dr_b', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Site Code ISF B"
+                        value={feedFormData.isf_dr_site_code_b}
+                        onChange={(e) => handleFeedInputChange('isf_dr_site_code_b', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <FormControl fullWidth>
+                        <InputLabel>DR Type (Cold or Live)</InputLabel>
+                        <Select
+                          value={feedFormData.dr_type}
+                          onChange={(e) => handleFeedInputChange('dr_type', e.target.value)}
+                          label="DR Type (Cold or Live)"
+                        >
+                          <MenuItem value="">None</MenuItem>
+                          <MenuItem value="Cold">Cold</MenuItem>
+                          <MenuItem value="Live">Live</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Order Entry ISF"
+                        value={feedFormData.order_entry_isf}
+                        onChange={(e) => handleFeedInputChange('order_entry_isf', e.target.value)}
+                      />
+                    </Grid>
+                  </>
+                )}
+
+                {/* Unicast ISF Field */}
+                {feedFormData.feed_delivery === 'Unicast' && (
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Unicast ISF"
+                      value={feedFormData.unicast_isf}
+                      onChange={(e) => handleFeedInputChange('unicast_isf', e.target.value)}
+                    />
+                  </Grid>
+                )}
+              </>
+            )}
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
@@ -1349,6 +1606,153 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setMoreInfoDialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ISF Info Dialog */}
+      <Dialog open={isfInfoDialogOpen} onClose={() => setISFInfoDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>ISF Information</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            {/* ISF A Fields */}
+            {selectedISFData?.isf_a && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="ISF A"
+                  value={selectedISFData.isf_a}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            {selectedISFData?.isf_site_code_a && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Site Code A"
+                  value={selectedISFData.isf_site_code_a}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            
+            {/* ISF B Fields */}
+            {selectedISFData?.isf_b && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="ISF B"
+                  value={selectedISFData.isf_b}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            {selectedISFData?.isf_site_code_b && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Site Code B"
+                  value={selectedISFData.isf_site_code_b}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            
+            {/* ISF DR A Fields */}
+            {selectedISFData?.isf_dr_a && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="ISF DR A"
+                  value={selectedISFData.isf_dr_a}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            {selectedISFData?.isf_dr_site_code_a && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Site Code ISF A"
+                  value={selectedISFData.isf_dr_site_code_a}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            
+            {/* ISF DR B Fields */}
+            {selectedISFData?.isf_dr_b && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="ISF DR B"
+                  value={selectedISFData.isf_dr_b}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            {selectedISFData?.isf_dr_site_code_b && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Site Code ISF B"
+                  value={selectedISFData.isf_dr_site_code_b}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            
+            {/* DR Type */}
+            {selectedISFData?.dr_type && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="DR Type"
+                  value={selectedISFData.dr_type}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            
+            {/* Order Entry ISF */}
+            {selectedISFData?.order_entry_isf && (
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Order Entry ISF"
+                  value={selectedISFData.order_entry_isf}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            
+            {/* Unicast ISF */}
+            {selectedISFData?.unicast_isf && (
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Unicast ISF"
+                  value={selectedISFData.unicast_isf}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            
+            {/* No ISF data message */}
+            {!selectedISFData?.isf_a && !selectedISFData?.isf_b && !selectedISFData?.isf_site_code_a && 
+             !selectedISFData?.isf_site_code_b && !selectedISFData?.isf_dr_a && !selectedISFData?.isf_dr_b &&
+             !selectedISFData?.isf_dr_site_code_a && !selectedISFData?.isf_dr_site_code_b && 
+             !selectedISFData?.order_entry_isf && !selectedISFData?.unicast_isf && (
+              <Grid item xs={12}>
+                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                  No ISF information available
+                </Typography>
+              </Grid>
+            )}
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setISFInfoDialogOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
 

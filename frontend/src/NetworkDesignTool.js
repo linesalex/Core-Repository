@@ -16,6 +16,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import LoadingButton from '@mui/lab/LoadingButton';
 import { networkDesignApi } from './api';
 import { getCarriers } from './api';
+import { useAuth } from './AuthContext';
 
 // Tab panel component
 function TabPanel(props) {
@@ -39,6 +40,11 @@ function TabPanel(props) {
 }
 
 const NetworkDesignTool = () => {
+  const { user } = useAuth();
+  
+  // Check if user can view pricing logs (not read-only)
+  const canViewPricingLogs = user && user.role !== 'read_only';
+  
   // Form state
   const [formData, setFormData] = useState({
     source: '',
@@ -93,16 +99,27 @@ const NetworkDesignTool = () => {
 
   const loadInitialData = async () => {
     try {
-      const [locationsData, exchangeRatesData, carriersData, auditLogsData] = await Promise.all([
+      const promises = [
         networkDesignApi.getLocations(),
         networkDesignApi.getExchangeRates(),
-        getCarriers(),
-        networkDesignApi.getAuditLogs()
-      ]);
+        getCarriers()
+      ];
+      
+      // Only load audit logs if user can view pricing logs
+      if (canViewPricingLogs) {
+        promises.push(networkDesignApi.getAuditLogs());
+      }
+      
+      const results = await Promise.all(promises);
+      const [locationsData, exchangeRatesData, carriersData, auditLogsData] = results;
       
       setLocations(locationsData);
       setCarriers(carriersData);
-      setAuditLogs(auditLogsData);
+      
+      // Only set audit logs if user can view them
+      if (canViewPricingLogs && auditLogsData) {
+        setAuditLogs(auditLogsData);
+      }
       
       // Convert exchange rates to object for easy lookup
       const ratesObj = {};
@@ -176,12 +193,14 @@ const NetworkDesignTool = () => {
       const pricing = await networkDesignApi.calculatePricing(pricingParams);
       setPricingResults(pricing);
 
-      // Refresh audit logs to show the new search
-      try {
-        const auditLogsData = await networkDesignApi.getAuditLogs();
-        setAuditLogs(auditLogsData);
-      } catch (logErr) {
-        console.error('Failed to refresh audit logs:', logErr);
+      // Refresh audit logs to show the new search (only if user can view them)
+      if (canViewPricingLogs) {
+        try {
+          const auditLogsData = await networkDesignApi.getAuditLogs();
+          setAuditLogs(auditLogsData);
+        } catch (logErr) {
+          console.error('Failed to refresh audit logs:', logErr);
+        }
       }
 
     } catch (err) {
@@ -286,7 +305,7 @@ const NetworkDesignTool = () => {
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
         <Tabs value={currentTab} onChange={handleTabChange} aria-label="network design tabs">
           <Tab icon={<SearchIcon />} label="Network Design" />
-          <Tab icon={<HistoryIcon />} label="Pricing Logs" />
+          {canViewPricingLogs && <Tab icon={<HistoryIcon />} label="Pricing Logs" />}
         </Tabs>
       </Box>
 
@@ -370,7 +389,7 @@ const NetworkDesignTool = () => {
                   type="number"
                   value={formData.mtuRequired}
                   onChange={(e) => handleInputChange('mtuRequired', e.target.value)}
-                  helperText="Default: 1500 if not specified"
+                  helperText="Default: 1500 if not specified - Maximum service MTU is 9000"
                 />
               </Grid>
 
@@ -952,64 +971,66 @@ const NetworkDesignTool = () => {
         )}
       </TabPanel>
 
-      {/* Pricing Logs Tab */}
-      <TabPanel value={currentTab} index={1}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-          <Typography variant="h6">Pricing Logs</Typography>
-          <Chip 
-            label={`${auditLogs.length} entries`} 
-            color="info" 
-            size="small"
-          />
-        </Box>
-        
-        <TableContainer component={Paper}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell><strong>Timestamp</strong></TableCell>
-                <TableCell><strong>Action</strong></TableCell>
-                <TableCell><strong>Parameters</strong></TableCell>
-                <TableCell><strong>Execution Time</strong></TableCell>
-                <TableCell><strong>Results</strong></TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {auditLogs.map((log) => (
-                <TableRow key={log.id}>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {new Date(log.timestamp).toLocaleString()}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Chip 
-                      label={log.action_type} 
-                      color={log.action_type === 'PATH_SEARCH' ? 'primary' : 'secondary'} 
-                      size="small" 
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" component="pre" sx={{ fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {log.parameters ? JSON.stringify(log.parameters, null, 2) : 'N/A'}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {log.execution_time ? `${log.execution_time}ms` : 'N/A'}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" component="pre" sx={{ fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {log.results ? JSON.stringify(log.results, null, 2) : log.pricing_data ? JSON.stringify(log.pricing_data, null, 2) : 'N/A'}
-                    </Typography>
-                  </TableCell>
+      {/* Pricing Logs Tab - Only show if user has permission */}
+      {canViewPricingLogs && (
+        <TabPanel value={currentTab} index={1}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+            <Typography variant="h6">Pricing Logs</Typography>
+            <Chip 
+              label={`${auditLogs.length} entries`} 
+              color="info" 
+              size="small"
+            />
+          </Box>
+          
+          <TableContainer component={Paper}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell><strong>Timestamp</strong></TableCell>
+                  <TableCell><strong>Action</strong></TableCell>
+                  <TableCell><strong>Parameters</strong></TableCell>
+                  <TableCell><strong>Execution Time</strong></TableCell>
+                  <TableCell><strong>Results</strong></TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </TabPanel>
+              </TableHead>
+              <TableBody>
+                {auditLogs.map((log) => (
+                  <TableRow key={log.id}>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {new Date(log.timestamp).toLocaleString()}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Chip 
+                        label={log.action_type} 
+                        color={log.action_type === 'PATH_SEARCH' ? 'primary' : 'secondary'} 
+                        size="small" 
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" component="pre" sx={{ fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {log.parameters ? JSON.stringify(log.parameters, null, 2) : 'N/A'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {log.execution_time ? `${log.execution_time}ms` : 'N/A'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" component="pre" sx={{ fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {log.results ? JSON.stringify(log.results, null, 2) : log.pricing_data ? JSON.stringify(log.pricing_data, null, 2) : 'N/A'}
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </TabPanel>
+      )}
 
       {/* Error/Success Messages */}
       <Snackbar

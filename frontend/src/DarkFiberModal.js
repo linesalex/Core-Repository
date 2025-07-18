@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Dialog, DialogTitle, DialogContent, DialogActions, Button, Table, TableBody, TableCell, TableHead, TableRow, IconButton, Checkbox, TextField, Typography, Box, Chip, Alert, Snackbar
+  Dialog, DialogTitle, DialogContent, DialogActions, Button, Table, TableBody, TableCell, TableHead, TableRow, IconButton, Checkbox, TextField, Typography, Box, Chip, Alert, Snackbar, FormControl, InputLabel, Select, MenuItem
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -12,6 +12,7 @@ import { getDarkFiberDetails, addDarkFiberDetail, editDarkFiberDetail, deleteDar
 const defaultForm = {
   dwdm_wavelength: '',
   dwdm_ucn: '',
+  dark_fiber_bandwidth: '',
   equipment: '',
   in_use: false,
   capex_cost_to_light: '',
@@ -19,14 +20,35 @@ const defaultForm = {
 
 function DarkFiberFormDialog({ open, onClose, onSubmit, initialData, mode }) {
   const [formData, setFormData] = useState(initialData || defaultForm);
+  const [validationError, setValidationError] = useState('');
+
   useEffect(() => {
-    if (open) setFormData(initialData || defaultForm);
+    if (open) {
+      setFormData(initialData || defaultForm);
+      setValidationError('');
+    }
   }, [open, initialData]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     setFormData(f => ({ ...f, [name]: type === 'checkbox' ? checked : value }));
+    
+    // Clear validation error when user makes changes
+    if (validationError) setValidationError('');
   };
+
+  const handleSubmit = () => {
+    // Validate: Bandwidth is required when DWDM UCN has a value
+    if (formData.dwdm_ucn && formData.dwdm_ucn.trim() !== '' && (!formData.dark_fiber_bandwidth || formData.dark_fiber_bandwidth.trim() === '')) {
+      setValidationError('Bandwidth is required when DWDM UCN is specified');
+      return;
+    }
+    
+    setValidationError('');
+    onSubmit(formData);
+  };
+
+  const bandwidthOptions = ['1Gb', '10Gb', '100Gb', '200Gb', '400Gb', '800Gb'];
 
   return (
     <Dialog 
@@ -39,6 +61,11 @@ function DarkFiberFormDialog({ open, onClose, onSubmit, initialData, mode }) {
     >
       <DialogTitle id="dark-fiber-form-dialog-title">{mode === 'add' ? 'Add' : 'Edit'} Dark Fiber Detail</DialogTitle>
       <DialogContent>
+        {validationError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {validationError}
+          </Alert>
+        )}
         <TextField
           label="DWDM Wavelength"
           name="dwdm_wavelength"
@@ -56,6 +83,22 @@ function DarkFiberFormDialog({ open, onClose, onSubmit, initialData, mode }) {
           sx={{ mb: 2 }}
           helperText="Individual circuit ID to distinguish DWDM channels"
         />
+        <FormControl fullWidth sx={{ mb: 2 }}>
+          <InputLabel>DWDM Bandwidth</InputLabel>
+          <Select
+            name="dark_fiber_bandwidth"
+            value={formData.dark_fiber_bandwidth}
+            onChange={handleChange}
+            label="DWDM Bandwidth"
+          >
+            <MenuItem value="">
+              <em>Select Bandwidth</em>
+            </MenuItem>
+            {bandwidthOptions.map(option => (
+              <MenuItem key={option} value={option}>{option}</MenuItem>
+            ))}
+          </Select>
+        </FormControl>
         <TextField
           label="Equipment"
           name="equipment"
@@ -83,7 +126,7 @@ function DarkFiberFormDialog({ open, onClose, onSubmit, initialData, mode }) {
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button onClick={() => onSubmit(formData)} variant="contained">{mode === 'add' ? 'Add' : 'Save'}</Button>
+        <Button onClick={handleSubmit} variant="contained">{mode === 'add' ? 'Add' : 'Save'}</Button>
       </DialogActions>
     </Dialog>
   );
@@ -121,6 +164,7 @@ function DarkFiberModal({ open, onClose, circuitId }) {
     setEditRow({
       dwdm_wavelength: row.dwdm_wavelength || '',
       dwdm_ucn: row.dwdm_ucn || '',
+      dark_fiber_bandwidth: row.bandwidth || '',
       equipment: row.equipment || '',
       in_use: !!row.in_use,
       capex_cost_to_light: row.capex_cost_to_light || '',
@@ -178,10 +222,18 @@ function DarkFiberModal({ open, onClose, circuitId }) {
   };
 
   const handleFormSubmit = async (formData) => {
+    // Map dark_fiber_bandwidth to bandwidth for backend API
+    const apiData = {
+      ...formData,
+      bandwidth: formData.dark_fiber_bandwidth,
+      circuit_id: circuitId
+    };
+    delete apiData.dark_fiber_bandwidth; // Remove the frontend field name
+    
     if (formMode === 'add') {
-      await addDarkFiberDetail({ ...formData, circuit_id: circuitId });
+      await addDarkFiberDetail(apiData);
     } else if (formMode === 'edit') {
-      await editDarkFiberDetail(editId, formData);
+      await editDarkFiberDetail(editId, apiData);
     }
     setFormOpen(false);
     fetchRows();
@@ -228,6 +280,7 @@ function DarkFiberModal({ open, onClose, circuitId }) {
                 <TableRow>
                   <TableCell>DWDM Wavelength</TableCell>
                   <TableCell>DWDM UCN</TableCell>
+                  <TableCell>DWDM Bandwidth</TableCell>
                   <TableCell>Equipment</TableCell>
                   <TableCell>In Use</TableCell>
                   <TableCell>Reserved</TableCell>
@@ -253,6 +306,7 @@ function DarkFiberModal({ open, onClose, circuitId }) {
                         )}
                       </Box>
                     </TableCell>
+                    <TableCell>{row.bandwidth || '-'}</TableCell>
                     <TableCell>{row.equipment}</TableCell>
                     <TableCell>
                       <Checkbox checked={!!row.in_use} disabled />

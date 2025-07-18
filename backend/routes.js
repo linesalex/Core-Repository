@@ -1085,6 +1085,10 @@ router.get('/network_routes_search', (req, res) => {
   const filters = [];
   const values = [];
   
+  // Check if we need to search DWDM UCNs in dark fiber details
+  const searchTerm = req.query.circuit_id;
+  const shouldSearchDarkFiber = searchTerm && searchTerm.trim() !== '';
+  
   for (const key of allowedFields) {
     if (req.query[key]) {
       // Special handling for location fields - search both location_a and location_b
@@ -1103,11 +1107,39 @@ router.get('/network_routes_search', (req, res) => {
     }
   }
   
-  const where = filters.length ? 'WHERE ' + filters.join(' AND ') : '';
-  db.all(`SELECT * FROM network_routes ${where}`, values, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+  if (shouldSearchDarkFiber) {
+    // Build query to search both network_routes and dark_fiber_details
+    const mainWhere = filters.length ? 'WHERE ' + filters.join(' AND ') : '';
+    
+    // Query for dark fiber DWDM UCN matches (case-insensitive)
+    const darkFiberQuery = `
+      SELECT DISTINCT nr.* FROM network_routes nr
+      INNER JOIN dark_fiber_details dfd ON nr.circuit_id = dfd.circuit_id
+      WHERE dfd.dwdm_ucn LIKE ?
+    `;
+    
+    // Combine both queries with UNION
+    const combinedQuery = `
+      SELECT * FROM network_routes ${mainWhere}
+      UNION
+      ${darkFiberQuery}
+    `;
+    
+    // Add case-insensitive search term for DWDM UCN
+    const allValues = [...values, `%${searchTerm}%`];
+    
+    db.all(combinedQuery, allValues, (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    });
+  } else {
+    // Standard search without dark fiber
+    const where = filters.length ? 'WHERE ' + filters.join(' AND ') : '';
+    db.all(`SELECT * FROM network_routes ${where}`, values, (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    });
+  }
 });
 
 // Dark Fiber Details CRUD with enhanced features
@@ -1121,10 +1153,22 @@ router.get('/dark_fiber_details/:circuit_id', (req, res) => {
 
 // Add a dark fiber detail
 router.post('/dark_fiber_details', (req, res) => {
-  const { circuit_id, dwdm_wavelength, dwdm_ucn, equipment, in_use, capex_cost_to_light } = req.body;
+  const { circuit_id, dwdm_wavelength, dwdm_ucn, equipment, in_use, capex_cost_to_light, bandwidth } = req.body;
+  
+  // Bandwidth validation: required when DWDM UCN has a value
+  if (dwdm_ucn && dwdm_ucn.trim() !== '' && (!bandwidth || bandwidth.trim() === '')) {
+    return res.status(400).json({ error: 'Bandwidth is required when DWDM UCN is specified' });
+  }
+  
+  // Validate bandwidth options if provided
+  const validBandwidths = ['1Gb', '10Gb', '100Gb', '200Gb', '400Gb', '800Gb'];
+  if (bandwidth && !validBandwidths.includes(bandwidth)) {
+    return res.status(400).json({ error: `Invalid bandwidth. Must be one of: ${validBandwidths.join(', ')}` });
+  }
+  
   db.run(
-    'INSERT INTO dark_fiber_details (circuit_id, dwdm_wavelength, dwdm_ucn, equipment, in_use, capex_cost_to_light) VALUES (?, ?, ?, ?, ?, ?)',
-    [circuit_id, dwdm_wavelength, dwdm_ucn, equipment, in_use ? 1 : 0, capex_cost_to_light],
+    'INSERT INTO dark_fiber_details (circuit_id, dwdm_wavelength, dwdm_ucn, equipment, in_use, capex_cost_to_light, bandwidth) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [circuit_id, dwdm_wavelength, dwdm_ucn, equipment, in_use ? 1 : 0, capex_cost_to_light, bandwidth || null],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       res.status(201).json({ id: this.lastID });
@@ -1134,10 +1178,22 @@ router.post('/dark_fiber_details', (req, res) => {
 
 // Edit a dark fiber detail by id
 router.put('/dark_fiber_details/:id', (req, res) => {
-  const { dwdm_wavelength, dwdm_ucn, equipment, in_use, capex_cost_to_light } = req.body;
+  const { dwdm_wavelength, dwdm_ucn, equipment, in_use, capex_cost_to_light, bandwidth } = req.body;
+  
+  // Bandwidth validation: required when DWDM UCN has a value
+  if (dwdm_ucn && dwdm_ucn.trim() !== '' && (!bandwidth || bandwidth.trim() === '')) {
+    return res.status(400).json({ error: 'Bandwidth is required when DWDM UCN is specified' });
+  }
+  
+  // Validate bandwidth options if provided
+  const validBandwidths = ['1Gb', '10Gb', '100Gb', '200Gb', '400Gb', '800Gb'];
+  if (bandwidth && !validBandwidths.includes(bandwidth)) {
+    return res.status(400).json({ error: `Invalid bandwidth. Must be one of: ${validBandwidths.join(', ')}` });
+  }
+  
   db.run(
-    'UPDATE dark_fiber_details SET dwdm_wavelength = ?, dwdm_ucn = ?, equipment = ?, in_use = ?, capex_cost_to_light = ? WHERE id = ?',
-    [dwdm_wavelength, dwdm_ucn, equipment, in_use ? 1 : 0, capex_cost_to_light, req.params.id],
+    'UPDATE dark_fiber_details SET dwdm_wavelength = ?, dwdm_ucn = ?, equipment = ?, in_use = ?, capex_cost_to_light = ?, bandwidth = ? WHERE id = ?',
+    [dwdm_wavelength, dwdm_ucn, equipment, in_use ? 1 : 0, capex_cost_to_light, bandwidth || null, req.params.id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
@@ -1497,7 +1553,8 @@ router.get('/locations/:id/capabilities', authenticateToken, authorizePermission
         csp_on_ramp: false,
         exchange_on_ramp: false,
         internet_on_ramp: false,
-        transport_only_pop: false
+        transport_only_pop: false,
+        cnx_colocation: false
       });
     } else {
       res.json(capabilities);
@@ -1520,12 +1577,12 @@ router.post('/locations/:id/capabilities', authenticateToken, authorizePermissio
         `UPDATE pop_capabilities SET 
          cnx_extranet_wan = ?, cnx_ethernet = ?, cnx_voice = ?, tdm_gateway = ?, 
          cnx_unigy = ?, cnx_alpha = ?, cnx_chrono = ?, cnx_sdwan = ?, 
-         csp_on_ramp = ?, exchange_on_ramp = ?, internet_on_ramp = ?, transport_only_pop = ?,
+         csp_on_ramp = ?, exchange_on_ramp = ?, internet_on_ramp = ?, transport_only_pop = ?, cnx_colocation = ?,
          updated_by = ? WHERE location_id = ?`,
         [
           capabilities.cnx_extranet_wan, capabilities.cnx_ethernet, capabilities.cnx_voice, capabilities.tdm_gateway,
           capabilities.cnx_unigy, capabilities.cnx_alpha, capabilities.cnx_chrono, capabilities.cnx_sdwan,
-          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop,
+          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop, capabilities.cnx_colocation,
           req.user.id, locationId
         ],
         function(err) {
@@ -1540,12 +1597,12 @@ router.post('/locations/:id/capabilities', authenticateToken, authorizePermissio
       // Create new capabilities
       db.run(
         `INSERT INTO pop_capabilities (location_id, cnx_extranet_wan, cnx_ethernet, cnx_voice, tdm_gateway, 
-         cnx_unigy, cnx_alpha, cnx_chrono, cnx_sdwan, csp_on_ramp, exchange_on_ramp, internet_on_ramp, transport_only_pop, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         cnx_unigy, cnx_alpha, cnx_chrono, cnx_sdwan, csp_on_ramp, exchange_on_ramp, internet_on_ramp, transport_only_pop, cnx_colocation, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           locationId, capabilities.cnx_extranet_wan, capabilities.cnx_ethernet, capabilities.cnx_voice, capabilities.tdm_gateway,
           capabilities.cnx_unigy, capabilities.cnx_alpha, capabilities.cnx_chrono, capabilities.cnx_sdwan,
-          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop,
+          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop, capabilities.cnx_colocation,
           req.user.id
         ],
         function(err) {
@@ -2545,6 +2602,395 @@ function generateKMLFromPaths(paths, locationMap, metadata) {
 }
 
 // ====================================
+// CNX COLOCATION ENDPOINTS
+// ====================================
+
+// Configure multer for CNX Colocation file uploads
+const colocationStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadDir = path.join(__dirname, 'colocation_files');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const extension = path.extname(file.originalname);
+    cb(null, `colocation_${req.params.id}_${uniqueSuffix}${extension}`);
+  }
+});
+
+const colocationUpload = multer({ 
+  storage: colocationStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: function (req, file, cb) {
+    if (file.fieldname === 'design_file' && file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else if (file.fieldname === 'pricing_info_file' && file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+      cb(null, true);
+    } else if (file.fieldname === 'client_design_file' && file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else if (file.fieldname === 'design_file') {
+      cb(new Error('Design file must be a PDF'), false);
+    } else if (file.fieldname === 'pricing_info_file') {
+      cb(new Error('Pricing info file must be an Excel file (.xlsx)'), false);
+    } else if (file.fieldname === 'client_design_file') {
+      cb(new Error('Client design file must be a PDF'), false);
+    } else {
+      cb(new Error('Invalid file field'), false);
+    }
+  }
+});
+
+// Get all locations with CNX Colocation enabled
+router.get('/cnx-colocation/locations', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+  const query = `
+    SELECT lr.*, pc.cnx_colocation
+    FROM location_reference lr
+    LEFT JOIN pop_capabilities pc ON lr.id = pc.location_id
+    WHERE pc.cnx_colocation = 1
+    ORDER BY lr.location_code
+  `;
+  
+  db.all(query, [], (err, locations) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(locations);
+  });
+});
+
+// Update CNX Colocation location (design file and more info only)
+router.put('/cnx-colocation/locations/:id', authenticateToken, authorizePermission('cnx_colocation', 'edit'), colocationUpload.single('design_file'), (req, res) => {
+  const locationId = req.params.id;
+  const { more_info } = req.body;
+  
+  // Get current location data
+  db.get('SELECT * FROM location_reference WHERE id = ?', [locationId], (err, location) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!location) return res.status(404).json({ error: 'Location not found' });
+    
+    // Check if this location has CNX Colocation enabled
+    db.get('SELECT cnx_colocation FROM pop_capabilities WHERE location_id = ?', [locationId], (capErr, capabilities) => {
+      if (capErr) return res.status(500).json({ error: capErr.message });
+      if (!capabilities || !capabilities.cnx_colocation) {
+        return res.status(403).json({ error: 'CNX Colocation is not enabled for this location' });
+      }
+      
+      // Prepare update data
+      let updateData = { more_info: more_info || null };
+      
+      // Handle design file upload
+      if (req.file) {
+        // Delete old design file if it exists
+        if (location.design_file) {
+          const oldFilePath = path.join(__dirname, 'colocation_files', location.design_file);
+          fs.unlink(oldFilePath, (unlinkErr) => {
+            if (unlinkErr) console.error('Failed to delete old design file:', unlinkErr);
+          });
+        }
+        updateData.design_file = req.file.filename;
+      }
+      
+      // Update location
+      const updateFields = Object.keys(updateData);
+      const updateValues = Object.values(updateData);
+      const setClause = updateFields.map(field => `${field} = ?`).join(', ');
+      
+      db.run(
+        `UPDATE location_reference SET ${setClause}, updated_date = CURRENT_TIMESTAMP WHERE id = ?`,
+        [...updateValues, locationId],
+        function(updateErr) {
+          if (updateErr) return res.status(500).json({ error: updateErr.message });
+          if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
+          
+          // Log the change
+          logChange(req.user.id, 'location_reference', locationId, 'UPDATE_CNX_COLOCATION', 
+            { more_info: location.more_info, design_file: location.design_file }, 
+            updateData, req);
+          
+          res.json({ 
+            message: 'CNX Colocation location updated successfully',
+            updated_fields: updateFields
+          });
+                 }
+       );
+     });
+   });
+ });
+
+// ====================================
+// CNX COLOCATION RACKS ENDPOINTS
+// ====================================
+
+// Get racks for a location
+router.get('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+  const locationId = req.params.locationId;
+  
+  const query = `
+    SELECT r.*, 
+           COUNT(c.id) as client_count,
+           COALESCE(SUM(c.power_purchased), 0) as allocated_power,
+           COALESCE(SUM(c.ru_purchased), 0) as ru_allocated
+    FROM cnx_colocation_racks r
+    LEFT JOIN cnx_colocation_clients c ON r.id = c.rack_id
+    WHERE r.location_id = ?
+    GROUP BY r.id
+    ORDER BY r.rack_id
+  `;
+  
+  db.all(query, [locationId], (err, racks) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(racks);
+  });
+});
+
+// Create rack
+router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizePermission('cnx_colocation', 'create'), colocationUpload.single('pricing_info_file'), (req, res) => {
+  const locationId = req.params.locationId;
+  const { rack_id, total_power_kva, network_infrastructure, more_info } = req.body;
+  
+  if (!rack_id || !total_power_kva || !network_infrastructure) {
+    return res.status(400).json({ error: 'Rack ID, Total Power, and Network Infrastructure are required' });
+  }
+  
+  // Check if rack_id already exists for this location
+  db.get('SELECT id FROM cnx_colocation_racks WHERE location_id = ? AND rack_id = ?', [locationId, rack_id], (err, existing) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (existing) return res.status(400).json({ error: 'Rack ID already exists for this location' });
+    
+    const pricingInfoFile = req.file ? req.file.filename : null;
+    
+    db.run(
+      'INSERT INTO cnx_colocation_racks (location_id, rack_id, total_power_kva, network_infrastructure, pricing_info_file, more_info, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [locationId, rack_id, parseFloat(total_power_kva), network_infrastructure, pricingInfoFile, more_info || null, req.user.id],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        logChange(req.user.id, 'cnx_colocation_racks', this.lastID, 'CREATE', null, 
+          { locationId, rack_id, total_power_kva, network_infrastructure, pricing_info_file: pricingInfoFile, more_info }, req);
+        
+        res.status(201).json({ id: this.lastID, rack_id, message: 'Rack created successfully' });
+      }
+    );
+  });
+});
+
+// Update rack
+router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizePermission('cnx_colocation', 'edit'), colocationUpload.single('pricing_info_file'), (req, res) => {
+  const rackId = req.params.rackId;
+  const { rack_id, total_power_kva, network_infrastructure, more_info } = req.body;
+  
+  if (!rack_id || !total_power_kva || !network_infrastructure) {
+    return res.status(400).json({ error: 'Rack ID, Total Power, and Network Infrastructure are required' });
+  }
+  
+  // Get current rack data
+  db.get('SELECT * FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rack) return res.status(404).json({ error: 'Rack not found' });
+    
+    // Check if rack_id conflicts with other racks (excluding current)
+    db.get('SELECT id FROM cnx_colocation_racks WHERE location_id = ? AND rack_id = ? AND id != ?', 
+      [rack.location_id, rack_id, rackId], (conflictErr, conflict) => {
+      if (conflictErr) return res.status(500).json({ error: conflictErr.message });
+      if (conflict) return res.status(400).json({ error: 'Rack ID already exists for this location' });
+      
+      let updateData = {
+        rack_id,
+        total_power_kva: parseFloat(total_power_kva),
+        network_infrastructure,
+        more_info: more_info || null
+      };
+      
+      // Handle pricing info file
+      if (req.file) {
+        if (rack.pricing_info_file) {
+          const oldFilePath = path.join(__dirname, 'colocation_files', rack.pricing_info_file);
+          fs.unlink(oldFilePath, (unlinkErr) => {
+            if (unlinkErr) console.error('Failed to delete old pricing file:', unlinkErr);
+          });
+        }
+        updateData.pricing_info_file = req.file.filename;
+      }
+      
+      const updateFields = Object.keys(updateData);
+      const updateValues = Object.values(updateData);
+      const setClause = updateFields.map(field => `${field} = ?`).join(', ');
+      
+      db.run(
+        `UPDATE cnx_colocation_racks SET ${setClause}, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [...updateValues, req.user.id, rackId],
+        function(updateErr) {
+          if (updateErr) return res.status(500).json({ error: updateErr.message });
+          if (this.changes === 0) return res.status(404).json({ error: 'Rack not found' });
+          
+          logChange(req.user.id, 'cnx_colocation_racks', rackId, 'UPDATE', rack, updateData, req);
+          
+          res.json({ message: 'Rack updated successfully' });
+        }
+      );
+    });
+  });
+});
+
+// Delete rack
+router.delete('/cnx-colocation/racks/:rackId', authenticateToken, authorizePermission('cnx_colocation', 'delete'), (req, res) => {
+  const rackId = req.params.rackId;
+  
+  // Get rack data before deletion
+  db.get('SELECT * FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rack) return res.status(404).json({ error: 'Rack not found' });
+    
+    // Check if rack has clients
+    db.get('SELECT COUNT(*) as client_count FROM cnx_colocation_clients WHERE rack_id = ?', [rackId], (clientErr, clientCount) => {
+      if (clientErr) return res.status(500).json({ error: clientErr.message });
+      if (clientCount.client_count > 0) {
+        return res.status(400).json({ error: `Cannot delete rack. It has ${clientCount.client_count} clients. Delete clients first.` });
+      }
+      
+      // Delete rack
+      db.run('DELETE FROM cnx_colocation_racks WHERE id = ?', [rackId], function(deleteErr) {
+        if (deleteErr) return res.status(500).json({ error: deleteErr.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Rack not found' });
+        
+        // Delete associated files
+        if (rack.pricing_info_file) {
+          const filePath = path.join(__dirname, 'colocation_files', rack.pricing_info_file);
+          fs.unlink(filePath, (unlinkErr) => {
+            if (unlinkErr) console.error('Failed to delete pricing file:', unlinkErr);
+          });
+        }
+        
+        logChange(req.user.id, 'cnx_colocation_racks', rackId, 'DELETE', rack, null, req);
+        
+        res.json({ message: 'Rack deleted successfully' });
+      });
+    });
+  });
+});
+
+// ====================================
+// CNX COLOCATION CLIENTS ENDPOINTS
+// ====================================
+
+// Get clients for a rack
+router.get('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+  const rackId = req.params.rackId;
+  
+  db.all('SELECT * FROM cnx_colocation_clients WHERE rack_id = ? ORDER BY client_name', [rackId], (err, clients) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(clients);
+  });
+});
+
+// Create client
+router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizePermission('cnx_colocation', 'create'), colocationUpload.single('client_design_file'), (req, res) => {
+  const rackId = req.params.rackId;
+  const { client_name, power_purchased, ru_purchased, more_info } = req.body;
+  
+  if (!client_name || power_purchased === undefined || ru_purchased === undefined) {
+    return res.status(400).json({ error: 'Client Name, Power Purchased, and RU Purchased are required' });
+  }
+  
+  const clientDesignFile = req.file ? req.file.filename : null;
+  
+  db.run(
+    'INSERT INTO cnx_colocation_clients (rack_id, client_name, power_purchased, ru_purchased, more_info, design_file, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [rackId, client_name, parseFloat(power_purchased), parseInt(ru_purchased), more_info || null, clientDesignFile, req.user.id],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      logChange(req.user.id, 'cnx_colocation_clients', this.lastID, 'CREATE', null, 
+        { rackId, client_name, power_purchased, ru_purchased, more_info, design_file: clientDesignFile }, req);
+      
+      res.status(201).json({ id: this.lastID, client_name, message: 'Client created successfully' });
+    }
+  );
+});
+
+// Update client
+router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizePermission('cnx_colocation', 'edit'), colocationUpload.single('client_design_file'), (req, res) => {
+  const clientId = req.params.clientId;
+  const { client_name, power_purchased, ru_purchased, more_info } = req.body;
+  
+  if (!client_name || power_purchased === undefined || ru_purchased === undefined) {
+    return res.status(400).json({ error: 'Client Name, Power Purchased, and RU Purchased are required' });
+  }
+  
+  // Get current client data
+  db.get('SELECT * FROM cnx_colocation_clients WHERE id = ?', [clientId], (err, client) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    
+    // Prepare update data
+    let updateData = {
+      client_name,
+      power_purchased: parseFloat(power_purchased),
+      ru_purchased: parseInt(ru_purchased),
+      more_info: more_info || null
+    };
+    
+    // Handle design file upload
+    if (req.file) {
+      // Delete old design file if it exists
+      if (client.design_file) {
+        const oldFilePath = path.join(__dirname, 'colocation_files', client.design_file);
+        fs.unlink(oldFilePath, (unlinkErr) => {
+          if (unlinkErr) console.error('Failed to delete old client design file:', unlinkErr);
+        });
+      }
+      updateData.design_file = req.file.filename;
+    }
+    
+    const updateFields = Object.keys(updateData);
+    const updateValues = Object.values(updateData);
+    const setClause = updateFields.map(field => `${field} = ?`).join(', ');
+    
+    db.run(
+      `UPDATE cnx_colocation_clients SET ${setClause}, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [...updateValues, req.user.id, clientId],
+      function(updateErr) {
+        if (updateErr) return res.status(500).json({ error: updateErr.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Client not found' });
+        
+        logChange(req.user.id, 'cnx_colocation_clients', clientId, 'UPDATE', client, updateData, req);
+        
+        res.json({ message: 'Client updated successfully' });
+      }
+    );
+  });
+});
+
+// Delete client
+router.delete('/cnx-colocation/clients/:clientId', authenticateToken, authorizePermission('cnx_colocation', 'delete'), (req, res) => {
+  const clientId = req.params.clientId;
+  
+  // Get client data before deletion
+  db.get('SELECT * FROM cnx_colocation_clients WHERE id = ?', [clientId], (err, client) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    
+    db.run('DELETE FROM cnx_colocation_clients WHERE id = ?', [clientId], function(deleteErr) {
+      if (deleteErr) return res.status(500).json({ error: deleteErr.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Client not found' });
+      
+      // Delete associated design file
+      if (client.design_file) {
+        const filePath = path.join(__dirname, 'colocation_files', client.design_file);
+        fs.unlink(filePath, (unlinkErr) => {
+          if (unlinkErr) console.error('Failed to delete client design file:', unlinkErr);
+        });
+      }
+      
+      logChange(req.user.id, 'cnx_colocation_clients', clientId, 'DELETE', client, null, req);
+      
+      res.json({ message: 'Client deleted successfully' });
+    });
+  });
+});
+
+// ====================================
 // EXCHANGE DATA ENDPOINTS
 // ====================================
 
@@ -2607,15 +3053,15 @@ router.get('/exchanges', authenticateToken, authorizePermission('exchange_data',
 
 // Create exchange (admin only)
 router.post('/exchanges', authenticateToken, authorizePermission('exchange_data', 'create'), (req, res) => {
-  const { exchange_name, region, available } = req.body;
+  const { exchange_name, region, available, salesperson_assigned } = req.body;
   
   if (!exchange_name || !region) {
     return res.status(400).json({ error: 'Exchange name and region are required' });
   }
   
   db.run(
-    'INSERT INTO exchanges (exchange_name, region, available, created_by) VALUES (?, ?, ?, ?)',
-    [exchange_name, region, available !== false ? 1 : 0, req.user.id],
+    'INSERT INTO exchanges (exchange_name, region, salesperson_assigned, available, created_by) VALUES (?, ?, ?, ?, ?)',
+    [exchange_name, region, salesperson_assigned || null, available !== false ? 1 : 0, req.user.id],
     function(err) {
       if (err) {
         if (err.message.includes('UNIQUE constraint failed')) {
@@ -2624,7 +3070,7 @@ router.post('/exchanges', authenticateToken, authorizePermission('exchange_data'
         return res.status(500).json({ error: err.message });
       }
       
-      logChange(req.user.id, 'exchanges', this.lastID, 'CREATE', null, { exchange_name, region, available }, req);
+      logChange(req.user.id, 'exchanges', this.lastID, 'CREATE', null, { exchange_name, region, salesperson_assigned, available }, req);
       
       res.status(201).json({ id: this.lastID, exchange_name, message: 'Exchange created successfully' });
     }
@@ -2633,7 +3079,7 @@ router.post('/exchanges', authenticateToken, authorizePermission('exchange_data'
 
 // Update exchange (admin only)
 router.put('/exchanges/:id', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
-  const { exchange_name, region, available } = req.body;
+  const { exchange_name, region, available, salesperson_assigned } = req.body;
   const exchangeId = req.params.id;
   
   // Check if exchange has feeds or contacts (prevent deletion if it does)
@@ -2649,8 +3095,8 @@ router.put('/exchanges/:id', authenticateToken, authorizePermission('exchange_da
         if (!oldExchange) return res.status(404).json({ error: 'Exchange not found' });
         
         db.run(
-          'UPDATE exchanges SET exchange_name = ?, region = ?, available = ?, updated_by = ? WHERE id = ?',
-          [exchange_name, region, available !== false ? 1 : 0, req.user.id, exchangeId],
+          'UPDATE exchanges SET exchange_name = ?, region = ?, salesperson_assigned = ?, available = ?, updated_by = ? WHERE id = ?',
+          [exchange_name, region, salesperson_assigned || null, available !== false ? 1 : 0, req.user.id, exchangeId],
           function(err) {
             if (err) {
               if (err.message.includes('UNIQUE constraint failed')) {
@@ -2660,7 +3106,7 @@ router.put('/exchanges/:id', authenticateToken, authorizePermission('exchange_da
             }
             if (this.changes === 0) return res.status(404).json({ error: 'Exchange not found' });
             
-            logChange(req.user.id, 'exchanges', exchangeId, 'UPDATE', oldExchange, { exchange_name, region, available }, req);
+            logChange(req.user.id, 'exchanges', exchangeId, 'UPDATE', oldExchange, { exchange_name, region, salesperson_assigned, available }, req);
             
             res.json({ message: 'Exchange updated successfully' });
           }
@@ -2731,8 +3177,12 @@ router.get('/exchanges/:id/feeds', authenticateToken, authorizePermission('excha
 router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exchange_data', 'edit'), exchangeUpload.single('design_file'), (req, res) => {
   const exchangeId = req.params.id;
   const {
-    feed_name, feed_delivery, feed_type, isf_a, isf_b, dr_available, bandwidth_1ms, available_now,
-    quick_quote, pass_through_fees, pass_through_currency, pass_through_fees_info, more_info
+    feed_name, feed_delivery, feed_type, isf_enabled, 
+    isf_a, isf_b, isf_site_code_a, isf_site_code_b,
+    isf_dr_a, isf_dr_b, isf_dr_site_code_a, isf_dr_site_code_b, 
+    dr_type, order_entry_isf, unicast_isf,
+    dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
+    pass_through_currency, pass_through_fees_info, more_info
   } = req.body;
   
   if (!feed_name) {
@@ -2747,19 +3197,43 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
     return res.status(400).json({ error: 'Feed type is required' });
   }
   
+  // ISF validation: if enabled, at least one field must be filled
+  if (isf_enabled === 'true' || isf_enabled === true) {
+    const isfFields = [isf_a, isf_b, isf_site_code_a, isf_site_code_b, isf_dr_a, isf_dr_b, 
+                       isf_dr_site_code_a, isf_dr_site_code_b, order_entry_isf, unicast_isf];
+    const hasISFData = isfFields.some(field => field && field.trim() !== '');
+    
+    if (!hasISFData) {
+      return res.status(400).json({ error: 'Please enter ISF details or disable ISF' });
+    }
+  }
+  
+  // Validate feed type
+  const validFeedTypes = ['Equities', 'Futures', 'Options', 'Fixed Income', 'FX', 'Commodities', 'Indices', 'ETFs', 'Alternative Data', 'Reference Data', 'Mixed'];
+  if (!validFeedTypes.includes(feed_type)) {
+    return res.status(400).json({ error: `Invalid feed type. Must be one of: ${validFeedTypes.join(', ')}` });
+  }
+  
   const designFilePath = req.file ? req.file.filename : null;
   
   db.run(
     `INSERT INTO exchange_feeds (
-      exchange_id, feed_name, feed_delivery, feed_type, isf_a, isf_b, dr_available, bandwidth_1ms,
-      available_now, quick_quote, pass_through_fees, pass_through_currency, pass_through_fees_info,
-      design_file_path, more_info, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      exchange_id, feed_name, feed_delivery, feed_type, isf_enabled, 
+      isf_a, isf_b, isf_site_code_a, isf_site_code_b,
+      isf_dr_a, isf_dr_b, isf_dr_site_code_a, isf_dr_site_code_b, 
+      dr_type, order_entry_isf, unicast_isf,
+      dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
+      pass_through_currency, pass_through_fees_info, design_file_path, more_info, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      exchangeId, feed_name, feed_delivery, feed_type, isf_a, isf_b, dr_available === 'true' ? 1 : 0,
-      bandwidth_1ms, available_now === 'true' ? 1 : 0, quick_quote === 'true' ? 1 : 0,
-      parseInt(pass_through_fees) || 0, pass_through_currency || 'USD', pass_through_fees_info || '',
-      designFilePath, more_info, req.user.id
+      exchangeId, feed_name, feed_delivery, feed_type, isf_enabled === 'true' ? 1 : 0,
+      isf_a || null, isf_b || null, isf_site_code_a || null, isf_site_code_b || null,
+      isf_dr_a || null, isf_dr_b || null, isf_dr_site_code_a || null, isf_dr_site_code_b || null,
+      dr_type || null, order_entry_isf || null, unicast_isf || null,
+      dr_available === 'true' ? 1 : 0, bandwidth_1ms,
+      available_now === 'true' ? 1 : 0, quick_quote === 'true' ? 1 : 0,
+      parseInt(pass_through_fees) || 0, pass_through_currency || 'USD', 
+      pass_through_fees_info || '', designFilePath, more_info, req.user.id
     ],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
@@ -2776,8 +3250,11 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
       }
       
       logChange(req.user.id, 'exchange_feeds', this.lastID, 'CREATE', null, {
-        exchange_id: exchangeId, feed_name, feed_delivery, feed_type, isf_a, isf_b, dr_available, bandwidth_1ms,
-        available_now, quick_quote, pass_through_fees, pass_through_currency, pass_through_fees_info, more_info
+        exchange_id: exchangeId, feed_name, feed_delivery, feed_type, isf_enabled, 
+        isf_a, isf_b, isf_site_code_a, isf_site_code_b, isf_dr_a, isf_dr_b,
+        isf_dr_site_code_a, isf_dr_site_code_b, dr_type, order_entry_isf, unicast_isf,
+        dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
+        pass_through_currency, pass_through_fees_info, more_info
       }, req);
       
       res.status(201).json({ id: this.lastID, feed_name, message: 'Exchange feed created successfully' });
@@ -2789,9 +3266,30 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
 router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizePermission('exchange_data', 'edit'), exchangeUpload.single('design_file'), (req, res) => {
   const { exchangeId, feedId } = req.params;
   const {
-    feed_name, feed_delivery, feed_type, isf_a, isf_b, dr_available, bandwidth_1ms, available_now,
-    quick_quote, pass_through_fees, pass_through_currency, pass_through_fees_info, more_info
+    feed_name, feed_delivery, feed_type, isf_enabled,
+    isf_a, isf_b, isf_site_code_a, isf_site_code_b,
+    isf_dr_a, isf_dr_b, isf_dr_site_code_a, isf_dr_site_code_b,
+    dr_type, order_entry_isf, unicast_isf,
+    dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
+    pass_through_currency, pass_through_fees_info, more_info
   } = req.body;
+  
+  // ISF validation: if enabled, at least one field must be filled
+  if (isf_enabled === 'true' || isf_enabled === true) {
+    const isfFields = [isf_a, isf_b, isf_site_code_a, isf_site_code_b, isf_dr_a, isf_dr_b, 
+                       isf_dr_site_code_a, isf_dr_site_code_b, order_entry_isf, unicast_isf];
+    const hasISFData = isfFields.some(field => field && field.trim() !== '');
+    
+    if (!hasISFData) {
+      return res.status(400).json({ error: 'Please enter ISF details or disable ISF' });
+    }
+  }
+  
+  // Validate feed type
+  const validFeedTypes = ['Equities', 'Futures', 'Options', 'Fixed Income', 'FX', 'Commodities', 'Indices', 'ETFs', 'Alternative Data', 'Reference Data', 'Mixed'];
+  if (feed_type && !validFeedTypes.includes(feed_type)) {
+    return res.status(400).json({ error: `Invalid feed type. Must be one of: ${validFeedTypes.join(', ')}` });
+  }
   
   // Get current feed data for change logging
   db.get('SELECT * FROM exchange_feeds WHERE id = ? AND exchange_id = ?', [feedId, exchangeId], (err, oldFeed) => {
@@ -2823,23 +3321,33 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
     
     db.run(
       `UPDATE exchange_feeds SET 
-        feed_name = ?, feed_delivery = ?, feed_type = ?, isf_a = ?, isf_b = ?, dr_available = ?, bandwidth_1ms = ?,
-        available_now = ?, quick_quote = ?, pass_through_fees = ?, pass_through_currency = ?, pass_through_fees_info = ?,
+        feed_name = ?, feed_delivery = ?, feed_type = ?, isf_enabled = ?, 
+        isf_a = ?, isf_b = ?, isf_site_code_a = ?, isf_site_code_b = ?,
+        isf_dr_a = ?, isf_dr_b = ?, isf_dr_site_code_a = ?, isf_dr_site_code_b = ?,
+        dr_type = ?, order_entry_isf = ?, unicast_isf = ?,
+        dr_available = ?, bandwidth_1ms = ?, available_now = ?, quick_quote = ?, 
+        pass_through_fees = ?, pass_through_currency = ?, pass_through_fees_info = ?, 
         design_file_path = ?, more_info = ?, updated_by = ?
       WHERE id = ? AND exchange_id = ?`,
       [
-        feed_name, feed_delivery, feed_type, isf_a, isf_b, dr_available === 'true' ? 1 : 0, bandwidth_1ms,
+        feed_name, feed_delivery, feed_type, isf_enabled === 'true' ? 1 : 0, 
+        isf_a || null, isf_b || null, isf_site_code_a || null, isf_site_code_b || null,
+        isf_dr_a || null, isf_dr_b || null, isf_dr_site_code_a || null, isf_dr_site_code_b || null,
+        dr_type || null, order_entry_isf || null, unicast_isf || null,
+        dr_available === 'true' ? 1 : 0, bandwidth_1ms,
         available_now === 'true' ? 1 : 0, quick_quote === 'true' ? 1 : 0,
-        parseInt(pass_through_fees) || 0, pass_through_currency || 'USD', pass_through_fees_info || '',
-        designFilePath, more_info, req.user.id, feedId, exchangeId
+        parseInt(pass_through_fees) || 0, pass_through_currency || 'USD', 
+        pass_through_fees_info || '', designFilePath, more_info, req.user.id, feedId, exchangeId
       ],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Exchange feed not found' });
         
         logChange(req.user.id, 'exchange_feeds', feedId, 'UPDATE', oldFeed, {
-          feed_name, feed_delivery, feed_type, isf_a, isf_b, dr_available, bandwidth_1ms, available_now,
-          quick_quote, pass_through_fees, pass_through_currency, pass_through_fees_info, more_info
+          feed_name, feed_delivery, feed_type, isf_enabled, isf_a, isf_b, isf_site_code_a, isf_site_code_b,
+          isf_dr_a, isf_dr_b, isf_dr_site_code_a, isf_dr_site_code_b, dr_type, order_entry_isf, unicast_isf,
+          dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
+          pass_through_currency, pass_through_fees_info, more_info
         }, req);
         
         res.json({ message: 'Exchange feed updated successfully' });
@@ -2924,7 +3432,7 @@ router.post('/exchanges/:id/contacts', authenticateToken, authorizePermission('e
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       exchangeId, contact_name, job_title, country, phone_number, email,
-      contact_type, daily_contact === 'true' ? 1 : 0, more_info, req.user.id
+      contact_type, (daily_contact === 'true' || daily_contact === true) ? 1 : 0, more_info, req.user.id
     ],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
@@ -2955,11 +3463,11 @@ router.put('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, auth
     db.run(
       `UPDATE exchange_contacts SET 
         contact_name = ?, job_title = ?, country = ?, phone_number = ?, email = ?,
-        contact_type = ?, daily_contact = ?, more_info = ?, updated_by = ?
+        contact_type = ?, daily_contact = ?, more_info = ?, last_updated = CURRENT_TIMESTAMP, updated_by = ?
       WHERE id = ? AND exchange_id = ?`,
       [
         contact_name, job_title, country, phone_number, email,
-        contact_type, daily_contact === 'true' ? 1 : 0, more_info, req.user.id, contactId, exchangeId
+        contact_type, (daily_contact === 'true' || daily_contact === true) ? 1 : 0, more_info, req.user.id, contactId, exchangeId
       ],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
@@ -2993,6 +3501,57 @@ router.delete('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, a
       
       res.json({ message: 'Exchange contact deleted successfully' });
     });
+  });
+});
+
+// Get overdue exchange contacts (365+ days without update)
+router.get('/exchanges/overdue-contacts', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+  const sql = `
+    SELECT 
+      ec.*,
+      e.exchange_name,
+      e.region,
+      julianday('now') - julianday(COALESCE(ec.last_updated, ec.created_at)) as days_since_update
+    FROM exchange_contacts ec
+    JOIN exchanges e ON ec.exchange_id = e.id
+    WHERE julianday('now') - julianday(COALESCE(ec.last_updated, ec.created_at)) >= 365
+    ORDER BY days_since_update DESC, e.exchange_name, ec.contact_name
+  `;
+  
+  db.all(sql, [], (err, contacts) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(contacts);
+  });
+});
+
+// Approve exchange contact yearly update
+router.post('/exchanges/:exchangeId/contacts/:contactId/approve', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+  const { exchangeId, contactId } = req.params;
+  
+  // Get current contact data for change logging
+  db.get('SELECT * FROM exchange_contacts WHERE id = ? AND exchange_id = ?', [contactId, exchangeId], (err, contact) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!contact) return res.status(404).json({ error: 'Exchange contact not found' });
+    
+    db.run(
+      `UPDATE exchange_contacts SET 
+        last_updated = CURRENT_TIMESTAMP, 
+        approved_by = ?, 
+        approved_at = CURRENT_TIMESTAMP 
+      WHERE id = ? AND exchange_id = ?`,
+      [req.user.id, contactId, exchangeId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Exchange contact not found' });
+        
+        logChange(req.user.id, 'exchange_contacts', contactId, 'APPROVE_YEARLY_UPDATE', contact, {
+          approved_by: req.user.id,
+          approved_at: new Date().toISOString()
+        }, req);
+        
+        res.json({ message: 'Exchange contact yearly update approved successfully' });
+      }
+    );
   });
 });
 

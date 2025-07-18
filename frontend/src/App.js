@@ -14,6 +14,7 @@ import DesignServicesIcon from '@mui/icons-material/DesignServices';
 import CurrencyExchangeIcon from '@mui/icons-material/CurrencyExchange';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import WarningIcon from '@mui/icons-material/Warning';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import LogoutIcon from '@mui/icons-material/Logout';
 import HistoryIcon from '@mui/icons-material/History';
@@ -29,6 +30,8 @@ import NetworkRoutesTable from './NetworkRoutesTable';
 import NetworkDesignTool from './NetworkDesignTool';
 import ExchangeRatesManager from './ExchangeRatesManager';
 import LocationDataManager from './LocationDataManager';
+import MinimumPricingManager from './MinimumPricingManager';
+import CNXColocationManager from './CNXColocationManager';
 import UserManagement from './UserManagement';
 import ChangeLogsViewer from './ChangeLogsViewer';
 import CoreOutagesTable from './CoreOutagesTable';
@@ -92,8 +95,10 @@ function AuthenticatedApp() {
       // List of modules in order of preference
       const modulePreferences = [
         'network-routes',
-        'network-design', 
+        'network-design',
+        'minimum-pricing',
         'location-data',
+        'cnx-colocation',
         'carriers',
         'exchange-rates',
         'exchange-feeds',
@@ -107,7 +112,9 @@ function AuthenticatedApp() {
         const moduleMap = {
           'network-routes': 'network_routes',
           'network-design': 'network_design',
+          'minimum-pricing': 'locations',
           'location-data': 'locations',
+          'cnx-colocation': 'cnx_colocation',
           'carriers': 'carriers',
           'exchange-rates': 'exchange_rates',
           'exchange-feeds': 'exchange_data',
@@ -315,6 +322,13 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'minimum-pricing':
+        return hasModuleAccess('locations') ? (
+          <MinimumPricingManager hasPermission={hasPermission} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'exchange-rates':
         return hasModuleAccess('exchange_rates') ? (
           <ExchangeRatesManager hasPermission={hasPermission} />
@@ -322,13 +336,20 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
-      case 'location-data':
+            case 'location-data':
         return hasModuleAccess('locations') ? (
           <LocationDataManager hasPermission={hasPermission} />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
-        
+      
+      case 'cnx-colocation':
+        return hasModuleAccess('cnx_colocation') ? (
+          <CNXColocationManager hasPermission={hasPermission} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'carriers':
         return hasModuleAccess('carriers') ? (
           <CarriersManager hasPermission={hasPermission} />
@@ -551,6 +572,16 @@ function AuthenticatedApp() {
                       <ListItemIcon><DesignServicesIcon /></ListItemIcon>
                       <ListItemText primary="Design & Pricing" />
                     </ListItem>
+                    {hasModuleAccess('locations') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('minimum-pricing')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'minimum-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><AttachMoneyIcon /></ListItemIcon>
+                        <ListItemText primary="Minimum Pricing" />
+                      </ListItem>
+                    )}
                   </List>
                 </Collapse>
               </>
@@ -588,7 +619,7 @@ function AuthenticatedApp() {
             )}
 
             {/* Network Data */}
-            {(hasModuleAccess('locations') || hasModuleAccess('carriers')) && (
+            {(hasModuleAccess('locations') || hasModuleAccess('carriers') || hasModuleAccess('cnx_colocation')) && (
               <>
                 <ListItem button onClick={() => setNetworkDataOpen(!networkDataOpen)}>
                   <ListItemIcon><DataObjectIcon /></ListItemIcon>
@@ -615,6 +646,16 @@ function AuthenticatedApp() {
                       >
                         <ListItemIcon><BusinessIcon /></ListItemIcon>
                         <ListItemText primary="Manage Carriers" />
+                      </ListItem>
+                    )}
+                    {hasModuleAccess('cnx_colocation') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('cnx-colocation')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><LocationOnIcon /></ListItemIcon>
+                        <ListItemText primary="CNX Colocation" />
                       </ListItem>
                     )}
                   </List>

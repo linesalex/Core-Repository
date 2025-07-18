@@ -3,7 +3,7 @@ import {
   Box, Paper, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, IconButton, Chip,
   Alert, Snackbar, Tooltip, Grid, Card, CardContent, Select, MenuItem, FormControl, InputLabel,
-  List, ListItem, ListItemText, ListItemIcon, Checkbox, FormControlLabel, Tabs, Tab
+  List, ListItem, ListItemText, ListItemIcon, Checkbox, FormControlLabel
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -15,6 +15,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import { locationDataApi } from './api';
+import axios from 'axios';
 
 const LocationDataManager = ({ hasPermission }) => {
   const [locations, setLocations] = useState([]);
@@ -22,8 +23,7 @@ const LocationDataManager = ({ hasPermission }) => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   
-  // Tab state
-  const [currentTab, setCurrentTab] = useState(0); // 0: Locations, 1: Minimum Pricing
+  // Tab state removed - only showing locations now
   
   // Dialog states
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -32,15 +32,8 @@ const LocationDataManager = ({ hasPermission }) => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [accessInfoDialogOpen, setAccessInfoDialogOpen] = useState(false);
   const [popCapabilitiesDialogOpen, setPopCapabilitiesDialogOpen] = useState(false);
-  const [minimumPricingDialogOpen, setMinimumPricingDialogOpen] = useState(false);
   const [currentAccessInfo, setCurrentAccessInfo] = useState('');
   const [currentCapabilities, setCurrentCapabilities] = useState({});
-  const [currentMinimumPricing, setCurrentMinimumPricing] = useState({
-    min_price_under_100mb: 0,
-    min_price_100_to_999mb: 0,
-    min_price_1000_to_2999mb: 0,
-    min_price_3000mb_plus: 0
-  });
   
   // Form data
   const [formData, setFormData] = useState({
@@ -68,7 +61,8 @@ const LocationDataManager = ({ hasPermission }) => {
     { key: 'csp_on_ramp', label: 'CSP On Ramp' },
     { key: 'exchange_on_ramp', label: 'Exchange On Ramp' },
     { key: 'internet_on_ramp', label: 'Internet On Ramp' },
-    { key: 'transport_only_pop', label: 'Transport Only POP' }
+    { key: 'transport_only_pop', label: 'Transport Only POP' },
+    { key: 'cnx_colocation', label: 'CNX Colocation' }
   ];
 
   // Filter states
@@ -210,7 +204,27 @@ const LocationDataManager = ({ hasPermission }) => {
     setPopCapabilitiesDialogOpen(true);
   };
 
-  const handleCapabilityChange = (key, value) => {
+  const handleCapabilityChange = async (key, value) => {
+    // Special handling for CNX Colocation - check for existing data before allowing disable
+    if (key === 'cnx_colocation' && !value && currentCapabilities[key]) {
+      try {
+        // Check if there are any racks for this location
+        const response = await axios.get(`http://localhost:4000/cnx-colocation/locations/${selectedLocation.id}/racks`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          }
+        });
+        
+        if (response.data && response.data.length > 0) {
+          setError(`Cannot disable CNX Colocation. This location has ${response.data.length} rack(s) with associated data. Please delete all racks first.`);
+          return; // Don't update the capability
+        }
+      } catch (err) {
+        // If we can't check, allow the change (fail safe)
+        console.warn('Could not check for existing rack data:', err);
+      }
+    }
+    
     setCurrentCapabilities(prev => ({
       ...prev,
       [key]: value
@@ -228,31 +242,7 @@ const LocationDataManager = ({ hasPermission }) => {
     }
   };
 
-  const handleMinimumPricingClick = (location) => {
-    setSelectedLocation(location);
-    setCurrentMinimumPricing({
-      min_price_under_100mb: location.min_price_under_100mb || 0,
-      min_price_100_to_999mb: location.min_price_100_to_999mb || 0,
-      min_price_1000_to_2999mb: location.min_price_1000_to_2999mb || 0,
-      min_price_3000mb_plus: location.min_price_3000mb_plus || 0
-    });
-    setMinimumPricingDialogOpen(true);
-  };
 
-  const handleMinimumPricingSave = async () => {
-    try {
-      await locationDataApi.updateMinimumPricing(selectedLocation.id, currentMinimumPricing);
-      setSuccess('Minimum pricing updated successfully');
-      setMinimumPricingDialogOpen(false);
-      await loadLocations();
-    } catch (err) {
-      setError('Failed to update minimum pricing: ' + err.message);
-    }
-  };
-
-  const handleTabChange = (event, newValue) => {
-    setCurrentTab(newValue);
-  };
 
   const getStatusChip = (status) => {
     const colors = {
@@ -325,18 +315,7 @@ const LocationDataManager = ({ hasPermission }) => {
         </Box>
       </Box>
 
-      {/* Tabs */}
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-        <Tabs value={currentTab} onChange={handleTabChange}>
-          <Tab label="Locations" />
-          {hasPermission && hasPermission('locations', 'edit') && (
-            <Tab label="Minimum Pricing" />
-          )}
-        </Tabs>
-      </Box>
-
-      {/* Tab Content */}
-      {currentTab === 0 && (
+      {/* Locations Content */}
         <Box>
           {/* Filters */}
           <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
@@ -637,137 +616,7 @@ const LocationDataManager = ({ hasPermission }) => {
           )}
         </DialogActions>
       </Dialog>
-        </Box>
-      )}
-
-      {/* Minimum Pricing Tab */}
-      {currentTab === 1 && hasPermission && hasPermission('locations', 'edit') && (
-        <Box>
-          <Box sx={{ mb: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              Manage minimum pricing tiers for each location. Prices are stored in USD and converted as needed.
-            </Typography>
-          </Box>
-          
-          <TableContainer component={Paper}>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell><strong>POP Code</strong></TableCell>
-                  <TableCell><strong>&lt; 100Mb (USD)</strong></TableCell>
-                  <TableCell><strong>100-999Mb (USD)</strong></TableCell>
-                  <TableCell><strong>1000-2999Mb (USD)</strong></TableCell>
-                  <TableCell><strong>3000Mb+ (USD)</strong></TableCell>
-                  <TableCell align="center"><strong>Actions</strong></TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {locations.map((location) => (
-                  <TableRow key={location.id} hover>
-                    <TableCell>
-                      <Typography variant="body1" fontWeight="bold">
-                        {location.location_code}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {location.city}, {location.country}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>${location.min_price_under_100mb || 0}</TableCell>
-                    <TableCell>${location.min_price_100_to_999mb || 0}</TableCell>
-                    <TableCell>${location.min_price_1000_to_2999mb || 0}</TableCell>
-                    <TableCell>${location.min_price_3000mb_plus || 0}</TableCell>
-                    <TableCell align="center">
-                      <Button
-                        size="small"
-                        startIcon={<EditIcon />}
-                        onClick={() => handleMinimumPricingClick(location)}
-                      >
-                        Edit
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Box>
-      )}
-
-      {/* Minimum Pricing Dialog */}
-      <Dialog open={minimumPricingDialogOpen} onClose={() => setMinimumPricingDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>
-          Edit Minimum Pricing - {selectedLocation?.location_code}
-        </DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Set minimum prices for different bandwidth tiers. All prices are in USD.
-          </Typography>
-          <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="< 100Mb (USD)"
-                type="text"
-                value={currentMinimumPricing.min_price_under_100mb}
-                onChange={(e) => setCurrentMinimumPricing(prev => ({
-                  ...prev,
-                  min_price_under_100mb: parseFloat(e.target.value) || 0
-                }))}
-                placeholder="0.00"
-                inputProps={{ pattern: '[0-9]*\\.?[0-9]*' }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="100-999Mb (USD)"
-                type="text"
-                value={currentMinimumPricing.min_price_100_to_999mb}
-                onChange={(e) => setCurrentMinimumPricing(prev => ({
-                  ...prev,
-                  min_price_100_to_999mb: parseFloat(e.target.value) || 0
-                }))}
-                placeholder="0.00"
-                inputProps={{ pattern: '[0-9]*\\.?[0-9]*' }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="1000-2999Mb (USD)"
-                type="text"
-                value={currentMinimumPricing.min_price_1000_to_2999mb}
-                onChange={(e) => setCurrentMinimumPricing(prev => ({
-                  ...prev,
-                  min_price_1000_to_2999mb: parseFloat(e.target.value) || 0
-                }))}
-                placeholder="0.00"
-                inputProps={{ pattern: '[0-9]*\\.?[0-9]*' }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="3000Mb+ (USD)"
-                type="text"
-                value={currentMinimumPricing.min_price_3000mb_plus}
-                onChange={(e) => setCurrentMinimumPricing(prev => ({
-                  ...prev,
-                  min_price_3000mb_plus: parseFloat(e.target.value) || 0
-                }))}
-                placeholder="0.00"
-                inputProps={{ pattern: '[0-9]*\\.?[0-9]*' }}
-              />
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setMinimumPricingDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleMinimumPricingSave} variant="contained">
-            Save
-          </Button>
-        </DialogActions>
-      </Dialog>
+      </Box>
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
