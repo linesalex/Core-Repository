@@ -29,6 +29,18 @@ Enterprise-grade Node.js backend for the Network Inventory Management System, fe
 - **File Management**: KMZ uploads, test results, and ZIP downloads
 - **CSV Export**: Comprehensive data export functionality
 
+### 🏢 CNX Colocation Management
+- **Multi-tier Data Structure**: Location → Rack → Client hierarchy
+- **Rack Management**: Power allocation, RU tracking (30U capacity), network infrastructure
+- **Client Management**: Individual client power/space allocation with design file uploads
+- **File Management**: 
+  - Location design files (PDF uploads)
+  - Rack pricing information (Excel files)  
+  - Client design documentation (PDF uploads)
+- **Real-time Calculations**: Automatic power and RU allocation updates
+- **Data Integrity**: Prevents rack deletion when clients exist
+- **Role-based Access**: Full CRUD operations with proper authorization
+
 ### 📊 Data Management & Auditing
 - **Change Logging**: Complete audit trail of all system modifications
 - **Location Capabilities**: 12-field POP capability matrix
@@ -135,6 +147,11 @@ npm start
 - **carriers**: Carrier information with regional support
 - **exchange_rates**: Currency conversion rates
 
+### CNX Colocation Tables
+- **cnx_colocation_racks**: Rack inventory with power allocation, RU tracking, and file management
+- **cnx_colocation_clients**: Client details with power/RU allocation and design file storage
+- **pop_capabilities**: Extended with CNX Colocation capability flag for location enablement
+
 ### Enhanced Features
 - **Minimum Pricing**: 4-tier location-based pricing structure
 - **POP Capabilities**: 12-field service capability matrix
@@ -183,6 +200,20 @@ DELETE /locations/:id                   # Delete location
 PUT    /locations/:id/minimum-pricing   # Update pricing (Admin only)
 GET    /locations/:id/capabilities      # Get POP capabilities
 POST   /locations/:id/capabilities      # Update capabilities
+```
+
+### CNX Colocation Management
+```
+GET    /cnx-colocation/locations                  # List CNX-enabled locations
+PUT    /cnx-colocation/locations/:id              # Update location design & info
+GET    /cnx-colocation/locations/:locationId/racks # List racks for location
+POST   /cnx-colocation/locations/:locationId/racks # Create rack with pricing file
+PUT    /cnx-colocation/racks/:rackId              # Update rack with file management
+DELETE /cnx-colocation/racks/:rackId              # Delete rack (if no clients)
+GET    /cnx-colocation/racks/:rackId/clients      # List clients for rack
+POST   /cnx-colocation/racks/:rackId/clients      # Create client with design file
+PUT    /cnx-colocation/clients/:clientId          # Update client with design file
+DELETE /cnx-colocation/clients/:clientId          # Delete client
 ```
 
 ### Carriers & Exchange Rates
@@ -291,6 +322,38 @@ PUT /locations/1/minimum-pricing
 }
 ```
 
+### CNX Colocation Management
+```javascript
+// Create rack with pricing file upload
+POST /cnx-colocation/locations/1/racks
+FormData:
+{
+  "rack_id": "RACK-001",
+  "total_power_kva": "10.5",
+  "network_infrastructure": "Cisco switches, Dell servers",
+  "more_info": "Primary rack for colocation clients",
+  "pricing_info_file": [Excel file]
+}
+
+// Create client with design file
+POST /cnx-colocation/racks/1/clients
+FormData:
+{
+  "client_name": "TechCorp Solutions",
+  "power_purchased": "2.5",
+  "ru_purchased": "4",
+  "more_info": "Development environment setup",
+  "client_design_file": [PDF file]
+}
+
+// Response includes updated calculations
+{
+  "id": 5,
+  "client_name": "TechCorp Solutions", 
+  "message": "Client created successfully"
+}
+```
+
 ## 🛡 Security Features
 
 ### Authentication Security
@@ -320,10 +383,12 @@ PUT /locations/1/minimum-pricing
 - **Transaction Management**: Proper transaction boundaries
 
 ### File Management
-- **Upload Limits**: Configurable file size restrictions
-- **Storage Optimization**: Efficient file organization
-- **Cleanup Processes**: Automated temporary file removal
+- **Upload Limits**: Configurable file size restrictions (10MB for PDFs/Excel)
+- **Storage Optimization**: Efficient file organization in dedicated directories
+- **File Types**: KMZ, PDF (design files), Excel (pricing), test results
+- **Cleanup Processes**: Automated temporary file removal and orphaned file cleanup
 - **ZIP Compression**: Bulk download optimization
+- **Security**: File type validation and secure storage paths
 
 ### Memory Management
 - **Stream Processing**: Large file handling
@@ -450,9 +515,10 @@ node -e "const db = require('./db'); console.log('Database connected');"
 
 ## 📄 License & Version
 
-- **Version**: 2.0
+- **Version**: 2.1
 - **Node.js Compatibility**: v16+
 - **Database**: SQLite 3
+- **Latest Features**: CNX Colocation Management with client design file uploads
 - **Last Updated**: January 2025
 
 ---

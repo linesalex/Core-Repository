@@ -56,6 +56,25 @@ npm start
 - **Rate Management**: Administrative control over exchange rates
 - **Pricing Integration**: Seamless integration with pricing calculations
 
+### 🏢 CNX Colocation Management
+- **Multi-level Expandable Interface**: 
+  - Location → Rack → Client hierarchy with inline expansion
+  - Real-time calculations and data visualization
+- **Comprehensive Rack Management**:
+  - Total power allocation and consumption tracking
+  - RU (Rack Unit) utilization with 30U rack capacity display
+  - Network infrastructure and pricing file management
+- **Client Management**:
+  - Individual client power and space allocation
+  - Design file uploads (PDF) for each client
+  - Automatic calculation updates when clients are modified
+- **File Management**:
+  - Location design files (PDF)
+  - Rack pricing information (Excel)
+  - Client design documentation (PDF)
+- **Role-based Permissions**: Full CRUD operations with proper authorization
+- **Data Integrity**: Prevents deletion of racks with active clients
+
 ### 📋 Advanced Data Management
 - **Location Reference**: 
   - POP capabilities matrix (12 different service types)
@@ -84,6 +103,8 @@ npm start
 - **CSV Export**: Advanced data export capabilities
 - **KMZ File Handling**: Geographic data management
 - **Multi-file Uploads**: Batch file processing
+- **PDF File Management**: Secure design document storage and management
+- **Excel File Processing**: Pricing spreadsheet uploads and validation
 - **Real-time Validation**: Client and server-side validation
 
 ## 📁 Project Structure
@@ -105,6 +126,7 @@ network-inventory/
 │   │   ├── NetworkDesignTool.js     # Pricing and path finding
 │   │   ├── LocationDataManager.js  # Location management
 │   │   ├── NetworkRoutesTable.js   # Routes management
+│   │   ├── CNXColocationManager.js # CNX Colocation management
 │   │   └── [other components]
 │   └── package.json        # Frontend dependencies
 ├── SETUP_GUIDE.md          # Comprehensive Windows setup guide
@@ -113,11 +135,11 @@ network-inventory/
 
 ## 🔑 Default Permissions Matrix
 
-| Role          | Network Routes | Locations | Pricing | Users | Change Logs |
-|---------------|----------------|-----------|---------|-------|-------------|
-| Administrator | Full Access    | Full      | Full    | Full  | View        |
-| Provisioner   | Create/Edit    | Create/Edit| View   | None  | View        |
-| Read Only     | View Only      | View      | View    | None  | None        |
+| Role          | Network Routes | Locations | CNX Colocation | Pricing | Users | Change Logs |
+|---------------|----------------|-----------|----------------|---------|-------|-------------|
+| Administrator | Full Access    | Full      | Full Access    | Full    | Full  | View        |
+| Provisioner   | Create/Edit    | Create/Edit| Create/Edit   | View    | None  | View        |
+| Read Only     | View Only      | View      | View Only      | View    | None  | None        |
 
 ## 🎯 Core Business Logic
 
@@ -162,6 +184,18 @@ network-inventory/
 - `PUT /locations/:id/minimum-pricing` - Update minimum pricing (Admin only)
 - `GET /locations/:id/capabilities` - Get POP capabilities
 
+### CNX Colocation
+- `GET /cnx-colocation/locations` - List CNX-enabled locations
+- `PUT /cnx-colocation/locations/:id` - Update location design & info
+- `GET /cnx-colocation/locations/:locationId/racks` - List racks for location
+- `POST /cnx-colocation/locations/:locationId/racks` - Create rack with pricing file
+- `PUT /cnx-colocation/racks/:rackId` - Update rack with file management
+- `DELETE /cnx-colocation/racks/:rackId` - Delete rack (if no clients)
+- `GET /cnx-colocation/racks/:rackId/clients` - List clients for rack
+- `POST /cnx-colocation/racks/:rackId/clients` - Create client with design file
+- `PUT /cnx-colocation/clients/:clientId` - Update client with design file
+- `DELETE /cnx-colocation/clients/:clientId` - Delete client
+
 ## 📊 Database Schema
 
 ### Core Tables
@@ -172,6 +206,11 @@ network-inventory/
 - **carriers**: Carrier information with regional support
 - **exchange_rates**: Currency conversion rates
 - **change_logs**: Complete audit trail
+
+### CNX Colocation Tables
+- **cnx_colocation_racks**: Rack inventory with power, infrastructure, and pricing files
+- **cnx_colocation_clients**: Client details with power/RU allocation and design files
+- **pop_capabilities**: Extended with CNX Colocation capability flag
 
 ### Enhanced Features
 - **Minimum Pricing**: 4-tier pricing structure per location
@@ -288,6 +327,7 @@ This is an enterprise network inventory management system designed for telecommu
 
 ---
 
-**Version**: 2.0  
+**Version**: 2.1  
 **Last Updated**: January 2025  
+**Latest Features**: CNX Colocation Management with multi-tier file handling  
 **Compatibility**: Windows 10+, Node.js 16+, Modern Browsers 
