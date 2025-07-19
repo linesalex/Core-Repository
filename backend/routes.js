@@ -2135,7 +2135,7 @@ router.post('/network_design/calculate_pricing', (req, res) => {
     return res.status(400).json({ error: 'Bandwidth, source, and destination are required for enhanced pricing' });
   }
   
-  // Get exchange rates and location minimum prices
+  // Get exchange rates, location minimum prices, and pricing logic configuration
   const queries = [
     new Promise((resolve, reject) => {
       db.all('SELECT * FROM exchange_rates WHERE status = "Active"', [], (err, rates) => {
@@ -2148,10 +2148,11 @@ router.post('/network_design/calculate_pricing', (req, res) => {
         if (err) reject(err);
         else resolve(locations);
       });
-    })
+    }),
+    getPricingLogicConfig()
   ];
 
-  Promise.all(queries).then(([rates, locations]) => {
+  Promise.all(queries).then(([rates, locations, pricingConfig]) => {
     const exchangeRates = {};
     rates.forEach(rate => {
       exchangeRates[rate.currency_code] = rate.exchange_rate;
@@ -2209,7 +2210,7 @@ router.post('/network_design/calculate_pricing', (req, res) => {
           segmentCost = convertCurrency(segmentCost, segmentCurrency, output_currency);
           
           // Calculate allocated cost based on bandwidth utilization
-          const utilizationFactor = isProtection ? 1.0 : 0.9; // 90% for primary, 100% for protection
+          const utilizationFactor = isProtection ? pricingConfig.utilizationFactors.protection : pricingConfig.utilizationFactors.primary;
           const allocationRatio = bandwidth / (segmentBandwidth * utilizationFactor);
           const allocatedCost = segmentCost * allocationRatio;
           
@@ -2219,38 +2220,16 @@ router.post('/network_design/calculate_pricing', (req, res) => {
 
       // Apply ULL charges if requested
       if (include_ull) {
-        totalAllocatedCost += totalAllocatedCost * 0.15; // 15% ULL premium
+        totalAllocatedCost += totalAllocatedCost * (pricingConfig.charges.ullPremiumPercent / 100);
       }
 
-      // Contract term-based pricing model
+      // Contract term-based pricing model using dynamic configuration
       let minMarginPercent, suggestedMarginPercent, nrcCharge;
       
-      switch (contract_term) {
-        case 12:
-          // 12 months: existing standards (40% min, 60% suggested) + $1000 NRC
-          minMarginPercent = 40;
-          suggestedMarginPercent = 60;
-          nrcCharge = convertCurrency(1000, 'USD', output_currency);
-          break;
-        case 24:
-          // 24 months: 37.5% min margin, 55% suggested + $500 NRC
-          minMarginPercent = 37.5;
-          suggestedMarginPercent = 55;
-          nrcCharge = convertCurrency(500, 'USD', output_currency);
-          break;
-        case 36:
-          // 36 months: 35% min margin, 50% suggested + $0 NRC
-          minMarginPercent = 35;
-          suggestedMarginPercent = 50;
-          nrcCharge = 0;
-          break;
-        default:
-          // Default to 12-month terms if invalid contract term
-          minMarginPercent = 40;
-          suggestedMarginPercent = 60;
-          nrcCharge = convertCurrency(1000, 'USD', output_currency);
-          break;
-      }
+      const termConfig = pricingConfig.contractTerms[contract_term] || pricingConfig.contractTerms[12];
+      minMarginPercent = termConfig.minMargin;
+      suggestedMarginPercent = termConfig.suggestedMargin;
+      nrcCharge = convertCurrency(termConfig.nrcCharge, 'USD', output_currency);
 
       // Calculate pricing with contract term-based margins
       const minPriceByMargin = totalAllocatedCost / (1 - minMarginPercent / 100);
@@ -2307,9 +2286,10 @@ router.post('/network_design/calculate_pricing', (req, res) => {
       const primaryPricing = pricingResults[0].pricing;
       const secondaryPricing = pricingResults[1].pricing;
       
-      const protectedMinPrice = primaryPricing.minimumPrice + (secondaryPricing.minimumPrice * 0.7);
-      const protectedSuggestedPrice = primaryPricing.suggestedPrice + (secondaryPricing.suggestedPrice * 0.7);
-      const protectedAllocatedCost = primaryPricing.allocatedCost + (secondaryPricing.allocatedCost * 0.7);
+      const protectionMultiplier = pricingConfig.charges.protectionPathMultiplier;
+      const protectedMinPrice = primaryPricing.minimumPrice + (secondaryPricing.minimumPrice * protectionMultiplier);
+      const protectedSuggestedPrice = primaryPricing.suggestedPrice + (secondaryPricing.suggestedPrice * protectionMultiplier);
+      const protectedAllocatedCost = primaryPricing.allocatedCost + (secondaryPricing.allocatedCost * protectionMultiplier);
       
       // NRC charge for protection is only charged once (from primary path)
       const protectionNrcCharge = primaryPricing.nrcCharge;
@@ -2330,9 +2310,9 @@ router.post('/network_design/calculate_pricing', (req, res) => {
             weight: '100%'
           },
           secondary: {
-            minimumPrice: Math.round((secondaryPricing.minimumPrice * 0.7) * 100) / 100,
-            suggestedPrice: Math.round((secondaryPricing.suggestedPrice * 0.7) * 100) / 100,
-            weight: '70%'
+            minimumPrice: Math.round((secondaryPricing.minimumPrice * protectionMultiplier) * 100) / 100,
+            suggestedPrice: Math.round((secondaryPricing.suggestedPrice * protectionMultiplier) * 100) / 100,
+            weight: `${Math.round(protectionMultiplier * 100)}%`
           }
         }
       };
@@ -3993,5 +3973,189 @@ router.get('/bulk-upload/history', authenticateToken, authorizeRole('administrat
     }
   );
 });
+
+// PRICING LOGIC CONFIGURATION APIs (Admin Only)
+
+// Get current pricing logic configuration
+router.get('/pricing_logic/config', authenticateToken, (req, res) => {
+  // Check if user is admin
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  // Get all pricing logic configuration
+  db.all('SELECT * FROM pricing_logic_config ORDER BY config_key', [], (err, configs) => {
+    if (err) {
+      console.error('Error fetching pricing logic config:', err);
+      return res.status(500).json({ error: 'Failed to fetch pricing configuration' });
+    }
+
+    // Transform array into structured object
+    const configData = {
+      contractTerms: {
+        12: { minMargin: 40, suggestedMargin: 60, nrcCharge: 1000 },
+        24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
+        36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
+      },
+      charges: {
+        ullPremiumPercent: 15,
+        protectionPathMultiplier: 0.7
+      },
+      utilizationFactors: {
+        primary: 0.9,
+        protection: 1.0
+      }
+    };
+
+    // Override with database values if they exist
+    configs.forEach(config => {
+      const parts = config.config_key.split('.');
+      if (parts.length === 3 && parts[0] === 'contractTerms') {
+        const term = parts[1];
+        const field = parts[2];
+        if (!configData.contractTerms[term]) configData.contractTerms[term] = {};
+        configData.contractTerms[term][field] = parseFloat(config.config_value);
+      } else if (parts.length === 2 && parts[0] === 'charges') {
+        configData.charges[parts[1]] = parseFloat(config.config_value);
+      } else if (parts.length === 2 && parts[0] === 'utilizationFactors') {
+        configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
+      }
+    });
+
+    res.json({
+      success: true,
+      data: configData,
+      lastUpdated: configs.length > 0 ? configs[0].updated_date : null
+    });
+  });
+});
+
+// Update pricing logic configuration
+router.put('/pricing_logic/config', authenticateToken, (req, res) => {
+  // Check if user is admin
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  const { contractTerms, charges, utilizationFactors } = req.body;
+
+  // Validate input
+  if (!contractTerms || !charges || !utilizationFactors) {
+    return res.status(400).json({ error: 'All configuration sections are required' });
+  }
+
+  // Prepare update operations
+  const updateOperations = [];
+
+  // Contract terms
+  Object.keys(contractTerms).forEach(term => {
+    const termConfig = contractTerms[term];
+    ['minMargin', 'suggestedMargin', 'nrcCharge'].forEach(field => {
+      updateOperations.push({
+        key: `contractTerms.${term}.${field}`,
+        value: termConfig[field]
+      });
+    });
+  });
+
+  // Charges
+  Object.keys(charges).forEach(chargeType => {
+    updateOperations.push({
+      key: `charges.${chargeType}`,
+      value: charges[chargeType]
+    });
+  });
+
+  // Utilization factors
+  Object.keys(utilizationFactors).forEach(factorType => {
+    updateOperations.push({
+      key: `utilizationFactors.${factorType}`,
+      value: utilizationFactors[factorType]
+    });
+  });
+
+  // Execute all updates
+  db.serialize(() => {
+    db.run('BEGIN TRANSACTION');
+
+    let completed = 0;
+    let hasError = false;
+
+    updateOperations.forEach(operation => {
+      db.run(
+        'INSERT OR REPLACE INTO pricing_logic_config (config_key, config_value, updated_by, updated_date) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+        [operation.key, operation.value.toString(), req.user.id],
+        function(err) {
+          if (err && !hasError) {
+            hasError = true;
+            db.run('ROLLBACK');
+            return res.status(500).json({ error: 'Failed to update pricing configuration: ' + err.message });
+          }
+
+          completed++;
+          if (completed === updateOperations.length && !hasError) {
+            db.run('COMMIT');
+
+            // Log the configuration change
+            logChange('pricing_logic_config', 'UPDATE', 'Updated pricing logic configuration', {
+              contractTerms, charges, utilizationFactors
+            }, req);
+
+            res.json({
+              success: true,
+              message: 'Pricing logic configuration updated successfully'
+            });
+          }
+        }
+      );
+    });
+  });
+});
+
+// Get pricing logic configuration for calculations (internal use)
+const getPricingLogicConfig = () => {
+  return new Promise((resolve, reject) => {
+    db.all('SELECT * FROM pricing_logic_config', [], (err, configs) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      // Default configuration
+      const configData = {
+        contractTerms: {
+          12: { minMargin: 40, suggestedMargin: 60, nrcCharge: 1000 },
+          24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
+          36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
+        },
+        charges: {
+          ullPremiumPercent: 15,
+          protectionPathMultiplier: 0.7
+        },
+        utilizationFactors: {
+          primary: 0.9,
+          protection: 1.0
+        }
+      };
+
+      // Override with database values
+      configs.forEach(config => {
+        const parts = config.config_key.split('.');
+        if (parts.length === 3 && parts[0] === 'contractTerms') {
+          const term = parts[1];
+          const field = parts[2];
+          if (!configData.contractTerms[term]) configData.contractTerms[term] = {};
+          configData.contractTerms[term][field] = parseFloat(config.config_value);
+        } else if (parts.length === 2 && parts[0] === 'charges') {
+          configData.charges[parts[1]] = parseFloat(config.config_value);
+        } else if (parts.length === 2 && parts[0] === 'utilizationFactors') {
+          configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
+        }
+      });
+
+      resolve(configData);
+    });
+  });
+};
 
 module.exports = router; 

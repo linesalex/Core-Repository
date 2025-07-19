@@ -126,6 +126,10 @@ export const networkDesignApi = {
   // Pricing Calculations
   calculatePricing: (params) => api.post(`${API_BASE_URL}/network_design/calculate_pricing`, params).then(res => res.data),
   
+  // Pricing Logic Configuration (Admin Only)
+  getPricingLogicConfig: () => api.get(`${API_BASE_URL}/pricing_logic/config`).then(res => res.data),
+  updatePricingLogicConfig: (config) => api.put(`${API_BASE_URL}/pricing_logic/config`, config).then(res => res.data),
+  
   // KMZ Generation
   generateKMZ: (params) => api.post(`${API_BASE_URL}/network_design/generate_kmz`, params).then(res => res.data),
   
