@@ -3,7 +3,17 @@ const bcrypt = require('bcrypt');
 const db = require('./db');
 
 // JWT secret key (in production, use environment variable)
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || (() => {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('CRITICAL SECURITY ERROR: JWT_SECRET environment variable is not set in production!');
+    process.exit(1);
+  }
+  // Generate a secure random secret for development only
+  const crypto = require('crypto');
+  const devSecret = crypto.randomBytes(64).toString('hex');
+  console.warn('WARNING: Using generated JWT secret for development. Set JWT_SECRET environment variable for production.');
+  return devSecret;
+})();
 
 // Hash password
 const hashPassword = async (password) => {

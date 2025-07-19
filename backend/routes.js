@@ -417,8 +417,8 @@ router.put('/users/:id', authenticateToken, authorizePermission('user_management
 router.delete('/users/:id', authenticateToken, authorizePermission('user_management', 'delete'), (req, res) => {
   const userId = req.params.id;
   
-  // Prevent deleting own account
-  if (userId == req.user.id) {
+  // Prevent deleting own account (use strict comparison to prevent type coercion bypass)
+  if (userId === req.user.id.toString() || parseInt(userId) === req.user.id) {
     return res.status(400).json({ error: 'Cannot delete your own account' });
   }
   
@@ -1108,37 +1108,57 @@ router.get('/network_routes_search', (req, res) => {
   }
   
   if (shouldSearchDarkFiber) {
-    // Build query to search both network_routes and dark_fiber_details
-    const mainWhere = filters.length ? 'WHERE ' + filters.join(' AND ') : '';
-    
-    // Query for dark fiber DWDM UCN matches (case-insensitive)
-    const darkFiberQuery = `
+    // Build parameterized query to search both network_routes and dark_fiber_details
+    let mainQuery = 'SELECT * FROM network_routes';
+    let darkFiberQuery = `
       SELECT DISTINCT nr.* FROM network_routes nr
       INNER JOIN dark_fiber_details dfd ON nr.circuit_id = dfd.circuit_id
       WHERE dfd.dwdm_ucn LIKE ?
     `;
     
-    // Combine both queries with UNION
-    const combinedQuery = `
-      SELECT * FROM network_routes ${mainWhere}
-      UNION
-      ${darkFiberQuery}
-    `;
-    
-    // Add case-insensitive search term for DWDM UCN
-    const allValues = [...values, `%${searchTerm}%`];
-    
-    db.all(combinedQuery, allValues, (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(rows);
-    });
+    if (filters.length > 0) {
+      mainQuery += ' WHERE ' + filters.join(' AND ');
+      
+      // Combine both queries with UNION
+      const combinedQuery = `${mainQuery} UNION ${darkFiberQuery}`;
+      const allValues = [...values, `%${searchTerm}%`];
+      
+      db.all(combinedQuery, allValues, (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+      });
+    } else {
+      // No main filters, just search dark fiber
+      db.all(darkFiberQuery, [`%${searchTerm}%`], (err, darkRows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        // Also get all main records and combine
+        db.all('SELECT * FROM network_routes', [], (err2, mainRows) => {
+          if (err2) return res.status(500).json({ error: err2.message });
+          
+          // Combine and deduplicate by circuit_id
+          const allRows = [...mainRows, ...darkRows];
+          const uniqueRows = allRows.filter((row, index, self) => 
+            index === self.findIndex(r => r.circuit_id === row.circuit_id)
+          );
+          res.json(uniqueRows);
+        });
+      });
+    }
   } else {
-    // Standard search without dark fiber
-    const where = filters.length ? 'WHERE ' + filters.join(' AND ') : '';
-    db.all(`SELECT * FROM network_routes ${where}`, values, (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(rows);
-    });
+    // Standard search without dark fiber - use proper parameterized query
+    if (filters.length > 0) {
+      const query = 'SELECT * FROM network_routes WHERE ' + filters.join(' AND ');
+      db.all(query, values, (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+      });
+    } else {
+      db.all('SELECT * FROM network_routes', [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+      });
+    }
   }
 });
 
