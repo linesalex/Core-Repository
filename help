@@ -1,27 +1,9 @@
-AuthContext.js:101 Connection error during login: Unable to connect to server. Please reach out to admin user for assistance.
+http://172.30.252.118:4000/login
 
-localhost:4000/login:1 
- Failed to load resource: net::ERR_CONNECTION_REFUSED
-AuthContext.js:101 Connection error during login: Unable to connect to server. Please reach out to admin user for assistance.
-localhost:4000/login:1 
- Failed to load resource: net::ERR_CONNECTION_REFUSED
-AuthContext.js:101 Connection error during login: Unable to connect to server. Please reach out to admin user for assistance.
-localhost:4000/login:1 
- Failed to load resource: net::ERR_CONNECTION_REFUSED
-AuthContext.js:101 Connection error during login: Unable to connect to server. Please reach out to admin user for assistance.
-localhost:4000/login:1 
- Failed to load resource: net::ERR_CONNECTION_REFUSED
-3
-172.30.252.118/:1 Uncaught (in promise) Error: A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received
-WebSocketClient.js:13 WebSocket connection to 'ws://172.30.252.118:3000/ws' failed: 
-AuthContext.js:101 Connection error during login: Unable to connect to server. Please reach out to admin user for assistance.
-localhost:4000/login:1 
- Failed to load resource: net::ERR_CONNECTION_REFUSED
-AuthContext.js:101 Connection error during login: Unable to connect to server. Please reach out to admin user for assistance.
-localhost:4000/login:1 
- Failed to load resource: net::ERR_CONNECTION_REFUSED
-AuthContext.js:101 Connection error during login: Unable to connect to server. Please reach out to admin user for assistance.
-localhost:4000/login:1 
- Failed to load resource: net::ERR_CONNECTION_REFUSED
-﻿
+{
+  "error": "Endpoint not found",
+  "type": "NOT_FOUND",
+  "retryable": false,
+  "timestamp": "2025-07-22T19:20:04.666Z"
+}
 
