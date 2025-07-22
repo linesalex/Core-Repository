@@ -1,62 +1,24 @@
-# The basic C compiler is missing, let's install it
-sudo yum install -y gcc
+[root@sni1-ipclon7 ~]# sudo yum install -y gcc
+Loaded plugins: langpacks, product-id, search-disabled-repos, subscription-manager
+This system is not registered with an entitlement server. You can use subscription-manager to register.
+No package gcc available.
+Error: Nothing to do
+[root@sni1-ipclon7 ~]# sudo subscription-manager status
++-------------------------------------------+
+   System Status Details
++-------------------------------------------+
+Overall Status: Unknown
 
-# Verify gcc is available
-gcc --version
-which gcc
+System Purpose Status: Unknown
 
-# Create symlink for 'cc' if needed
-sudo ln -sf /usr/bin/gcc /usr/bin/cc
-
-# Test
-cc --version
-
-cd /root/Core-Repository/backend
-
-# Now try installing sqlite3@4.2.0 again
-npm install sqlite3@4.2.0
-
-# Test
-npm start
-
-
-
-# Install system sqlite development libraries
-sudo yum install -y sqlite-devel
-
-# Then try building sqlite3
-cd /root/Core-Repository/backend
-npm install sqlite3@4.2.0 --build-from-source
-
-
-
-# Install missing compiler
-sudo yum install -y gcc
-sudo ln -sf /usr/bin/gcc /usr/bin/cc
-
-# Try installing sqlite3 again
-cd /root/Core-Repository/backend
-npm install sqlite3@4.2.0
-
-# Test
-npm start
-
-
-
-
-# Check what development tools you have
-rpm -qa | grep -E 'gcc|make|kernel-devel'
-
-# Check CXXABI versions available
-strings /lib64/libstdc++.so.6 | grep CXXABI
-
-
-
-
-
-
-# Verify all build tools
-gcc --version
-g++ --version  
-make --version
-which cc
+[root@sni1-ipclon7 ~]# sudo yum repolist
+Loaded plugins: langpacks, product-id, search-disabled-repos, subscription-manager
+This system is not registered with an entitlement server. You can use subscription-manager to register.
+repo id                       repo name                                                                       status
+epel/x86_64                   Extra Packages for Enterprise Linux 7 - x86_64                                  13,791
+ius/x86_64                    IUS for Enterprise Linux 7 - x86_64                                                159
+remi-php56                    Remi's PHP 5.6 RPM repository for Enterprise Linux 7 - x86_64                      454
+remi-php73                    Remi's PHP 7.3 RPM repository for Enterprise Linux 7 - x86_64                      467
+remi-safe                     Safe Remi's RPM repository for Enterprise Linux 7 - x86_64                       5,596
+repolist: 20,467
+[root@sni1-ipclon7 ~]# 
