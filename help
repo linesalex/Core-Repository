@@ -207,3 +207,43 @@ Router methods: [
 
 -ipclon7 backend]# curl -X POST http://172.30.252.118:4000/Login
 {"error":"Username and password are required"}[root@sni1-ipclon7 backend]# 
+
+
+[root@sni1-ipclon7 backend]# node -e "
+> const routes = require('./routes');
+> console.log('Router type:', typeof routes);
+> console.log('Router constructor:', routes.constructor.name);
+> console.log('Has stack:', !!routes.stack);
+console.log('Has stack:', node -e "
+const routes = require('./routes');
+console.log('Router type:', typeof routes);
+console.log('Router constructor:', routes.constructor.name);routes.stack);
+[eval]:5
+console.log('Has stack:', node -e 
+                                ^
+
+SyntaxError: missing ) after argument list
+    at new Script (vm.js:102:7)
+    at createScript (vm.js:262:10)
+    at Object.runInThisContext (vm.js:310:10)
+    at internal/process/execution.js:81:19
+    at [eval]-wrapper:6:22
+    at evalScript (internal/process/execution.js:80:60)
+    at internal/main/eval_string.js:27:3
+-bash: syntax error near unexpected token `('
+[root@sni1-ipclon7 backend]# if (routes.stack) {
+-bash: syntax error near unexpected token `{'
+[root@sni1-ipclon7 backend]#   console.log('Number of routes:', routes.stack.length);
+-bash: syntax error near unexpected token `'Number of routes:','
+[root@sni1-ipclon7 backend]#   routes.stack.forEach((layer, i) => {
+-bash: syntax error near unexpected token `('
+[root@sni1-ipclon7 backend]#     if (layer.route) {
+-bash: syntax error near unexpected token `{'
+[root@sni1-ipclon7 backend]#       console.log(`Route ${i}: ${layer.route.path} [${Object.keys(layer.route.methods).join(',')}]`);
+-bash: syntax error near unexpected token ``Route ${i}: ${layer.route.path} [${Object.keys(layer.route.methods).join(',')}]`'
+[root@sni1-ipclon7 backend]#     }
+-bash: syntax error near unexpected token `}'
+[root@sni1-ipclon7 backend]#   });
+-bash: syntax error near unexpected token `}'
+[root@sni1-ipclon7 backend]# }
+-bash: syntax error near unexpected token `}'
