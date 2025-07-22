@@ -37,77 +37,93 @@ sudo yum update -y
 
 ### **Install Development Tools**
 ```bash
+# Fix groups database first (common RHEL 7 issue)
+sudo yum groups mark convert
+
 # Install essential build tools (required for npm packages with native modules)
 sudo yum groupinstall -y "Development Tools"
 
-# Install additional required packages
+# If groupinstall fails, install core packages individually
+if [ $? -ne 0 ]; then
+    sudo yum install -y make gcc gcc-c++ kernel-devel
+fi
+
+# Install additional required packages (avoid git conflicts)
 sudo yum install -y \
     curl \
     wget \
-    git \
     python-devel \
-    make \
-    gcc \
-    gcc-c++ \
     openssl-devel \
     bzip2-devel \
     libffi-devel \
     zlib-devel \
     sqlite-devel
 
-# Verify git installation
+# Check if git is already installed
 git --version
+# If git is not installed or you need to upgrade:
+# sudo yum install -y git
 ```
 
 ## 🔧 Step 2: Install Node.js
 
-### **Method 1: NodeSource Repository (Recommended)**
+### **Method 1: NodeSource Repository (RHEL 7 Compatible)**
 ```bash
-# Download and install Node.js 18.x LTS repository
-curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
+# IMPORTANT: Use Node.js 16.x for RHEL 7 compatibility
+# Node.js 18+ requires glibc 2.28+, but RHEL 7 only has glibc 2.17
+curl -fsSL https://rpm.nodesource.com/setup_16.x | sudo bash -
 
 # Install Node.js
 sudo yum install -y nodejs
 
 # Verify installation
-node --version  # Should show v18.x.x
-npm --version   # Should show 9.x.x
+node --version  # Should show v16.x.x
+npm --version   # Should show 8.x.x
+
+# Check system compatibility
+ldd --version  # Should show glibc 2.17 (RHEL 7 default)
 ```
 
-### **Method 2: Using NVM (Alternative)**
+### **Method 2: Using NVM (Most Reliable for RHEL 7)**
 ```bash
-# Install NVM (Node Version Manager)
+# Install NVM (Node Version Manager) - works on any system
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
 
 # Reload shell configuration
 source ~/.bashrc
 
-# Install Node.js 18 LTS
-nvm install 18
-nvm use 18
-nvm alias default 18
+# Install Node.js 16 LTS (RHEL 7 compatible)
+nvm install 16
+nvm use 16
+nvm alias default 16
 
 # Verify installation
-node --version
-npm --version
+node --version  # Should show v16.x.x
+npm --version   # Should show 8.x.x
+
+# List available versions if needed
+nvm ls-remote --lts
 ```
 
 ### **Method 3: Pre-compiled Binaries (If repositories fail)**
 ```bash
-# Download Node.js pre-compiled binary
+# Download Node.js 16 pre-compiled binary (RHEL 7 compatible)
 cd /tmp
-wget https://nodejs.org/dist/v18.19.0/node-v18.19.0-linux-x64.tar.xz
+wget https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz
 
 # Extract and install
-sudo tar -xJf node-v18.19.0-linux-x64.tar.xz -C /usr/local --strip-components=1
+sudo tar -xJf node-v16.20.2-linux-x64.tar.xz -C /usr/local --strip-components=1
 
 # Add to PATH if needed
 echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
 source ~/.bashrc
 
 # Verify installation
-node --version
-npm --version
+node --version  # Should show v16.20.2
+npm --version   # Should show 8.x.x
+
+# Clean up
+rm -f /tmp/node-v16.20.2-linux-x64.tar.xz
 ```
 
 ## 📁 Step 3: Get the Application
@@ -127,7 +143,24 @@ pwd
 ls -la  # You should see backend/, frontend/, README.md, etc.
 ```
 
-## 🔧 Step 4: Configure npm for RHEL 7
+## 🔧 Step 4: Verify System Compatibility
+
+### **Check RHEL 7 System Requirements**
+```bash
+# Check glibc version (should be 2.17 for RHEL 7)
+ldd --version
+
+# Check system architecture
+uname -m  # Should show x86_64
+
+# Check available memory (Node.js needs at least 512MB)
+free -h
+
+# Check disk space
+df -h
+```
+
+## 🔧 Step 5: Configure npm for RHEL 7
 
 ### **Set npm Configuration (Important for RHEL 7)**
 ```bash
@@ -138,12 +171,15 @@ npm config set unsafe-perm true
 # Increase npm timeout for slower connections
 npm config set timeout 300000
 
+# Set legacy peer deps (helps with older npm versions)
+npm config set legacy-peer-deps true
+
 # If behind corporate firewall, you may need:
 # npm config set strict-ssl false
 # npm config set registry http://registry.npmjs.org/
 ```
 
-## 🔧 Step 5: Install Dependencies
+## 🔧 Step 6: Install Dependencies
 
 ```bash
 # Install backend dependencies
@@ -161,7 +197,7 @@ npm install
 # npm install --max_old_space_size=4096
 ```
 
-## 🗄 Step 6: Setup Database
+## 🗄 Step 7: Setup Database
 
 ```bash
 # Navigate to backend directory
@@ -180,7 +216,7 @@ ls -la ../network_routes.db
 # Should show the database file with proper permissions
 ```
 
-## 🚀 Step 7: Configure Firewall (Optional but Recommended)
+## 🚀 Step 8: Configure Firewall (Optional but Recommended)
 
 ### **Configure firewalld for Development**
 ```bash
@@ -203,7 +239,7 @@ sudo systemctl stop firewalld
 sudo systemctl disable firewalld
 ```
 
-## 🚀 Step 8: Start the Application
+## 🚀 Step 9: Start the Application
 
 ### **Terminal 1 - Start Backend**
 ```bash
@@ -226,7 +262,7 @@ npm start
 # PORT=3001 npm start
 ```
 
-## ✅ Step 9: Access the Application
+## ✅ Step 10: Access the Application
 
 1. **Open your web browser** (Firefox, Chrome, or any modern browser)
 2. **Navigate to**: `http://localhost:3000`
@@ -364,6 +400,27 @@ chmod 664 network_routes.db
 
 # If running as root, you may need:
 # npm config set unsafe-perm true
+```
+
+### **Node.js Compatibility Issues (Most Common)**
+```bash
+# Check if you're trying to install incompatible Node.js version
+node --version
+ldd --version  # Should show glibc 2.17 for RHEL 7
+
+# If you get glibc version errors, use Node.js 16 instead of 18+
+# Uninstall incompatible version first
+sudo yum remove -y nodejs npm
+
+# Install compatible version
+curl -fsSL https://rpm.nodesource.com/setup_16.x | sudo bash -
+sudo yum install -y nodejs
+
+# Or use NVM method (most reliable)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+source ~/.bashrc
+nvm install 16
+nvm use 16
 ```
 
 ### **Node.js/npm Issues on RHEL 7**
@@ -669,11 +726,16 @@ ip addr show
 
 ### **Application Quick Start Commands**
 ```bash
-# One-time setup (copy and paste)
+# One-time setup (copy and paste) - RHEL 7 Compatible
 sudo yum install -y epel-release
-curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
+sudo yum groups mark convert
+curl -fsSL https://rpm.nodesource.com/setup_16.x | sudo bash -
 sudo yum install -y nodejs
 sudo yum groupinstall -y "Development Tools"
+
+# Configure npm for RHEL 7
+npm config set python python2
+npm config set unsafe-perm true
 
 # Start application (every time)
 cd /path/to/Core-Repository
