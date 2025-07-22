@@ -1,89 +1,40 @@
-[root@sni1-ipclon7 ~]# cat /etc/redhat-release
-Red Hat Enterprise Linux Server release 7.7 (Maipo)
-[root@sni1-ipclon7 ~]# cd /tmp
-[root@sni1-ipclon7 tmp]# rm -rf node-v14.21.3*
-[root@sni1-ipclon7 tmp]# wget https://nodejs.org/dist/v12.22.12/node-v12.22.12.tar.gz
---2025-07-22 18:17:57--  https://nodejs.org/dist/v12.22.12/node-v12.22.12.tar.gz
-Resolving nodejs.org (nodejs.org)... 104.20.1.252, 172.66.128.70, 2606:4700:10::ac42:8046, ...
-Connecting to nodejs.org (nodejs.org)|104.20.1.252|:443... connected.
-HTTP request sent, awaiting response... 200 OK
-Length: 53999081 (51M) [application/gzip]
-Saving to: â€˜node-v12.22.12.tar.gzâ€™
-
-100%[==========================================================================>] 53,999,081  10.0MB/s   in 5.3s   
-
-2025-07-22 18:18:03 (9.76 MB/s) - â€˜node-v12.22.12.tar.gzâ€™ saved [53999081/53999081]
-
-[root@sni1-ipclon7 tmp]# tar xzf node-v12.22.12.tar.gz
-[root@sni1-ipclon7 tmp]# cd node-v12.22.12
-[root@sni1-ipclon7 node-v12.22.12]# export PYTHON=/usr/bin/python2
-[root@sni1-ipclon7 node-v12.22.12]# ./configure --prefix=/usr/local
-WARNING: failed to autodetect C++ compiler version (CXX=g++)
-WARNING: failed to autodetect C compiler version (CC=gcc)
-ERROR: No acceptable C compiler found!
-
-       Please make sure you have a C compiler installed on your system and/or
-       consider adjusting the CC environment variable if you installed
-       it in a non-standard prefix.
-[root@sni1-ipclon7 node-v12.22.12]# make -j2
-Missing or stale config.gypi, please run ./configure
-make: *** [config.gypi] Error 1
-[root@sni1-ipclon7 node-v12.22.12]# 
-
-
-# Clean up and try Node.js 12
+# Clean up compilation attempts
 cd /tmp
-rm -rf node-v14.21.3*
-wget https://nodejs.org/dist/v12.22.12/node-v12.22.12.tar.gz
-tar xzf node-v12.22.12.tar.gz
-cd node-v12.22.12
+rm -rf node-v*
 
-# Configure and build
-export PYTHON=/usr/bin/python2
-./configure --prefix=/usr/local
-make -j2
-
-# If successful, install
-sudo make install
-source ~/.bashrc
-node --version
-
-# Download statically-linked Node.js 12 binary
-cd /tmp
+# Download pre-compiled Node.js 12 binary (static, works on any Linux)
 wget https://unofficial-builds.nodejs.org/download/release/v12.22.12/node-v12.22.12-linux-x64-musl.tar.xz
 
-# Extract and install
+# Extract it
 tar -xJf node-v12.22.12-linux-x64-musl.tar.xz
+
+# Copy to system location
 sudo cp -r node-v12.22.12-linux-x64-musl/* /usr/local/
 
 # Add to PATH
 echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
 source ~/.bashrc
 
-# Test
-node --version  # Should work this time
+# Test immediately
+/usr/local/bin/node --version
+/usr/local/bin/npm --version
+
+# Test with PATH
+node --version
 npm --version
 
 
-# Download Node.js AppImage
-cd /tmp
-wget https://github.com/AppImage/AppImageKit/releases/download/continuous/node-v12.22.12-linux-x64.AppImage
-
-# Make executable and run
-chmod +x node-v12.22.12-linux-x64.AppImage
-./node-v12.22.12-linux-x64.AppImage --version
-
-# If it works, install it
-sudo mv node-v12.22.12-linux-x64.AppImage /usr/local/bin/node
-sudo ln -sf /usr/local/bin/node /usr/local/bin/npm
-
-
-# Configure npm
+# Configure npm for your system
 npm config set python python2
 npm config set unsafe-perm true
 
-# Now you can install your application
-cd /path/to/Core-Repository/backend
+# Test npm
+npm --version
+
+# Now install your application (assuming you have the files)
+cd /root/Core-Repository/backend  # or wherever your files are
 npm install
+
 cd ../frontend
 npm install
+
