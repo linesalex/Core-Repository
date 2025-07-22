@@ -1,91 +1,28 @@
-[root@sni1-ipclon7 ~]# ```bash
-> sudo yum groupinstall -y "Development Tools"
-> sudo yum install -y \
->     curl \
->     wget \
->     git \
->     python-devel \
->     make \
->     gcc \
->     gcc-c++ \
->     openssl-devel \
->     bzip2-devel \
->     libffi-devel \
->     zlib-devel \
->     sqlite-devel
-> git --version
-> ```
-[root@sni1-ipclon7 ~]# git --version
-[root@sni1-ipclon7 ~]# sudo yum groupinstall -y "Development Tools"
-There is no installed groups file.
-Maybe run: yum groups mark convert (see man yum)
-Warning: Group development does not have any packages to install.
-Maybe run: yum groups mark install (see man yum)
+[root@sni1-ipclon7 ~]# sudo yum install -y \
+> make \
+> gcc \
+> gcc-c+ \
+> gcc-c++ \
+>     kernel-devel \
+>     autoconf \
+>     automake \
+>     libtool \
+>     pkgconfig \
+>     patch
 [root@sni1-ipclon7 ~]# sudo yum install -y \
 >     curl \
 >     wget \
->     git \
 >     python-devel \
->     make \
->     gcc \
->     gcc-c++ \
 >     openssl-devel \
 >     bzip2-devel \
 >     libffi-devel \
 >     zlib-devel \
 >     sqlite-devel
+[root@sni1-ipclon7 ~]# git --version
+[root@sni1-ipclon7 ~]# sudo yum install -y git
 Error: git236-perl-Git conflicts with perl-Git-1.8.3.1-20.el7.noarch
 Error: git236-core conflicts with git-1.8.3.1-20.el7.x86_64
 Error: git236 conflicts with git-1.8.3.1-20.el7.x86_64
 Error: Package: git236-core-2.36.6-1.el7.ius.x86_64 (ius)
            Requires: libpcre2-8.so.0()(64bit)
-[root@sni1-ipclon7 ~]# git --version
-[root@sni1-ipclon7 ~]# curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
-[root@sni1-ipclon7 ~]# sudo yum install -y nodejs
-Error: Package: 2:nodejs-18.20.8-1nodesource.x86_64 (nodesource-nodejs)
-           Requires: libstdc++.so.6(GLIBCXX_3.4.21)(64bit)
-Error: Package: 2:nodejs-18.20.8-1nodesource.x86_64 (nodesource-nodejs)
-           Requires: libstdc++.so.6(GLIBCXX_3.4.20)(64bit)
-Error: Package: 2:nodejs-18.20.8-1nodesource.x86_64 (nodesource-nodejs)
-           Requires: libc.so.6(GLIBC_2.28)(64bit)
-Error: Package: 2:nodejs-18.20.8-1nodesource.x86_64 (nodesource-nodejs)
-           Requires: glibc >= 2.28
-           Installed: glibc-2.17-292.el7.x86_64 (@rhel-7-server-rpms)
-               glibc = 2.17-292.el7
-Error: Package: 2:nodejs-18.20.8-1nodesource.x86_64 (nodesource-nodejs)
-           Requires: libstdc++.so.6(CXXABI_1.3.9)(64bit)
-Error: Package: 2:nodejs-18.20.8-1nodesource.x86_64 (nodesource-nodejs)
-           Requires: python3
-Error: Package: 2:nodejs-18.20.8-1nodesource.x86_64 (nodesource-nodejs)
-           Requires: libm.so.6(GLIBC_2.27)(64bit)
-[root@sni1-ipclon7 ~]# node --version
-bash: node: command not found
-[root@sni1-ipclon7 ~]# ```bash
-> # Install essential build tools (required for npm packages with native modules)
-> sudo yum groupinstall -y "Development Tools"
-> 
-> # Install additional required packages
-> sudo yum install -y \
->     curl \
->     wget \
->     git \
->     python-devel \
->     make \
->     gcc \
->     gcc-c++ \
->     openssl-devel \
->     bzip2-devel \
->     libffi-devel \
->     zlib-devel \
->     sqlite-devel
-> 
-> # Verify git installation
-> git --version
-> ```
-[root@sni1-ipclon7 ~]# ```bash
-> # Download and install Node.js 18.x LTS repository
-> curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
-> sudo yum install -y nodejs
-> node --version 
-> ^C
 [root@sni1-ipclon7 ~]# 
