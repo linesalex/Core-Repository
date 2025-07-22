@@ -37,18 +37,19 @@ sudo yum update -y
 
 ### **Install Development Tools**
 ```bash
-# Fix groups database first (common RHEL 7 issue)
-sudo yum groups mark convert
+# Install essential build tools individually (more reliable for RHEL 7)
+sudo yum install -y \
+    make \
+    gcc \
+    gcc-c++ \
+    kernel-devel \
+    autoconf \
+    automake \
+    libtool \
+    pkgconfig \
+    patch
 
-# Install essential build tools (required for npm packages with native modules)
-sudo yum groupinstall -y "Development Tools"
-
-# If groupinstall fails, install core packages individually
-if [ $? -ne 0 ]; then
-    sudo yum install -y make gcc gcc-c++ kernel-devel
-fi
-
-# Install additional required packages (avoid git conflicts)
+# Install additional required packages
 sudo yum install -y \
     curl \
     wget \
@@ -61,8 +62,12 @@ sudo yum install -y \
 
 # Check if git is already installed
 git --version
-# If git is not installed or you need to upgrade:
+# If git is not installed:
 # sudo yum install -y git
+
+# Alternative: If groups work on your system, you can try:
+# sudo yum groups mark convert
+# sudo yum groupinstall -y "Development Tools"
 ```
 
 ## 🔧 Step 2: Install Node.js
@@ -347,6 +352,19 @@ curl http://localhost:3000
 ```
 
 ## 🔍 RHEL 7 Specific Troubleshooting
+
+### **Groups File Issues**
+```bash
+# If you get "there is no installed groups file" error:
+sudo yum groups mark convert
+# Error: there is no installed groups file
+
+# Solution: Install packages individually instead
+sudo yum install -y make gcc gcc-c++ kernel-devel autoconf automake libtool
+
+# Skip group installations entirely and use individual package names
+# This is actually more reliable on RHEL 7 minimal installations
+```
 
 ### **Port Already in Use**
 ```bash
@@ -728,10 +746,9 @@ ip addr show
 ```bash
 # One-time setup (copy and paste) - RHEL 7 Compatible
 sudo yum install -y epel-release
-sudo yum groups mark convert
+sudo yum install -y make gcc gcc-c++ kernel-devel python-devel openssl-devel
 curl -fsSL https://rpm.nodesource.com/setup_16.x | sudo bash -
 sudo yum install -y nodejs
-sudo yum groupinstall -y "Development Tools"
 
 # Configure npm for RHEL 7
 npm config set python python2
