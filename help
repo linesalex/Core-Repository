@@ -1,22 +1,20 @@
-[root@sni1-ipclon7 tmp]# node --version
-[root@sni1-ipclon7 tmp]# rpm -qa | grep -E 'nodejs|npm'
-[root@sni1-ipclon7 tmp]# ls -la /usr/bin/node* /usr/bin/npm*
-[root@sni1-ipclon7 tmp]# which node
-[root@sni1-ipclon7 tmp]# which npm
-[root@sni1-ipclon7 tmp]# file /usr/bin/node
-[root@sni1-ipclon7 tmp]# file /usr/bin/npm
-[root@sni1-ipclon7 tmp]# 
-[root@sni1-ipclon7 tmp]# /usr/bin/node --version
-/usr/bin/npm --version[root@sni1-ipclon7 tmp]# /usr/bin/npm --version
-[root@sni1-ipclon7 tmp]# strace /usr/bin/node --version 2>&1 | head -20
-[root@sni1-ipclon7 tmp]# strace /usr/bin/npm --version 2>&1 | head -20
-[root@sni1-ipclon7 tmp]# ldd /usr/bin/node
-[root@sni1-ipclon7 tmp]# ldd /usr/bin/npm
-[root@sni1-ipclon7 tmp]# sudo yum remove -y nodejs npm
-[root@sni1-ipclon7 tmp]# sudo yum clean all
+# Step 1: Install the SCL repository
+sudo yum install -y centos-release-scl-rh
 
-[root@sni1-ipclon7 tmp]# 
-[root@sni1-ipclon7 tmp]# sudo yum install -y nodejs npm --enablerepo=epel
-[root@sni1-ipclon7 tmp]# node --version
-[root@sni1-ipclon7 tmp]# npm --version
-[root@sni1-ipclon7 tmp]# 
+# Step 2: Install Node.js 14 from SCL (RHEL 7 compatible)
+sudo yum install -y rh-nodejs14
+
+# Step 3: Enable the SCL environment in your shell
+source /opt/rh/rh-nodejs14/enable
+
+# Step 4: Verify in this shell
+node --version  # Should show v14.x.x (e.g., v14.21.3)
+npm --version   # Should show 6.x.x
+
+# Step 5: Make it permanent (add to your .bashrc)
+echo 'source /opt/rh/rh-nodejs14/enable' >> ~/.bashrc
+source ~/.bashrc
+
+# Step 6: Test again
+node --version
+npm --version
