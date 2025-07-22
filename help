@@ -1,16 +1,56 @@
-[root@sni1-ipclon7 ~]# 
-[root@sni1-ipclon7 ~]# 
-[root@sni1-ipclon7 ~]# sudo yum install -y python-setuptools python-devel gyp
-[root@sni1-ipclon7 ~]#  sudo yum install -y gcc gcc-c++ make openssl-devel zlib-devel libffi-devel bzip2-devel
-[root@sni1-ipclon7 ~]# cd /tmp/node-v14.21.3
-[root@sni1-ipclon7 node-v14.21.3]# make clean
-[root@sni1-ipclon7 node-v14.21.3]# export PYTHON=/usr/bin/python2
-[root@sni1-ipclon7 node-v14.21.3]# ./configure --prefix=/usr/local --debug
-[root@sni1-ipclon7 node-v14.21.3]# make -j2 VERBOSE=1
-make: *** [config.gypi] Error 1
-[root@sni1-ipclon7 node-v14.21.3]# 
+# Clean up and try Node.js 12
+cd /tmp
+rm -rf node-v14.21.3*
+wget https://nodejs.org/dist/v12.22.12/node-v12.22.12.tar.gz
+tar xzf node-v12.22.12.tar.gz
+cd node-v12.22.12
 
-[root@sni1-ipclon7 ~]# cat /etc/redhat-release
-Red Hat Enterprise Linux Server release 7.7 (Maipo)
-[root@sni1-ipclon7 ~]# 
+# Configure and build
+export PYTHON=/usr/bin/python2
+./configure --prefix=/usr/local
+make -j2
 
+# If successful, install
+sudo make install
+source ~/.bashrc
+node --version
+
+# Download statically-linked Node.js 12 binary
+cd /tmp
+wget https://unofficial-builds.nodejs.org/download/release/v12.22.12/node-v12.22.12-linux-x64-musl.tar.xz
+
+# Extract and install
+tar -xJf node-v12.22.12-linux-x64-musl.tar.xz
+sudo cp -r node-v12.22.12-linux-x64-musl/* /usr/local/
+
+# Add to PATH
+echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+
+# Test
+node --version  # Should work this time
+npm --version
+
+
+# Download Node.js AppImage
+cd /tmp
+wget https://github.com/AppImage/AppImageKit/releases/download/continuous/node-v12.22.12-linux-x64.AppImage
+
+# Make executable and run
+chmod +x node-v12.22.12-linux-x64.AppImage
+./node-v12.22.12-linux-x64.AppImage --version
+
+# If it works, install it
+sudo mv node-v12.22.12-linux-x64.AppImage /usr/local/bin/node
+sudo ln -sf /usr/local/bin/node /usr/local/bin/npm
+
+
+# Configure npm
+npm config set python python2
+npm config set unsafe-perm true
+
+# Now you can install your application
+cd /path/to/Core-Repository/backend
+npm install
+cd ../frontend
+npm install
