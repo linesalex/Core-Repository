@@ -1,24 +1,16 @@
-[root@sni1-ipclon7 ~]# sudo yum install -y gcc
-Loaded plugins: langpacks, product-id, search-disabled-repos, subscription-manager
-This system is not registered with an entitlement server. You can use subscription-manager to register.
-No package gcc available.
-Error: Nothing to do
-[root@sni1-ipclon7 ~]# sudo subscription-manager status
-+-------------------------------------------+
-   System Status Details
-+-------------------------------------------+
-Overall Status: Unknown
+cd /root/Core-Repository/backend
 
-System Purpose Status: Unknown
+# Download pre-compiled sqlite3 for Node.js 14 and RHEL 7
+wget https://github.com/mapbox/node-sqlite3/releases/download/v4.2.0/node-v83-linux-x64.tar.gz
 
-[root@sni1-ipclon7 ~]# sudo yum repolist
-Loaded plugins: langpacks, product-id, search-disabled-repos, subscription-manager
-This system is not registered with an entitlement server. You can use subscription-manager to register.
-repo id                       repo name                                                                       status
-epel/x86_64                   Extra Packages for Enterprise Linux 7 - x86_64                                  13,791
-ius/x86_64                    IUS for Enterprise Linux 7 - x86_64                                                159
-remi-php56                    Remi's PHP 5.6 RPM repository for Enterprise Linux 7 - x86_64                      454
-remi-php73                    Remi's PHP 7.3 RPM repository for Enterprise Linux 7 - x86_64                      467
-remi-safe                     Safe Remi's RPM repository for Enterprise Linux 7 - x86_64                       5,596
-repolist: 20,467
-[root@sni1-ipclon7 ~]# 
+# Create the proper directory structure
+mkdir -p node_modules/sqlite3/lib/binding/node-v83-linux-x64
+
+# Extract the binary
+tar -xzf node-v83-linux-x64.tar.gz -C node_modules/sqlite3/lib/binding/node-v83-linux-x64/ --strip-components=1
+
+# Install sqlite3 without building
+npm install sqlite3@4.2.0 --ignore-scripts
+
+# Test
+npm start
