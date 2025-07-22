@@ -1,22 +1,25 @@
-# Download Node.js 16 directly
-cd /tmp
-wget https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz
+[root@sni1-ipclon7 ~]# cd /tmp
+[root@sni1-ipclon7 tmp]# wget https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz
+--2025-07-22 17:41:41--  https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz
+Resolving nodejs.org (nodejs.org)... 172.66.128.70, 104.20.1.252, 2606:4700:10::6814:1fc, ...
+Connecting to nodejs.org (nodejs.org)|172.66.128.70|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 22556484 (22M) [application/x-xz]
+Saving to: â€˜node-v16.20.2-linux-x64.tar.xzâ€™
 
-# Extract to /usr/local
-sudo tar -xJf node-v16.20.2-linux-x64.tar.xz -C /usr/local --strip-components=1
+100%[==========================================================================>] 22,556,484  10.3MB/s   in 2.1s   
 
-# Add to PATH permanently
-echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
-source ~/.bashrc
+2025-07-22 17:41:43 (10.3 MB/s) - â€˜node-v16.20.2-linux-x64.tar.xzâ€™ saved [22556484/22556484]
 
-# Test
-/usr/local/bin/node --version
-/usr/local/bin/npm --version
-
-# If the above works, create symlinks
-sudo ln -sf /usr/local/bin/node /usr/bin/node
-sudo ln -sf /usr/local/bin/npm /usr/bin/npm
-
-# Test global access
-node --version
-npm --version
+[root@sni1-ipclon7 tmp]# sudo tar -xJf node-v16.20.2-linux-x64.tar.xz -C /usr/local --strip-components=1
+[root@sni1-ipclon7 tmp]# echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
+[root@sni1-ipclon7 tmp]# source ~/.bashrc
+[root@sni1-ipclon7 tmp]# /usr/local/bin/node --version
+[root@sni1-ipclon7 tmp]# /usr/local/bin/npm --version
+[root@sni1-ipclon7 tmp]# sudo ln -sf /usr/local/bin/node /usr/bin/node
+[root@sni1-ipclon7 tmp]# sudo ln -sf /usr/local/bin/npm /usr/bin/npm
+[root@sni1-ipclon7 tmp]# ^C
+[root@sni1-ipclon7 tmp]# ^C
+[root@sni1-ipclon7 tmp]# node --version
+[root@sni1-ipclon7 tmp]# npm --version
+[root@sni1-ipclon7 tmp]# 
