@@ -1,8 +1,5 @@
-# Remove NodeSource repo and install from EPEL
-sudo rm -f /etc/yum.repos.d/nodesource*.repo && sudo yum clean all && sudo yum install -y nodejs npm
-
-# List available nodejs packages from EPEL only
-sudo yum --enablerepo=epel --disablerepo=nodesource* list available | grep nodejs
-
-# Install the specific EPEL version
-sudo yum --enablerepo=epel --disablerepo=nodesource* install -y nodejs-16.20.2-1.el7 npm-8.19.4-1.16.20.2.1.el7
+[root@sni1-ipclon7 tmp]# node --version
+[root@sni1-ipclon7 tmp]# sudo rm -f /etc/yum.repos.d/nodesource*.repo && sudo yum clean all && sudo yum install -y nodejs npm
+[root@sni1-ipclon7 tmp]# sudo yum --enablerepo=epel --disablerepo=nodesource* list available | grep nodejs
+[root@sni1-ipclon7 tmp]# sudo yum --enablerepo=epel --disablerepo=nodesource* install -y nodejs-16.20.2-1.el7 npm-8.19.4-1.16.20.2.1.el7
+[root@sni1-ipclon7 tmp]# 
