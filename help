@@ -1,53 +1,11 @@
-# Step 1: Install build dependencies (you may already have some from earlier)
-sudo yum install -y gcc gcc-c++ make python openssl-devel zlib-devel libffi-devel bzip2-devel
-
-# Step 2: Download Node.js 14 source code
-cd /tmp
-wget https://nodejs.org/dist/v14.21.3/node-v14.21.3.tar.gz
-tar xzf node-v14.21.3.tar.gz
-cd node-v14.21.3
-
-# Step 3: Configure and compile (use -j4 if you have 4+ CPU cores for faster build)
-./configure --prefix=/usr/local
-make -j2  # Change -j2 to -j4 if your system has more cores
-
-# Step 4: Install the compiled binaries
-sudo make install
-
-# Step 5: Add to PATH (if not already)
-echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
-source ~/.bashrc
-
-# Step 6: Verify installation
-node --version  # Should show v14.21.3
-npm --version   # Should show 6.x.x
-
-
-   # Install Python and gyp-related packages
-   sudo yum install -y python-setuptools python-devel gyp
-
-   # Ensure all previous dependencies are present
-   sudo yum install -y gcc gcc-c++ make openssl-devel zlib-devel libffi-devel bzip2-devel
-
-   cd /tmp/node-v14.21.3
-   make clean  # Clean up previous build attempts
-
-   # Set Python explicitly
-   export PYTHON=/usr/bin/python2
-
-   # Re-run configure with debug flags for better error info
-   ./configure --prefix=/usr/local --debug
-
-   # If configure succeeds, proceed to build
-   make -j2 VERBOSE=1  # Add VERBOSE=1 for detailed output
-
-     sudo easy_install gyp  # If easy_install is available
-
-   sudo make install
-
-   # Add to PATH and test
-   echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
-   source ~/.bashrc
-   node --version  # Should now work and show v14.21.3
-   npm --version
-
+[root@sni1-ipclon7 ~]# 
+[root@sni1-ipclon7 ~]# 
+[root@sni1-ipclon7 ~]# sudo yum install -y python-setuptools python-devel gyp
+[root@sni1-ipclon7 ~]#  sudo yum install -y gcc gcc-c++ make openssl-devel zlib-devel libffi-devel bzip2-devel
+[root@sni1-ipclon7 ~]# cd /tmp/node-v14.21.3
+[root@sni1-ipclon7 node-v14.21.3]# make clean
+[root@sni1-ipclon7 node-v14.21.3]# export PYTHON=/usr/bin/python2
+[root@sni1-ipclon7 node-v14.21.3]# ./configure --prefix=/usr/local --debug
+[root@sni1-ipclon7 node-v14.21.3]# make -j2 VERBOSE=1
+make: *** [config.gypi] Error 1
+[root@sni1-ipclon7 node-v14.21.3]# 
