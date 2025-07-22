@@ -1,9 +1,14 @@
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash && source ~/.bashrc && nvm install 16 && nvm use 16 && node --version
+[root@sni1-ipclon7 ~]# curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash && source ~/.bashrc && nvm install 16 && nvm use 16 && node --version
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100 14984  100 14984    0     0  39788      0 --:--:-- --:--:-- --:--:-- 39745
+Downloading https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz...
+######################################################################## 100.0%
+Computing checksum with sha256sum
+Checksums matched!
+[root@sni1-ipclon7 ~]# sudo yum repolist
+[root@sni1-ipclon7 ~]# sudo yum --enablerepo=rhel-7-server-rpms --disablerepo=ius install -y git
 
-# Check available repositories
-sudo yum repolist
 
-# Install git from the correct repository
-sudo yum --enablerepo=rhel-7-server-rpms --disablerepo=ius install -y git
-
-# Or skip git entirely if you already have the code files
+Error getting repository data for rhel-7-server-rpms, repository not found
+[root@sni1-ipclon7 ~]# 
