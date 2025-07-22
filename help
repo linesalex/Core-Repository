@@ -1,1 +1,9 @@
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash && source ~/.bashrc && nvm install 16 && nvm use 16 && node --version
+
+# Check available repositories
+sudo yum repolist
+
+# Install git from the correct repository
+sudo yum --enablerepo=rhel-7-server-rpms --disablerepo=ius install -y git
+
+# Or skip git entirely if you already have the code files
