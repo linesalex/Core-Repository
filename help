@@ -1,7 +1,34 @@
-# Option 1: Install an older sqlite3 version compatible with RHEL 7
-cd /root/Core-Repository/backend
-npm uninstall sqlite3
-npm install sqlite3@5.0.12  # Older version more compatible with RHEL 7
+[root@sni1-ipclon7 backend]# npm uninstall sqlite3
+npm WARN network-inventory-backend@1.0.0 No repository field.
+npm WARN network-inventory-backend@1.0.0 No license field.
+npm WARN optional SKIPPING OPTIONAL DEPENDENCY: fsevents@2.3.3 (node_modules/fsevents):
+npm WARN notsup SKIPPING OPTIONAL DEPENDENCY: Unsupported platform for fsevents@2.3.3: wanted {"os":"darwin","arch":"any"} (current: {"os":"linux","arch":"x64"})
 
-# Test
-npm start
+removed 75 packages and audited 232 packages in 2.035s
+
+27 packages are looking for funding
+  run `npm fund` for details
+
+found 1 high severity vulnerability
+  run `npm audit fix` to fix them, or `npm audit` for details
+[root@sni1-ipclon7 backend]# npm install sqlite3@5.0.12
+npm ERR! code ETARGET
+npm ERR! notarget No matching version found for sqlite3@5.0.12.
+npm ERR! notarget In most cases you or one of your dependencies are requesting
+npm ERR! notarget a package version that doesn't exist.
+
+npm ERR! A complete log of this run can be found in:
+npm ERR!     /root/.npm/_logs/2025-07-22T18_12_04_289Z-debug.log
+[root@sni1-ipclon7 backend]# npm install sllite3 --build-from-source
+npm ERR! code E404
+npm ERR! 404 Not Found - GET https://registry.npmjs.org/sllite3 - Not found
+npm ERR! 404 
+npm ERR! 404  'sllite3@latest' is not in the npm registry.
+npm ERR! 404 You should bug the author to publish it (or use the name yourself!)
+npm ERR! 404 
+npm ERR! 404 Note that you can also install from a
+npm ERR! 404 tarball, folder, http url, or git url.
+
+npm ERR! A complete log of this run can be found in:
+npm ERR!     /root/.npm/_logs/2025-07-22T18_12_34_330Z-debug.log
+[root@sni1-ipclon7 backend]# 
