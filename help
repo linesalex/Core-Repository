@@ -1,5 +1,37 @@
-[root@sni1-ipclon7 tmp]# node --version
-[root@sni1-ipclon7 tmp]# sudo rm -f /etc/yum.repos.d/nodesource*.repo && sudo yum clean all && sudo yum install -y nodejs npm
-[root@sni1-ipclon7 tmp]# sudo yum --enablerepo=epel --disablerepo=nodesource* list available | grep nodejs
-[root@sni1-ipclon7 tmp]# sudo yum --enablerepo=epel --disablerepo=nodesource* install -y nodejs-16.20.2-1.el7 npm-8.19.4-1.16.20.2.1.el7
-[root@sni1-ipclon7 tmp]# 
+# Check installed packages
+rpm -qa | grep -E 'nodejs|npm'
+
+# Check binary locations
+ls -la /usr/bin/node* /usr/bin/npm*
+which node
+which npm
+
+# Check if the binary is executable
+file /usr/bin/node
+file /usr/bin/npm
+
+# Run with full path
+/usr/bin/node --version
+/usr/bin/npm --version
+
+# If no output, try with debug
+strace /usr/bin/node --version 2>&1 | head -20
+strace /usr/bin/npm --version 2>&1 | head -20
+
+# Check for missing libraries
+ldd /usr/bin/node
+ldd /usr/bin/npm
+
+
+# Remove existing installation
+sudo yum remove -y nodejs npm
+
+# Clean cache
+sudo yum clean all
+
+# Reinstall
+sudo yum install -y nodejs npm --enablerepo=epel
+
+# Test again
+node --version
+npm --version
