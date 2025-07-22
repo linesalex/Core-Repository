@@ -18,3 +18,13 @@ source ~/.bashrc
 # Step 6: Test again
 node --version
 npm --version
+
+[root@sni1-ipclon7 ~]# 
+[root@sni1-ipclon7 ~]# 
+[root@sni1-ipclon7 ~]# sudo yum install -y centos-release-scl-rh
+
+Error: Nothing to do
+[root@sni1-ipclon7 ~]# 
+[root@sni1-ipclon7 ~]# sudo yum install -y rh-nodejs14
+Error: Nothing to do
+[root@sni1-ipclon7 ~]# 
