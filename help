@@ -1,63 +1,53 @@
-[root@sni1-ipclon7 ~]# wget https://unofficial-builds.nodejs.org/download/release/v12.22.12/node-v12.22.12-linux-x64-musl.tar.xz
---2025-07-22 18:23:52--  https://unofficial-builds.nodejs.org/download/release/v12.22.12/node-v12.22.12-linux-x64-musl.tar.xz
-Resolving unofficial-builds.nodejs.org (unofficial-builds.nodejs.org)... 45.55.98.129
-Connecting to unofficial-builds.nodejs.org (unofficial-builds.nodejs.org)|45.55.98.129|:443... connected.
-HTTP request sent, awaiting response... 200 OK
-Length: 15060860 (14M) [application/x-xz]
-Saving to: â€˜node-v12.22.12-linux-x64-musl.tar.xzâ€™
+# Check current git status
+git --version
+which git
+rpm -qa | grep git
 
-100%[==========================================================================>] 15,060,860  5.83MB/s   in 2.5s   
+# Remove all git packages cleanly
+sudo yum remove -y git* perl-Git*
 
-2025-07-22 18:23:55 (5.83 MB/s) - â€˜node-v12.22.12-linux-x64-musl.tar.xzâ€™ saved [15060860/15060860]
+# Clear yum cache completely
+sudo yum clean all
 
-[root@sni1-ipclon7 ~]# tar -xJf node-v12.22.12-linux-x64-musl.tar.xz
-[root@sni1-ipclon7 ~]# sudo cp -r node-v12.22.12-linux-x64-musl/* /usr/local/
-[root@sni1-ipclon7 ~]# echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
-[root@sni1-ipclon7 ~]# source ~/.bashrc
-[root@sni1-ipclon7 ~]# /usr/local/bin/node --version
--bash: /usr/local/bin/node: /lib/ld-musl-x86_64.so.1: bad ELF interpreter: No such file or directory
-[root@sni1-ipclon7 ~]# /usr/local/bin/npm --version
-6.14.16
-[root@sni1-ipclon7 ~]# node --version
--bash: /usr/local/bin/node: /lib/ld-musl-x86_64.so.1: bad ELF interpreter: No such file or directory
-[root@sni1-ipclon7 ~]# 
-[root@sni1-ipclon7 ~]# npm --version
-6.14.16
-[root@sni1-ipclon7 ~]# sudo rm -rf /usr/local/bin/node /usr/local/bin/npm /usr/local/lib/node_modules
-[root@sni1-ipclon7 ~]# cd /tmp
-[root@sni1-ipclon7 tmp]# wget https://nodejs.org/dist/v12.22.12/node-v12.22.12-linux-x64.tar.xz
---2025-07-22 18:28:32--  https://nodejs.org/dist/v12.22.12/node-v12.22.12-linux-x64.tar.xz
-Resolving nodejs.org (nodejs.org)... 172.66.128.70, 104.20.1.252, 2606:4700:10::ac42:8046, ...
-Connecting to nodejs.org (nodejs.org)|172.66.128.70|:443... connected.
-HTTP request sent, awaiting response... 200 OK
-Length: 14584388 (14M) [application/x-xz]
-Saving to: â€˜node-v12.22.12-linux-x64.tar.xzâ€™
+# Install git from base RHEL repository (avoid conflicts)
+sudo yum install -y git --disablerepo=ius,epel
 
-100%[==========================================================================>] 14,584,388  10.1MB/s   in 1.4s   
+# Test git
+git --version  # Should show git version 1.8.3.1 or similar
 
-2025-07-22 18:28:33 (10.1 MB/s) - â€˜node-v12.22.12-linux-x64.tar.xzâ€™ saved [14584388/14584388]
 
-[root@sni1-ipclon7 tmp]# tar -xJf node-v12.22.12-linux-x64.tar.xz
-[root@sni1-ipclon7 tmp]# sudo cp -r node-v12.22.12-linux-x64/* /usr/local/
-[root@sni1-ipclon7 tmp]# 
-[root@sni1-ipclon7 tmp]# /usr/local/bin/node --version
-v12.22.12
-[root@sni1-ipclon7 tmp]# /usr/local/bin/npm --version
-6.14.16
-[root@sni1-ipclon7 tmp]# source ~/.bashrc
-[root@sni1-ipclon7 tmp]# node --version
-v12.22.12
-[root@sni1-ipclon7 tmp]# npm --version
-6.14.16
-[root@sni1-ipclon7 tmp]# 
-[root@sni1-ipclon7 tmp]# npm config set python python2
-npm config set unsafe-perm true[root@sni1-ipclon7 tmp]# npm config set unsafe-perm true
-[root@sni1-ipclon7 tmp]# node --version
-v12.22.12
-[root@sni1-ipclon7 tmp]# npm --version
-6.14.16
-[root@sni1-ipclon7 tmp]# 
+# Download the repository as a ZIP file (no git required)
+cd /root
+wget https://github.com/your-username/Core-Repository/archive/refs/heads/main.zip
+# Replace 'your-username' with the actual GitHub username/organization
+
+# Extract
+unzip main.zip
+mv Core-Repository-main Core-Repository
+cd Core-Repository
+
+
+# Download a static git binary that works on any Linux
+cd /tmp
+wget https://github.com/git/git/releases/download/v2.17.0/git-2.17.0.tar.gz
+# This is an older version compatible with RHEL 7
+
+# Or use a pre-compiled static git
+wget https://github.com/niess/git-static/releases/download/v2.30.0/git-v2.30.0-x86_64-linux.tar.gz
+tar xzf git-v2.30.0-x86_64-linux.tar.gz
+sudo cp git-v2.30.0-x86_64-linux/bin/git /usr/local/bin/
+git --version
+
+sudo yum remove -y git* perl-Git*
+sudo yum clean all
+sudo yum install -y git --disablerepo=ius,epel
+git --version
 
 
 
+cd /root
+git clone https://github.com/your-username/Core-Repository.git
+# Replace with your actual repository URL
 
+cd Core-Repository
+ls -la  # Should show backend/, frontend/, README.md, etc.
