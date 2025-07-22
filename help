@@ -1,37 +1,22 @@
-# Check installed packages
-rpm -qa | grep -E 'nodejs|npm'
+[root@sni1-ipclon7 tmp]# node --version
+[root@sni1-ipclon7 tmp]# rpm -qa | grep -E 'nodejs|npm'
+[root@sni1-ipclon7 tmp]# ls -la /usr/bin/node* /usr/bin/npm*
+[root@sni1-ipclon7 tmp]# which node
+[root@sni1-ipclon7 tmp]# which npm
+[root@sni1-ipclon7 tmp]# file /usr/bin/node
+[root@sni1-ipclon7 tmp]# file /usr/bin/npm
+[root@sni1-ipclon7 tmp]# 
+[root@sni1-ipclon7 tmp]# /usr/bin/node --version
+/usr/bin/npm --version[root@sni1-ipclon7 tmp]# /usr/bin/npm --version
+[root@sni1-ipclon7 tmp]# strace /usr/bin/node --version 2>&1 | head -20
+[root@sni1-ipclon7 tmp]# strace /usr/bin/npm --version 2>&1 | head -20
+[root@sni1-ipclon7 tmp]# ldd /usr/bin/node
+[root@sni1-ipclon7 tmp]# ldd /usr/bin/npm
+[root@sni1-ipclon7 tmp]# sudo yum remove -y nodejs npm
+[root@sni1-ipclon7 tmp]# sudo yum clean all
 
-# Check binary locations
-ls -la /usr/bin/node* /usr/bin/npm*
-which node
-which npm
-
-# Check if the binary is executable
-file /usr/bin/node
-file /usr/bin/npm
-
-# Run with full path
-/usr/bin/node --version
-/usr/bin/npm --version
-
-# If no output, try with debug
-strace /usr/bin/node --version 2>&1 | head -20
-strace /usr/bin/npm --version 2>&1 | head -20
-
-# Check for missing libraries
-ldd /usr/bin/node
-ldd /usr/bin/npm
-
-
-# Remove existing installation
-sudo yum remove -y nodejs npm
-
-# Clean cache
-sudo yum clean all
-
-# Reinstall
-sudo yum install -y nodejs npm --enablerepo=epel
-
-# Test again
-node --version
-npm --version
+[root@sni1-ipclon7 tmp]# 
+[root@sni1-ipclon7 tmp]# sudo yum install -y nodejs npm --enablerepo=epel
+[root@sni1-ipclon7 tmp]# node --version
+[root@sni1-ipclon7 tmp]# npm --version
+[root@sni1-ipclon7 tmp]# 
