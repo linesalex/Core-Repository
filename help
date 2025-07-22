@@ -38,3 +38,32 @@ npm install
 cd ../frontend
 npm install
 
+
+[root@sni1-ipclon7 ~]# 
+[root@sni1-ipclon7 ~]# 
+[root@sni1-ipclon7 ~]# wget https://unofficial-builds.nodejs.org/download/release/v12.22.12/node-v12.22.12-linux-x64-musl.tar.xz
+--2025-07-22 18:23:52--  https://unofficial-builds.nodejs.org/download/release/v12.22.12/node-v12.22.12-linux-x64-musl.tar.xz
+Resolving unofficial-builds.nodejs.org (unofficial-builds.nodejs.org)... 45.55.98.129
+Connecting to unofficial-builds.nodejs.org (unofficial-builds.nodejs.org)|45.55.98.129|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 15060860 (14M) [application/x-xz]
+Saving to: â€˜node-v12.22.12-linux-x64-musl.tar.xzâ€™
+
+100%[==========================================================================>] 15,060,860  5.83MB/s   in 2.5s   
+
+2025-07-22 18:23:55 (5.83 MB/s) - â€˜node-v12.22.12-linux-x64-musl.tar.xzâ€™ saved [15060860/15060860]
+
+[root@sni1-ipclon7 ~]# tar -xJf node-v12.22.12-linux-x64-musl.tar.xz
+[root@sni1-ipclon7 ~]# sudo cp -r node-v12.22.12-linux-x64-musl/* /usr/local/
+[root@sni1-ipclon7 ~]# echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
+[root@sni1-ipclon7 ~]# source ~/.bashrc
+[root@sni1-ipclon7 ~]# /usr/local/bin/node --version
+-bash: /usr/local/bin/node: /lib/ld-musl-x86_64.so.1: bad ELF interpreter: No such file or directory
+[root@sni1-ipclon7 ~]# /usr/local/bin/npm --version
+6.14.16
+[root@sni1-ipclon7 ~]# node --version
+-bash: /usr/local/bin/node: /lib/ld-musl-x86_64.so.1: bad ELF interpreter: No such file or directory
+[root@sni1-ipclon7 ~]# 
+[root@sni1-ipclon7 ~]# npm --version
+6.14.16
+[root@sni1-ipclon7 ~]# 
