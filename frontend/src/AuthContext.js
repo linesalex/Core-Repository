@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
+import config from './config';
 
 const AuthContext = createContext();
 
@@ -51,7 +52,7 @@ export const AuthProvider = ({ children }) => {
     const checkAuth = async () => {
       if (token) {
         try {
-          const response = await axios.get('http://localhost:4000/me');
+          const response = await axios.get(`${config.API_BASE_URL}/me`);
           setUser(response.data.user);
           setPermissions(response.data.permissions);
           setModuleVisibility(response.data.moduleVisibility || {});
@@ -78,7 +79,7 @@ export const AuthProvider = ({ children }) => {
     try {
       setConnectionError(null); // Clear any previous connection errors
       
-      const response = await axios.post('http://localhost:4000/login', {
+      const response = await axios.post(`${config.API_BASE_URL}/login`, {
         username,
         password
       });
@@ -121,7 +122,7 @@ export const AuthProvider = ({ children }) => {
 
   const changePassword = async (currentPassword, newPassword) => {
     try {
-      await axios.put('http://localhost:4000/change-password', {
+      await axios.put(`${config.API_BASE_URL}/change-password`, {
         currentPassword,
         newPassword
       });
