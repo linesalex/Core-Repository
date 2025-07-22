@@ -1,9 +1,22 @@
-[root@sni1-ipclon7 ~]# source ~/.bashrc
-[root@sni1-ipclon7 ~]# nvm --version
-[root@sni1-ipclon7 ~]# nvm install 16
-v16.20.2 is already installed.
-[root@sni1-ipclon7 ~]# nvm use 16
-[root@sni1-ipclon7 ~]# nvm alias default 16
-[root@sni1-ipclon7 ~]# node --version
-[root@sni1-ipclon7 ~]# npm --version
-[root@sni1-ipclon7 ~]# 
+# Download Node.js 16 directly
+cd /tmp
+wget https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz
+
+# Extract to /usr/local
+sudo tar -xJf node-v16.20.2-linux-x64.tar.xz -C /usr/local --strip-components=1
+
+# Add to PATH permanently
+echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+
+# Test
+/usr/local/bin/node --version
+/usr/local/bin/npm --version
+
+# If the above works, create symlinks
+sudo ln -sf /usr/local/bin/node /usr/bin/node
+sudo ln -sf /usr/local/bin/npm /usr/bin/npm
+
+# Test global access
+node --version
+npm --version
