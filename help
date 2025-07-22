@@ -21,3 +21,33 @@ source ~/.bashrc
 # Step 6: Verify installation
 node --version  # Should show v14.21.3
 npm --version   # Should show 6.x.x
+
+
+   # Install Python and gyp-related packages
+   sudo yum install -y python-setuptools python-devel gyp
+
+   # Ensure all previous dependencies are present
+   sudo yum install -y gcc gcc-c++ make openssl-devel zlib-devel libffi-devel bzip2-devel
+
+   cd /tmp/node-v14.21.3
+   make clean  # Clean up previous build attempts
+
+   # Set Python explicitly
+   export PYTHON=/usr/bin/python2
+
+   # Re-run configure with debug flags for better error info
+   ./configure --prefix=/usr/local --debug
+
+   # If configure succeeds, proceed to build
+   make -j2 VERBOSE=1  # Add VERBOSE=1 for detailed output
+
+     sudo easy_install gyp  # If easy_install is available
+
+   sudo make install
+
+   # Add to PATH and test
+   echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
+   source ~/.bashrc
+   node --version  # Should now work and show v14.21.3
+   npm --version
+
