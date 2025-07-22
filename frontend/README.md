@@ -510,11 +510,12 @@ console.log('API response:', response);
 
 ## 📄 License & Version
 
-- **Version**: 2.0
+- **Version**: 2.2
 - **React Version**: 18.2.0
 - **Material-UI Version**: 5.x
 - **Last Updated**: January 2025
-- **Browser Support**: Modern browsers (ES6+)
+- **Latest Features**: Enhanced Pricing Logs, Exchange Pricing Tool, Comprehensive Bulk Upload System
+- **Browser Support**: Chrome 90+, Firefox 88+, Safari 14+, Edge 90+ (Modern ES6+ browsers)
 
 ---
 

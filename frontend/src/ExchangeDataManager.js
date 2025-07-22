@@ -90,11 +90,14 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     isf_dr_site_code_b: '',
     dr_type: '',
     order_entry_isf: '',
+    dr_order_entry_isf: '',
     unicast_isf: '',
     dr_available: false,
     bandwidth_1ms: '',
     available_now: false,
     quick_quote: false,
+    quick_quote_min_cost: '',
+    order_entry_cost: '',
     pass_through_fees: '',
     pass_through_currency: 'USD',
     pass_through_fees_info: '',
@@ -318,6 +321,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       isf_dr_site_code_b: '',
       dr_type: '',
       order_entry_isf: '',
+      dr_order_entry_isf: '',
       unicast_isf: '',
       dr_available: false,
       bandwidth_1ms: '',
@@ -353,11 +357,14 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       isf_dr_site_code_b: feed.isf_dr_site_code_b || '',
       dr_type: feed.dr_type || '',
       order_entry_isf: feed.order_entry_isf || '',
+      dr_order_entry_isf: feed.dr_order_entry_isf || '',
       unicast_isf: feed.unicast_isf || '',
       dr_available: Boolean(feed.dr_available),
       bandwidth_1ms: feed.bandwidth_1ms || '',
       available_now: Boolean(feed.available_now),
       quick_quote: Boolean(feed.quick_quote),
+      quick_quote_min_cost: feed.quick_quote_min_cost?.toString() || '',
+      order_entry_cost: feed.order_entry_cost?.toString() || '',
       pass_through_fees: feed.pass_through_fees?.toString() || '',
       pass_through_currency: feed.pass_through_currency || 'USD',
       pass_through_fees_info: feed.pass_through_fees_info || '',
@@ -398,7 +405,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
         const isfFields = [
           feedFormData.isf_a, feedFormData.isf_b, feedFormData.isf_site_code_a, feedFormData.isf_site_code_b,
           feedFormData.isf_dr_a, feedFormData.isf_dr_b, feedFormData.isf_dr_site_code_a, feedFormData.isf_dr_site_code_b,
-          feedFormData.order_entry_isf, feedFormData.unicast_isf
+          feedFormData.order_entry_isf, feedFormData.dr_order_entry_isf, feedFormData.unicast_isf
         ];
         const hasISFData = isfFields.some(field => field && field.trim() !== '');
         
@@ -1267,7 +1274,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12}>
+            <Grid item xs={12} sm={6}>
               <FormControlLabel
                 control={
                   <Switch
@@ -1277,6 +1284,17 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                 }
                 label="ISF Enabled"
               />
+              {feedFormData.isf_enabled && (feedFormData.isf_a || feedFormData.isf_b || feedFormData.order_entry_isf) && (
+                <Tooltip title="View ISF Details">
+                  <IconButton 
+                    size="small" 
+                    onClick={() => handleMoreInfo(`ISF Details:\n${feedFormData.isf_a ? `ISF A: ${feedFormData.isf_a}\n` : ''}${feedFormData.isf_b ? `ISF B: ${feedFormData.isf_b}\n` : ''}${feedFormData.order_entry_isf ? `Order Entry ISF: ${feedFormData.order_entry_isf}\n` : ''}${feedFormData.isf_site_code_a ? `Site Code A: ${feedFormData.isf_site_code_a}\n` : ''}${feedFormData.isf_site_code_b ? `Site Code B: ${feedFormData.isf_site_code_b}` : ''}`)}
+                    sx={{ p: 0.5 }}
+                  >
+                    <InfoIcon sx={{ fontSize: 16, color: 'primary.main' }} />
+                  </IconButton>
+                </Tooltip>
+              )}
             </Grid>
             {feedFormData.isf_enabled && (
               <>
@@ -1364,9 +1382,17 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                     <Grid item xs={12} sm={6}>
                       <TextField
                         fullWidth
-                        label="Order Entry ISF"
+                        label="Prod Order Entry ISF"
                         value={feedFormData.order_entry_isf}
                         onChange={(e) => handleFeedInputChange('order_entry_isf', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="DR Order Entry ISF"
+                        value={feedFormData.dr_order_entry_isf}
+                        onChange={(e) => handleFeedInputChange('dr_order_entry_isf', e.target.value)}
                       />
                     </Grid>
                   </>
@@ -1473,6 +1499,36 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                 label="Quick Quote"
               />
             </Grid>
+            
+            {/* Quick Quote Pricing Fields - Only show when Quick Quote is enabled */}
+            {feedFormData.quick_quote && (
+              <>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="A & B Feed Minimum Cost (USD)"
+                    type="number"
+                    inputProps={{ min: 0, step: 0.01 }}
+                    value={feedFormData.quick_quote_min_cost}
+                    onChange={(e) => handleFeedInputChange('quick_quote_min_cost', e.target.value)}
+                    required
+                    helperText="Required when Quick Quote is enabled"
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Production Order Entry Cost (USD)"
+                    type="number"
+                    inputProps={{ min: 0, step: 0.01 }}
+                    value={feedFormData.order_entry_cost}
+                    onChange={(e) => handleFeedInputChange('order_entry_cost', e.target.value)}
+                    helperText="Optional order entry cost"
+                  />
+                </Grid>
+              </>
+            )}
+            
             <Grid item xs={12} sm={6}>
               <Button
                 variant="outlined"
@@ -1714,13 +1770,25 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
               </Grid>
             )}
             
-            {/* Order Entry ISF */}
+            {/* Prod Order Entry ISF */}
             {selectedISFData?.order_entry_isf && (
               <Grid item xs={12}>
                 <TextField
                   fullWidth
-                  label="Order Entry ISF"
+                  label="Prod Order Entry ISF"
                   value={selectedISFData.order_entry_isf}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+            
+            {/* DR Order Entry ISF */}
+            {selectedISFData?.dr_order_entry_isf && (
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="DR Order Entry ISF"
+                  value={selectedISFData.dr_order_entry_isf}
                   InputProps={{ readOnly: true }}
                 />
               </Grid>
@@ -1742,7 +1810,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
             {!selectedISFData?.isf_a && !selectedISFData?.isf_b && !selectedISFData?.isf_site_code_a && 
              !selectedISFData?.isf_site_code_b && !selectedISFData?.isf_dr_a && !selectedISFData?.isf_dr_b &&
              !selectedISFData?.isf_dr_site_code_a && !selectedISFData?.isf_dr_site_code_b && 
-             !selectedISFData?.order_entry_isf && !selectedISFData?.unicast_isf && (
+             !selectedISFData?.order_entry_isf && !selectedISFData?.dr_order_entry_isf && !selectedISFData?.unicast_isf && (
               <Grid item xs={12}>
                 <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
                   No ISF information available

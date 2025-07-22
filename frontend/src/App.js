@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, CssBaseline, Drawer, List, ListItem, ListItemIcon, ListItemText, AppBar, Toolbar, Typography, Button, Container, Paper, 
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse, Menu, MenuItem, IconButton, Chip, CircularProgress,
-  Alert, Divider, Avatar
+  Alert, Divider, Avatar, Grid
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -25,14 +25,18 @@ import TableRowsIcon from '@mui/icons-material/TableRows';
 import ContactsIcon from '@mui/icons-material/Contacts';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import SettingsIcon from '@mui/icons-material/Settings';
+import LocalOfferIcon from '@mui/icons-material/LocalOffer';
+import CalculateIcon from '@mui/icons-material/Calculate';
 import { AuthProvider, useAuth } from './AuthContext';
 import LoginForm from './LoginForm';
 import NetworkRoutesTable from './NetworkRoutesTable';
 import NetworkDesignTool from './NetworkDesignTool';
 import ExchangeRatesManager from './ExchangeRatesManager';
+import ExchangePricingTool from './ExchangePricingTool';
 import LocationDataManager from './LocationDataManager';
 import MinimumPricingManager from './MinimumPricingManager';
 import PricingLogicManager from './PricingLogicManager';
+import PromoPricingManager from './PromoPricingManager';
 import CNXColocationManager from './CNXColocationManager';
 import UserManagement from './UserManagement';
 import ChangeLogsViewer from './ChangeLogsViewer';
@@ -49,7 +53,7 @@ const drawerWidth = 280;
 
 // Main authenticated application component
 function AuthenticatedApp() {
-  const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, hasPermission, permissions, connectionError } = useAuth();
+  const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, isModuleVisible, hasPermission, hasRole, permissions, connectionError } = useAuth();
   
   const [openDetails, setOpenDetails] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
@@ -123,6 +127,7 @@ function AuthenticatedApp() {
           'exchange-rates': 'exchange_rates',
           'exchange-feeds': 'exchange_data',
           'exchange-contacts': 'exchange_data',
+          'exchange-pricing': 'exchange_data',
           'change-logs': 'change_logs',
           'user-management': 'user_management'
         };
@@ -344,6 +349,13 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'promo-pricing':
+        return hasRole('administrator') ? (
+          <PromoPricingManager hasPermission={hasRole} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'exchange-rates':
         return hasModuleAccess('exchange_rates') ? (
           <ExchangeRatesManager hasPermission={hasPermission} />
@@ -382,6 +394,13 @@ function AuthenticatedApp() {
       case 'exchange-contacts':
         return hasModuleAccess('exchange_data') ? (
           <ExchangeDataManager hasPermission={hasPermission} initialTab={1} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'exchange-pricing':
+        return hasModuleAccess('exchange_data') ? (
+          <ExchangePricingTool />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
@@ -556,14 +575,16 @@ function AuthenticatedApp() {
                       </ListItem>
                     )}
                     
-                    <ListItem 
-                      button 
-                      onClick={() => setCurrentTab('core-outages')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'core-outages' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                    >
-                      <ListItemIcon><WarningIcon /></ListItemIcon>
-                      <ListItemText primary="Core Outages" />
-                    </ListItem>
+                    {(isModuleVisible('core_outages') && hasModuleAccess('network_routes')) && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('core-outages')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'core-outages' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><WarningIcon /></ListItemIcon>
+                        <ListItemText primary="Core Outages" />
+                      </ListItem>
+                    )}
                   </List>
                 </Collapse>
               </>
@@ -587,7 +608,7 @@ function AuthenticatedApp() {
                       <ListItemIcon><DesignServicesIcon /></ListItemIcon>
                       <ListItemText primary="Design & Pricing" />
                     </ListItem>
-                    {hasModuleAccess('locations') && (
+                    {(isModuleVisible('minimum_pricing') && hasModuleAccess('locations')) && (
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('minimum-pricing')} 
@@ -597,7 +618,7 @@ function AuthenticatedApp() {
                         <ListItemText primary="Minimum Pricing" />
                       </ListItem>
                     )}
-                    {hasRole('administrator') && (
+                    {(isModuleVisible('pricing_logic') && hasRole('administrator') && hasModuleAccess('network_design')) && (
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('pricing-logic')} 
@@ -605,6 +626,16 @@ function AuthenticatedApp() {
                       >
                         <ListItemIcon><SettingsIcon /></ListItemIcon>
                         <ListItemText primary="Pricing Logic" />
+                      </ListItem>
+                    )}
+                    {(isModuleVisible('promo_pricing') && hasRole('administrator') && hasModuleAccess('network_design')) && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('promo-pricing')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'promo-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><LocalOfferIcon /></ListItemIcon>
+                        <ListItemText primary="Promo Pricing" />
                       </ListItem>
                     )}
                   </List>
@@ -637,6 +668,14 @@ function AuthenticatedApp() {
                     >
                       <ListItemIcon><ContactsIcon /></ListItemIcon>
                       <ListItemText primary="Exchange Contacts" />
+                    </ListItem>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('exchange-pricing')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'exchange-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><CalculateIcon /></ListItemIcon>
+                      <ListItemText primary="Pricing Tool" />
                     </ListItem>
                   </List>
                 </Collapse>
@@ -736,7 +775,7 @@ function AuthenticatedApp() {
             )}
 
             {/* Bulk Upload (Admin Only) */}
-            {hasModuleAccess('user_management') && (
+            {(isModuleVisible('bulk_upload') && hasModuleAccess('user_management')) && (
               <ListItem 
                 button 
                 onClick={() => setCurrentTab('bulk-upload')} 
@@ -797,16 +836,112 @@ function AuthenticatedApp() {
         >
           <DialogTitle id="details-dialog-title">More Details</DialogTitle>
         <DialogContent>
-          <TextField
-            label="Notes"
-            value={detailsRow ? detailsRow.more_details : ''}
-            fullWidth
-            multiline
-            minRows={2}
-            InputProps={{ readOnly: true, style: { fontSize: '0.7rem', lineHeight: 1.1, minHeight: 48 }} }
-            InputLabelProps={{ style: { fontSize: '0.7rem' } }}
-            sx={{ fontSize: '0.7rem', minHeight: 48 }}
-          />
+          <Grid container spacing={2}>
+            <Grid item xs={12}>
+              <Typography variant="h6" gutterBottom>Route Information</Typography>
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                label="Circuit ID"
+                value={detailsRow ? detailsRow.circuit_id : ''}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                label="Equipment Type"
+                value={detailsRow ? detailsRow.equipment_type || 'Nokia' : ''}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                label="Location A"
+                value={detailsRow ? detailsRow.location_a : ''}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                label="Location B"
+                value={detailsRow ? detailsRow.location_b : ''}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                label="Bandwidth"
+                value={detailsRow ? detailsRow.bandwidth : ''}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                label="Underlying Carrier"
+                value={detailsRow ? detailsRow.underlying_carrier : ''}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                label="Local Loop Carriers A-End"
+                value={detailsRow ? detailsRow.local_loop_carriers_a || 'None' : 'None'}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                label="Local Loop Carriers B-End"
+                value={detailsRow ? detailsRow.local_loop_carriers_b || 'None' : 'None'}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                label="Expected Latency (ms)"
+                value={detailsRow ? detailsRow.expected_latency : ''}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                label="MTU"
+                value={detailsRow ? detailsRow.mtu : ''}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                label="Notes"
+                value={detailsRow ? detailsRow.more_details : ''}
+                fullWidth
+                multiline
+                minRows={2}
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+          </Grid>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDetailsOpen(false)}>Close</Button>

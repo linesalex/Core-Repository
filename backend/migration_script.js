@@ -467,6 +467,34 @@ const migrations = [
       -- Add foreign key for approved_by (enforced in application logic for SQLite)
       -- FOREIGN KEY (approved_by) REFERENCES users(id)
     `
+  },
+  {
+    name: 'Create Audit Logs Table for Pricing Tools',
+    sql: `
+      -- Create audit logs table for tracking pricing calculations and system activities
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        action_type TEXT NOT NULL,
+        user_id INTEGER,
+        user_name TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        parameters TEXT, -- JSON string of input parameters
+        results TEXT, -- JSON string of calculation results
+        pricing_data TEXT, -- JSON string of pricing-specific data
+        execution_time INTEGER, -- Execution time in milliseconds
+        kmz_files TEXT, -- JSON string for KMZ file data
+        ip_address TEXT,
+        user_agent TEXT,
+        session_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+      
+      -- Create index for better performance
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_action_type ON audit_logs(action_type);
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+    `
   }
 ];
 

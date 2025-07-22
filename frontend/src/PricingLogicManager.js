@@ -31,7 +31,8 @@ import {
   TrendingUp as TrendingUpIcon,
   AttachMoney as AttachMoneyIcon,
   Speed as SpeedIcon,
-  Security as SecurityIcon
+  Security as SecurityIcon,
+  LocalOffer as LocalOfferIcon
 } from '@mui/icons-material';
 import { networkDesignApi } from './api';
 
@@ -42,13 +43,20 @@ const PricingLogicManager = ({ hasPermission }) => {
       24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
       36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
     },
+    protectedServiceMargins: {
+      12: { minMargin: 50, suggestedMargin: 70 },
+      24: { minMargin: 47.5, suggestedMargin: 65 },
+      36: { minMargin: 45, suggestedMargin: 60 }
+    },
     charges: {
-      ullPremiumPercent: 15,
       protectionPathMultiplier: 0.7
     },
     utilizationFactors: {
       primary: 0.9,
       protection: 1.0
+    },
+    promoPricing: {
+      minimumMarginPercent: 35
     }
   });
   
@@ -110,6 +118,19 @@ const PricingLogicManager = ({ hasPermission }) => {
     }));
   };
 
+  const updateProtectedServiceMargin = (term, field, value) => {
+    setConfig(prev => ({
+      ...prev,
+      protectedServiceMargins: {
+        ...prev.protectedServiceMargins,
+        [term]: {
+          ...prev.protectedServiceMargins[term],
+          [field]: parseFloat(value) || 0
+        }
+      }
+    }));
+  };
+
   const updateCharge = (chargeType, value) => {
     setConfig(prev => ({
       ...prev,
@@ -130,6 +151,16 @@ const PricingLogicManager = ({ hasPermission }) => {
     }));
   };
 
+  const updatePromoPricing = (settingType, value) => {
+    setConfig(prev => ({
+      ...prev,
+      promoPricing: {
+        ...prev.promoPricing,
+        [settingType]: parseFloat(value) || 0
+      }
+    }));
+  };
+
   const resetToDefaults = () => {
     setConfig({
       contractTerms: {
@@ -137,13 +168,20 @@ const PricingLogicManager = ({ hasPermission }) => {
         24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
         36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
       },
+      protectedServiceMargins: {
+        12: { minMargin: 50, suggestedMargin: 70 },
+        24: { minMargin: 47.5, suggestedMargin: 65 },
+        36: { minMargin: 45, suggestedMargin: 60 }
+      },
       charges: {
-        ullPremiumPercent: 15,
         protectionPathMultiplier: 0.7
       },
       utilizationFactors: {
         primary: 0.9,
         protection: 1.0
+      },
+      promoPricing: {
+        minimumMarginPercent: 35
       }
     });
   };
@@ -208,7 +246,8 @@ const PricingLogicManager = ({ hasPermission }) => {
         )}
 
         <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-          Configure the core pricing logic parameters that affect all network design calculations. 
+          Configure the core pricing logic parameters that affect all network design calculations, including 
+          standard service margins and premium protected service margins for redundant connectivity. 
           Changes take effect immediately for new pricing calculations.
         </Typography>
 
@@ -285,6 +324,64 @@ const PricingLogicManager = ({ hasPermission }) => {
             </Accordion>
           </Grid>
 
+          {/* Protected Service Margins */}
+          <Grid item xs={12}>
+            <Accordion defaultExpanded>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <SecurityIcon color="primary" />
+                  <Typography variant="h6">Protected Service Margin Rules</Typography>
+                </Box>
+              </AccordionSummary>
+              <AccordionDetails>
+                <TableContainer component={Paper} elevation={0} sx={{ border: 1, borderColor: 'divider' }}>
+                  <Table>
+                                          <TableHead>
+                        <TableRow>
+                          <TableCell><strong>Contract Term</strong></TableCell>
+                          <TableCell><strong>Minimum Margin (%)</strong></TableCell>
+                          <TableCell><strong>Suggested Margin (%)</strong></TableCell>
+                        </TableRow>
+                      </TableHead>
+                    <TableBody>
+                      {Object.entries(config.protectedServiceMargins).map(([term, termConfig]) => (
+                        <TableRow key={term}>
+                          <TableCell>
+                            <Chip label={`${term} months`} variant="outlined" color="secondary" />
+                          </TableCell>
+                          <TableCell>
+                            <TextField
+                              type="number"
+                              value={termConfig.minMargin}
+                              onChange={(e) => updateProtectedServiceMargin(term, 'minMargin', e.target.value)}
+                              InputProps={{
+                                endAdornment: <InputAdornment position="end">%</InputAdornment>
+                              }}
+                              size="small"
+                              sx={{ width: 120 }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <TextField
+                              type="number"
+                              value={termConfig.suggestedMargin}
+                              onChange={(e) => updateProtectedServiceMargin(term, 'suggestedMargin', e.target.value)}
+                              InputProps={{
+                                endAdornment: <InputAdornment position="end">%</InputAdornment>
+                              }}
+                              size="small"
+                              sx={{ width: 120 }}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </AccordionDetails>
+            </Accordion>
+          </Grid>
+
           {/* Additional Charges */}
           <Grid item xs={12} md={6}>
             <Card>
@@ -294,19 +391,6 @@ const PricingLogicManager = ({ hasPermission }) => {
                   <Typography variant="h6">Additional Charges</Typography>
                 </Box>
                 <Grid container spacing={2}>
-                  <Grid item xs={12}>
-                    <TextField
-                      fullWidth
-                      label="ULL Premium Percentage"
-                      type="number"
-                      value={config.charges.ullPremiumPercent}
-                      onChange={(e) => updateCharge('ullPremiumPercent', e.target.value)}
-                      InputProps={{
-                        endAdornment: <InputAdornment position="end">%</InputAdornment>
-                      }}
-                      helperText="Additional charge for Ultra Low Latency requirements"
-                    />
-                  </Grid>
                   <Grid item xs={12}>
                     <TextField
                       fullWidth
@@ -352,6 +436,34 @@ const PricingLogicManager = ({ hasPermission }) => {
                       value={config.utilizationFactors.protection}
                       onChange={(e) => updateUtilizationFactor('protection', e.target.value)}
                       helperText="Expected utilization factor for protection paths (0.0 - 1.0)"
+                    />
+                  </Grid>
+                </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Promo Pricing Settings */}
+          <Grid item xs={12} md={6}>
+            <Card>
+              <CardContent>
+                <Box display="flex" alignItems="center" gap={1} mb={2}>
+                  <LocalOfferIcon color="primary" />
+                  <Typography variant="h6">Promo Pricing Settings</Typography>
+                </Box>
+                <Grid container spacing={2}>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Minimum Margin Percentage"
+                      type="number"
+                      inputProps={{ step: 0.1, min: 0, max: 100 }}
+                      value={config.promoPricing.minimumMarginPercent}
+                      onChange={(e) => updatePromoPricing('minimumMarginPercent', e.target.value)}
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>
+                      }}
+                      helperText="Minimum margin required for promo pricing to be used (fallback to regular pricing if not met)"
                     />
                   </Grid>
                 </Grid>

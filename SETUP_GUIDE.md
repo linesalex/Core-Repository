@@ -67,10 +67,12 @@ cd C:\NetworkInventory
    node init_db.js
    ```
 
-5. **Run database migrations** (if upgrading):
+5. **Run database migrations** (required for full functionality):
    ```cmd
    node migration_script.js
    ```
+   
+   This step creates all necessary tables and applies the latest database schema updates.
 
 ### Step 4: Setup Frontend
 
@@ -146,12 +148,12 @@ To run the application as a Windows service:
    pm2 save
    ```
 
-## Default Login Credentials
+## 🔐 Default Login Credentials
 
 - **Username**: `admin`
 - **Password**: `admin123`
 
-⚠️ **IMPORTANT**: Change the default password immediately after first login!
+⚠️ **CRITICAL SECURITY**: Change the default password immediately after first login! Access User Management → Edit Profile to set a secure password.
 
 ## Application URLs
 
@@ -243,14 +245,44 @@ For technical support:
 2. Review application logs for error messages
 3. Consult individual component README files for detailed information
 
+## 📊 Data Management
+
+### Bulk Upload System
+The application includes a comprehensive bulk upload system for importing data via CSV files:
+
+1. **Access**: Navigate to "Bulk Upload" in the sidebar (Administrator only)
+2. **Available Modules**: 
+   - Network Routes (all route data)
+   - Locations (POP information and pricing)
+   - Carriers (carrier details)
+   - Users (user accounts)
+   - Exchange Feeds (financial data feeds)
+   - Exchange Contacts (exchange contact information)
+   - POP Capabilities (service capabilities per location)
+   - And more...
+
+3. **Process**:
+   - Download CSV template for any module
+   - Fill in your data following the template format
+   - Upload the completed CSV file
+   - Review results and error reports
+
+### Data Templates
+- Templates include all available database fields
+- Sample data provided for reference
+- Comprehensive field validation
+- Error reporting for failed imports
+
 ## Next Steps
 
 After successful installation:
-1. Change default admin password
+1. **Change default admin password** (CRITICAL)
 2. Create additional user accounts as needed
-3. Configure network routes and locations
-4. Set up regular backup procedures
-5. Train users on the application features
+3. Configure network routes and locations using the UI or bulk upload
+4. Set up exchange pricing data if using financial features
+5. Configure POP capabilities for each location
+6. Set up regular backup procedures
+7. Train users on the application features
 
 ---
 

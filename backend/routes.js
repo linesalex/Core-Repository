@@ -986,7 +986,7 @@ router.post('/network_routes', (req, res) => {
     }
     
     const fields = [
-      'circuit_id','repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'
+      'circuit_id','repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type'
     ];
     const placeholders = fields.map(() => '?').join(',');
     const values = fields.map(f => data[f] ?? (f === 'repository_type_id' ? 1 : null));
@@ -1021,7 +1021,7 @@ router.put('/network_routes/:circuit_id', (req, res) => {
     }
     
     const fields = [
-      'repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'
+      'repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type'
     ];
     const setClause = fields.map(f => `${f} = ?`).join(', ');
     const values = fields.map(f => data[f] ?? null);
@@ -1686,7 +1686,7 @@ router.get('/exchange-currencies', (req, res) => {
 
 // Network Design Path Finding with Dijkstra Algorithm
 router.post('/network_design/find_path', (req, res) => {
-  const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false } = req.body;
+  const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false, use_cisco_only_routes = false } = req.body;
   const startTime = Date.now();
   
     // Validate inputs
@@ -1702,8 +1702,10 @@ router.post('/network_design/find_path', (req, res) => {
   const exclusionReasons = {
     bandwidth: { count: 0, routes: [] },
     carrier_avoidance: { count: 0, routes: [], carriers: [] },
+    local_loop_carrier_avoidance: { count: 0, routes: [], carriers: [] },
     mtu_requirement: { count: 0, routes: [] },
     ull_restriction: { count: 0, routes: [] },
+    equipment_restriction: { count: 0, routes: [] },
     decommission_pop: { count: 0, routes: [] },
     total_routes_available: 0,
     total_routes_excluded: 0
@@ -1788,7 +1790,9 @@ router.post('/network_design/find_path', (req, res) => {
       
       // Skip routes with carrier constraints
       if (constraints.carrier_avoidance && underlying_carrier && 
-          constraints.carrier_avoidance.includes(underlying_carrier)) {
+          constraints.carrier_avoidance.some(avoidedCarrier => 
+            underlying_carrier.toLowerCase().trim() === avoidedCarrier.toLowerCase().trim()
+          )) {
         if (isRelevant) console.log(`  SKIPPED: Carrier avoided (${underlying_carrier})`);
         exclusionReasons.carrier_avoidance.count++;
         exclusionReasons.carrier_avoidance.routes.push({
@@ -1802,6 +1806,63 @@ router.post('/network_design/find_path', (req, res) => {
         routesSkipped++;
         return;
       }
+
+      // Skip routes with local loop carrier constraints
+      if (constraints.carrier_avoidance && constraints.carrier_avoidance.length > 0) {
+        const localLoopCarriersA = route.local_loop_carriers_a ? route.local_loop_carriers_a.split(',').map(c => c.trim()).filter(c => c) : [];
+        const localLoopCarriersB = route.local_loop_carriers_b ? route.local_loop_carriers_b.split(',').map(c => c.trim()).filter(c => c) : [];
+        const allLocalLoopCarriers = [...localLoopCarriersA, ...localLoopCarriersB];
+        
+        if (isRelevant && allLocalLoopCarriers.length > 0) {
+          console.log(`  Local loop carriers: A-end=[${localLoopCarriersA.join(', ')}], B-end=[${localLoopCarriersB.join(', ')}]`);
+          console.log(`  Avoiding: [${constraints.carrier_avoidance.join(', ')}]`);
+        }
+        
+        // Use case-insensitive comparison for carrier avoidance
+        const avoidedLocalCarriers = allLocalLoopCarriers.filter(carrier => 
+          constraints.carrier_avoidance.some(avoidedCarrier => 
+            carrier.toLowerCase().trim() === avoidedCarrier.toLowerCase().trim()
+          )
+        );
+        
+        if (avoidedLocalCarriers.length > 0) {
+          if (isRelevant) console.log(`  SKIPPED: Local loop carrier(s) avoided (${avoidedLocalCarriers.join(', ')})`);
+          exclusionReasons.local_loop_carrier_avoidance.count++;
+          exclusionReasons.local_loop_carrier_avoidance.routes.push({
+            circuit_id,
+            route: `${location_a} <-> ${location_b}`,
+            carriers: avoidedLocalCarriers,
+            local_loop_a: localLoopCarriersA,
+            local_loop_b: localLoopCarriersB
+          });
+          avoidedLocalCarriers.forEach(carrier => {
+            if (!exclusionReasons.local_loop_carrier_avoidance.carriers.includes(carrier)) {
+              exclusionReasons.local_loop_carrier_avoidance.carriers.push(carrier);
+            }
+          });
+          routesSkipped++;
+          return;
+        }
+      }
+
+      // Skip routes based on equipment type filtering
+      const equipmentType = route.equipment_type || 'Nokia'; // Default to Nokia for null values
+      if (!use_cisco_only_routes) {
+        // Default: Only use Nokia and Mixed routes
+        if (equipmentType === 'Cisco') {
+          if (isRelevant) console.log(`  SKIPPED: Cisco equipment excluded (equipment_type: ${equipmentType})`);
+          exclusionReasons.equipment_restriction.count++;
+          exclusionReasons.equipment_restriction.routes.push({
+            circuit_id,
+            route: `${location_a} <-> ${location_b}`,
+            equipment_type: equipmentType,
+            reason: 'Cisco equipment excluded (Include Cisco Only Routes disabled)'
+          });
+          routesSkipped++;
+          return;
+        }
+      }
+      // If use_cisco_only_routes is true, all equipment types (Nokia, Cisco, Mixed) are allowed
 
       // Skip routes that don't meet MTU requirements
       const mtuRequired = constraints.mtu_required || 1500; // Default to 1500 if not specified
@@ -2092,17 +2153,45 @@ router.post('/network_design/find_path', (req, res) => {
     
     const executionTime = Date.now() - startTime;
     
-    // Log the search
+    // Log the search with enhanced details
     db.run(
-      'INSERT INTO audit_logs (action_type, parameters, results, execution_time) VALUES (?, ?, ?, ?)',
+      'INSERT INTO audit_logs (action_type, user_id, user_name, parameters, results, execution_time, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       [
         'PATH_SEARCH',
-        JSON.stringify({ source, destination, bandwidth, bandwidth_unit, constraints, include_ull }),
-        JSON.stringify({ primaryPath, diversePath, totalCost }),
-        executionTime
+        req.user?.id || null,
+        req.user?.full_name || 'Unknown User',
+        JSON.stringify({ 
+          source, 
+          destination, 
+          bandwidth, 
+          bandwidth_unit, 
+          constraints, 
+          include_ull,
+          timestamp: new Date().toISOString()
+        }),
+        JSON.stringify({ 
+          primaryPath, 
+          diversePath, 
+          totalCost,
+          exclusionReasons,
+          protectionStatus: constraints.protection_required ? {
+            required: true,
+            available: diversePath !== null,
+            message: diversePath ? 'Protection route found' : 'No protection route available',
+            failureReasons: protectionFailureReasons
+          } : {
+            required: false,
+            message: 'Protection not requested'
+          }
+        }),
+        executionTime,
+        req.ip || req.connection?.remoteAddress || 'unknown',
+        req.get('User-Agent') || 'unknown'
       ],
       function(err) {
-        if (err) console.error('Failed to log search:', err);
+        if (err) {
+          console.error('Failed to log PATH_SEARCH to audit_logs:', err);
+        }
       }
     );
     
@@ -2144,7 +2233,7 @@ router.post('/network_design/find_path', (req, res) => {
 });
 
 // Network Design with Enhanced Pricing
-router.post('/network_design/calculate_pricing', (req, res) => {
+router.post('/network_design/calculate_pricing', async (req, res) => {
   const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, bandwidth, source, destination, protection_required = false } = req.body;
   
   if (!paths || !Array.isArray(paths)) {
@@ -2172,7 +2261,8 @@ router.post('/network_design/calculate_pricing', (req, res) => {
     getPricingLogicConfig()
   ];
 
-  Promise.all(queries).then(([rates, locations, pricingConfig]) => {
+  try {
+    const [rates, locations, pricingConfig] = await Promise.all(queries);
     const exchangeRates = {};
     rates.forEach(rate => {
       exchangeRates[rate.currency_code] = rate.exchange_rate;
@@ -2217,7 +2307,7 @@ router.post('/network_design/calculate_pricing', (req, res) => {
     };
 
     // Helper function to calculate enhanced pricing for a path with contract term-based pricing
-    const calculatePathPricing = (path, isProtection = false) => {
+    const calculatePathPricing = async (path, isProtection = false) => {
       let totalAllocatedCost = 0;
       
       if (path.route) {
@@ -2238,12 +2328,55 @@ router.post('/network_design/calculate_pricing', (req, res) => {
         });
       }
 
-      // Apply ULL charges if requested
-      if (include_ull) {
-        totalAllocatedCost += totalAllocatedCost * (pricingConfig.charges.ullPremiumPercent / 100);
-      }
 
-      // Contract term-based pricing model using dynamic configuration
+
+      // Check for promo pricing first (applies to both primary and secondary paths)
+        try {
+          const promoPrice = await findPromoPrice(source, destination, bandwidth);
+          if (promoPrice) {
+            // Convert promo price from USD to output currency
+            const promoPriceConverted = convertCurrency(promoPrice.price, 'USD', output_currency);
+            
+            // Check if promo pricing meets minimum margin requirement
+            const promoMinMargin = pricingConfig.promoPricing.minimumMarginPercent;
+            const requiredAllocatedCost = promoPriceConverted * (1 - promoMinMargin / 100);
+            
+            if (totalAllocatedCost <= requiredAllocatedCost) {
+              // Promo pricing meets margin requirements, use it
+              const actualMargin = ((promoPriceConverted - totalAllocatedCost) / promoPriceConverted) * 100;
+              
+              // Calculate NRC charge based on contract term (same logic as regular pricing)
+              const termConfig = pricingConfig.contractTerms[contract_term] || pricingConfig.contractTerms[12];
+              const promoNrcCharge = convertCurrency(termConfig.nrcCharge, 'USD', output_currency);
+              
+              return {
+                allocatedCost: Math.round(totalAllocatedCost * 100) / 100,
+                minimumPrice: Math.round(promoPriceConverted * 100) / 100,
+                suggestedPrice: Math.round(promoPriceConverted * 100) / 100,
+                minimumMargin: Math.round(actualMargin * 10) / 10,
+                suggestedMargin: Math.round(actualMargin * 10) / 10,
+                locationMinimum: 0,
+                marginEnforced: false,
+                contractTerm: contract_term,
+                targetMinMargin: promoMinMargin,
+                targetSuggestedMargin: promoMinMargin,
+                nrcCharge: Math.round(promoNrcCharge * 100) / 100,
+                promoPricing: {
+                  used: true,
+                  ruleId: promoPrice.ruleId,
+                  ruleName: promoPrice.ruleName,
+                  originalPriceUSD: promoPrice.price,
+                  priceField: promoPrice.priceField
+                }
+              };
+            }
+          }
+        } catch (err) {
+          console.error('Error checking promo pricing:', err);
+          // Continue with regular pricing if promo pricing fails
+        }
+
+      // Fall back to regular contract term-based pricing model
       let minMarginPercent, suggestedMarginPercent, nrcCharge;
       
       const termConfig = pricingConfig.contractTerms[contract_term] || pricingConfig.contractTerms[12];
@@ -2277,14 +2410,17 @@ router.post('/network_design/calculate_pricing', (req, res) => {
         contractTerm: contract_term,
         targetMinMargin: minMarginPercent,
         targetSuggestedMargin: suggestedMarginPercent,
-        nrcCharge: Math.round(nrcCharge * 100) / 100
+        nrcCharge: Math.round(nrcCharge * 100) / 100,
+        promoPricing: {
+          used: false
+        }
       };
     };
 
-    // Calculate pricing for each path
-    const pricingResults = paths.map((path, index) => {
+    // Calculate pricing for each path (now async)
+    const pricingPromises = paths.map(async (path, index) => {
       const isProtection = index > 0; // First path is primary, others are protection
-      const pathPricing = calculatePathPricing(path, isProtection);
+      const pathPricing = await calculatePathPricing(path, isProtection);
 
       return {
         path: path.path,
@@ -2300,6 +2436,8 @@ router.post('/network_design/calculate_pricing', (req, res) => {
       };
     });
 
+    const pricingResults = await Promise.all(pricingPromises);
+
     // Calculate protection pricing if required
     let protectionPricing = null;
     if (protection_required && pricingResults.length >= 2) {
@@ -2307,9 +2445,15 @@ router.post('/network_design/calculate_pricing', (req, res) => {
       const secondaryPricing = pricingResults[1].pricing;
       
       const protectionMultiplier = pricingConfig.charges.protectionPathMultiplier;
+      
+      // Protection pricing = 100% primary + 70% secondary (simple addition)
       const protectedMinPrice = primaryPricing.minimumPrice + (secondaryPricing.minimumPrice * protectionMultiplier);
       const protectedSuggestedPrice = primaryPricing.suggestedPrice + (secondaryPricing.suggestedPrice * protectionMultiplier);
       const protectedAllocatedCost = primaryPricing.allocatedCost + (secondaryPricing.allocatedCost * protectionMultiplier);
+      
+      // Calculate actual margins achieved
+      const actualProtectedMinMargin = ((protectedMinPrice - protectedAllocatedCost) / protectedMinPrice) * 100;
+      const actualProtectedSuggestedMargin = ((protectedSuggestedPrice - protectedAllocatedCost) / protectedSuggestedPrice) * 100;
       
       // NRC charge for protection is only charged once (from primary path)
       const protectionNrcCharge = primaryPricing.nrcCharge;
@@ -2318,45 +2462,75 @@ router.post('/network_design/calculate_pricing', (req, res) => {
         minimumPrice: Math.round(protectedMinPrice * 100) / 100,
         suggestedPrice: Math.round(protectedSuggestedPrice * 100) / 100,
         allocatedCost: Math.round(protectedAllocatedCost * 100) / 100,
-        minimumMargin: Math.round(((protectedMinPrice - protectedAllocatedCost) / protectedMinPrice) * 1000) / 10,
-        suggestedMargin: Math.round(((protectedSuggestedPrice - protectedAllocatedCost) / protectedSuggestedPrice) * 1000) / 10,
+        minimumMargin: Math.round(actualProtectedMinMargin * 10) / 10,
+        suggestedMargin: Math.round(actualProtectedSuggestedMargin * 10) / 10,
         nrcCharge: protectionNrcCharge,
         contractTerm: contract_term,
         currency: output_currency,
+        serviceType: 'protected',
         composition: {
           primary: {
             minimumPrice: primaryPricing.minimumPrice,
             suggestedPrice: primaryPricing.suggestedPrice,
+            allocatedCost: primaryPricing.allocatedCost,
             weight: '100%'
           },
           secondary: {
             minimumPrice: Math.round((secondaryPricing.minimumPrice * protectionMultiplier) * 100) / 100,
             suggestedPrice: Math.round((secondaryPricing.suggestedPrice * protectionMultiplier) * 100) / 100,
+            allocatedCost: Math.round((secondaryPricing.allocatedCost * protectionMultiplier) * 100) / 100,
             weight: `${Math.round(protectionMultiplier * 100)}%`
           }
         }
       };
     }
     
-    // Log pricing calculation
+    // Log pricing calculation with enhanced details
     db.run(
-      'INSERT INTO audit_logs (action_type, parameters, pricing_data) VALUES (?, ?, ?)',
+      'INSERT INTO audit_logs (action_type, user_id, user_name, parameters, pricing_data, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [
         'CONTRACT_TERM_PRICING_CALCULATION',
-        JSON.stringify({ contract_term, output_currency, include_ull, bandwidth, source, destination, protection_required }),
+        req.user?.id || null,
+        req.user?.full_name || 'Unknown User',
         JSON.stringify({ 
-          individual: pricingResults, 
-          protection: protectionPricing,
+          contract_term, 
+          output_currency, 
+          include_ull, 
+          bandwidth, 
+          source, 
+          destination, 
+          protection_required,
+          timestamp: new Date().toISOString()
+        }),
+        JSON.stringify({ 
+          inputParameters: {
+            contract_term,
+            output_currency,
+            include_ull,
+            bandwidth,
+            source,
+            destination,
+            protection_required
+          },
+          calculationResults: {
+            individual: pricingResults,
+            protection: protectionPricing
+          },
           contractTermRules: {
             term: contract_term,
             appliedRules: contract_term === 12 ? '40%/60% margins + $1000 NRC' :
                          contract_term === 24 ? '37.5%/55% margins + $500 NRC' :
                          contract_term === 36 ? '35%/50% margins + $0 NRC' : 'Default 12-month rules'
-          }
-        })
+          },
+          exchangeRates: exchangeRates
+        }),
+        req.ip || req.connection?.remoteAddress || 'unknown',
+        req.get('User-Agent') || 'unknown'
       ],
       function(err) {
-        if (err) console.error('Failed to log pricing calculation:', err);
+        if (err) {
+          console.error('Failed to log CONTRACT_TERM_PRICING_CALCULATION to audit_logs:', err);
+        }
       }
     );
     
@@ -2388,10 +2562,10 @@ router.post('/network_design/calculate_pricing', (req, res) => {
       timestamp: new Date().toISOString()
     });
 
-  }).catch(err => {
+  } catch (err) {
     console.error('Error in pricing calculation:', err);
     res.status(500).json({ error: 'Failed to calculate pricing: ' + err.message });
-  });
+  }
 });
 
 // Generate KMZ file for network path
@@ -2500,9 +2674,31 @@ router.delete('/network_design/saved_searches/:id', (req, res) => {
 });
 
 // Get audit logs for Network Design Tool
-router.get('/network_design/audit_logs', (req, res) => {
-  db.all('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 100', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+router.get('/network_design/audit_logs', authenticateToken, (req, res) => {
+  // Check if user can view logs (not read-only)
+  if (req.user.role === 'read_only') {
+    return res.status(403).json({ error: 'Access denied. Read-only users cannot view audit logs.' });
+  }
+
+  const { limit = 100, offset = 0, action_type } = req.query;
+  
+  let query = 'SELECT * FROM audit_logs';
+  let params = [];
+  
+  if (action_type) {
+    query += ' WHERE action_type = ?';
+    params.push(action_type);
+  }
+  
+  query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+  params.push(parseInt(limit), parseInt(offset));
+  
+  db.all(query, params, (err, rows) => {
+    if (err) {
+      console.error('Error fetching audit logs:', err);
+      return res.status(500).json({ error: err.message });
+    }
+    
     const logs = rows.map(row => ({
       ...row,
       parameters: row.parameters ? JSON.parse(row.parameters) : null,
@@ -2510,6 +2706,84 @@ router.get('/network_design/audit_logs', (req, res) => {
       pricing_data: row.pricing_data ? JSON.parse(row.pricing_data) : null
     }));
     res.json(logs);
+  });
+});
+
+
+
+// Clear audit logs (Admin and Provisioner only)
+router.delete('/network_design/audit_logs', authenticateToken, (req, res) => {
+  // Check permissions
+  if (!['administrator', 'provisioner'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Access denied. Only administrators and provisioners can clear audit logs.' });
+  }
+
+  db.run('DELETE FROM audit_logs', [], function(err) {
+    if (err) {
+      console.error('Error clearing audit logs:', err);
+      return res.status(500).json({ error: 'Failed to clear audit logs' });
+    }
+    
+    // Log the clear action
+    logChange(req.user.id, 'audit_logs', null, 'CLEAR_ALL', null, { 
+      cleared_count: this.changes,
+      action: 'Clear all audit logs'
+    }, req);
+    
+    res.json({ 
+      message: 'Audit logs cleared successfully',
+      cleared_count: this.changes
+    });
+  });
+});
+
+// Export audit logs to CSV (Admin and Provisioner only)
+router.get('/network_design/audit_logs/export', authenticateToken, (req, res) => {
+  // Check permissions
+  if (!['administrator', 'provisioner'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Access denied. Only administrators and provisioners can export audit logs.' });
+  }
+
+  db.all('SELECT * FROM audit_logs ORDER BY timestamp DESC', [], (err, rows) => {
+    if (err) {
+      console.error('Error exporting audit logs:', err);
+      return res.status(500).json({ error: 'Failed to export audit logs' });
+    }
+    
+    // Convert to CSV format
+    const csvHeaders = 'ID,Action Type,User ID,User Name,Timestamp,Parameters,Results,Pricing Data,Execution Time,IP Address,User Agent\n';
+    const csvRows = rows.map(row => {
+      const escapeCsv = (str) => {
+        if (str === null || str === undefined) return '';
+        return `"${String(str).replace(/"/g, '""')}"`;
+      };
+      
+      return [
+        row.id,
+        escapeCsv(row.action_type),
+        row.user_id || '',
+        escapeCsv(row.user_name),
+        escapeCsv(row.timestamp),
+        escapeCsv(row.parameters),
+        escapeCsv(row.results),
+        escapeCsv(row.pricing_data),
+        row.execution_time || '',
+        escapeCsv(row.ip_address),
+        escapeCsv(row.user_agent)
+      ].join(',');
+    });
+    
+    const csvContent = csvHeaders + csvRows.join('\n');
+    
+    // Log the export action
+    logChange(req.user.id, 'audit_logs', null, 'EXPORT', null, { 
+      exported_count: rows.length,
+      action: 'Export audit logs to CSV'
+    }, req);
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="audit_logs_${new Date().toISOString().split('T')[0]}.csv"`);
+    res.send(csvContent);
   });
 });
 
@@ -3180,9 +3454,10 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
     feed_name, feed_delivery, feed_type, isf_enabled, 
     isf_a, isf_b, isf_site_code_a, isf_site_code_b,
     isf_dr_a, isf_dr_b, isf_dr_site_code_a, isf_dr_site_code_b, 
-    dr_type, order_entry_isf, unicast_isf,
+    dr_type, order_entry_isf, dr_order_entry_isf, unicast_isf,
     dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
-    pass_through_currency, pass_through_fees_info, more_info
+    pass_through_currency, pass_through_fees_info, more_info,
+    quick_quote_min_cost, order_entry_cost
   } = req.body;
   
   if (!feed_name) {
@@ -3200,7 +3475,7 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
   // ISF validation: if enabled, at least one field must be filled
   if (isf_enabled === 'true' || isf_enabled === true) {
     const isfFields = [isf_a, isf_b, isf_site_code_a, isf_site_code_b, isf_dr_a, isf_dr_b, 
-                       isf_dr_site_code_a, isf_dr_site_code_b, order_entry_isf, unicast_isf];
+                       isf_dr_site_code_a, isf_dr_site_code_b, order_entry_isf, dr_order_entry_isf, unicast_isf];
     const hasISFData = isfFields.some(field => field && field.trim() !== '');
     
     if (!hasISFData) {
@@ -3213,6 +3488,13 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
   if (!validFeedTypes.includes(feed_type)) {
     return res.status(400).json({ error: `Invalid feed type. Must be one of: ${validFeedTypes.join(', ')}` });
   }
+
+  // Quick Quote validation: if enabled, minimum cost is required
+  if (quick_quote === 'true' || quick_quote === true) {
+    if (!quick_quote_min_cost || parseFloat(quick_quote_min_cost) <= 0) {
+      return res.status(400).json({ error: 'A & B Feed Minimum Cost is required when Quick Quote is enabled' });
+    }
+  }
   
   const designFilePath = req.file ? req.file.filename : null;
   
@@ -3221,19 +3503,22 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
       exchange_id, feed_name, feed_delivery, feed_type, isf_enabled, 
       isf_a, isf_b, isf_site_code_a, isf_site_code_b,
       isf_dr_a, isf_dr_b, isf_dr_site_code_a, isf_dr_site_code_b, 
-      dr_type, order_entry_isf, unicast_isf,
+      dr_type, order_entry_isf, dr_order_entry_isf, unicast_isf,
       dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
-      pass_through_currency, pass_through_fees_info, design_file_path, more_info, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      pass_through_currency, pass_through_fees_info, design_file_path, more_info,
+      quick_quote_min_cost, order_entry_cost, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       exchangeId, feed_name, feed_delivery, feed_type, isf_enabled === 'true' ? 1 : 0,
       isf_a || null, isf_b || null, isf_site_code_a || null, isf_site_code_b || null,
       isf_dr_a || null, isf_dr_b || null, isf_dr_site_code_a || null, isf_dr_site_code_b || null,
-      dr_type || null, order_entry_isf || null, unicast_isf || null,
+      dr_type || null, order_entry_isf || null, dr_order_entry_isf || null, unicast_isf || null,
       dr_available === 'true' ? 1 : 0, bandwidth_1ms,
       available_now === 'true' ? 1 : 0, quick_quote === 'true' ? 1 : 0,
       parseInt(pass_through_fees) || 0, pass_through_currency || 'USD', 
-      pass_through_fees_info || '', designFilePath, more_info, req.user.id
+      pass_through_fees_info || '', designFilePath, more_info,
+      quick_quote_min_cost ? parseFloat(quick_quote_min_cost) : null,
+      order_entry_cost ? parseFloat(order_entry_cost) : null, req.user.id
     ],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
@@ -3269,15 +3554,16 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
     feed_name, feed_delivery, feed_type, isf_enabled,
     isf_a, isf_b, isf_site_code_a, isf_site_code_b,
     isf_dr_a, isf_dr_b, isf_dr_site_code_a, isf_dr_site_code_b,
-    dr_type, order_entry_isf, unicast_isf,
+    dr_type, order_entry_isf, dr_order_entry_isf, unicast_isf,
     dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
-    pass_through_currency, pass_through_fees_info, more_info
+    pass_through_currency, pass_through_fees_info, more_info,
+    quick_quote_min_cost, order_entry_cost
   } = req.body;
   
   // ISF validation: if enabled, at least one field must be filled
   if (isf_enabled === 'true' || isf_enabled === true) {
     const isfFields = [isf_a, isf_b, isf_site_code_a, isf_site_code_b, isf_dr_a, isf_dr_b, 
-                       isf_dr_site_code_a, isf_dr_site_code_b, order_entry_isf, unicast_isf];
+                       isf_dr_site_code_a, isf_dr_site_code_b, order_entry_isf, dr_order_entry_isf, unicast_isf];
     const hasISFData = isfFields.some(field => field && field.trim() !== '');
     
     if (!hasISFData) {
@@ -3289,6 +3575,13 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
   const validFeedTypes = ['Equities', 'Futures', 'Options', 'Fixed Income', 'FX', 'Commodities', 'Indices', 'ETFs', 'Alternative Data', 'Reference Data', 'Mixed'];
   if (feed_type && !validFeedTypes.includes(feed_type)) {
     return res.status(400).json({ error: `Invalid feed type. Must be one of: ${validFeedTypes.join(', ')}` });
+  }
+
+  // Quick Quote validation: if enabled, minimum cost is required
+  if (quick_quote === 'true' || quick_quote === true) {
+    if (!quick_quote_min_cost || parseFloat(quick_quote_min_cost) <= 0) {
+      return res.status(400).json({ error: 'A & B Feed Minimum Cost is required when Quick Quote is enabled' });
+    }
   }
   
   // Get current feed data for change logging
@@ -3324,20 +3617,22 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
         feed_name = ?, feed_delivery = ?, feed_type = ?, isf_enabled = ?, 
         isf_a = ?, isf_b = ?, isf_site_code_a = ?, isf_site_code_b = ?,
         isf_dr_a = ?, isf_dr_b = ?, isf_dr_site_code_a = ?, isf_dr_site_code_b = ?,
-        dr_type = ?, order_entry_isf = ?, unicast_isf = ?,
+        dr_type = ?, order_entry_isf = ?, dr_order_entry_isf = ?, unicast_isf = ?,
         dr_available = ?, bandwidth_1ms = ?, available_now = ?, quick_quote = ?, 
         pass_through_fees = ?, pass_through_currency = ?, pass_through_fees_info = ?, 
-        design_file_path = ?, more_info = ?, updated_by = ?
+        design_file_path = ?, more_info = ?, quick_quote_min_cost = ?, order_entry_cost = ?, updated_by = ?
       WHERE id = ? AND exchange_id = ?`,
       [
         feed_name, feed_delivery, feed_type, isf_enabled === 'true' ? 1 : 0, 
         isf_a || null, isf_b || null, isf_site_code_a || null, isf_site_code_b || null,
         isf_dr_a || null, isf_dr_b || null, isf_dr_site_code_a || null, isf_dr_site_code_b || null,
-        dr_type || null, order_entry_isf || null, unicast_isf || null,
+        dr_type || null, order_entry_isf || null, dr_order_entry_isf || null, unicast_isf || null,
         dr_available === 'true' ? 1 : 0, bandwidth_1ms,
         available_now === 'true' ? 1 : 0, quick_quote === 'true' ? 1 : 0,
         parseInt(pass_through_fees) || 0, pass_through_currency || 'USD', 
-        pass_through_fees_info || '', designFilePath, more_info, req.user.id, feedId, exchangeId
+        pass_through_fees_info || '', designFilePath, more_info,
+        quick_quote_min_cost ? parseFloat(quick_quote_min_cost) : null,
+        order_entry_cost ? parseFloat(order_entry_cost) : null, req.user.id, feedId, exchangeId
       ],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
@@ -3345,9 +3640,9 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
         
         logChange(req.user.id, 'exchange_feeds', feedId, 'UPDATE', oldFeed, {
           feed_name, feed_delivery, feed_type, isf_enabled, isf_a, isf_b, isf_site_code_a, isf_site_code_b,
-          isf_dr_a, isf_dr_b, isf_dr_site_code_a, isf_dr_site_code_b, dr_type, order_entry_isf, unicast_isf,
+          isf_dr_a, isf_dr_b, isf_dr_site_code_a, isf_dr_site_code_b, dr_type, order_entry_isf, dr_order_entry_isf, unicast_isf,
           dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
-          pass_through_currency, pass_through_fees_info, more_info
+          pass_through_currency, pass_through_fees_info, more_info, quick_quote_min_cost, order_entry_cost
         }, req);
         
         res.json({ message: 'Exchange feed updated successfully' });
@@ -3599,34 +3894,46 @@ const bulkUploadModules = {
   network_routes: {
     table: 'network_routes',
     templateFields: [
-      'circuit_id', 'kmz_file_path', 'mtu', 'sla_latency', 'expected_latency',
+      'circuit_id', 'repository_type_id', 'outage_tickets_last_30d', 'maintenance_tickets_last_30d',
+      'kmz_file_path', 'mtu', 'sla_latency', 'live_latency', 'expected_latency', 'test_results_link',
       'cable_system', 'is_special', 'underlying_carrier', 'cost', 'currency',
-      'location_a', 'location_b', 'bandwidth', 'capacity_usage_percent', 'more_details'
+      'location_a', 'location_b', 'bandwidth', 'capacity_usage_percent', 'more_details', 'test_results_file'
     ],
     requiredFields: ['circuit_id'],
     sampleData: {
       circuit_id: 'SAMPLE123456',
+      repository_type_id: '1',
+      outage_tickets_last_30d: '2',
+      maintenance_tickets_last_30d: '1',
+      kmz_file_path: '',
       mtu: '1500',
       sla_latency: '10',
+      live_latency: '8.5',
       expected_latency: '8',
+      test_results_link: 'http://example.com/test-results',
       cable_system: 'Sample Cable System',
       is_special: 'false',
       underlying_carrier: 'Sample Carrier',
       cost: '1000',
       currency: 'USD',
-      location_a: 'New York',
-      location_b: 'London',
+      location_a: 'LONLON',
+      location_b: 'NYCNYC',
       bandwidth: '10 Gbps',
       capacity_usage_percent: '75',
-      more_details: 'Sample route details'
+      more_details: 'Sample route details',
+      test_results_file: ''
     }
   },
   exchange_feeds: {
     table: 'exchange_feeds',
     templateFields: [
-      'exchange_id', 'feed_name', 'feed_delivery', 'feed_type', 'isf_a', 'isf_b',
+      'exchange_id', 'feed_name', 'feed_delivery', 'feed_type', 'isf_enabled',
+      'isf_a', 'isf_b', 'isf_site_code_a', 'isf_site_code_b',
+      'isf_dr_a', 'isf_dr_b', 'isf_dr_site_code_a', 'isf_dr_site_code_b',
+      'dr_type', 'order_entry_isf', 'dr_order_entry_isf', 'unicast_isf',
       'dr_available', 'bandwidth_1ms', 'available_now', 'quick_quote',
-      'pass_through_fees', 'pass_through_currency', 'pass_through_fees_info', 'more_info'
+      'pass_through_fees', 'pass_through_currency', 'pass_through_fees_info',
+      'quick_quote_min_cost', 'order_entry_cost', 'more_info'
     ],
     requiredFields: ['exchange_id', 'feed_name', 'feed_delivery', 'feed_type'],
     sampleData: {
@@ -3634,33 +3941,48 @@ const bulkUploadModules = {
       feed_name: 'Sample Feed',
       feed_delivery: 'Unicast',
       feed_type: 'Equities',
+      isf_enabled: 'true',
       isf_a: 'ISF_A_SAMPLE',
       isf_b: 'ISF_B_SAMPLE',
+      isf_site_code_a: 'SITE_A_CODE',
+      isf_site_code_b: 'SITE_B_CODE',
+      isf_dr_a: 'DR_ISF_A',
+      isf_dr_b: 'DR_ISF_B',
+      isf_dr_site_code_a: 'DR_SITE_A',
+      isf_dr_site_code_b: 'DR_SITE_B',
+      dr_type: 'Cold',
+      order_entry_isf: 'ORDER_ENTRY_ISF',
+      dr_order_entry_isf: 'DR_ORDER_ENTRY',
+      unicast_isf: 'UNICAST_ISF',
       dr_available: 'true',
       bandwidth_1ms: '100',
       available_now: 'true',
-      quick_quote: 'false',
+      quick_quote: 'true',
       pass_through_fees: '500',
       pass_through_currency: 'USD',
       pass_through_fees_info: 'Sample fee info',
+      quick_quote_min_cost: '1000',
+      order_entry_cost: '250',
       more_info: 'Sample additional info'
     }
   },
   exchange_contacts: {
     table: 'exchange_contacts',
     templateFields: [
-      'exchange_id', 'contact_name', 'contact_title', 'contact_email',
-      'contact_phone', 'contact_address', 'contact_notes'
+      'exchange_id', 'contact_name', 'job_title', 'country', 'phone_number',
+      'email', 'contact_type', 'daily_contact', 'more_info'
     ],
-    requiredFields: ['exchange_id', 'contact_name', 'contact_email'],
+    requiredFields: ['exchange_id', 'contact_name', 'email'],
     sampleData: {
       exchange_id: '1',
       contact_name: 'John Doe',
-      contact_title: 'Technical Director',
-      contact_email: 'john.doe@example.com',
-      contact_phone: '+1-555-0123',
-      contact_address: '123 Exchange St, New York, NY 10001',
-      contact_notes: 'Primary technical contact'
+      job_title: 'Technical Director',
+      country: 'United States',
+      phone_number: '+1-555-0123',
+      email: 'john.doe@example.com',
+      contact_type: 'Technical',
+      daily_contact: 'false',
+      more_info: 'Primary technical contact for exchange operations'
     }
   },
   exchange_rates: {
@@ -3676,42 +3998,105 @@ const bulkUploadModules = {
   locations: {
     table: 'location_reference',
     templateFields: [
-      'location_name', 'country', 'region', 'provider', 'access_info',
-      'level_1_min_price', 'level_2_min_price', 'level_3_min_price', 'level_4_min_price'
+      'location_code', 'city', 'country', 'datacenter_name', 'datacenter_address',
+      'latitude', 'longitude', 'time_zone', 'pop_type', 'status', 'provider', 'access_info',
+      'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus'
     ],
-    requiredFields: ['location_name', 'country'],
+    requiredFields: ['location_code', 'city', 'country'],
     sampleData: {
-      location_name: 'Sample Data Center',
-      country: 'United States',
-      region: 'North America',
+      location_code: 'LONLON',
+      city: 'London',
+      country: 'United Kingdom',
+      datacenter_name: 'London Data Center 1',
+      datacenter_address: '123 Tech Street, London, UK',
+      latitude: '51.5074',
+      longitude: '-0.1278',
+      time_zone: 'GMT',
+      pop_type: 'Primary',
+      status: 'Active',
       provider: 'Sample Provider',
-      access_info: 'Sample access information',
-      level_1_min_price: '100',
-      level_2_min_price: '200',
-      level_3_min_price: '500',
-      level_4_min_price: '1000'
+      access_info: 'Secure access, 24/7 support available',
+      min_price_under_100mb: '100',
+      min_price_100_to_999mb: '200',
+      min_price_1000_to_2999mb: '500',
+      min_price_3000mb_plus: '1000'
     }
   },
   carriers: {
     table: 'carriers',
-    templateFields: ['carrier_name', 'region', 'contact_name', 'contact_email', 'contact_phone'],
+    templateFields: ['carrier_name', 'previously_known_as', 'status', 'region'],
     requiredFields: ['carrier_name', 'region'],
     sampleData: {
       carrier_name: 'Sample Carrier Inc.',
-      region: 'North America',
-      contact_name: 'Jane Smith',
-      contact_email: 'jane.smith@samplecarrier.com',
-      contact_phone: '+1-555-0456'
+      previously_known_as: 'Old Carrier Name',
+      status: 'active',
+      region: 'North America'
     }
   },
   users: {
     table: 'users',
-    templateFields: ['username', 'password', 'role'],
-    requiredFields: ['username', 'password', 'role'],
+    templateFields: ['username', 'password', 'email', 'full_name', 'user_role', 'status'],
+    requiredFields: ['username', 'password', 'user_role'],
     sampleData: {
       username: 'newuser',
       password: 'temppassword123',
-      role: 'read_only'
+      email: 'newuser@example.com',
+      full_name: 'New User',
+      user_role: 'read_only',
+      status: 'active'
+    }
+  },
+  // Add missing bulk upload modules
+  carrier_contacts: {
+    table: 'carrier_contacts',
+    templateFields: [
+      'carrier_id', 'contact_name', 'contact_title', 'email', 'phone', 'is_primary', 'notes'
+    ],
+    requiredFields: ['carrier_id', 'contact_name', 'email'],
+    sampleData: {
+      carrier_id: '1',
+      contact_name: 'John Smith',
+      contact_title: 'Account Manager',
+      email: 'john.smith@carrier.com',
+      phone: '+1-555-0789',
+      is_primary: 'true',
+      notes: 'Primary contact for technical issues'
+    }
+  },
+  pop_capabilities: {
+    table: 'pop_capabilities',
+    templateFields: [
+      'location_id', 'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
+      'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
+      'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop'
+    ],
+    requiredFields: ['location_id'],
+    sampleData: {
+      location_id: '1',
+      cnx_extranet_wan: 'true',
+      cnx_ethernet: 'true',
+      cnx_voice: 'false',
+      tdm_gateway: 'false',
+      cnx_unigy: 'true',
+      cnx_alpha: 'false',
+      cnx_chrono: 'true',
+      cnx_sdwan: 'false',
+      csp_on_ramp: 'true',
+      exchange_on_ramp: 'true',
+      internet_on_ramp: 'false',
+      transport_only_pop: 'false'
+    }
+  },
+  exchanges: {
+    table: 'exchanges',
+    templateFields: ['exchange_name', 'region', 'contact_info', 'website', 'more_info'],
+    requiredFields: ['exchange_name', 'region'],
+    sampleData: {
+      exchange_name: 'Sample Exchange',
+      region: 'North America',
+      contact_info: 'support@sampleexchange.com',
+      website: 'https://www.sampleexchange.com',
+      more_info: 'Leading financial data exchange'
     }
   }
 };
@@ -4017,13 +4402,20 @@ router.get('/pricing_logic/config', authenticateToken, (req, res) => {
         24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
         36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
       },
+      protectedServiceMargins: {
+        12: { minMargin: 50, suggestedMargin: 70 },
+        24: { minMargin: 47.5, suggestedMargin: 65 },
+        36: { minMargin: 45, suggestedMargin: 60 }
+      },
       charges: {
-        ullPremiumPercent: 15,
         protectionPathMultiplier: 0.7
       },
       utilizationFactors: {
         primary: 0.9,
         protection: 1.0
+      },
+      promoPricing: {
+        minimumMarginPercent: 35
       }
     };
 
@@ -4035,10 +4427,17 @@ router.get('/pricing_logic/config', authenticateToken, (req, res) => {
         const field = parts[2];
         if (!configData.contractTerms[term]) configData.contractTerms[term] = {};
         configData.contractTerms[term][field] = parseFloat(config.config_value);
+      } else if (parts.length === 3 && parts[0] === 'protectedServiceMargins') {
+        const term = parts[1];
+        const field = parts[2];
+        if (!configData.protectedServiceMargins[term]) configData.protectedServiceMargins[term] = {};
+        configData.protectedServiceMargins[term][field] = parseFloat(config.config_value);
       } else if (parts.length === 2 && parts[0] === 'charges') {
         configData.charges[parts[1]] = parseFloat(config.config_value);
       } else if (parts.length === 2 && parts[0] === 'utilizationFactors') {
         configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
+      } else if (parts.length === 2 && parts[0] === 'promoPricing') {
+        configData.promoPricing[parts[1]] = parseFloat(config.config_value);
       }
     });
 
@@ -4057,10 +4456,10 @@ router.put('/pricing_logic/config', authenticateToken, (req, res) => {
     return res.status(403).json({ error: 'Admin access required' });
   }
 
-  const { contractTerms, charges, utilizationFactors } = req.body;
+  const { contractTerms, protectedServiceMargins, charges, utilizationFactors, promoPricing } = req.body;
 
   // Validate input
-  if (!contractTerms || !charges || !utilizationFactors) {
+  if (!contractTerms || !protectedServiceMargins || !charges || !utilizationFactors || !promoPricing) {
     return res.status(400).json({ error: 'All configuration sections are required' });
   }
 
@@ -4073,6 +4472,17 @@ router.put('/pricing_logic/config', authenticateToken, (req, res) => {
     ['minMargin', 'suggestedMargin', 'nrcCharge'].forEach(field => {
       updateOperations.push({
         key: `contractTerms.${term}.${field}`,
+        value: termConfig[field]
+      });
+    });
+  });
+
+  // Protected service margins
+  Object.keys(protectedServiceMargins).forEach(term => {
+    const termConfig = protectedServiceMargins[term];
+    ['minMargin', 'suggestedMargin'].forEach(field => {
+      updateOperations.push({
+        key: `protectedServiceMargins.${term}.${field}`,
         value: termConfig[field]
       });
     });
@@ -4094,31 +4504,44 @@ router.put('/pricing_logic/config', authenticateToken, (req, res) => {
     });
   });
 
+  // Promo pricing
+  Object.keys(promoPricing).forEach(settingType => {
+    updateOperations.push({
+      key: `promoPricing.${settingType}`,
+      value: promoPricing[settingType]
+    });
+  });
+
   // Execute all updates
-  db.serialize(() => {
-    db.run('BEGIN TRANSACTION');
+  const dbInstance = db.getInstance();
+  if (!dbInstance) {
+    return res.status(500).json({ error: 'Database connection not available' });
+  }
+
+  dbInstance.serialize(() => {
+    dbInstance.run('BEGIN TRANSACTION');
 
     let completed = 0;
     let hasError = false;
 
     updateOperations.forEach(operation => {
-      db.run(
+      dbInstance.run(
         'INSERT OR REPLACE INTO pricing_logic_config (config_key, config_value, updated_by, updated_date) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
         [operation.key, operation.value.toString(), req.user.id],
         function(err) {
           if (err && !hasError) {
             hasError = true;
-            db.run('ROLLBACK');
+            dbInstance.run('ROLLBACK');
             return res.status(500).json({ error: 'Failed to update pricing configuration: ' + err.message });
           }
 
           completed++;
           if (completed === updateOperations.length && !hasError) {
-            db.run('COMMIT');
+            dbInstance.run('COMMIT');
 
             // Log the configuration change
-            logChange('pricing_logic_config', 'UPDATE', 'Updated pricing logic configuration', {
-              contractTerms, charges, utilizationFactors
+            logChange(req.user.id, 'pricing_logic_config', 'config', 'UPDATE', null, {
+              contractTerms, protectedServiceMargins, charges, utilizationFactors, promoPricing
             }, req);
 
             res.json({
@@ -4131,6 +4554,73 @@ router.put('/pricing_logic/config', authenticateToken, (req, res) => {
     });
   });
 });
+
+// Find matching promo pricing rules for a route
+const findPromoPrice = (sourceLocation, destinationLocation, bandwidth) => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      SELECT pr.*, 
+             pls.location_code as source_match, 
+             pld.location_code as dest_match
+      FROM promo_pricing_rules pr
+      INNER JOIN promo_pricing_locations pls ON pr.id = pls.promo_rule_id AND pls.location_type = 'source'
+      INNER JOIN promo_pricing_locations pld ON pr.id = pld.promo_rule_id AND pld.location_type = 'destination'
+      WHERE pr.is_active = 1
+        AND ((pls.location_code = ? AND pld.location_code = ?) 
+             OR (pls.location_code = ? AND pld.location_code = ?))
+      ORDER BY pr.created_at ASC
+    `;
+
+    db.all(query, [sourceLocation, destinationLocation, destinationLocation, sourceLocation], (err, rules) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      if (rules.length === 0) {
+        resolve(null);
+        return;
+      }
+
+      // Determine which pricing tier to use based on bandwidth
+      const bandwidthMbps = parseFloat(bandwidth);
+      let priceField;
+      if (bandwidthMbps < 100) {
+        priceField = 'price_under_100mb';
+      } else if (bandwidthMbps < 1000) {
+        priceField = 'price_100_to_999mb';
+      } else if (bandwidthMbps < 3000) {
+        priceField = 'price_1000_to_2999mb';
+      } else {
+        priceField = 'price_3000mb_plus';
+      }
+
+      // Find the rule with the lowest price for this bandwidth tier
+      let lowestPrice = Infinity;
+      let selectedRule = null;
+
+      rules.forEach(rule => {
+        const price = parseFloat(rule[priceField]);
+        if (price > 0 && price < lowestPrice) {
+          lowestPrice = price;
+          selectedRule = rule;
+        }
+      });
+
+      if (selectedRule) {
+        resolve({
+          ruleId: selectedRule.id,
+          ruleName: selectedRule.rule_name,
+          price: lowestPrice,
+          priceField: priceField,
+          createdAt: selectedRule.created_at
+        });
+      } else {
+        resolve(null);
+      }
+    });
+  });
+};
 
 // Get pricing logic configuration for calculations (internal use)
 const getPricingLogicConfig = () => {
@@ -4148,15 +4638,22 @@ const getPricingLogicConfig = () => {
           24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
           36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
         },
-        charges: {
-          ullPremiumPercent: 15,
-          protectionPathMultiplier: 0.7
+        protectedServiceMargins: {
+          12: { minMargin: 50, suggestedMargin: 70 },
+          24: { minMargin: 47.5, suggestedMargin: 65 },
+          36: { minMargin: 45, suggestedMargin: 60 }
         },
-        utilizationFactors: {
-          primary: 0.9,
-          protection: 1.0
-        }
-      };
+              charges: {
+        protectionPathMultiplier: 0.7
+      },
+      utilizationFactors: {
+        primary: 0.9,
+        protection: 1.0
+      },
+      promoPricing: {
+        minimumMarginPercent: 35
+      }
+    };
 
       // Override with database values
       configs.forEach(config => {
@@ -4166,10 +4663,17 @@ const getPricingLogicConfig = () => {
           const field = parts[2];
           if (!configData.contractTerms[term]) configData.contractTerms[term] = {};
           configData.contractTerms[term][field] = parseFloat(config.config_value);
+        } else if (parts.length === 3 && parts[0] === 'protectedServiceMargins') {
+          const term = parts[1];
+          const field = parts[2];
+          if (!configData.protectedServiceMargins[term]) configData.protectedServiceMargins[term] = {};
+          configData.protectedServiceMargins[term][field] = parseFloat(config.config_value);
         } else if (parts.length === 2 && parts[0] === 'charges') {
           configData.charges[parts[1]] = parseFloat(config.config_value);
         } else if (parts.length === 2 && parts[0] === 'utilizationFactors') {
           configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
+        } else if (parts.length === 2 && parts[0] === 'promoPricing') {
+          configData.promoPricing[parts[1]] = parseFloat(config.config_value);
         }
       });
 
@@ -4177,5 +4681,820 @@ const getPricingLogicConfig = () => {
     });
   });
 };
+
+// ====================================
+// PROMO PRICING MANAGEMENT APIs (Admin Only)
+// ====================================
+
+// Helper function to get promo rules with their locations
+const getPromoRulesWithLocations = () => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      SELECT 
+        pr.*,
+        u1.username as created_by_username,
+        u2.username as updated_by_username,
+        GROUP_CONCAT(CASE WHEN pl.location_type = 'source' THEN pl.location_code END) as source_locations,
+        GROUP_CONCAT(CASE WHEN pl.location_type = 'destination' THEN pl.location_code END) as destination_locations
+      FROM promo_pricing_rules pr
+      LEFT JOIN users u1 ON pr.created_by = u1.id
+      LEFT JOIN users u2 ON pr.updated_by = u2.id
+      LEFT JOIN promo_pricing_locations pl ON pr.id = pl.promo_rule_id
+      WHERE pr.is_active = 1
+      GROUP BY pr.id
+      ORDER BY pr.created_at DESC
+    `;
+    
+    db.all(query, [], (err, rules) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      // Parse locations strings into arrays
+      const rulesWithLocations = rules.map(rule => ({
+        ...rule,
+        source_locations: rule.source_locations ? rule.source_locations.split(',') : [],
+        destination_locations: rule.destination_locations ? rule.destination_locations.split(',') : []
+      }));
+      
+      resolve(rulesWithLocations);
+    });
+  });
+};
+
+// Get all promo pricing rules
+router.get('/promo-pricing', authenticateToken, (req, res) => {
+  // Check if user is admin
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  const { search } = req.query;
+
+  getPromoRulesWithLocations()
+    .then(rules => {
+      let filteredRules = rules;
+      
+      // Apply search filter if provided
+      if (search) {
+        const searchLower = search.toLowerCase();
+        filteredRules = rules.filter(rule => 
+          rule.rule_name.toLowerCase().includes(searchLower) ||
+          rule.source_locations.some(loc => loc.toLowerCase().includes(searchLower)) ||
+          rule.destination_locations.some(loc => loc.toLowerCase().includes(searchLower))
+        );
+      }
+      
+      res.json({
+        success: true,
+        data: filteredRules
+      });
+    })
+    .catch(err => {
+      console.error('Error fetching promo pricing rules:', err);
+      res.status(500).json({ error: 'Failed to fetch promo pricing rules' });
+    });
+});
+
+// Create new promo pricing rule
+router.post('/promo-pricing', authenticateToken, (req, res) => {
+  // Check if user is admin
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  const { 
+    rule_name, 
+    source_locations, 
+    destination_locations,
+    price_under_100mb, 
+    price_100_to_999mb, 
+    price_1000_to_2999mb, 
+    price_3000mb_plus 
+  } = req.body;
+
+  // Validate required fields
+  if (!rule_name || !source_locations || !Array.isArray(source_locations) || source_locations.length === 0) {
+    return res.status(400).json({ error: 'Rule name and at least one source location are required' });
+  }
+  if (!destination_locations || !Array.isArray(destination_locations) || destination_locations.length === 0) {
+    return res.status(400).json({ error: 'At least one destination location is required' });
+  }
+
+  // Validate pricing values
+  if (price_under_100mb < 0 || price_100_to_999mb < 0 || price_1000_to_2999mb < 0 || price_3000mb_plus < 0) {
+    return res.status(400).json({ error: 'Pricing values must be non-negative' });
+  }
+
+  const dbInstance = db.getInstance();
+  if (!dbInstance) {
+    return res.status(500).json({ error: 'Database connection not available' });
+  }
+
+  dbInstance.serialize(() => {
+    dbInstance.run('BEGIN TRANSACTION');
+
+    // Insert the promo rule
+    dbInstance.run(
+      `INSERT INTO promo_pricing_rules 
+       (rule_name, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus, created_by) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [rule_name, price_under_100mb || 0, price_100_to_999mb || 0, price_1000_to_2999mb || 0, price_3000mb_plus || 0, req.user.id],
+      function(err) {
+        if (err) {
+          dbInstance.run('ROLLBACK');
+          return res.status(500).json({ error: 'Failed to create promo rule: ' + err.message });
+        }
+
+        const promoRuleId = this.lastID;
+        let completed = 0;
+        let hasError = false;
+        const totalLocations = source_locations.length + destination_locations.length;
+
+        // Insert source locations
+        source_locations.forEach(locationCode => {
+          dbInstance.run(
+            'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+            [promoRuleId, locationCode, 'source'],
+            function(err) {
+              if (err && !hasError) {
+                hasError = true;
+                dbInstance.run('ROLLBACK');
+                return res.status(500).json({ error: 'Failed to add source locations: ' + err.message });
+              }
+
+              completed++;
+              if (completed === totalLocations && !hasError) {
+                dbInstance.run('COMMIT');
+
+                // Log the change
+                logChange(req.user.id, 'promo_pricing_rules', promoRuleId, 'CREATE', null, {
+                  rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+                }, req);
+
+                res.status(201).json({
+                  success: true,
+                  message: 'Promo pricing rule created successfully',
+                  id: promoRuleId
+                });
+              }
+            }
+          );
+        });
+
+        // Insert destination locations
+        destination_locations.forEach(locationCode => {
+          dbInstance.run(
+            'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+            [promoRuleId, locationCode, 'destination'],
+            function(err) {
+              if (err && !hasError) {
+                hasError = true;
+                dbInstance.run('ROLLBACK');
+                return res.status(500).json({ error: 'Failed to add destination locations: ' + err.message });
+              }
+
+              completed++;
+              if (completed === totalLocations && !hasError) {
+                dbInstance.run('COMMIT');
+
+                // Log the change
+                logChange(req.user.id, 'promo_pricing_rules', promoRuleId, 'CREATE', null, {
+                  rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+                }, req);
+
+                res.status(201).json({
+                  success: true,
+                  message: 'Promo pricing rule created successfully',
+                  id: promoRuleId
+                });
+              }
+            }
+          );
+        });
+      }
+    );
+  });
+});
+
+// Update promo pricing rule
+router.put('/promo-pricing/:id', authenticateToken, (req, res) => {
+  // Check if user is admin
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  const promoRuleId = req.params.id;
+  const { 
+    rule_name, 
+    source_locations, 
+    destination_locations,
+    price_under_100mb, 
+    price_100_to_999mb, 
+    price_1000_to_2999mb, 
+    price_3000mb_plus 
+  } = req.body;
+
+  // Validate required fields
+  if (!rule_name || !source_locations || !Array.isArray(source_locations) || source_locations.length === 0) {
+    return res.status(400).json({ error: 'Rule name and at least one source location are required' });
+  }
+  if (!destination_locations || !Array.isArray(destination_locations) || destination_locations.length === 0) {
+    return res.status(400).json({ error: 'At least one destination location is required' });
+  }
+
+  // Validate pricing values
+  if (price_under_100mb < 0 || price_100_to_999mb < 0 || price_1000_to_2999mb < 0 || price_3000mb_plus < 0) {
+    return res.status(400).json({ error: 'Pricing values must be non-negative' });
+  }
+
+  const dbInstance = db.getInstance();
+  if (!dbInstance) {
+    return res.status(500).json({ error: 'Database connection not available' });
+  }
+
+  // Get old data for change logging
+  db.get('SELECT * FROM promo_pricing_rules WHERE id = ?', [promoRuleId], (err, oldRule) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldRule) return res.status(404).json({ error: 'Promo rule not found' });
+
+    dbInstance.serialize(() => {
+      dbInstance.run('BEGIN TRANSACTION');
+
+      // Update the promo rule
+      dbInstance.run(
+        `UPDATE promo_pricing_rules 
+         SET rule_name = ?, price_under_100mb = ?, price_100_to_999mb = ?, price_1000_to_2999mb = ?, price_3000mb_plus = ?, updated_by = ?
+         WHERE id = ?`,
+        [rule_name, price_under_100mb || 0, price_100_to_999mb || 0, price_1000_to_2999mb || 0, price_3000mb_plus || 0, req.user.id, promoRuleId],
+        function(err) {
+          if (err) {
+            dbInstance.run('ROLLBACK');
+            return res.status(500).json({ error: 'Failed to update promo rule: ' + err.message });
+          }
+
+                      // Delete existing locations
+            dbInstance.run(
+              'DELETE FROM promo_pricing_locations WHERE promo_rule_id = ?',
+              [promoRuleId],
+              function(err) {
+                if (err) {
+                  dbInstance.run('ROLLBACK');
+                  return res.status(500).json({ error: 'Failed to update locations: ' + err.message });
+                }
+
+                let completed = 0;
+                let hasError = false;
+                const totalLocations = source_locations.length + destination_locations.length;
+
+                // Insert new source locations
+                source_locations.forEach(locationCode => {
+                  dbInstance.run(
+                    'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                    [promoRuleId, locationCode, 'source'],
+                    function(err) {
+                      if (err && !hasError) {
+                        hasError = true;
+                        dbInstance.run('ROLLBACK');
+                        return res.status(500).json({ error: 'Failed to add source locations: ' + err.message });
+                      }
+
+                      completed++;
+                      if (completed === totalLocations && !hasError) {
+                        dbInstance.run('COMMIT');
+
+                        // Log the change
+                        logChange(req.user.id, 'promo_pricing_rules', promoRuleId, 'UPDATE', oldRule, {
+                          rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+                        }, req);
+
+                        res.json({
+                          success: true,
+                          message: 'Promo pricing rule updated successfully'
+                        });
+                      }
+                    }
+                  );
+                });
+
+                // Insert new destination locations
+                destination_locations.forEach(locationCode => {
+                  dbInstance.run(
+                    'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                    [promoRuleId, locationCode, 'destination'],
+                    function(err) {
+                      if (err && !hasError) {
+                        hasError = true;
+                        dbInstance.run('ROLLBACK');
+                        return res.status(500).json({ error: 'Failed to add destination locations: ' + err.message });
+                      }
+
+                      completed++;
+                      if (completed === totalLocations && !hasError) {
+                        dbInstance.run('COMMIT');
+
+                        // Log the change
+                        logChange(req.user.id, 'promo_pricing_rules', promoRuleId, 'UPDATE', oldRule, {
+                          rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+                        }, req);
+
+                        res.json({
+                          success: true,
+                          message: 'Promo pricing rule updated successfully'
+                        });
+                      }
+                    }
+                  );
+                });
+              }
+            );
+        }
+      );
+    });
+  });
+});
+
+// Delete promo pricing rule
+router.delete('/promo-pricing/:id', authenticateToken, (req, res) => {
+  // Check if user is admin
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  const promoRuleId = req.params.id;
+
+  // Get rule data for change logging
+  db.get('SELECT * FROM promo_pricing_rules WHERE id = ?', [promoRuleId], (err, rule) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rule) return res.status(404).json({ error: 'Promo rule not found' });
+
+    // Soft delete (set is_active to false)
+    db.run(
+      'UPDATE promo_pricing_rules SET is_active = 0, updated_by = ? WHERE id = ?',
+      [req.user.id, promoRuleId],
+      function(err) {
+        if (err) return res.status(500).json({ error: 'Failed to delete promo rule: ' + err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Promo rule not found' });
+
+        // Log the change
+        logChange(req.user.id, 'promo_pricing_rules', promoRuleId, 'DELETE', rule, null, req);
+
+        res.json({
+          success: true,
+          message: 'Promo pricing rule deleted successfully'
+        });
+      }
+    );
+  });
+});
+
+// ===== EXCHANGE PRICING TOOL ROUTES =====
+
+// Get available regions for exchange pricing tool
+router.get('/exchange-pricing/regions', authenticateToken, (req, res) => {
+  db.all(`
+    SELECT DISTINCT e.region 
+    FROM exchanges e 
+    INNER JOIN exchange_feeds ef ON e.id = ef.exchange_id 
+    WHERE ef.quick_quote = 1 AND e.region IS NOT NULL
+    ORDER BY e.region
+  `, [], (err, rows) => {
+    if (err) {
+      console.error('Error getting regions:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(rows.map(row => row.region));
+  });
+});
+
+// Get available exchanges by region for exchange pricing tool
+router.get('/exchange-pricing/exchanges/:region', authenticateToken, (req, res) => {
+  const { region } = req.params;
+  db.all(`
+    SELECT DISTINCT e.id, e.exchange_name, e.region 
+    FROM exchanges e 
+    INNER JOIN exchange_feeds ef ON e.id = ef.exchange_id 
+    WHERE e.region = ? AND ef.quick_quote = 1
+    ORDER BY e.exchange_name
+  `, [region], (err, rows) => {
+    if (err) {
+      console.error('Error getting exchanges for region:', region, err.message);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(rows);
+  });
+});
+
+// Get available feeds by exchange for exchange pricing tool  
+router.get('/exchange-pricing/feeds/:exchangeId', authenticateToken, (req, res) => {
+  const { exchangeId } = req.params;
+  db.all(`
+    SELECT ef.*, e.exchange_name, e.region
+    FROM exchange_feeds ef
+    INNER JOIN exchanges e ON ef.exchange_id = e.id
+    WHERE ef.exchange_id = ? AND ef.quick_quote = 1
+    ORDER BY ef.feed_name
+  `, [exchangeId], (err, rows) => {
+    if (err) {
+      console.error('Error getting feeds for exchange:', exchangeId, err.message);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(rows);
+  });
+});
+
+// Get available currencies from exchange rates table
+router.get('/exchange-pricing/currencies', authenticateToken, (req, res) => {
+  // Currency name mapping since exchange_rates table doesn't have currency_name column
+  const currencyNames = {
+    'USD': 'US Dollar',
+    'EUR': 'Euro',
+    'GBP': 'British Pound',
+    'JPY': 'Japanese Yen',
+    'AUD': 'Australian Dollar',
+    'CAD': 'Canadian Dollar',
+    'CHF': 'Swiss Franc',
+    'CNY': 'Chinese Yuan',
+    'SGD': 'Singapore Dollar',
+    'HKD': 'Hong Kong Dollar',
+    'NOK': 'Norwegian Krone',
+    'SEK': 'Swedish Krona',
+    'DKK': 'Danish Krone',
+    'PLN': 'Polish Zloty',
+    'CZK': 'Czech Koruna',
+    'HUF': 'Hungarian Forint',
+    'RUB': 'Russian Ruble',
+    'BRL': 'Brazilian Real',
+    'MXN': 'Mexican Peso',
+    'ZAR': 'South African Rand',
+    'INR': 'Indian Rupee',
+    'KRW': 'South Korean Won',
+    'THB': 'Thai Baht',
+    'MYR': 'Malaysian Ringgit',
+    'IDR': 'Indonesian Rupiah',
+    'PHP': 'Philippine Peso',
+    'NZD': 'New Zealand Dollar'
+  };
+
+  db.all(`
+    SELECT DISTINCT currency_code 
+    FROM exchange_rates 
+    WHERE status = 'Active'
+    ORDER BY currency_code
+  `, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    // Add currency names to the response
+    const currencies = rows.map(row => ({
+      currency_code: row.currency_code,
+      currency_name: currencyNames[row.currency_code] || row.currency_code
+    }));
+    
+    res.json(currencies);
+  });
+});
+
+// Get available delivery datacenters by region (Tier 1 POPs only)
+router.get('/exchange-pricing/datacenters/:region', authenticateToken, (req, res) => {
+  const { region } = req.params;
+  console.log(`Getting datacenters for region: ${region}`);
+  
+  db.all(`
+    SELECT location_code, datacenter_name as location_name, city, country, region, pop_type
+    FROM location_reference 
+    WHERE region = ? AND pop_type = 'Tier 1'
+    ORDER BY location_code
+  `, [region], (err, rows) => {
+    if (err) {
+      console.error('Error getting datacenters for region:', region, err.message);
+      return res.status(500).json({ error: err.message });
+    }
+    console.log(`Found ${rows.length} datacenters for region ${region}:`, rows);
+    res.json(rows);
+  });
+});
+
+// Create new quote request
+router.post('/exchange-pricing/quotes', authenticateToken, (req, res) => {
+  const {
+    customer_name, region, exchange_name, feed_name, desired_sell_price,
+    currency_requested, order_entry_required, delivery_datacenter, 
+    feed_id, exchange_id
+  } = req.body;
+
+  // Validate required fields
+  if (!customer_name || !region || !exchange_name || !feed_name || 
+      !desired_sell_price || !currency_requested || !delivery_datacenter || 
+      order_entry_required === undefined || order_entry_required === null) {
+    return res.status(400).json({ error: 'All fields are required' });
+  }
+
+  // Get feed pricing data
+  db.get(`
+    SELECT ef.quick_quote_min_cost, ef.order_entry_cost, ef.isf_a, ef.isf_b, 
+           ef.bandwidth_1ms, ef.order_entry_isf, ef.pass_through_fees, e.exchange_name, e.region
+    FROM exchange_feeds ef
+    INNER JOIN exchanges e ON ef.exchange_id = e.id
+    WHERE ef.id = ? AND ef.exchange_id = ? AND ef.quick_quote = 1
+  `, [feed_id, exchange_id], (err, feed) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!feed) return res.status(404).json({ error: 'Feed not found or Quick Quote not enabled' });
+
+    // Get exchange rate for currency conversion
+    db.get(`
+      SELECT exchange_rate FROM exchange_rates WHERE currency_code = ?
+    `, [currency_requested], (err, rate) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!rate) return res.status(400).json({ error: 'Invalid currency selected' });
+
+      // Convert desired sell price to USD
+      const desiredSellPriceUSD = parseFloat(desired_sell_price) / parseFloat(rate.exchange_rate);
+      
+      // Check if price meets minimum
+      const feedMinCost = parseFloat(feed.quick_quote_min_cost);
+      const isApproved = desiredSellPriceUSD >= feedMinCost;
+      const priceDifference = desiredSellPriceUSD - feedMinCost;
+
+      // Get user's full name for requestor
+      db.get('SELECT full_name FROM users WHERE id = ?', [req.user.id], (err, user) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        // Insert quote request
+        db.run(`
+          INSERT INTO quote_requests (
+            requestor_name, customer_name, region, exchange_name, feed_name,
+            desired_sell_price, currency_requested, desired_sell_price_usd,
+            order_entry_required, delivery_datacenter, feed_min_cost, order_entry_cost,
+            is_approved, price_difference, created_by
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          user ? user.full_name : 'Unknown User',
+          customer_name, region, exchange_name, feed_name,
+          parseFloat(desired_sell_price), currency_requested, desiredSellPriceUSD,
+          order_entry_required ? 1 : 0, delivery_datacenter, feedMinCost,
+          feed.order_entry_cost ? parseFloat(feed.order_entry_cost) : null,
+          isApproved ? 1 : 0, priceDifference, req.user.id
+        ], function(err) {
+          if (err) return res.status(500).json({ error: err.message });
+
+          const quoteResult = {
+            quote_id: this.lastID,
+            requestor_name: user ? user.full_name : 'Unknown User',
+            customer_name,
+            region,
+            exchange_name,
+            feed_name,
+            desired_sell_price: parseFloat(desired_sell_price),
+            currency_requested,
+            desired_sell_price_usd: desiredSellPriceUSD,
+            order_entry_required: order_entry_required ? true : false,
+            delivery_datacenter,
+            feed_min_cost: feedMinCost,
+            order_entry_cost: feed.order_entry_cost ? parseFloat(feed.order_entry_cost) : null,
+            is_approved: isApproved,
+            price_difference: priceDifference,
+            approval_status: isApproved ? 'Approved' : 'Price too Low - Not Approved',
+            // Additional feed data
+            isf_a: feed.isf_a || null,
+            isf_b: feed.isf_b || null,
+            bandwidth: feed.bandwidth_1ms || null,
+            order_entry_isf: feed.order_entry_isf || null,
+            pass_through_fees: feed.pass_through_fees || 0,
+            // Exchange rate for currency conversion
+            exchange_rate: parseFloat(rate.exchange_rate)
+          };
+
+          // Log the exchange pricing quote with enhanced details
+          db.run(
+            'INSERT INTO audit_logs (action_type, user_id, user_name, parameters, pricing_data, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [
+              'EXCHANGE_PRICING_QUOTE',
+              req.user?.id || null,
+              req.user?.full_name || 'Unknown User',
+              JSON.stringify({
+                customer_name,
+                region,
+                exchange_name,
+                feed_name,
+                desired_sell_price: parseFloat(desired_sell_price),
+                currency_requested,
+                order_entry_required,
+                delivery_datacenter,
+                feed_id,
+                exchange_id,
+                timestamp: new Date().toISOString()
+              }),
+              JSON.stringify({
+                inputParameters: {
+                  customer_name,
+                  region,
+                  exchange_name,
+                  feed_name,
+                  desired_sell_price: parseFloat(desired_sell_price),
+                  currency_requested,
+                  order_entry_required,
+                  delivery_datacenter
+                },
+                calculationResults: {
+                  quote_id: this.lastID,
+                  desired_sell_price_usd: desiredSellPriceUSD,
+                  feed_min_cost: feedMinCost,
+                  price_difference: priceDifference,
+                  is_approved: isApproved,
+                  approval_status: isApproved ? 'Approved' : 'Price too Low - Not Approved'
+                },
+                feedData: {
+                  isf_a: feed.isf_a,
+                  isf_b: feed.isf_b,
+                  bandwidth: feed.bandwidth_1ms,
+                  order_entry_isf: feed.order_entry_isf,
+                  pass_through_fees: feed.pass_through_fees,
+                  order_entry_cost: feed.order_entry_cost
+                },
+                exchangeRate: parseFloat(rate.exchange_rate)
+              }),
+              req.ip || req.connection?.remoteAddress || 'unknown',
+              req.get('User-Agent') || 'unknown'
+            ],
+            function(logErr) {
+              if (logErr) console.error('Failed to log exchange pricing quote:', logErr);
+            }
+          );
+
+          // Return quote results
+          res.json(quoteResult);
+        });
+      });
+    });
+  });
+});
+
+// Get quote requests history
+router.get('/exchange-pricing/quotes', authenticateToken, (req, res) => {
+  const { page = 1, limit = 50, search = '' } = req.query;
+  const offset = (page - 1) * limit;
+  
+  let whereClause = 'WHERE 1=1';
+  let params = [];
+  
+  if (search) {
+    whereClause += ` AND (customer_name LIKE ? OR exchange_name LIKE ? OR feed_name LIKE ? OR requestor_name LIKE ?)`;
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+  }
+  
+  db.all(`
+    SELECT * FROM quote_requests 
+    ${whereClause}
+    ORDER BY created_at DESC 
+    LIMIT ? OFFSET ?
+  `, [...params, parseInt(limit), parseInt(offset)], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    // Get total count for pagination
+    db.get(`SELECT COUNT(*) as total FROM quote_requests ${whereClause}`, params, (err, count) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      res.json({
+        quotes: rows,
+        totalCount: count.total,
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count.total / limit)
+      });
+    });
+  });
+});
+
+// Get exchange pricing audit logs
+router.get('/exchange-pricing/audit_logs', authenticateToken, (req, res) => {
+  // Check if user can view logs (not read-only)
+  if (req.user.role === 'read_only') {
+    return res.status(403).json({ error: 'Access denied. Read-only users cannot view audit logs.' });
+  }
+
+  const { limit = 100, offset = 0 } = req.query;
+  
+  db.all(
+    'SELECT * FROM audit_logs WHERE action_type = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',
+    ['EXCHANGE_PRICING_QUOTE', parseInt(limit), parseInt(offset)],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      const logs = rows.map(row => ({
+        ...row,
+        parameters: row.parameters ? JSON.parse(row.parameters) : null,
+        pricing_data: row.pricing_data ? JSON.parse(row.pricing_data) : null
+      }));
+      res.json(logs);
+    }
+  );
+});
+
+// Clear exchange pricing audit logs (Admin and Provisioner only)
+router.delete('/exchange-pricing/audit_logs', authenticateToken, (req, res) => {
+  // Check permissions
+  if (!['administrator', 'provisioner'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Access denied. Only administrators and provisioners can clear audit logs.' });
+  }
+
+  db.run('DELETE FROM audit_logs WHERE action_type = ?', ['EXCHANGE_PRICING_QUOTE'], function(err) {
+    if (err) {
+      console.error('Error clearing exchange pricing audit logs:', err);
+      return res.status(500).json({ error: 'Failed to clear exchange pricing audit logs' });
+    }
+    
+    // Log the clear action
+    logChange(req.user.id, 'audit_logs', null, 'CLEAR_EXCHANGE_PRICING', null, { 
+      cleared_count: this.changes,
+      action: 'Clear exchange pricing audit logs'
+    }, req);
+    
+    res.json({ 
+      message: 'Exchange pricing audit logs cleared successfully',
+      cleared_count: this.changes
+    });
+  });
+});
+
+// Clear exchange pricing quote history (Admin and Provisioner only)
+router.delete('/exchange-pricing/quotes/clear', authenticateToken, (req, res) => {
+  // Check permissions
+  if (!['administrator', 'provisioner'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Access denied. Only administrators and provisioners can clear quote history.' });
+  }
+
+  db.run('DELETE FROM quote_requests', [], function(err) {
+    if (err) {
+      console.error('Error clearing quote history:', err);
+      return res.status(500).json({ error: 'Failed to clear quote history' });
+    }
+    
+    // Log the clear action
+    logChange(req.user.id, 'quote_requests', null, 'CLEAR_ALL_QUOTES', null, { 
+      cleared_count: this.changes,
+      action: 'Clear all exchange pricing quote history'
+    }, req);
+    
+    res.json({ 
+      message: 'Quote history cleared successfully',
+      cleared_count: this.changes
+    });
+  });
+});
+
+// Export exchange pricing audit logs to CSV (Admin and Provisioner only)
+router.get('/exchange-pricing/audit_logs/export', authenticateToken, (req, res) => {
+  // Check permissions
+  if (!['administrator', 'provisioner'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Access denied. Only administrators and provisioners can export audit logs.' });
+  }
+
+  db.all('SELECT * FROM audit_logs WHERE action_type = ? ORDER BY timestamp DESC', ['EXCHANGE_PRICING_QUOTE'], (err, rows) => {
+    if (err) {
+      console.error('Error exporting exchange pricing audit logs:', err);
+      return res.status(500).json({ error: 'Failed to export exchange pricing audit logs' });
+    }
+    
+    // Convert to CSV format
+    const csvHeaders = 'ID,Action Type,User ID,User Name,Timestamp,Customer Name,Exchange,Feed,Desired Price,Currency,Approved,Price Difference,IP Address\n';
+    const csvRows = rows.map(row => {
+      const escapeCsv = (str) => {
+        if (str === null || str === undefined) return '';
+        return `"${String(str).replace(/"/g, '""')}"`;
+      };
+      
+      const params = row.parameters ? JSON.parse(row.parameters) : {};
+      const pricingData = row.pricing_data ? JSON.parse(row.pricing_data) : {};
+      
+      return [
+        row.id,
+        escapeCsv(row.action_type),
+        row.user_id || '',
+        escapeCsv(row.user_name),
+        escapeCsv(row.timestamp),
+        escapeCsv(params.customer_name),
+        escapeCsv(params.exchange_name),
+        escapeCsv(params.feed_name),
+        params.desired_sell_price || '',
+        escapeCsv(params.currency_requested),
+        pricingData.calculationResults?.is_approved ? 'Yes' : 'No',
+        pricingData.calculationResults?.price_difference || '',
+        escapeCsv(row.ip_address)
+      ].join(',');
+    });
+    
+    const csvContent = csvHeaders + csvRows.join('\n');
+    
+    // Log the export action
+    logChange(req.user.id, 'audit_logs', null, 'EXPORT_EXCHANGE_PRICING', null, { 
+      exported_count: rows.length,
+      action: 'Export exchange pricing audit logs to CSV'
+    }, req);
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="exchange_pricing_logs_${new Date().toISOString().split('T')[0]}.csv"`);
+    res.send(csvContent);
+  });
+});
 
 module.exports = router; 

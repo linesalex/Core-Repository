@@ -10,9 +10,12 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchIcon from '@mui/icons-material/Search';
 import RouteIcon from '@mui/icons-material/Route';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
-import MapIcon from '@mui/icons-material/Map';
+import DownloadIcon from '@mui/icons-material/Download';
+import DeleteIcon from '@mui/icons-material/Delete';
+
 import SaveIcon from '@mui/icons-material/Save';
 import HistoryIcon from '@mui/icons-material/History';
+import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import LoadingButton from '@mui/lab/LoadingButton';
 import { networkDesignApi } from './api';
 import { getCarriers } from './api';
@@ -45,12 +48,16 @@ const NetworkDesignTool = () => {
   // Check if user can view pricing logs (not read-only)
   const canViewPricingLogs = user && user.role !== 'read_only';
   
+  // Check if user can manage logs (admin or provisioner)
+  const canManageLogs = user && ['administrator', 'provisioner'].includes(user.role);
+  
   // Form state
   const [formData, setFormData] = useState({
     source: '',
     destination: '',
     bandwidth: '',
     includeULL: false,
+    useCiscoOnlyRoutes: false,
     protectionRequired: false,
     mtuRequired: '', // Changed from maxLatency to mtuRequired
     carrierAvoidance: [],
@@ -149,6 +156,13 @@ const NetworkDesignTool = () => {
       return;
     }
 
+    // Validate bandwidth range
+    const bandwidth = parseFloat(formData.bandwidth);
+    if (bandwidth && (bandwidth < 10 || bandwidth > 10000)) {
+      setError('Bandwidth must be between 10 and 10000 Mbps');
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setSearchResults(null);
@@ -160,6 +174,8 @@ const NetworkDesignTool = () => {
         destination: formData.destination,
         bandwidth: formData.bandwidth ? parseFloat(formData.bandwidth) : undefined,
         bandwidth_unit: 'Mbps',
+        include_ull: formData.includeULL,
+        use_cisco_only_routes: formData.useCiscoOnlyRoutes,
         quote_request_id: formData.quoteRequestId,
         customer_name: formData.customerName,
         constraints: {
@@ -184,6 +200,7 @@ const NetworkDesignTool = () => {
         contract_term: formData.contractTerm,
         output_currency: formData.outputCurrency,
         include_ull: formData.includeULL,
+        use_cisco_only_routes: formData.useCiscoOnlyRoutes,
         bandwidth: parseFloat(formData.bandwidth),
         source: formData.source,
         destination: formData.destination,
@@ -226,6 +243,11 @@ const NetworkDesignTool = () => {
           reasons.push(`Carrier avoidance: ${exclusionData.carrier_avoidance.count} routes excluded (avoiding: ${carriers})`);
         }
         
+        if (exclusionData.local_loop_carrier_avoidance && exclusionData.local_loop_carrier_avoidance.count > 0) {
+          const localCarriers = exclusionData.local_loop_carrier_avoidance.carriers.join(', ');
+          reasons.push(`Local loop carrier avoidance: ${exclusionData.local_loop_carrier_avoidance.count} routes excluded (avoiding: ${localCarriers})`);
+        }
+        
         if (exclusionData.mtu_requirement.count > 0) {
           const requiredMtu = exclusionData.mtu_requirement.routes[0]?.required_mtu;
           const availableMtu = exclusionData.mtu_requirement.routes[0]?.available_mtu;
@@ -236,6 +258,10 @@ const NetworkDesignTool = () => {
           reasons.push(`ULL restriction: ${exclusionData.ull_restriction.count} Special/ULL routes excluded (Include ULL disabled)`);
         }
         
+        if (exclusionData.equipment_restriction && exclusionData.equipment_restriction.count > 0) {
+          reasons.push(`Equipment restriction: ${exclusionData.equipment_restriction.count} Cisco routes excluded (Include Cisco Only Routes disabled)`);
+        }
+        
         if (exclusionData.decommission_pop && exclusionData.decommission_pop.count > 0) {
           const decommissionedLocations = [...new Set(exclusionData.decommission_pop.routes.map(r => r.decommissioned_location))];
           reasons.push(`Decommissioned POPs: ${exclusionData.decommission_pop.count} routes excluded (locations: ${decommissionedLocations.join(', ')})`);
@@ -243,7 +269,7 @@ const NetworkDesignTool = () => {
         
         if (reasons.length > 0) {
           errorMessage += 'Constraints that prevented routing:\n• ' + reasons.join('\n• ');
-          errorMessage += '\n\nSuggested actions:\n• Reduce bandwidth requirements\n• Remove carrier avoidance restrictions\n• Lower MTU requirements\n• Enable "Include ULL" if Special/ULL routes are acceptable\n• Try different source/destination locations';
+          errorMessage += '\n\nSuggested actions:\n• Reduce bandwidth requirements\n• Remove carrier avoidance restrictions\n• Lower MTU requirements\n• Enable "Include ULL" if Special/ULL routes are acceptable\n• Enable "Include Cisco Only Routes" to include Cisco equipment\n• Try different source/destination locations';
         }
         
         errorMessage += `\n\nRoute analysis: ${exclusionData.total_routes_available} total routes, ${exclusionData.total_routes_excluded} excluded by constraints`;
@@ -257,36 +283,7 @@ const NetworkDesignTool = () => {
     }
   };
 
-  const handleGenerateKMZ = async () => {
-    if (!searchResults) {
-      setError('No search results to export');
-      return;
-    }
 
-    try {
-      const paths = [searchResults.primaryPath];
-      if (searchResults.diversePath) paths.push(searchResults.diversePath);
-
-      const metadata = {
-        search_date: new Date().toISOString(),
-        source: formData.source,
-        destination: formData.destination,
-        bandwidth: formData.bandwidth,
-        protection: formData.protectionRequired
-      };
-
-      const result = await networkDesignApi.generateKMZ({ paths, metadata });
-      
-      // Download the KMZ file
-      const downloadUrl = `${process.env.REACT_APP_API_URL || 'http://localhost:5000'}/api${result.downloadUrl}`;
-      window.open(downloadUrl, '_blank');
-      
-      setSuccess('KMZ file generated and downloaded successfully');
-
-    } catch (err) {
-      setError('Failed to generate KMZ file: ' + err.message);
-    }
-  };
 
   const formatCurrency = (amount, currency) => {
     return new Intl.NumberFormat('en-US', {
@@ -297,6 +294,66 @@ const NetworkDesignTool = () => {
 
   const formatLatency = (latency) => {
     return Math.round(latency * 10) / 10; // Round to 1 decimal place
+  };
+
+  const handleClearLogs = async () => {
+    if (!window.confirm('Are you sure you want to clear all pricing logs? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await networkDesignApi.clearAuditLogs();
+      setAuditLogs([]);
+      setSuccess('Pricing logs cleared successfully');
+    } catch (err) {
+      setError('Failed to clear pricing logs: ' + err.message);
+    }
+  };
+
+  const handleExportLogs = async () => {
+    try {
+      setSuccess('Preparing export...');
+      // Use fetch directly to handle the file download properly
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:4000'}/network_design/audit_logs/export`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Export failed: ${response.statusText}`);
+      }
+
+      // Get the filename from the response header or use a default
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = 'audit_logs_export.csv';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+
+      // Create blob and download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      setSuccess('Pricing logs exported successfully');
+    } catch (err) {
+      console.error('Export error:', err);
+      setError('Failed to export pricing logs: ' + err.message);
+    }
   };
 
   return (
@@ -378,6 +435,8 @@ const NetworkDesignTool = () => {
                   type="number"
                   value={formData.bandwidth}
                   onChange={(e) => handleInputChange('bandwidth', e.target.value)}
+                  inputProps={{ min: 10, max: 10000, step: 1 }}
+                  helperText="Enter bandwidth between 10 and 10000 Mbps"
                 />
               </Grid>
 
@@ -447,6 +506,19 @@ const NetworkDesignTool = () => {
                     />
                   }
                   label="Include ULL"
+                />
+              </Grid>
+
+              {/* Include Cisco Only Routes */}
+              <Grid item xs={12} md={6}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.useCiscoOnlyRoutes}
+                      onChange={(e) => handleInputChange('useCiscoOnlyRoutes', e.target.checked)}
+                    />
+                  }
+                  label="Include Cisco Only Routes"
                 />
               </Grid>
 
@@ -691,8 +763,10 @@ const NetworkDesignTool = () => {
                           
                           {(searchResults.exclusionReasons.bandwidth.count > 0 || 
                             searchResults.exclusionReasons.carrier_avoidance.count > 0 || 
+                            searchResults.exclusionReasons.local_loop_carrier_avoidance?.count > 0 ||
                             searchResults.exclusionReasons.mtu_requirement.count > 0 ||
-                            searchResults.exclusionReasons.ull_restriction.count > 0) && (
+                            searchResults.exclusionReasons.ull_restriction.count > 0 ||
+                            searchResults.exclusionReasons.equipment_restriction?.count > 0) && (
                             <Box sx={{ mt: 1 }}>
                               <Typography variant="body2" color="text.secondary">
                                 Exclusion reasons:
@@ -709,6 +783,12 @@ const NetworkDesignTool = () => {
                                     ({searchResults.exclusionReasons.carrier_avoidance.carriers.join(', ')})
                                   </Typography>
                                 )}
+                                {searchResults.exclusionReasons.local_loop_carrier_avoidance?.count > 0 && (
+                                  <Typography component="li" variant="body2" color="text.secondary">
+                                    {searchResults.exclusionReasons.local_loop_carrier_avoidance.count} routes excluded due to local loop carrier avoidance 
+                                    ({searchResults.exclusionReasons.local_loop_carrier_avoidance.carriers.join(', ')})
+                                  </Typography>
+                                )}
                                 {searchResults.exclusionReasons.mtu_requirement.count > 0 && (
                                   <Typography component="li" variant="body2" color="text.secondary">
                                     {searchResults.exclusionReasons.mtu_requirement.count} routes excluded due to MTU requirements
@@ -717,6 +797,12 @@ const NetworkDesignTool = () => {
                                 {searchResults.exclusionReasons.ull_restriction.count > 0 && (
                                   <Typography component="li" variant="body2" color="text.secondary">
                                     {searchResults.exclusionReasons.ull_restriction.count} Special/ULL routes excluded (Include ULL disabled)
+                                  </Typography>
+                                )}
+                                {searchResults.exclusionReasons.equipment_restriction?.count > 0 && (
+                                  <Typography component="li" variant="body2" color="text.secondary">
+                                    {searchResults.exclusionReasons.equipment_restriction.count} routes excluded due to equipment restrictions 
+                                    (Cisco equipment excluded - Include Cisco Only Routes disabled)
                                   </Typography>
                                 )}
                               </Box>
@@ -728,18 +814,7 @@ const NetworkDesignTool = () => {
                   </Card>
                 </Grid>
 
-                {/* Action Buttons */}
-                <Grid item xs={12}>
-                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                    <Button
-                      variant="outlined"
-                      startIcon={<MapIcon />}
-                      onClick={handleGenerateKMZ}
-                    >
-                      Generate KMZ
-                    </Button>
-                  </Box>
-                </Grid>
+
               </Grid>
             </AccordionDetails>
           </Accordion>
@@ -831,6 +906,24 @@ const NetworkDesignTool = () => {
                             </Box>
                           </Box>
 
+                          {/* Promo Pricing Indicator */}
+                          {result.pricing.promoPricing?.used && (
+                            <Box sx={{ p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
+                              <Box display="flex" alignItems="center" gap={1} mb={1}>
+                                <LocalOfferIcon color="success" fontSize="small" />
+                                <Typography variant="subtitle2" color="success.dark" fontWeight="bold">
+                                  PROMO PRICING APPLIED
+                                </Typography>
+                              </Box>
+                              <Typography variant="body2" color="text.secondary">
+                                Rule: <strong>{result.pricing.promoPricing.ruleName}</strong>
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Original USD Price: ${result.pricing.promoPricing.originalPriceUSD} • Tier: {result.pricing.promoPricing.priceField.replace('price_', '').replace('_', ' ').replace('mb', 'Mb')}
+                              </Typography>
+                            </Box>
+                          )}
+
                           {/* NRC Charges */}
                           {result.pricing.nrcCharge > 0 && (
                             <Box sx={{ bgcolor: 'info.50', p: 2, borderRadius: 1 }}>
@@ -900,7 +993,7 @@ const NetworkDesignTool = () => {
                     <Card sx={{ bgcolor: 'primary.50' }}>
                       <CardHeader 
                         title="Protected Service Pricing"
-                        subheader="100% Primary + 70% Protection"
+                        subheader="100% Primary + 70% Protection Path"
                       />
                       <CardContent>
                         <Grid container spacing={3}>
@@ -911,7 +1004,7 @@ const NetworkDesignTool = () => {
                               </Typography>
                               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                                 <Typography variant="body1" color="success.main">
-                                  Minimum ({pricingResults.contractTermDetails?.rules[pricingResults.protectionPricing.contractTerm]?.minMargin || 'N/A'} margin):
+                                  Minimum (Protected Service):
                                 </Typography>
                                 <Typography variant="h6" fontWeight="bold" color="success.main">
                                   {formatCurrency(pricingResults.protectionPricing.minimumPrice, pricingResults.protectionPricing.currency)}
@@ -919,7 +1012,7 @@ const NetworkDesignTool = () => {
                               </Box>
                               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                                 <Typography variant="body1" color="warning.main">
-                                  Suggested ({pricingResults.contractTermDetails?.rules[pricingResults.protectionPricing.contractTerm]?.suggestedMargin || 'N/A'} margin):
+                                  Suggested (Protected Service):
                                 </Typography>
                                 <Typography variant="h6" fontWeight="bold" color="warning.main">
                                   {formatCurrency(pricingResults.protectionPricing.suggestedPrice, pricingResults.protectionPricing.currency)}
@@ -976,11 +1069,34 @@ const NetworkDesignTool = () => {
         <TabPanel value={currentTab} index={1}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
             <Typography variant="h6">Pricing Logs</Typography>
-            <Chip 
-              label={`${auditLogs.length} entries`} 
-              color="info" 
-              size="small"
-            />
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+              <Chip 
+                label={`${auditLogs.length} entries`} 
+                color="info" 
+                size="small"
+              />
+              {canManageLogs && (
+                <>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={handleExportLogs}
+                    startIcon={<DownloadIcon />}
+                  >
+                    Export CSV
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    size="small"
+                    onClick={handleClearLogs}
+                    startIcon={<DeleteIcon />}
+                  >
+                    Clear Logs
+                  </Button>
+                </>
+              )}
+            </Box>
           </Box>
           
           <TableContainer component={Paper}>
@@ -988,10 +1104,11 @@ const NetworkDesignTool = () => {
               <TableHead>
                 <TableRow>
                   <TableCell><strong>Timestamp</strong></TableCell>
+                  <TableCell><strong>User</strong></TableCell>
                   <TableCell><strong>Action</strong></TableCell>
-                  <TableCell><strong>Parameters</strong></TableCell>
+                  <TableCell><strong>Complete Input Data</strong></TableCell>
+                  <TableCell><strong>Complete Results Data</strong></TableCell>
                   <TableCell><strong>Execution Time</strong></TableCell>
-                  <TableCell><strong>Results</strong></TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -1003,25 +1120,60 @@ const NetworkDesignTool = () => {
                       </Typography>
                     </TableCell>
                     <TableCell>
+                      <Typography variant="body2">
+                        {log.user_name || 'Unknown User'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
                       <Chip 
                         label={log.action_type} 
                         color={log.action_type === 'PATH_SEARCH' ? 'primary' : 'secondary'} 
                         size="small" 
                       />
                     </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" component="pre" sx={{ fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {log.parameters ? JSON.stringify(log.parameters, null, 2) : 'N/A'}
-                      </Typography>
+                    <TableCell sx={{ maxWidth: 400 }}>
+                      <Box 
+                        component="pre" 
+                        sx={{ 
+                          fontSize: '0.75rem', 
+                          fontFamily: 'monospace',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          maxHeight: '200px',
+                          overflow: 'auto',
+                          backgroundColor: '#f5f5f5',
+                          padding: 1,
+                          borderRadius: 1
+                        }}
+                      >
+                        {log.parameters ? JSON.stringify(log.parameters, null, 2) : 
+                         log.pricing_data?.inputParameters ? JSON.stringify(log.pricing_data.inputParameters, null, 2) : 
+                         'No input data available'}
+                      </Box>
+                    </TableCell>
+                    <TableCell sx={{ maxWidth: 400 }}>
+                      <Box 
+                        component="pre" 
+                        sx={{ 
+                          fontSize: '0.75rem', 
+                          fontFamily: 'monospace',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          maxHeight: '200px',
+                          overflow: 'auto',
+                          backgroundColor: '#f5f5f5',
+                          padding: 1,
+                          borderRadius: 1
+                        }}
+                      >
+                        {log.results ? JSON.stringify(log.results, null, 2) : 
+                         log.pricing_data?.calculationResults ? JSON.stringify(log.pricing_data.calculationResults, null, 2) : 
+                         'No results data available'}
+                      </Box>
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2">
                         {log.execution_time ? `${log.execution_time}ms` : 'N/A'}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" component="pre" sx={{ fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {log.results ? JSON.stringify(log.results, null, 2) : log.pricing_data ? JSON.stringify(log.pricing_data, null, 2) : 'N/A'}
                       </Typography>
                     </TableCell>
                   </TableRow>

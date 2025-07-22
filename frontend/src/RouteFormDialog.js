@@ -24,7 +24,10 @@ const defaultValues = {
   location_b: '',
   bandwidth: '',
   capacity_usage_percent: '',
-  more_details: ''
+  more_details: '',
+  local_loop_carriers_a: '',
+  local_loop_carriers_b: '',
+  equipment_type: 'Nokia'
 };
 
 function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit = false, onFileDeleted }) {
@@ -37,6 +40,10 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
   const [carrierOptions, setCarrierOptions] = useState([]);
   const [carrierInputValue, setCarrierInputValue] = useState('');
   const [selectedCarrier, setSelectedCarrier] = useState(null);
+  const [selectedLocalLoopCarriersA, setSelectedLocalLoopCarriersA] = useState([]);
+  const [selectedLocalLoopCarriersB, setSelectedLocalLoopCarriersB] = useState([]);
+  const [localLoopCarrierInputValueA, setLocalLoopCarrierInputValueA] = useState('');
+  const [localLoopCarrierInputValueB, setLocalLoopCarrierInputValueB] = useState('');
 
   useEffect(() => {
     if (isEdit && initialValues && Object.keys(initialValues).length > 0) {
@@ -51,6 +58,23 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
         });
         setCarrierInputValue(initialValues.underlying_carrier);
       }
+
+      // Set the selected local loop carriers based on comma-separated values
+      if (initialValues.local_loop_carriers_a) {
+        const carriersA = initialValues.local_loop_carriers_a.split(',').map(carrier => ({
+          carrier_name: carrier.trim(),
+          id: null
+        })).filter(carrier => carrier.carrier_name);
+        setSelectedLocalLoopCarriersA(carriersA);
+      }
+
+      if (initialValues.local_loop_carriers_b) {
+        const carriersB = initialValues.local_loop_carriers_b.split(',').map(carrier => ({
+          carrier_name: carrier.trim(),
+          id: null
+        })).filter(carrier => carrier.carrier_name);
+        setSelectedLocalLoopCarriersB(carriersB);
+      }
       
       // Load existing test results files
       loadExistingFiles(initialValues.circuit_id);
@@ -60,6 +84,10 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
       setExistingFiles([]);
       setSelectedCarrier(null);
       setCarrierInputValue('');
+      setSelectedLocalLoopCarriersA([]);
+      setSelectedLocalLoopCarriersB([]);
+      setLocalLoopCarrierInputValueA('');
+      setLocalLoopCarrierInputValueB('');
     }
     setFile(null);
     setTestResultsFiles([]);
@@ -137,6 +165,28 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
         setValues({ ...values, underlying_carrier: '' });
       }
     }
+  };
+
+  const handleLocalLoopCarrierChangeA = (event, newValue) => {
+    setSelectedLocalLoopCarriersA(newValue);
+    const carrierNames = newValue.map(carrier => carrier.carrier_name).join(', ');
+    setValues({ ...values, local_loop_carriers_a: carrierNames });
+  };
+
+  const handleLocalLoopCarrierChangeB = (event, newValue) => {
+    setSelectedLocalLoopCarriersB(newValue);
+    const carrierNames = newValue.map(carrier => carrier.carrier_name).join(', ');
+    setValues({ ...values, local_loop_carriers_b: carrierNames });
+  };
+
+  const handleLocalLoopCarrierInputChangeA = (event, newInputValue) => {
+    setLocalLoopCarrierInputValueA(newInputValue);
+    searchCarriers(newInputValue);
+  };
+
+  const handleLocalLoopCarrierInputChangeB = (event, newInputValue) => {
+    setLocalLoopCarrierInputValueB(newInputValue);
+    searchCarriers(newInputValue);
   };
 
   const handleFileChange = (e) => {
@@ -369,6 +419,73 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
               handleHomeEndKeys
               noOptionsText="No carriers found - type at least 2 characters to search"
             />
+          </Grid>
+          <Grid item xs={12}>
+            <Autocomplete
+              multiple
+              options={carrierOptions}
+              getOptionLabel={(option) => option.carrier_name}
+              value={selectedLocalLoopCarriersA}
+              onChange={handleLocalLoopCarrierChangeA}
+              inputValue={localLoopCarrierInputValueA}
+              onInputChange={handleLocalLoopCarrierInputChangeA}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Local Loop Carriers A-End"
+                  placeholder="Search carriers..."
+                  fullWidth
+                  helperText="Select multiple carriers from the database"
+                />
+              )}
+              clearOnBlur
+              selectOnFocus
+              handleHomeEndKeys
+              noOptionsText="No carriers found - type at least 2 characters to search"
+              freeSolo
+              isOptionEqualToValue={(option, value) => option.carrier_name === value.carrier_name}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <Autocomplete
+              multiple
+              options={carrierOptions}
+              getOptionLabel={(option) => option.carrier_name}
+              value={selectedLocalLoopCarriersB}
+              onChange={handleLocalLoopCarrierChangeB}
+              inputValue={localLoopCarrierInputValueB}
+              onInputChange={handleLocalLoopCarrierInputChangeB}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Local Loop Carriers B-End"
+                  placeholder="Search carriers..."
+                  fullWidth
+                  helperText="Select multiple carriers from the database"
+                />
+              )}
+              clearOnBlur
+              selectOnFocus
+              handleHomeEndKeys
+              noOptionsText="No carriers found - type at least 2 characters to search"
+              freeSolo
+              isOptionEqualToValue={(option, value) => option.carrier_name === value.carrier_name}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <FormControl fullWidth>
+              <InputLabel>Equipment Type</InputLabel>
+              <Select
+                name="equipment_type"
+                value={values.equipment_type}
+                onChange={handleChange}
+                label="Equipment Type"
+              >
+                <MenuItem value="Nokia">Nokia</MenuItem>
+                <MenuItem value="Cisco">Cisco</MenuItem>
+                <MenuItem value="Mixed">Mixed</MenuItem>
+              </Select>
+            </FormControl>
           </Grid>
           <Grid item xs={12}>
             <TextField

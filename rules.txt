@@ -1,0 +1,4 @@
+do not run the frontend or backend - i will do this
+the terminal is using powershell so && is not valid - run each terminal command separately
+do not change any features aside from ones prompted to
+ask clarification questions by default rather than proceeding without 100% clear understanding

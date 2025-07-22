@@ -30,14 +30,20 @@ const UserManagement = () => {
   // Module visibility state
   const [moduleVisibility, setModuleVisibility] = useState({});
   const [availableModules] = useState([
-    { key: 'network_routes', label: 'Network Routes' },
-    { key: 'network_design', label: 'Network Design & Pricing' },
+    { key: 'network_routes', label: 'Network Routes Repository' },
+    { key: 'network_design', label: 'Network Design & Pricing Tool' },
     { key: 'locations', label: 'Manage Locations' },
     { key: 'carriers', label: 'Manage Carriers' },
+    { key: 'cnx_colocation', label: 'CNX Colocation' },
     { key: 'exchange_rates', label: 'Exchange Rates' },
     { key: 'exchange_data', label: 'Exchange Data' },
     { key: 'change_logs', label: 'Change Logs' },
-    { key: 'user_management', label: 'User Management' }
+    { key: 'user_management', label: 'User Management' },
+    { key: 'bulk_upload', label: 'Bulk Upload' },
+    { key: 'core_outages', label: 'Core Outages' },
+    { key: 'minimum_pricing', label: 'Minimum Pricing' },
+    { key: 'pricing_logic', label: 'Pricing Logic (Admin)' },
+    { key: 'promo_pricing', label: 'Promo Pricing (Admin)' }
   ]);
   
   // Form data

@@ -32,6 +32,7 @@ const generateToken = (user) => {
     { 
       id: user.id, 
       username: user.username, 
+      full_name: user.full_name || user.username,
       role: user.user_role 
     },
     JWT_SECRET,
@@ -186,8 +187,20 @@ const getUserPermissionsWithVisibility = (userId, callback) => {
             });
             
             // Build visibility map - default all modules to visible
+            const allModules = [
+              'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
+              'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
+              'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
+            ];
+            
+            // Set all modules to visible by default
+            allModules.forEach(module => {
+              visibilityMap[module] = true;
+            });
+            
+            // Also include any modules from permissions table
             permissions.forEach(perm => {
-              visibilityMap[perm.module_name] = true; // Default to visible
+              visibilityMap[perm.module_name] = true;
             });
             
             // Override with user-specific visibility settings

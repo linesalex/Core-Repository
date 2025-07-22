@@ -11,6 +11,7 @@ A comprehensive enterprise-grade application for managing global telecommunicati
 cd backend
 npm install
 node init_db.js
+node migration_script.js  # Run database migrations
 npm start
 
 # Frontend Setup (new terminal)
@@ -20,6 +21,8 @@ npm start
 ```
 
 **Default Login**: Username: `admin`, Password: `admin123`
+
+⚠️ **IMPORTANT**: Change the default password immediately after first login!
 
 ## ✨ Key Features
 
@@ -51,10 +54,12 @@ npm start
 - **Status Monitoring**: Real-time status updates and notifications
 - **Reporting**: Comprehensive outage reporting and analytics
 
-### 💰 Exchange Rates Management
-- **Multi-currency Support**: Real-time currency conversion
+### 💰 Exchange Rates & Pricing Management
+- **Multi-currency Support**: Real-time currency conversion across all pricing tools
 - **Rate Management**: Administrative control over exchange rates
-- **Pricing Integration**: Seamless integration with pricing calculations
+- **Exchange Pricing Tool**: Quick quote system for exchange feed pricing
+- **Enhanced Pricing Logs**: Comprehensive audit trails with user tracking and export capabilities
+- **Pricing Integration**: Seamless integration with all pricing calculations
 
 ### 🏢 CNX Colocation Management
 - **Multi-level Expandable Interface**: 
@@ -80,6 +85,15 @@ npm start
   - POP capabilities matrix (12 different service types)
   - Minimum pricing tiers (4 bandwidth categories)
   - Access information and provider details
+- **Bulk Upload System**: 
+  - CSV templates for all major data types (network routes, locations, carriers, users, exchanges, etc.)
+  - Comprehensive field mapping including all database fields
+  - Data validation and error reporting
+  - Template generation and database export capabilities
+- **Exchange Data Management**: 
+  - Complete exchange and feed management
+  - ISF (Infrastructure Service Fee) tracking
+  - Pass-through fees and pricing management
 - **Change Auditing**: Complete audit trail of all system changes
 - **Data Validation**: Strict validation rules and format enforcement
 
@@ -174,10 +188,12 @@ network-inventory/
 - `PUT /network_routes/:id` - Update route
 - `DELETE /network_routes/:id` - Delete route
 
-### Network Design
+### Network Design & Pricing
 - `POST /network_design/find_path` - Path finding algorithm
-- `POST /network_design/calculate_pricing` - Pricing calculations
-- `POST /network_design/generate_kmz` - KMZ file generation
+- `POST /network_design/calculate_pricing` - Pricing calculations with contract terms
+- `GET /network_design/audit_logs` - Pricing calculation audit logs
+- `DELETE /network_design/audit_logs` - Clear pricing logs (Admin/Provisioner)
+- `GET /network_design/audit_logs/export` - Export pricing logs to CSV
 
 ### Locations & Pricing
 - `GET /locations` - List all locations
@@ -196,27 +212,52 @@ network-inventory/
 - `PUT /cnx-colocation/clients/:clientId` - Update client with design file
 - `DELETE /cnx-colocation/clients/:clientId` - Delete client
 
+### Exchange Pricing
+- `POST /exchange-pricing/quotes` - Create pricing quote
+- `GET /exchange-pricing/quotes` - Quote history with search
+- `GET /exchange-pricing/regions` - Available regions
+- `GET /exchange-pricing/exchanges/:region` - Exchanges by region
+- `GET /exchange-pricing/feeds/:exchangeId` - Feeds by exchange
+- `GET /exchange-pricing/audit_logs` - Pricing quote audit logs
+- `DELETE /exchange-pricing/audit_logs` - Clear pricing logs (Admin/Provisioner)
+- `GET /exchange-pricing/audit_logs/export` - Export pricing logs to CSV
+
+### Bulk Upload
+- `GET /bulk-upload/modules` - Available upload modules
+- `GET /bulk-upload/template/:module` - Download CSV template
+- `POST /bulk-upload/:module` - Upload CSV data
+- `GET /bulk-upload/history` - Upload history and status
+
 ## 📊 Database Schema
 
 ### Core Tables
-- **users**: User accounts and roles
-- **role_permissions**: Permission matrix
-- **network_routes**: Network route inventory
-- **location_reference**: POP database with pricing tiers
-- **carriers**: Carrier information with regional support
-- **exchange_rates**: Currency conversion rates
-- **change_logs**: Complete audit trail
+- **users**: User accounts with roles and module visibility
+- **role_permissions**: Granular permission matrix
+- **network_routes**: Network route inventory with enhanced tracking
+- **location_reference**: POP database with comprehensive location data
+- **carriers**: Multi-regional carrier database
+- **carrier_contacts**: Carrier contact management
+- **exchange_rates**: Multi-currency conversion rates
+- **change_logs**: Complete audit trail of all changes
+- **audit_logs**: Pricing calculation and system activity logs
+
+### Exchange Management Tables
+- **exchanges**: Exchange provider information
+- **exchange_feeds**: Feed details with ISF and pricing data
+- **exchange_contacts**: Exchange contact information
+- **quote_requests**: Exchange pricing quote history
 
 ### CNX Colocation Tables
 - **cnx_colocation_racks**: Rack inventory with power, infrastructure, and pricing files
 - **cnx_colocation_clients**: Client details with power/RU allocation and design files
-- **pop_capabilities**: Extended with CNX Colocation capability flag
 
 ### Enhanced Features
-- **Minimum Pricing**: 4-tier pricing structure per location
-- **POP Capabilities**: 12-field capability matrix
-- **Regional Carriers**: Support for same carrier in different regions
-- **Flexible Capacity**: 0-1000% capacity usage range
+- **Comprehensive Pricing Logs**: Enhanced audit trails with user tracking and IP logging
+- **Bulk Upload System**: CSV import for all major data types
+- **Exchange Pricing**: Quick quote system with comprehensive feed management
+- **POP Capabilities**: 12-field capability matrix per location
+- **Regional Support**: Multi-regional carriers and exchanges
+- **User Module Visibility**: Granular UI control per user
 
 ## 🔧 Development
 
@@ -327,7 +368,7 @@ This is an enterprise network inventory management system designed for telecommu
 
 ---
 
-**Version**: 2.1  
+**Version**: 2.2  
 **Last Updated**: January 2025  
-**Latest Features**: CNX Colocation Management with multi-tier file handling  
-**Compatibility**: Windows 10+, Node.js 16+, Modern Browsers 
+**Latest Features**: Enhanced Pricing Logs, Comprehensive Bulk Upload System, Exchange Pricing Tool  
+**Compatibility**: Windows 10+, Node.js 16+, Modern Browsers (Chrome 90+, Firefox 88+, Safari 14+, Edge 90+) 

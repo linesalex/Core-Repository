@@ -38,6 +38,7 @@ const LocationDataManager = ({ hasPermission }) => {
   // Form data
   const [formData, setFormData] = useState({
     location_code: '',
+    region: 'AMERs', // Default to AMERs
     city: '',
     country: '',
     datacenter_name: '',
@@ -119,6 +120,7 @@ const LocationDataManager = ({ hasPermission }) => {
     setSelectedLocation(location);
     setFormData({
       location_code: location.location_code,
+      region: location.region || 'AMERs',
       city: location.city,
       country: location.country,
       datacenter_name: location.datacenter_name || '',
@@ -361,6 +363,7 @@ const LocationDataManager = ({ hasPermission }) => {
           <TableHead>
             <TableRow>
               <TableCell>POP Code</TableCell>
+              <TableCell>Region</TableCell>
               <TableCell>City</TableCell>
               <TableCell>Country</TableCell>
               <TableCell>Address</TableCell>
@@ -379,6 +382,17 @@ const LocationDataManager = ({ hasPermission }) => {
                   <Typography variant="body1" fontWeight="bold">
                     {location.location_code}
                   </Typography>
+                </TableCell>
+                <TableCell>
+                  <Chip 
+                    label={location.region || 'N/A'} 
+                    color={
+                      location.region === 'AMERs' ? 'primary' : 
+                      location.region === 'EMEA' ? 'secondary' : 
+                      location.region === 'APAC' ? 'success' : 'default'
+                    }
+                    size="small"
+                  />
                 </TableCell>
                 <TableCell>{location.city}</TableCell>
                 <TableCell>{location.country}</TableCell>
@@ -451,6 +465,20 @@ const LocationDataManager = ({ hasPermission }) => {
                 onChange={(e) => handleInputChange('location_code', e.target.value)}
                 disabled={dialogMode === 'edit'}
               />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth required>
+                <InputLabel>Region *</InputLabel>
+                <Select
+                  value={formData.region}
+                  label="Region *"
+                  onChange={(e) => handleInputChange('region', e.target.value)}
+                >
+                  <MenuItem value="AMERs">AMERs</MenuItem>
+                  <MenuItem value="EMEA">EMEA</MenuItem>
+                  <MenuItem value="APAC">APAC</MenuItem>
+                </Select>
+              </FormControl>
             </Grid>
             <Grid item xs={12} sm={6}>
               <TextField

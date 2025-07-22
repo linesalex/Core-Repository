@@ -140,7 +140,11 @@ export const networkDesignApi = {
   deleteSavedSearch: (id) => api.delete(`${API_BASE_URL}/network_design/saved_searches/${id}`).then(res => res.data),
   
   // Audit Logs
-  getAuditLogs: () => api.get(`${API_BASE_URL}/network_design/audit_logs`).then(res => res.data),
+  getAuditLogs: (params = {}) => api.get(`${API_BASE_URL}/network_design/audit_logs`, { params }).then(res => res.data),
+  clearAuditLogs: () => api.delete(`${API_BASE_URL}/network_design/audit_logs`).then(res => res.data),
+  exportAuditLogs: () => {
+    window.open(`${API_BASE_URL}/network_design/audit_logs/export`, '_blank');
+  },
   
   // Convenience methods for accessing location and exchange rate data
   getLocations: () => locationDataApi.getLocations(),
@@ -208,4 +212,31 @@ export const uploadBulkData = (module, file) => {
 // Get bulk upload history
 export const getBulkUploadHistory = (page = 1, limit = 50) => {
   return api.get(`${API_BASE_URL}/bulk-upload/history?page=${page}&limit=${limit}`);
-}; 
+};
+
+// ====================================
+// EXCHANGE PRICING TOOL
+// ====================================
+
+export const exchangePricingApi = {
+  // Quote Management
+  createQuote: (data) => api.post(`${API_BASE_URL}/exchange-pricing/quotes`, data).then(res => res.data),
+  getQuoteHistory: (params = {}) => api.get(`${API_BASE_URL}/exchange-pricing/quotes`, { params }).then(res => res.data),
+  
+  // Data for form dropdowns
+  getRegions: () => api.get(`${API_BASE_URL}/exchange-pricing/regions`).then(res => res.data),
+  getExchanges: (region) => api.get(`${API_BASE_URL}/exchange-pricing/exchanges/${region}`).then(res => res.data),
+  getFeeds: (exchangeId) => api.get(`${API_BASE_URL}/exchange-pricing/feeds/${exchangeId}`).then(res => res.data),
+  getCurrencies: () => api.get(`${API_BASE_URL}/exchange-pricing/currencies`).then(res => res.data),
+  getDatacenters: (region) => api.get(`${API_BASE_URL}/exchange-pricing/datacenters/${region}`).then(res => res.data),
+  
+  // Audit Logs
+  getAuditLogs: (params = {}) => api.get(`${API_BASE_URL}/exchange-pricing/audit_logs`, { params }).then(res => res.data),
+  clearAuditLogs: () => api.delete(`${API_BASE_URL}/exchange-pricing/audit_logs`).then(res => res.data),
+  exportAuditLogs: () => {
+    window.open(`${API_BASE_URL}/exchange-pricing/audit_logs/export`, '_blank');
+  }
+};
+
+// Export the base api object for direct use
+export { api }; 
