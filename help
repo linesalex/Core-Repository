@@ -1,9 +1,32 @@
-http://172.30.252.118:4000/login
+# Test if routes.js loads without errors
+cd /root/Core-Repository/backend
+node -e "console.log('Testing routes import...'); try { require('./routes'); console.log('✅ Routes loaded successfully'); } catch(e) { console.log('❌ Routes failed to load:', e.message); }"
 
-{
-  "error": "Endpoint not found",
-  "type": "NOT_FOUND",
-  "retryable": false,
-  "timestamp": "2025-07-22T19:20:04.666Z"
-}
 
+
+# Check what the root endpoint returns
+curl http://172.30.252.118:4000/
+
+cd /root/Core-Repository/backend
+
+# Test if auth.js loads (which routes.js imports)
+node -e "console.log('Testing auth...'); try { require('./auth'); console.log('✅ Auth loaded'); } catch(e) { console.log('❌ Auth failed:', e.message); }"
+
+# Test if db.js loads (which auth.js imports)  
+node -e "console.log('Testing db...'); try { require('./db'); console.log('✅ DB loaded'); } catch(e) { console.log('❌ DB failed:', e.message); }"
+
+
+# Check the exact content of the routes mounting
+cd /root/Core-Repository/backend
+grep -A 5 -B 5 "app.use.*routes" index.js
+
+
+# Add this test route temporarily to index.js (before app.use('/', routes))
+# You can edit index.js and add this line:
+
+app.post('/test-login', (req, res) => {
+  res.json({ message: 'Test login endpoint working' });
+});
+
+# Then restart backend and test:
+curl -X POST http://172.30.252.118:4000/test-login
