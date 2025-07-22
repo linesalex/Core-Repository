@@ -9,3 +9,8 @@
 [root@sni1-ipclon7 node-v14.21.3]# make -j2 VERBOSE=1
 make: *** [config.gypi] Error 1
 [root@sni1-ipclon7 node-v14.21.3]# 
+
+[root@sni1-ipclon7 ~]# cat /etc/redhat-release
+Red Hat Enterprise Linux Server release 7.7 (Maipo)
+[root@sni1-ipclon7 ~]# 
+
