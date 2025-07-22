@@ -1,30 +1,23 @@
-# Step 1: Install the SCL repository
-sudo yum install -y centos-release-scl-rh
+# Step 1: Install build dependencies (you may already have some from earlier)
+sudo yum install -y gcc gcc-c++ make python openssl-devel zlib-devel libffi-devel bzip2-devel
 
-# Step 2: Install Node.js 14 from SCL (RHEL 7 compatible)
-sudo yum install -y rh-nodejs14
+# Step 2: Download Node.js 14 source code
+cd /tmp
+wget https://nodejs.org/dist/v14.21.3/node-v14.21.3.tar.gz
+tar xzf node-v14.21.3.tar.gz
+cd node-v14.21.3
 
-# Step 3: Enable the SCL environment in your shell
-source /opt/rh/rh-nodejs14/enable
+# Step 3: Configure and compile (use -j4 if you have 4+ CPU cores for faster build)
+./configure --prefix=/usr/local
+make -j2  # Change -j2 to -j4 if your system has more cores
 
-# Step 4: Verify in this shell
-node --version  # Should show v14.x.x (e.g., v14.21.3)
-npm --version   # Should show 6.x.x
+# Step 4: Install the compiled binaries
+sudo make install
 
-# Step 5: Make it permanent (add to your .bashrc)
-echo 'source /opt/rh/rh-nodejs14/enable' >> ~/.bashrc
+# Step 5: Add to PATH (if not already)
+echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
 source ~/.bashrc
 
-# Step 6: Test again
-node --version
-npm --version
-
-[root@sni1-ipclon7 ~]# 
-[root@sni1-ipclon7 ~]# 
-[root@sni1-ipclon7 ~]# sudo yum install -y centos-release-scl-rh
-
-Error: Nothing to do
-[root@sni1-ipclon7 ~]# 
-[root@sni1-ipclon7 ~]# sudo yum install -y rh-nodejs14
-Error: Nothing to do
-[root@sni1-ipclon7 ~]# 
+# Step 6: Verify installation
+node --version  # Should show v14.21.3
+npm --version   # Should show 6.x.x
