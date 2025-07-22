@@ -1,81 +1,54 @@
-# Test if routes.js loads without errors
+# Check if the router is properly exported from routes.js
 cd /root/Core-Repository/backend
-node -e "console.log('Testing routes import...'); try { require('./routes'); console.log('✅ Routes loaded successfully'); } catch(e) { console.log('❌ Routes failed to load:', e.message); }"
+tail -10 routes.js | grep -E "(module.exports|router)"
+
+
+# Test if the login route is actually registered
+node -e "
+const router = require('./routes');
+console.log('Router methods:', router.stack?.map(r => r.route?.path + ' ' + Object.keys(r.route?.methods || {})).filter(Boolean));
+"
+
+# Test if the login route is actually registered
+node -e "
+const router = require('./routes');
+console.log('Router methods:', router.stack?.map(r => r.route?.path + ' ' + Object.keys(r.route?.methods || {})).filter(Boolean));
+"
+
+
+# Check what routes.js actually contains around the login definition
+cd /root/Core-Repository/backend
+grep -n -A 10 -B 5 "router.post.*login" routes.js
 
 
 
-# Check what the root endpoint returns
-curl http://172.30.252.118:4000/
+
+# Test different HTTP methods
+curl -X GET http://172.30.252.118:4000/login
+curl -X POST http://172.30.252.118:4000/login  
+curl -X PUT http://172.30.252.118:4000/login
+
+
+# Test with and without trailing slash
+curl -X POST http://172.30.252.118:4000/login/
+curl -X POST http://172.30.252.118:4000//login
+
+# Test case sensitivity
+curl -X POST http://172.30.252.118:4000/Login
+
 
 cd /root/Core-Repository/backend
-
-# Test if auth.js loads (which routes.js imports)
-node -e "console.log('Testing auth...'); try { require('./auth'); console.log('✅ Auth loaded'); } catch(e) { console.log('❌ Auth failed:', e.message); }"
-
-# Test if db.js loads (which auth.js imports)  
-node -e "console.log('Testing db...'); try { require('./db'); console.log('✅ DB loaded'); } catch(e) { console.log('❌ DB failed:', e.message); }"
-
-
-# Check the exact content of the routes mounting
-cd /root/Core-Repository/backend
-grep -A 5 -B 5 "app.use.*routes" index.js
-
-
-# Add this test route temporarily to index.js (before app.use('/', routes))
-# You can edit index.js and add this line:
-
-app.post('/test-login', (req, res) => {
-  res.json({ message: 'Test login endpoint working' });
-});
-
-# Then restart backend and test:
-curl -X POST http://172.30.252.118:4000/test-login
-
-
-
-
-[root@sni1-ipclon7 backend]# node -e "console.log('Testing routes import...'); try { require('./routes'); console.log('? Routes loaded successfully'); } catch(e) { console.log('? Routes failed to load:', e.message); }"
-Testing routes import...
-Database connection attempt 1/3...
-WARNING: Using generated JWT secret for development. Set JWT_SECRET environment variable for production.
-? Routes loaded successfully
-âœ… Connected to SQLite database successfully
-âœ… Database connection test passed
-[root@sni1-ipclon7 backend]# 
-
-
-[root@sni1-ipclon7 backend]# curl http://172.30.252.118:4000/
-{"message":"Network Inventory Backend API","version":"2.0","status":"running","timestamp":"2025-07-22T19:30:54.363Z","endpoints":{"health":"/health","database":"/health/database","login":"/login"}}[root@sni1-ipclon7 backend]# 
-
-
-[root@sni1-ipclon7 backend]# node -e "console.log('Testing auth...'); try { require('./auth'); console.log('? Auth loaded'); } catch(e) { console.log('? Auth failed:', e.message); }"
-Testing auth...
-Database connection attempt 1/3...
-WARNING: Using generated JWT secret for development. Set JWT_SECRET environment variable for production.
-? Auth loaded
-âœ… Connected to SQLite database successfully
-âœ… Database connection test
-
-
-[root@sni1-ipclon7 backend]# node -e "console.log('Testing db...'); try { require('./db'); console.log('? DB loaded'); } catch(e) { console.log('? DB failed:', e.message); }"
-Testing db...
-Database connection attempt 1/3...
-? DB loaded
-âœ… Connected to SQLite database successfully
-âœ… Database connection test passed
-[root@sni1-ipclon7 backend]# 
-
-
-[root@sni1-ipclon7 backend]# grep -A 5 -B 5 "app.use.*routes" index.js
-      login: '/login'
+node -e "
+const routes = require('./routes');
+console.log('Router type:', typeof routes);
+console.log('Router constructor:', routes.constructor.name);
+console.log('Has stack:', !!routes.stack);
+if (routes.stack) {
+  console.log('Number of routes:', routes.stack.length);
+  routes.stack.forEach((layer, i) => {
+    if (layer.route) {
+      console.log(`Route ${i}: ${layer.route.path} [${Object.keys(layer.route.methods).join(',')}]`);
     }
   });
-});
-
-app.use('/', routes);
-
-// Database error handling middleware (must be after routes)
-app.use(handleDatabaseError);
-
-// General error handling middleware
-[root@sni1-ipclon7 backend]# 
+}
+"
