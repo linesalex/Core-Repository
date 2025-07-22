@@ -242,6 +242,36 @@ const migrations = [
     `
   },
   {
+    name: 'Create Pricing Logic Configuration Table',
+    sql: `
+      -- Create table for storing dynamic pricing logic configuration
+      CREATE TABLE IF NOT EXISTS pricing_logic_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        config_key TEXT NOT NULL UNIQUE,
+        config_value TEXT NOT NULL,
+        updated_by INTEGER NOT NULL,
+        updated_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (updated_by) REFERENCES users(id)
+      );
+      
+      -- Insert default pricing logic configuration
+      INSERT OR IGNORE INTO pricing_logic_config (config_key, config_value, updated_by) VALUES
+      ('contractTerms.12.minMargin', '40', 1),
+      ('contractTerms.12.suggestedMargin', '60', 1),
+      ('contractTerms.12.nrcCharge', '1000', 1),
+      ('contractTerms.24.minMargin', '37.5', 1),
+      ('contractTerms.24.suggestedMargin', '55', 1),
+      ('contractTerms.24.nrcCharge', '500', 1),
+      ('contractTerms.36.minMargin', '35', 1),
+      ('contractTerms.36.suggestedMargin', '50', 1),
+      ('contractTerms.36.nrcCharge', '0', 1),
+      ('charges.ullPremiumPercent', '15', 1),
+      ('charges.protectionPathMultiplier', '0.7', 1),
+      ('utilizationFactors.primary', '0.9', 1),
+      ('utilizationFactors.protection', '1.0', 1);
+    `
+  },
+  {
     name: 'Fix Carriers Unique Constraint for Regional Duplicates',
     sql: `
       -- Create new carriers table with proper constraints

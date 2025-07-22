@@ -24,6 +24,7 @@ import DataObjectIcon from '@mui/icons-material/DataObject';
 import TableRowsIcon from '@mui/icons-material/TableRows';
 import ContactsIcon from '@mui/icons-material/Contacts';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import SettingsIcon from '@mui/icons-material/Settings';
 import { AuthProvider, useAuth } from './AuthContext';
 import LoginForm from './LoginForm';
 import NetworkRoutesTable from './NetworkRoutesTable';
@@ -31,6 +32,7 @@ import NetworkDesignTool from './NetworkDesignTool';
 import ExchangeRatesManager from './ExchangeRatesManager';
 import LocationDataManager from './LocationDataManager';
 import MinimumPricingManager from './MinimumPricingManager';
+import PricingLogicManager from './PricingLogicManager';
 import CNXColocationManager from './CNXColocationManager';
 import UserManagement from './UserManagement';
 import ChangeLogsViewer from './ChangeLogsViewer';
@@ -97,6 +99,7 @@ function AuthenticatedApp() {
         'network-routes',
         'network-design',
         'minimum-pricing',
+        'pricing-logic',
         'location-data',
         'cnx-colocation',
         'carriers',
@@ -113,6 +116,7 @@ function AuthenticatedApp() {
           'network-routes': 'network_routes',
           'network-design': 'network_design',
           'minimum-pricing': 'locations',
+          'pricing-logic': 'administrator', // Admin-only access
           'location-data': 'locations',
           'cnx-colocation': 'cnx_colocation',
           'carriers': 'carriers',
@@ -122,6 +126,10 @@ function AuthenticatedApp() {
           'change-logs': 'change_logs',
           'user-management': 'user_management'
         };
+        // Special case for admin-only modules
+        if (moduleMap[module] === 'administrator') {
+          return hasRole('administrator');
+        }
         return hasModuleAccess(moduleMap[module]);
       });
       
@@ -325,6 +333,13 @@ function AuthenticatedApp() {
       case 'minimum-pricing':
         return hasModuleAccess('locations') ? (
           <MinimumPricingManager hasPermission={hasPermission} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'pricing-logic':
+        return hasRole('administrator') ? (
+          <PricingLogicManager hasPermission={hasRole} />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
@@ -580,6 +595,16 @@ function AuthenticatedApp() {
                       >
                         <ListItemIcon><AttachMoneyIcon /></ListItemIcon>
                         <ListItemText primary="Minimum Pricing" />
+                      </ListItem>
+                    )}
+                    {hasRole('administrator') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('pricing-logic')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'pricing-logic' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><SettingsIcon /></ListItemIcon>
+                        <ListItemText primary="Pricing Logic" />
                       </ListItem>
                     )}
                   </List>
