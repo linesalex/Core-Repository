@@ -1,206 +1,62 @@
-[root@sni1-ipclon7 backend]# npm start
+# The basic C compiler is missing, let's install it
+sudo yum install -y gcc
 
-> network-inventory-backend@1.0.0 start /root/Core-Repository/backend
-> node index.js
+# Verify gcc is available
+gcc --version
+which gcc
 
-/root/Core-Repository/backend/node_modules/bindings/bindings.js:121
-        throw e;
-        ^
+# Create symlink for 'cc' if needed
+sudo ln -sf /usr/bin/gcc /usr/bin/cc
 
-Error: /lib64/libstdc++.so.6: version `CXXABI_1.3.8' not found (required by /root/Core-Repository/backend/node_modules/sqlite3/build/Release/node_sqlite3.node)
-    at Object.Module._extensions..node (internal/modules/cjs/loader.js:1173:18)
-    at Module.load (internal/modules/cjs/loader.js:979:32)
-    at Function.Module._load (internal/modules/cjs/loader.js:819:12)
-    at Module.require (internal/modules/cjs/loader.js:1003:19)
-    at require (internal/modules/cjs/helpers.js:107:18)
-    at bindings (/root/Core-Repository/backend/node_modules/bindings/bindings.js:112:48)
-    at Object.<anonymous> (/root/Core-Repository/backend/node_modules/sqlite3/lib/sqlite3-binding.js:1:37)
-    at Module._compile (internal/modules/cjs/loader.js:1114:14)
-    at Object.Module._extensions..js (internal/modules/cjs/loader.js:1143:10)
-    at Module.load (internal/modules/cjs/loader.js:979:32) {
-  code: 'ERR_DLOPEN_FAILED'
-}
-npm ERR! code ELIFECYCLE
-npm ERR! errno 1
-npm ERR! network-inventory-backend@1.0.0 start: `node index.js`
-npm ERR! Exit status 1
-npm ERR! 
-npm ERR! Failed at the network-inventory-backend@1.0.0 start script.
-npm ERR! This is probably not a problem with npm. There is likely additional logging output above.
+# Test
+cc --version
 
-npm ERR! A complete log of this run can be found in:
-npm ERR!     /root/.npm/_logs/2025-07-22T18_05_02_112Z-debug.log
-[root@sni1-ipclon7 backend]# ^C
-[root@sni1-ipclon7 backend]# npm uninstall sqlite3
-npm WARN network-inventory-backend@1.0.0 No repository field.
-npm WARN network-inventory-backend@1.0.0 No license field.
-npm WARN optional SKIPPING OPTIONAL DEPENDENCY: fsevents@2.3.3 (node_modules/fsevents):
-npm WARN notsup SKIPPING OPTIONAL DEPENDENCY: Unsupported platform for fsevents@2.3.3: wanted {"os":"darwin","arch":"any"} (current: {"os":"linux","arch":"x64"})
+cd /root/Core-Repository/backend
 
-removed 75 packages and audited 232 packages in 2.035s
+# Now try installing sqlite3@4.2.0 again
+npm install sqlite3@4.2.0
 
-27 packages are looking for funding
-  run `npm fund` for details
+# Test
+npm start
 
-found 1 high severity vulnerability
-  run `npm audit fix` to fix them, or `npm audit` for details
-[root@sni1-ipclon7 backend]# npm install sqlite3@5.0.12
-npm ERR! code ETARGET
-npm ERR! notarget No matching version found for sqlite3@5.0.12.
-npm ERR! notarget In most cases you or one of your dependencies are requesting
-npm ERR! notarget a package version that doesn't exist.
 
-npm ERR! A complete log of this run can be found in:
-npm ERR!     /root/.npm/_logs/2025-07-22T18_12_04_289Z-debug.log
-[root@sni1-ipclon7 backend]# npm install sllite3 --build-from-source
-npm ERR! code E404
-npm ERR! 404 Not Found - GET https://registry.npmjs.org/sllite3 - Not found
-npm ERR! 404 
-npm ERR! 404  'sllite3@latest' is not in the npm registry.
-npm ERR! 404 You should bug the author to publish it (or use the name yourself!)
-npm ERR! 404 
-npm ERR! 404 Note that you can also install from a
-npm ERR! 404 tarball, folder, http url, or git url.
 
-npm ERR! A complete log of this run can be found in:
-npm ERR!     /root/.npm/_logs/2025-07-22T18_12_34_330Z-debug.log
-[root@sni1-ipclon7 backend]# npm install slite3 --build-from-source
-npm ERR! code E404
-npm ERR! 404 Not Found - GET https://registry.npmjs.org/slite3 - Not found
-npm ERR! 404 
-npm ERR! 404  'slite3@latest' is not in the npm registry.
-npm ERR! 404 You should bug the author to publish it (or use the name yourself!)
-npm ERR! 404 
-npm ERR! 404 Note that you can also install from a
-npm ERR! 404 tarball, folder, http url, or git url.
+# Install system sqlite development libraries
+sudo yum install -y sqlite-devel
 
-npm ERR! A complete log of this run can be found in:
-npm ERR!     /root/.npm/_logs/2025-07-22T18_15_59_760Z-debug.log
-[root@sni1-ipclon7 backend]# npm install sqlite3@4.2.0
-npm WARN deprecated node-pre-gyp@0.11.0: Please upgrade to @mapbox/node-pre-gyp: the non-scoped node-pre-gyp package is deprecated and only the @mapbox scoped package will recieve updates in the future
-npm WARN deprecated npmlog@4.1.2: This package is no longer supported.
-npm WARN deprecated rimraf@2.7.1: Rimraf versions prior to v4 are no longer supported
-npm WARN deprecated osenv@0.1.5: This package is no longer supported.
-npm WARN deprecated are-we-there-yet@1.1.7: This package is no longer supported.
-npm WARN deprecated gauge@2.7.4: This package is no longer supported.
+# Then try building sqlite3
+cd /root/Core-Repository/backend
+npm install sqlite3@4.2.0 --build-from-source
 
-> sqlite3@4.2.0 install /root/Core-Repository/backend/node_modules/sqlite3
-> node-pre-gyp install --fallback-to-build
 
-node-pre-gyp WARN Using needle for node-pre-gyp https download 
-node-pre-gyp WARN Tried to download(403): https://mapbox-node-binary.s3.amazonaws.com/sqlite3/v4.2.0/node-v83-linux-x64.tar.gz 
-node-pre-gyp WARN Pre-built binaries not found for sqlite3@4.2.0 and node@14.21.3 (node-v83 ABI, glibc) (falling back to source compile with node-gyp) 
-make: Entering directory `/root/Core-Repository/backend/node_modules/sqlite3/build'
-  ACTION deps_sqlite3_gyp_action_before_build_target_unpack_sqlite_dep Release/obj/gen/sqlite-autoconf-3310100/sqlite3.c
-  TOUCH Release/obj.target/deps/action_before_build.stamp
-  CC(target) Release/obj.target/sqlite3/gen/sqlite-autoconf-3310100/sqlite3.o
-make: cc: Command not found
-make: *** [Release/obj.target/sqlite3/gen/sqlite-autoconf-3310100/sqlite3.o] Error 127
-make: Leaving directory `/root/Core-Repository/backend/node_modules/sqlite3/build'
-gyp ERR! build error 
-gyp ERR! stack Error: `make` failed with exit code: 2
-gyp ERR! stack     at ChildProcess.onExit (/usr/local/lib/node_modules/npm/node_modules/node-gyp/lib/build.js:194:23)
-gyp ERR! stack     at ChildProcess.emit (events.js:400:28)
-gyp ERR! stack     at Process.ChildProcess._handle.onexit (internal/child_process.js:285:12)
-gyp ERR! System Linux 3.10.0-1062.9.1.el7.x86_64
-gyp ERR! command "/usr/local/bin/node" "/usr/local/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js" "build" "--fallback-to-build" "--module=/root/Core-Repository/backend/node_modules/sqlite3/lib/binding/node-v83-linux-x64/node_sqlite3.node" "--module_name=node_sqlite3" "--module_path=/root/Core-Repository/backend/node_modules/sqlite3/lib/binding/node-v83-linux-x64" "--napi_version=8" "--node_abi_napi=napi" "--napi_build_version=0" "--node_napi_label=node-v83"
-gyp ERR! cwd /root/Core-Repository/backend/node_modules/sqlite3
-gyp ERR! node -v v14.21.3
-gyp ERR! node-gyp -v v5.1.1
-gyp ERR! not ok 
-node-pre-gyp ERR! build error 
-node-pre-gyp ERR! stack Error: Failed to execute '/usr/local/bin/node /usr/local/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js build --fallback-to-build --module=/root/Core-Repository/backend/node_modules/sqlite3/lib/binding/node-v83-linux-x64/node_sqlite3.node --module_name=node_sqlite3 --module_path=/root/Core-Repository/backend/node_modules/sqlite3/lib/binding/node-v83-linux-x64 --napi_version=8 --node_abi_napi=napi --napi_build_version=0 --node_napi_label=node-v83' (1)
-node-pre-gyp ERR! stack     at ChildProcess.<anonymous> (/root/Core-Repository/backend/node_modules/sqlite3/node_modules/node-pre-gyp/lib/util/compile.js:83:29)
-node-pre-gyp ERR! stack     at ChildProcess.emit (events.js:400:28)
-node-pre-gyp ERR! stack     at maybeClose (internal/child_process.js:1088:16)
-node-pre-gyp ERR! stack     at Process.ChildProcess._handle.onexit (internal/child_process.js:296:5)
-node-pre-gyp ERR! System Linux 3.10.0-1062.9.1.el7.x86_64
-node-pre-gyp ERR! command "/usr/local/bin/node" "/root/Core-Repository/backend/node_modules/sqlite3/node_modules/.bin/node-pre-gyp" "install" "--fallback-to-build"
-node-pre-gyp ERR! cwd /root/Core-Repository/backend/node_modules/sqlite3
-node-pre-gyp ERR! node -v v14.21.3
-node-pre-gyp ERR! node-pre-gyp -v v0.11.0
-node-pre-gyp ERR! not ok 
-Failed to execute '/usr/local/bin/node /usr/local/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js build --fallback-to-build --module=/root/Core-Repository/backend/node_modules/sqlite3/lib/binding/node-v83-linux-x64/node_sqlite3.node --module_name=node_sqlite3 --module_path=/root/Core-Repository/backend/node_modules/sqlite3/lib/binding/node-v83-linux-x64 --napi_version=8 --node_abi_napi=napi --napi_build_version=0 --node_napi_label=node-v83' (1)
-npm WARN network-inventory-backend@1.0.0 No repository field.
-npm WARN network-inventory-backend@1.0.0 No license field.
-npm WARN optional SKIPPING OPTIONAL DEPENDENCY: fsevents@2.3.3 (node_modules/fsevents):
-npm WARN notsup SKIPPING OPTIONAL DEPENDENCY: Unsupported platform for fsevents@2.3.3: wanted {"os":"darwin","arch":"any"} (current: {"os":"linux","arch":"x64"})
 
-npm ERR! code ELIFECYCLE
-npm ERR! errno 1
-npm ERR! sqlite3@4.2.0 install: `node-pre-gyp install --fallback-to-build`
-npm ERR! Exit status 1
-npm ERR! 
-npm ERR! Failed at the sqlite3@4.2.0 install script.
-npm ERR! This is probably not a problem with npm. There is likely additional logging output above.
+# Install missing compiler
+sudo yum install -y gcc
+sudo ln -sf /usr/bin/gcc /usr/bin/cc
 
-npm ERR! A complete log of this run can be found in:
-npm ERR!     /root/.npm/_logs/2025-07-22T18_17_46_281Z-debug.log
-[root@sni1-ipclon7 backend]# npm install
-npm WARN network-inventory-backend@1.0.0 No repository field.
-npm WARN network-inventory-backend@1.0.0 No license field.
-npm WARN optional SKIPPING OPTIONAL DEPENDENCY: fsevents@2.3.3 (node_modules/fsevents):
-npm WARN notsup SKIPPING OPTIONAL DEPENDENCY: Unsupported platform for fsevents@2.3.3: wanted {"os":"darwin","arch":"any"} (current: {"os":"linux","arch":"x64"})
+# Try installing sqlite3 again
+cd /root/Core-Repository/backend
+npm install sqlite3@4.2.0
 
-audited 232 packages in 1.606s
+# Test
+npm start
 
-27 packages are looking for funding
-  run `npm fund` for details
 
-found 1 high severity vulnerability
-  run `npm audit fix` to fix them, or `npm audit` for details
-[root@sni1-ipclon7 backend]# npm start
 
-> network-inventory-backend@1.0.0 start /root/Core-Repository/backend
-> node index.js
 
-internal/modules/cjs/loader.js:934
-  throw err;
-  ^
+# Check what development tools you have
+rpm -qa | grep -E 'gcc|make|kernel-devel'
 
-Error: Cannot find module 'sqlite3'
-Require stack:
-- /root/Core-Repository/backend/db.js
-- /root/Core-Repository/backend/routes.js
-- /root/Core-Repository/backend/index.js
-    at Function.Module._resolveFilename (internal/modules/cjs/loader.js:931:15)
-    at Function.Module._load (internal/modules/cjs/loader.js:774:27)
-    at Module.require (internal/modules/cjs/loader.js:1003:19)
-    at require (internal/modules/cjs/helpers.js:107:18)
-    at Object.<anonymous> (/root/Core-Repository/backend/db.js:1:17)
-    at Module._compile (internal/modules/cjs/loader.js:1114:14)
-    at Object.Module._extensions..js (internal/modules/cjs/loader.js:1143:10)
-    at Module.load (internal/modules/cjs/loader.js:979:32)
-    at Function.Module._load (internal/modules/cjs/loader.js:819:12)
-    at Module.require (internal/modules/cjs/loader.js:1003:19) {
-  code: 'MODULE_NOT_FOUND',
-  requireStack: [
-    '/root/Core-Repository/backend/db.js',
-    '/root/Core-Repository/backend/routes.js',
-    '/root/Core-Repository/backend/index.js'
-  ]
-}
-npm ERR! code ELIFECYCLE
-npm ERR! errno 1
-npm ERR! network-inventory-backend@1.0.0 start: `node index.js`
-npm ERR! Exit status 1
-npm ERR! 
-npm ERR! Failed at the network-inventory-backend@1.0.0 start script.
-npm ERR! This is probably not a problem with npm. There is likely additional logging output above.
+# Check CXXABI versions available
+strings /lib64/libstdc++.so.6 | grep CXXABI
 
-npm ERR! A complete log of this run can be found in:
-npm ERR!     /root/.npm/_logs/2025-07-22T18_18_04_429Z-debug.log
-[root@sni1-ipclon7 backend]# sudo yum install -y devtoolset-7-gcc-c++
-Loaded plugins: langpacks, product-id, search-disabled-repos, subscription-manager
-This system is not registered with an entitlement server. You can use subscription-manager to register.
-epel/x86_64/metalink                                                                         | 4.8 kB  00:00:00     
-epel                                                                                         | 4.3 kB  00:00:00     
-ius                                                                                          | 1.3 kB  00:00:00     
-(1/4): epel/x86_64/group                                                                     | 399 kB  00:00:00     
-(2/4): epel/x86_64/updateinfo                                                                | 1.0 MB  00:00:00     
-(3/4): ius/x86_64/primary                                                                    |  40 kB  00:00:00     
-(4/4): epel/x86_64/primary_db                                                                | 8.7 MB  00:00:04     
-ius                                                                                                         159/159
-No package devtoolset-7-gcc-c++ available.
-Error: Nothing to do
-[root@sni1-ipclon7 backend]# 
+
+
+
+
+
+# Verify all build tools
+gcc --version
+g++ --version  
+make --version
+which cc
