@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
+import { API_BASE_URL } from './config';
 
 const AuthContext = createContext();
 
@@ -18,6 +19,7 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem('authToken'));
   const [connectionError, setConnectionError] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   // Helper function to detect connection errors
   const isConnectionError = (error) => {
@@ -46,39 +48,34 @@ export const AuthProvider = ({ children }) => {
     }
   }, [token]);
 
-  // Check if user is authenticated on app load
+  // Check if user is already authenticated
   useEffect(() => {
     const checkAuth = async () => {
+      const token = localStorage.getItem('token');
+      
       if (token) {
         try {
-          const response = await axios.get('http://localhost:4000/me');
-          setUser(response.data.user);
-          setPermissions(response.data.permissions);
-          setModuleVisibility(response.data.moduleVisibility || {});
-          setConnectionError(null); // Clear any previous connection errors
+          axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+          const response = await axios.get(`${API_BASE_URL}/me`);
+          setUser(response.data);
+          setIsAuthenticated(true);
         } catch (error) {
-          const errorMessage = getErrorMessage(error);
-          
-          if (isConnectionError(error)) {
-            setConnectionError(errorMessage);
-            console.error('Connection error during auth check:', errorMessage);
-          } else {
-            console.error('Auth check failed:', errorMessage);
-            logout(); // Only logout for auth failures, not connection issues
-          }
+          console.error('Auth check failed:', error);
+          localStorage.removeItem('token');
+          delete axios.defaults.headers.common['Authorization'];
         }
       }
       setLoading(false);
     };
 
     checkAuth();
-  }, [token]);
+  }, []);
 
   const login = async (username, password) => {
     try {
       setConnectionError(null); // Clear any previous connection errors
       
-      const response = await axios.post('http://localhost:4000/login', {
+      const response = await axios.post(`${API_BASE_URL}/login`, {
         username,
         password
       });
@@ -121,16 +118,14 @@ export const AuthProvider = ({ children }) => {
 
   const changePassword = async (currentPassword, newPassword) => {
     try {
-      await axios.put('http://localhost:4000/change-password', {
+      await axios.put(`${API_BASE_URL}/change-password`, {
         currentPassword,
         newPassword
       });
       return { success: true };
     } catch (error) {
-      return { 
-        success: false, 
-        error: error.response?.data?.error || 'Password change failed' 
-      };
+      console.error('Password change failed:', error);
+      throw error.response?.data || { error: 'Password change failed' };
     }
   };
 

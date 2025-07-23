@@ -38,8 +38,7 @@ import {
   AttachMoney as AttachMoneyIcon
 } from '@mui/icons-material';
 import { api, locationDataApi } from './api';
-
-const API_BASE_URL = 'http://localhost:4000';
+import { API_BASE_URL } from './config';
 
 const PromoPricingManager = ({ hasPermission }) => {
   const [promoRules, setPromoRules] = useState([]);

@@ -13,6 +13,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
+import { API_BASE_URL } from './config';
 
 const UserManagement = () => {
   const [users, setUsers] = useState([]);
@@ -68,7 +69,7 @@ const UserManagement = () => {
   const loadUsers = async () => {
     try {
       setLoading(true);
-      const response = await axios.get('http://localhost:4000/users');
+      const response = await axios.get(`${API_BASE_URL}/users`);
       setUsers(response.data);
     } catch (err) {
       setError('Failed to load users: ' + (err.response?.data?.error || err.message));
@@ -118,7 +119,7 @@ const UserManagement = () => {
           return;
         }
 
-        await axios.post('http://localhost:4000/users', formData);
+        await axios.post(`${API_BASE_URL}/users`, formData);
         setSuccess('User created successfully');
       } else {
         // For edit mode, don't send password if it's empty
@@ -129,7 +130,7 @@ const UserManagement = () => {
           status: formData.status
         };
         
-        await axios.put(`http://localhost:4000/users/${selectedUser.id}`, updateData);
+        await axios.put(`${API_BASE_URL}/users/${selectedUser.id}`, updateData);
         setSuccess('User updated successfully');
       }
 
@@ -143,7 +144,7 @@ const UserManagement = () => {
 
   const handleDeleteConfirm = async () => {
     try {
-      await axios.delete(`http://localhost:4000/users/${selectedUser.id}`);
+      await axios.delete(`${API_BASE_URL}/users/${selectedUser.id}`);
       setSuccess('User deleted successfully');
       setDeleteDialogOpen(false);
       await loadUsers();
@@ -162,7 +163,7 @@ const UserManagement = () => {
   const handleManageVisibility = async (user) => {
     setSelectedUser(user);
     try {
-      const response = await axios.get(`http://localhost:4000/users/${user.id}/module-visibility`);
+      const response = await axios.get(`${API_BASE_URL}/users/${user.id}/module-visibility`);
       setModuleVisibility(response.data);
       setVisibilityDialogOpen(true);
     } catch (err) {
@@ -179,7 +180,7 @@ const UserManagement = () => {
 
   const handleSaveVisibility = async () => {
     try {
-      await axios.put(`http://localhost:4000/users/${selectedUser.id}/module-visibility`, moduleVisibility);
+      await axios.put(`${API_BASE_URL}/users/${selectedUser.id}/module-visibility`, moduleVisibility);
       setSuccess('Module visibility updated successfully');
       setVisibilityDialogOpen(false);
     } catch (err) {

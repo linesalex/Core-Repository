@@ -16,6 +16,7 @@ import EmailIcon from '@mui/icons-material/Email';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { useAuth } from './AuthContext';
 import { exchangePricingApi } from './api';
+import { API_BASE_URL } from './config';
 
 const ExchangePricingTool = () => {
   const { user } = useAuth();
@@ -161,7 +162,7 @@ const ExchangePricingTool = () => {
     try {
       // Call API to clear quote history
       const token = localStorage.getItem('authToken');
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:4000'}/exchange-pricing/quotes/clear`, {
+      const response = await fetch(`${API_BASE_URL}/exchange-pricing/quotes/clear`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,

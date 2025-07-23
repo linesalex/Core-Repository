@@ -14,6 +14,7 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import InfoIcon from '@mui/icons-material/Info';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import { API_BASE_URL } from './config';
 import axios from 'axios';
 
 const CNXColocationManager = ({ hasPermission }) => {
@@ -66,7 +67,7 @@ const CNXColocationManager = ({ hasPermission }) => {
   const loadCNXColocationLocations = async () => {
     try {
       setLoading(true);
-      const response = await axios.get('http://localhost:4000/cnx-colocation/locations', {
+      const response = await axios.get(`${API_BASE_URL}/cnx-colocation/locations`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -109,7 +110,7 @@ const CNXColocationManager = ({ hasPermission }) => {
 
   const loadRacks = async (locationId) => {
     try {
-      const response = await axios.get(`http://localhost:4000/cnx-colocation/locations/${locationId}/racks`, {
+      const response = await axios.get(`${API_BASE_URL}/cnx-colocation/locations/${locationId}/racks`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -126,7 +127,7 @@ const CNXColocationManager = ({ hasPermission }) => {
 
   const loadClients = async (rackId) => {
     try {
-      const response = await axios.get(`http://localhost:4000/cnx-colocation/racks/${rackId}/clients`, {
+      const response = await axios.get(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/clients`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -163,7 +164,7 @@ const CNXColocationManager = ({ hasPermission }) => {
       }
 
       await axios.put(
-        `http://localhost:4000/cnx-colocation/locations/${selectedLocation.id}`,
+        `${API_BASE_URL}/cnx-colocation/locations/${selectedLocation.id}`,
         formData,
         {
           headers: {
@@ -251,7 +252,7 @@ const CNXColocationManager = ({ hasPermission }) => {
 
       if (rackDialogMode === 'add') {
         await axios.post(
-          `http://localhost:4000/cnx-colocation/locations/${selectedLocation.id}/racks`,
+          `${API_BASE_URL}/cnx-colocation/locations/${selectedLocation.id}/racks`,
           formData,
           {
             headers: {
@@ -263,7 +264,7 @@ const CNXColocationManager = ({ hasPermission }) => {
         setSuccess('Rack created successfully');
       } else {
         await axios.put(
-          `http://localhost:4000/cnx-colocation/racks/${selectedRack.id}`,
+          `${API_BASE_URL}/cnx-colocation/racks/${selectedRack.id}`,
           formData,
           {
             headers: {
@@ -290,7 +291,7 @@ const CNXColocationManager = ({ hasPermission }) => {
     }
 
     try {
-      await axios.delete(`http://localhost:4000/cnx-colocation/racks/${rack.id}`, {
+              await axios.delete(`${API_BASE_URL}/cnx-colocation/racks/${rack.id}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -341,7 +342,7 @@ const CNXColocationManager = ({ hasPermission }) => {
 
       if (clientDialogMode === 'add') {
         await axios.post(
-          `http://localhost:4000/cnx-colocation/racks/${selectedRack.id}/clients`,
+          `${API_BASE_URL}/cnx-colocation/racks/${selectedRack.id}/clients`,
           formData,
           {
             headers: {
@@ -353,7 +354,7 @@ const CNXColocationManager = ({ hasPermission }) => {
         setSuccess('Client created successfully');
       } else {
         await axios.put(
-          `http://localhost:4000/cnx-colocation/clients/${selectedClient.id}`,
+          `${API_BASE_URL}/cnx-colocation/clients/${selectedClient.id}`,
           formData,
           {
             headers: {
@@ -388,7 +389,7 @@ const CNXColocationManager = ({ hasPermission }) => {
     }
 
     try {
-      await axios.delete(`http://localhost:4000/cnx-colocation/clients/${client.id}`, {
+              await axios.delete(`${API_BASE_URL}/cnx-colocation/clients/${client.id}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }

@@ -16,6 +16,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckIcon from '@mui/icons-material/Check';
 import WarningIcon from '@mui/icons-material/Warning';
 import axios from 'axios';
+import { API_BASE_URL } from './config';
 import { useAuth } from './AuthContext';
 
 const CarriersManager = ({ hasPermission }) => {
@@ -77,7 +78,7 @@ const CarriersManager = ({ hasPermission }) => {
   const loadCarriers = async () => {
     try {
       setLoading(true);
-      const response = await axios.get('http://localhost:4000/carriers', {
+      const response = await axios.get(`${API_BASE_URL}/carriers`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -94,7 +95,7 @@ const CarriersManager = ({ hasPermission }) => {
 
   const loadOverdueContacts = async () => {
     try {
-      const response = await axios.get('http://localhost:4000/carriers/overdue-contacts', {
+      const response = await axios.get(`${API_BASE_URL}/carriers/overdue-contacts`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -108,7 +109,7 @@ const CarriersManager = ({ hasPermission }) => {
 
   const loadContacts = async (carrierId) => {
     try {
-      const response = await axios.get(`http://localhost:4000/carriers/${carrierId}/contacts`, {
+      const response = await axios.get(`${API_BASE_URL}/carriers/${carrierId}/contacts`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -213,10 +214,10 @@ const CarriersManager = ({ hasPermission }) => {
           return;
         }
 
-        await axios.post('http://localhost:4000/carriers', carrierFormData, { headers });
+        await axios.post(`${API_BASE_URL}/carriers`, carrierFormData, { headers });
         setSuccess('Carrier created successfully');
       } else {
-        await axios.put(`http://localhost:4000/carriers/${selectedCarrier.id}`, carrierFormData, { headers });
+        await axios.put(`${API_BASE_URL}/carriers/${selectedCarrier.id}`, carrierFormData, { headers });
         setSuccess('Carrier updated successfully');
       }
 
@@ -236,10 +237,10 @@ const CarriersManager = ({ hasPermission }) => {
       };
 
       if (contactDialogMode === 'add') {
-        await axios.post(`http://localhost:4000/carriers/${selectedCarrier.id}/contacts`, contactFormData, { headers });
+        await axios.post(`${API_BASE_URL}/carriers/${selectedCarrier.id}/contacts`, contactFormData, { headers });
         setSuccess('Contact created successfully');
       } else {
-        await axios.put(`http://localhost:4000/carriers/${selectedCarrier.id}/contacts/${selectedContact.id}`, contactFormData, { headers });
+        await axios.put(`${API_BASE_URL}/carriers/${selectedCarrier.id}/contacts/${selectedContact.id}`, contactFormData, { headers });
         setSuccess('Contact updated successfully');
       }
 
@@ -253,7 +254,7 @@ const CarriersManager = ({ hasPermission }) => {
 
   const handleCarrierDeleteConfirm = async () => {
     try {
-      await axios.delete(`http://localhost:4000/carriers/${selectedCarrier.id}`, {
+      await axios.delete(`${API_BASE_URL}/carriers/${selectedCarrier.id}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -268,7 +269,7 @@ const CarriersManager = ({ hasPermission }) => {
 
   const handleContactDeleteConfirm = async () => {
     try {
-      await axios.delete(`http://localhost:4000/carriers/${selectedCarrier.id}/contacts/${selectedContact.id}`, {
+      await axios.delete(`${API_BASE_URL}/carriers/${selectedCarrier.id}/contacts/${selectedContact.id}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -287,7 +288,7 @@ const CarriersManager = ({ hasPermission }) => {
 
   const handleApproveContact = async (carrierId, contactId) => {
     try {
-      await axios.post(`http://localhost:4000/carriers/${carrierId}/contacts/${contactId}/approve`, {}, {
+      await axios.post(`${API_BASE_URL}/carriers/${carrierId}/contacts/${contactId}/approve`, {}, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }

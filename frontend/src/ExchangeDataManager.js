@@ -20,6 +20,7 @@ import AttachFileIcon from '@mui/icons-material/AttachFile';
 import InfoIcon from '@mui/icons-material/Info';
 import WarningIcon from '@mui/icons-material/Warning';
 import CheckIcon from '@mui/icons-material/Check';
+import { API_BASE_URL } from './config';
 import axios from 'axios';
 
 
@@ -133,7 +134,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       if (filterRegion) params.append('region', filterRegion);
       if (filterAvailable) params.append('available', filterAvailable);
 
-      const response = await axios.get(`http://localhost:4000/exchanges?${params}`, {
+      const response = await axios.get(`${API_BASE_URL}/exchanges?${params}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -148,7 +149,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
 
   const loadCurrencies = async (showSuccess = false) => {
     try {
-      const response = await axios.get('http://localhost:4000/exchange-currencies', {
+      const response = await axios.get(`${API_BASE_URL}/exchange-currencies`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -173,7 +174,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       const params = new URLSearchParams();
       if (feedSearchText) params.append('search', feedSearchText);
 
-      const response = await axios.get(`http://localhost:4000/exchanges/${exchangeId}/feeds?${params}`, {
+              const response = await axios.get(`${API_BASE_URL}/exchanges/${exchangeId}/feeds?${params}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -189,7 +190,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
 
   const loadContacts = async (exchangeId) => {
     try {
-      const response = await axios.get(`http://localhost:4000/exchanges/${exchangeId}/contacts`, {
+              const response = await axios.get(`${API_BASE_URL}/exchanges/${exchangeId}/contacts`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -205,7 +206,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
 
   const loadOverdueContacts = async () => {
     try {
-      const response = await axios.get('http://localhost:4000/exchanges/overdue-contacts', {
+              const response = await axios.get(`${API_BASE_URL}/exchanges/overdue-contacts`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -218,7 +219,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
 
   const handleApproveContact = async (contactId) => {
     try {
-      await axios.post(`http://localhost:4000/exchanges/contacts/${contactId}/approve`, {}, {
+              await axios.post(`${API_BASE_URL}/exchanges/contacts/${contactId}/approve`, {}, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -286,10 +287,10 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
           return;
         }
 
-        await axios.post('http://localhost:4000/exchanges', exchangeFormData, { headers });
+        await axios.post(`${API_BASE_URL}/exchanges`, exchangeFormData, { headers });
         setSuccess('Exchange created successfully');
       } else {
-        await axios.put(`http://localhost:4000/exchanges/${selectedExchange.id}`, exchangeFormData, { headers });
+        await axios.put(`${API_BASE_URL}/exchanges/${selectedExchange.id}`, exchangeFormData, { headers });
         setSuccess('Exchange updated successfully');
       }
 
@@ -429,10 +430,10 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       };
 
       if (feedDialogMode === 'add') {
-        await axios.post(`http://localhost:4000/exchanges/${selectedExchange.id}/feeds`, formData, { headers });
+        await axios.post(`${API_BASE_URL}/exchanges/${selectedExchange.id}/feeds`, formData, { headers });
         setSuccess('Exchange feed created successfully');
       } else {
-        await axios.put(`http://localhost:4000/exchanges/${selectedExchange.id}/feeds/${selectedFeed.id}`, formData, { headers });
+        await axios.put(`${API_BASE_URL}/exchanges/${selectedExchange.id}/feeds/${selectedFeed.id}`, formData, { headers });
         setSuccess('Exchange feed updated successfully');
       }
 
@@ -498,10 +499,10 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       };
 
       if (contactDialogMode === 'add') {
-        await axios.post(`http://localhost:4000/exchanges/${selectedExchange.id}/contacts`, contactFormData, { headers });
+        await axios.post(`${API_BASE_URL}/exchanges/${selectedExchange.id}/contacts`, contactFormData, { headers });
         setSuccess('Exchange contact created successfully');
       } else {
-        await axios.put(`http://localhost:4000/exchanges/${selectedExchange.id}/contacts/${selectedContact.id}`, contactFormData, { headers });
+        await axios.put(`${API_BASE_URL}/exchanges/${selectedExchange.id}/contacts/${selectedContact.id}`, contactFormData, { headers });
         setSuccess('Exchange contact updated successfully');
       }
 
@@ -521,15 +522,15 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       };
 
       if (deleteTarget.type === 'exchange') {
-        await axios.delete(`http://localhost:4000/exchanges/${deleteTarget.item.id}`, { headers });
+        await axios.delete(`${API_BASE_URL}/exchanges/${deleteTarget.item.id}`, { headers });
         setSuccess('Exchange deleted successfully');
         await loadExchanges();
       } else if (deleteTarget.type === 'feed') {
-        await axios.delete(`http://localhost:4000/exchanges/${selectedExchange.id}/feeds/${deleteTarget.item.id}`, { headers });
+        await axios.delete(`${API_BASE_URL}/exchanges/${selectedExchange.id}/feeds/${deleteTarget.item.id}`, { headers });
         setSuccess('Exchange feed deleted successfully');
         await loadFeeds(selectedExchange.id);
       } else if (deleteTarget.type === 'contact') {
-        await axios.delete(`http://localhost:4000/exchanges/${selectedExchange.id}/contacts/${deleteTarget.item.id}`, { headers });
+        await axios.delete(`${API_BASE_URL}/exchanges/${selectedExchange.id}/contacts/${deleteTarget.item.id}`, { headers });
         setSuccess('Exchange contact deleted successfully');
         await loadContacts(selectedExchange.id);
       }
@@ -584,7 +585,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
 
   const handleDownloadDesign = async (exchangeId, feedId) => {
     try {
-      const response = await axios.get(`http://localhost:4000/exchanges/${exchangeId}/feeds/${feedId}/download`, {
+      const response = await axios.get(`${API_BASE_URL}/exchanges/${exchangeId}/feeds/${feedId}/download`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         },

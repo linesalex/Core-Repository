@@ -1,6 +1,5 @@
 import axios from 'axios';
-
-const API_BASE_URL = 'http://localhost:4000';
+import { API_BASE_URL } from './config';
 
 // Use the global axios instance instead of creating a separate one
 // This ensures the Authorization header set in AuthContext is used
