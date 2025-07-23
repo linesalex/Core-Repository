@@ -9,6 +9,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import HistoryIcon from '@mui/icons-material/History';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import FilterListIcon from '@mui/icons-material/FilterList';
+import { API_BASE_URL } from './config';
 import axios from 'axios';
 
 const ChangeLogsViewer = () => {
@@ -44,7 +45,7 @@ const ChangeLogsViewer = () => {
         }
       });
       
-      const response = await axios.get(`http://localhost:4000/change-logs?${params.toString()}`);
+      const response = await axios.get(`${API_BASE_URL}/change-logs?${params.toString()}`);
       setLogs(response.data);
       setTotalPages(Math.ceil(response.data.length / filters.limit));
     } catch (err) {

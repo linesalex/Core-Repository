@@ -5,6 +5,7 @@ import {
   Select, MenuItem, FormControl, InputLabel, Autocomplete
 } from '@mui/material';
 import { uploadTestResults, getTestResultsFiles, deleteTestResultsFile } from './api';
+import { API_BASE_URL } from './config';
 import axios from 'axios';
 
 const CIRCUIT_ID_REGEX = /^[A-Z]{6}[0-9]{6}$/;
@@ -121,7 +122,7 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
     }
     
     try {
-      const response = await axios.get(`http://localhost:4000/carriers/search?q=${inputValue}`, {
+              const response = await axios.get(`${API_BASE_URL}/carriers/search?q=${inputValue}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }

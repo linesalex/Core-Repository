@@ -15,6 +15,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import { locationDataApi } from './api';
+import { API_BASE_URL } from './config';
 import axios from 'axios';
 
 const LocationDataManager = ({ hasPermission }) => {
@@ -211,7 +212,7 @@ const LocationDataManager = ({ hasPermission }) => {
     if (key === 'cnx_colocation' && !value && currentCapabilities[key]) {
       try {
         // Check if there are any racks for this location
-        const response = await axios.get(`http://localhost:4000/cnx-colocation/locations/${selectedLocation.id}/racks`, {
+        const response = await axios.get(`${API_BASE_URL}/cnx-colocation/locations/${selectedLocation.id}/racks`, {
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('authToken')}`
           }

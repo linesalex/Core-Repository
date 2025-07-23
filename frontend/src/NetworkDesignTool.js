@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box, Grid, Paper, Typography, TextField, Button, Select, MenuItem, FormControl, InputLabel,
   Chip, Alert, CircularProgress, Accordion, AccordionSummary, AccordionDetails, Table, TableBody,
@@ -20,6 +20,7 @@ import LoadingButton from '@mui/lab/LoadingButton';
 import { networkDesignApi } from './api';
 import { getCarriers } from './api';
 import { useAuth } from './AuthContext';
+import { API_BASE_URL } from './config';
 
 // Tab panel component
 function TabPanel(props) {
@@ -315,7 +316,7 @@ const NetworkDesignTool = () => {
       setSuccess('Preparing export...');
       // Use fetch directly to handle the file download properly
       const token = localStorage.getItem('authToken');
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:4000'}/network_design/audit_logs/export`, {
+      const response = await fetch(`${API_BASE_URL}/network_design/audit_logs/export`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
