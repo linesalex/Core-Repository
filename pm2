@@ -1,0 +1,511 @@
+# PM2 Configuration Guide - Network Inventory Management System
+
+## 📋 **Requirements**
+
+### **System Requirements**
+- Node.js 12+ (14+ recommended for RHEL 7)
+- NPM 6+
+- SQLite3 5.0.2+ with native bindings
+- bcryptjs (instead of bcrypt for RHEL 7 compatibility)
+- PM2 installed globally
+
+### **Install PM2**
+```bash
+# Install PM2 globally
+npm install -g pm2
+
+# Verify installation
+pm2 --version
+```
+
+---
+
+## ⚙️ **PM2 Configuration Files**
+
+### **1. Ecosystem Configuration (ecosystem.config.js)**
+
+Create this file in project root (`/root/Core-Repository/ecosystem.config.js`):
+
+```javascript
+module.exports = {
+  apps: [
+    {
+      name: 'network-backend',
+      cwd: './backend',
+      script: 'index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 4000,
+        JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production'
+      },
+      env_production: {
+        NODE_ENV: 'production',
+        PORT: 4000
+      },
+      // Performance settings
+      max_memory_restart: '1G',
+      min_uptime: '10s',
+      max_restarts: 10,
+      
+      // Logging
+      log_file: './logs/backend-combined.log',
+      out_file: './logs/backend-out.log',
+      error_file: './logs/backend-err.log',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      
+      // Auto-restart settings
+      autorestart: true,
+      watch: false,
+      ignore_watch: ['node_modules', 'logs'],
+      
+      // Health monitoring
+      kill_timeout: 5000,
+      listen_timeout: 3000,
+      
+      // Environment-specific settings
+      merge_logs: true,
+      time: true
+    },
+    {
+      name: 'network-frontend',
+      cwd: './frontend',
+      script: 'npm',
+      args: 'start',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3000,
+        REACT_APP_API_URL: 'http://172.30.252.118:4000'
+      },
+      env_production: {
+        NODE_ENV: 'production',
+        PORT: 3000,
+        GENERATE_SOURCEMAP: 'false'
+      },
+      
+      // Performance settings
+      max_memory_restart: '2G',
+      min_uptime: '10s',
+      max_restarts: 10,
+      
+      // Logging
+      log_file: './logs/frontend-combined.log',
+      out_file: './logs/frontend-out.log',
+      error_file: './logs/frontend-err.log',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      
+      // Auto-restart settings
+      autorestart: true,
+      watch: false,
+      
+      // Health monitoring
+      kill_timeout: 5000,
+      listen_timeout: 8000, // React takes longer to start
+      
+      merge_logs: true,
+      time: true
+    }
+  ]
+};
+```
+
+### **2. Production Build Configuration (Optional)**
+
+For better performance, use a production build:
+
+```javascript
+// ecosystem.prod.config.js
+module.exports = {
+  apps: [
+    {
+      name: 'network-backend',
+      cwd: './backend',
+      script: 'index.js',
+      instances: 2, // Scale based on CPU cores
+      exec_mode: 'cluster', // Use cluster mode for better performance
+      env: {
+        NODE_ENV: 'production',
+        PORT: 4000
+      }
+    },
+    {
+      name: 'network-frontend-static',
+      cwd: './frontend',
+      script: 'serve',
+      args: '-s build -l 3000',
+      instances: 1,
+      env: {
+        NODE_ENV: 'production'
+      }
+    }
+  ]
+};
+```
+
+---
+
+## 🚀 **Deployment Commands**
+
+### **Basic Deployment**
+```bash
+# Navigate to project directory
+cd /root/Core-Repository
+
+# Create logs directory
+mkdir -p logs
+
+# Start applications using ecosystem file
+pm2 start ecosystem.config.js
+
+# Save PM2 process list for auto-restart
+pm2 save
+
+# Generate startup script for auto-restart on boot
+pm2 startup
+
+# Follow the command it outputs (usually something like):
+# sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u root --hp /root
+```
+
+### **Production Build Deployment**
+```bash
+# Build frontend for production
+cd /root/Core-Repository/frontend
+npm run build
+
+# Install serve globally for static file serving
+npm install -g serve
+
+# Start with production configuration
+cd /root/Core-Repository
+pm2 start ecosystem.prod.config.js --env production
+```
+
+---
+
+## 📊 **Monitoring & Management**
+
+### **Essential PM2 Commands**
+```bash
+# View all processes
+pm2 list
+
+# Monitor processes in real-time
+pm2 monit
+
+# View logs
+pm2 logs                    # All processes
+pm2 logs network-backend    # Specific process
+pm2 logs --lines 100        # Last 100 lines
+
+# Restart processes
+pm2 restart all
+pm2 restart network-backend
+pm2 restart network-frontend
+
+# Stop processes
+pm2 stop all
+pm2 stop network-backend
+
+# Delete processes
+pm2 delete all
+pm2 delete network-backend
+
+# Reload processes (zero-downtime)
+pm2 reload all
+
+# Show process details
+pm2 show network-backend
+pm2 describe network-backend
+```
+
+### **Advanced Monitoring**
+```bash
+# Process resource usage
+pm2 show network-backend
+
+# Real-time monitoring
+pm2 monit
+
+# Process logs with grep
+pm2 logs network-backend | grep ERROR
+
+# Flush logs
+pm2 flush
+
+# Restart processes with specific memory limit
+pm2 restart network-backend --max-memory-restart 500M
+```
+
+---
+
+## 🔧 **Configuration Management**
+
+### **Environment Variables**
+```bash
+# Set environment variables
+pm2 set network-backend:env.JWT_SECRET "your-secret-key"
+pm2 set network-frontend:env.REACT_APP_API_URL "http://your-server:4000"
+
+# Restart to apply changes
+pm2 restart all
+```
+
+### **Dynamic Configuration Updates**
+```bash
+# Update ecosystem file and reload
+pm2 startOrReload ecosystem.config.js
+
+# Scale processes
+pm2 scale network-backend 4    # Scale to 4 instances
+
+# Update process settings
+pm2 restart network-backend --max-memory-restart 1G
+```
+
+---
+
+## 🛠️ **Troubleshooting Guide**
+
+### **Common Issues & Solutions**
+
+#### **1. Process Won't Start**
+```bash
+# Check process status
+pm2 list
+
+# View detailed logs
+pm2 logs network-backend --err
+
+# Common fixes:
+# - Check Node.js version: node --version
+# - Verify dependencies: cd backend && npm install
+# - Check file permissions: ls -la backend/index.js
+# - Verify database file: ls -la network_routes.db
+```
+
+#### **2. Backend Database Errors**
+```bash
+# Check SQLite3 installation
+cd /root/Core-Repository/backend
+npm list sqlite3
+
+# Fix SQLite3 issues
+npm uninstall sqlite3
+npm install sqlite3@5.0.2
+
+# Alternative: Use better-sqlite3
+npm install better-sqlite3
+# Update db.js to use better-sqlite3
+```
+
+#### **3. Frontend Build Errors**
+```bash
+# Clear cache and reinstall
+cd /root/Core-Repository/frontend
+rm -rf node_modules package-lock.json
+npm install
+
+# Check for missing dependencies
+npm audit fix
+
+# Build manually to see errors
+npm run build
+```
+
+#### **4. Port Conflicts**
+```bash
+# Check what's using ports
+netstat -tulpn | grep :4000
+netstat -tulpn | grep :3000
+
+# Kill conflicting processes
+sudo kill -9 <PID>
+
+# Use different ports in ecosystem.config.js
+```
+
+#### **5. Memory Issues**
+```bash
+# Monitor memory usage
+pm2 monit
+
+# Restart high memory processes
+pm2 restart network-frontend
+
+# Lower memory limits
+pm2 restart network-backend --max-memory-restart 512M
+```
+
+#### **6. Auto-Restart Not Working**
+```bash
+# Check startup configuration
+pm2 startup
+
+# Save current processes
+pm2 save
+
+# Test reboot
+sudo reboot
+
+# After reboot, check processes
+pm2 list
+```
+
+---
+
+## 🚨 **Emergency Recovery**
+
+### **Complete System Recovery**
+```bash
+# Stop all PM2 processes
+pm2 kill
+
+# Clear PM2 cache
+pm2 flush
+
+# Reinstall dependencies
+cd /root/Core-Repository/backend
+npm install
+cd ../frontend
+npm install
+
+# Start fresh
+cd /root/Core-Repository
+pm2 start ecosystem.config.js
+pm2 save
+```
+
+### **Database Recovery**
+```bash
+# Check database integrity
+cd /root/Core-Repository
+sqlite3 network_routes.db "PRAGMA integrity_check;"
+
+# Backup current database
+cp network_routes.db network_routes.db.backup
+
+# Restore from backup if needed
+cp network_routes.db.backup network_routes.db
+
+# Restart backend
+pm2 restart network-backend
+```
+
+---
+
+## 📈 **Performance Optimization**
+
+### **Backend Optimization**
+```bash
+# Use cluster mode for multiple CPU cores
+pm2 start ecosystem.config.js --env production
+pm2 scale network-backend 2  # 2 instances
+
+# Monitor performance
+pm2 monit
+
+# Log rotation
+pm2 install pm2-logrotate
+pm2 set pm2-logrotate:max_size 10M
+pm2 set pm2-logrotate:retain 30
+```
+
+### **Frontend Optimization**
+```bash
+# Create production build
+cd /root/Core-Repository/frontend
+npm run build
+
+# Serve static files with nginx (recommended) or serve
+npm install -g serve
+pm2 start "serve -s build -l 3000" --name network-frontend-static
+```
+
+---
+
+## 🔒 **Security Considerations**
+
+### **Production Checklist**
+- [ ] Set strong JWT_SECRET environment variable
+- [ ] Use HTTPS in production
+- [ ] Configure firewall (ports 3000, 4000)
+- [ ] Regular log monitoring
+- [ ] Database backups
+- [ ] Keep Node.js and dependencies updated
+
+### **Monitoring Setup**
+```bash
+# Install PM2 web interface (optional)
+npm install -g pm2-web
+pm2-web --port 8080
+
+# Setup log monitoring
+tail -f /root/Core-Repository/logs/backend-err.log
+tail -f /root/Core-Repository/logs/frontend-err.log
+```
+
+---
+
+## 📝 **Maintenance Schedule**
+
+### **Daily**
+- Check process status: `pm2 list`
+- Monitor logs for errors: `pm2 logs --err`
+
+### **Weekly**
+- Review log files: `ls -la logs/`
+- Check memory usage: `pm2 monit`
+- Rotate logs if needed: `pm2 flush`
+
+### **Monthly**
+- Update dependencies: `npm update`
+- Database backup: `cp network_routes.db backups/`
+- Review PM2 configuration
+
+---
+
+## 🚀 **Quick Reference Commands**
+
+```bash
+# Start everything
+pm2 start ecosystem.config.js && pm2 save
+
+# Check status
+pm2 list && pm2 monit
+
+# View logs
+pm2 logs --lines 50
+
+# Restart all
+pm2 restart all
+
+# Emergency stop
+pm2 kill
+
+# Auto-startup setup
+pm2 startup && pm2 save
+```
+
+---
+
+## 🆘 **Support Information**
+
+### **Log Locations**
+- Backend logs: `/root/Core-Repository/logs/backend-*.log`
+- Frontend logs: `/root/Core-Repository/logs/frontend-*.log`
+- PM2 logs: `~/.pm2/logs/`
+
+### **Configuration Files**
+- Main config: `/root/Core-Repository/ecosystem.config.js`
+- Backend config: `/root/Core-Repository/backend/package.json`
+- Frontend config: `/root/Core-Repository/frontend/package.json`
+
+### **Health Check URLs**
+- Backend: `http://172.30.252.118:4000/health`
+- Frontend: `http://172.30.252.118:3000`
+
+**For additional support, check the APPLICATION_WALKTHROUGH.md and LINUX_DEV_SETUP.md files.**

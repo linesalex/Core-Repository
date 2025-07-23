@@ -18,11 +18,13 @@ import WarningIcon from '@mui/icons-material/Warning';
 import axios from 'axios';
 import { API_BASE_URL } from './config';
 import { useAuth } from './AuthContext';
+import LoadingIndicator from './components/LoadingIndicator';
 
 const CarriersManager = ({ hasPermission }) => {
   const { user } = useAuth();
   const [carriers, setCarriers] = useState([]);
   const [contacts, setContacts] = useState({});
+  const [contactsLoading, setContactsLoading] = useState({}); // Track loading state per carrier
   const [overdueContacts, setOverdueContacts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -109,6 +111,7 @@ const CarriersManager = ({ hasPermission }) => {
 
   const loadContacts = async (carrierId) => {
     try {
+      setContactsLoading(prev => ({ ...prev, [carrierId]: true }));
       const response = await axios.get(`${API_BASE_URL}/carriers/${carrierId}/contacts`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
@@ -120,6 +123,8 @@ const CarriersManager = ({ hasPermission }) => {
       }));
     } catch (err) {
       console.error('Failed to load contacts:', err);
+    } finally {
+      setContactsLoading(prev => ({ ...prev, [carrierId]: false }));
     }
   };
 
@@ -498,7 +503,9 @@ const CarriersManager = ({ hasPermission }) => {
                           </Button>
                         </Box>
                         
-                        {contacts[carrier.id] && contacts[carrier.id].length > 0 ? (
+                        {contactsLoading[carrier.id] ? (
+                          <LoadingIndicator message="Loading contacts..." size={16} sx={{ p: 1 }} />
+                        ) : contacts[carrier.id] && contacts[carrier.id].length > 0 ? (
                           <TableContainer component={Paper} sx={{ mt: 1 }}>
                             <Table size="small">
                               <TableHead>

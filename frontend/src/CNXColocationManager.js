@@ -16,10 +16,13 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { API_BASE_URL } from './config';
 import axios from 'axios';
+import LoadingIndicator from './components/LoadingIndicator';
 
 const CNXColocationManager = ({ hasPermission }) => {
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [racksLoading, setRacksLoading] = useState({}); // Track loading state per location
+  const [clientsLoading, setClientsLoading] = useState({}); // Track loading state per rack
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [expandedRows, setExpandedRows] = useState({});
@@ -110,6 +113,7 @@ const CNXColocationManager = ({ hasPermission }) => {
 
   const loadRacks = async (locationId) => {
     try {
+      setRacksLoading(prev => ({ ...prev, [locationId]: true }));
       const response = await axios.get(`${API_BASE_URL}/cnx-colocation/locations/${locationId}/racks`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
@@ -122,11 +126,14 @@ const CNXColocationManager = ({ hasPermission }) => {
       }));
     } catch (err) {
       setError('Failed to load racks: ' + err.message);
+    } finally {
+      setRacksLoading(prev => ({ ...prev, [locationId]: false }));
     }
   };
 
   const loadClients = async (rackId) => {
     try {
+      setClientsLoading(prev => ({ ...prev, [rackId]: true }));
       const response = await axios.get(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/clients`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
@@ -139,6 +146,8 @@ const CNXColocationManager = ({ hasPermission }) => {
       }));
     } catch (err) {
       setError('Failed to load clients: ' + err.message);
+    } finally {
+      setClientsLoading(prev => ({ ...prev, [rackId]: false }));
     }
   };
 
@@ -595,7 +604,9 @@ const CNXColocationManager = ({ hasPermission }) => {
                             )}
                           </Box>
                           
-                          {rackData[location.id] && rackData[location.id].length > 0 ? (
+                          {racksLoading[location.id] ? (
+                            <LoadingIndicator message="Loading racks..." size={16} />
+                          ) : rackData[location.id] && rackData[location.id].length > 0 ? (
                             <Table size="small">
                               <TableHead>
                                 <TableRow>
@@ -758,6 +769,8 @@ const CNXColocationManager = ({ hasPermission }) => {
                                                   ))}
                                                 </TableBody>
                                               </Table>
+                                            ) : clientsLoading[rack.id] ? (
+                                              <LoadingIndicator message="Loading clients..." size={16} sx={{ p: 1 }} />
                                             ) : (
                                               <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
                                                 No clients found for this rack.

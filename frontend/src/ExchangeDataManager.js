@@ -22,7 +22,7 @@ import WarningIcon from '@mui/icons-material/Warning';
 import CheckIcon from '@mui/icons-material/Check';
 import { API_BASE_URL } from './config';
 import axios from 'axios';
-
+import LoadingIndicator from './components/LoadingIndicator';
 
 
 const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
@@ -36,6 +36,8 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
   
   // UI states
   const [loading, setLoading] = useState(true);
+  const [feedsLoading, setFeedsLoading] = useState({}); // Track loading state per exchange
+  const [contactsLoading, setContactsLoading] = useState({}); // Track loading state per exchange
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [expandedExchange, setExpandedExchange] = useState(null);
@@ -171,6 +173,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
 
   const loadFeeds = async (exchangeId) => {
     try {
+      setFeedsLoading(prev => ({ ...prev, [exchangeId]: true }));
       const params = new URLSearchParams();
       if (feedSearchText) params.append('search', feedSearchText);
 
@@ -185,11 +188,14 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       }));
     } catch (err) {
       console.error('Failed to load feeds:', err);
+    } finally {
+      setFeedsLoading(prev => ({ ...prev, [exchangeId]: false }));
     }
   };
 
   const loadContacts = async (exchangeId) => {
     try {
+      setContactsLoading(prev => ({ ...prev, [exchangeId]: true }));
               const response = await axios.get(`${API_BASE_URL}/exchanges/${exchangeId}/contacts`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
@@ -201,6 +207,8 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       }));
     } catch (err) {
       console.error('Failed to load contacts:', err);
+    } finally {
+      setContactsLoading(prev => ({ ...prev, [exchangeId]: false }));
     }
   };
 
@@ -849,7 +857,9 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                             <Typography variant="h6" gutterBottom component="div">
                               Exchange Feeds
                             </Typography>
-                            {feeds[exchange.id] && feeds[exchange.id].length > 0 ? (
+                            {feedsLoading[exchange.id] ? (
+                              <LoadingIndicator message="Loading feeds..." size={16} sx={{ p: 1 }} />
+                            ) : feeds[exchange.id] && feeds[exchange.id].length > 0 ? (
                               <Table size="small">
                                 <TableHead>
                                   <TableRow>
@@ -1023,7 +1033,9 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                 <Typography variant="h6" gutterBottom component="div">
                                   Exchange Contacts
                                 </Typography>
-                                {contacts[exchange.id] && contacts[exchange.id].length > 0 ? (
+                                {contactsLoading[exchange.id] ? (
+                                  <LoadingIndicator message="Loading contacts..." size={16} sx={{ p: 1 }} />
+                                ) : contacts[exchange.id] && contacts[exchange.id].length > 0 ? (
                                   <Table size="small">
                                     <TableHead>
                                       <TableRow>
