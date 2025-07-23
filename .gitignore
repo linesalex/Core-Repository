@@ -137,3 +137,4 @@ temp/
 # Local configuration files
 config.local.*
 settings.local.* 
+complete_project_updated.tar.gz
