@@ -1,43 +1,69 @@
-# Network Inventory Management System - RHEL 7 Development Setup
+# Network Inventory Management System - RHEL 7 Production Setup Guide
 
-Quick and simple setup guide for running the Network Inventory Management System in development mode on Red Hat Enterprise Linux 7.
+**🔥 BATTLE-TESTED GUIDE** - Based on real-world deployment experience and troubleshooting
 
-## 🚀 Quick Requirements
+## ⚠️ **CRITICAL REQUIREMENTS - READ FIRST**
 
-- **RHEL 7**: Red Hat Enterprise Linux 7.x (7.6+ recommended)
-- **Root/Sudo Access**: Required for package installation
-- **Internet Connection**: For downloading packages and dependencies
-- **10 minutes** of your time ⏰
+This guide reflects **actual deployment challenges** encountered on RHEL 7. Follow these specific requirements to avoid common pitfalls.
 
-## 📋 Prerequisites Check
+### **🚨 Known Issues & Solutions**
+- **Git Limitations**: Many RHEL 7 environments have limited/no git access - manual file transfer required
+- **SQLite3 Version**: Must use SQLite3 5.0.2 specifically (newer versions cause native binding issues)
+- **bcrypt Incompatibility**: bcrypt native compilation fails - must use bcryptjs alternative
+- **Node.js Compatibility**: Node.js 18+ requires glibc 2.28+, RHEL 7 only has 2.17 - use Node.js 12-16
+- **Native Modules**: C++ compilation often fails - use pure JavaScript alternatives when possible
+
+---
+
+## 🎯 **System Requirements**
+
+- **RHEL 7.6+**: Red Hat Enterprise Linux 7.6 or higher
+- **Root Access**: Required for package installation
+- **4GB RAM**: Minimum (8GB recommended for development)
+- **No Git Required**: Manual file transfer methods provided
+- **Internet Access**: For package downloads (or internal mirrors)
+
+---
+
+## 📋 **Pre-Deployment Checklist**
 
 ```bash
 # Check RHEL version
 cat /etc/redhat-release
-# Should show: Red Hat Enterprise Linux Server release 7.x
+# Required: Red Hat Enterprise Linux Server release 7.6+
 
-# Check if you have sudo access
-sudo whoami
-# Should show: root
+# Check available memory  
+free -h
+# Minimum: 4GB total
+
+# Check available disk space
+df -h
+# Minimum: 10GB free space
+
+# Check glibc version (important for Node.js compatibility)
+ldd --version
+# Expected: glibc 2.17 (RHEL 7 default)
 ```
 
-## 📦 Step 1: Install Required Dependencies
+---
 
-### **Enable EPEL Repository**
+## 📦 **Step 1: System Dependencies**
+
+### **Enable Required Repositories**
 ```bash
-# RHEL 7 requires EPEL for additional packages
+# Enable EPEL (Extra Packages for Enterprise Linux)
 sudo yum install -y epel-release
 
-# If epel-release is not available, install directly
+# If EPEL install fails, try direct download:
 sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
 
 # Update package cache
 sudo yum update -y
 ```
 
-### **Install Development Tools**
+### **Install Build Tools (Required for Native Modules)**
 ```bash
-# Install essential build tools individually (more reliable for RHEL 7)
+# Install essential development tools individually
 sudo yum install -y \
     make \
     gcc \
@@ -47,12 +73,7 @@ sudo yum install -y \
     automake \
     libtool \
     pkgconfig \
-    patch
-
-# Install additional required packages
-sudo yum install -y \
-    curl \
-    wget \
+    patch \
     python-devel \
     openssl-devel \
     bzip2-devel \
@@ -60,713 +81,439 @@ sudo yum install -y \
     zlib-devel \
     sqlite-devel
 
-# Check if git is already installed
-git --version
-# If git is not installed:
-# sudo yum install -y git
-
-# Alternative: If groups work on your system, you can try:
-# sudo yum groups mark convert
-# sudo yum groupinstall -y "Development Tools"
-```
-
-## 🔧 Step 2: Install Node.js
-
-### **Method 1: NodeSource Repository (RHEL 7 Compatible)**
-```bash
-# IMPORTANT: Use Node.js 16.x for RHEL 7 compatibility
-# Node.js 18+ requires glibc 2.28+, but RHEL 7 only has glibc 2.17
-curl -fsSL https://rpm.nodesource.com/setup_16.x | sudo bash -
-
-# Install Node.js
-sudo yum install -y nodejs
-
-# Verify installation
-node --version  # Should show v16.x.x
-npm --version   # Should show 8.x.x
-
-# Check system compatibility
-ldd --version  # Should show glibc 2.17 (RHEL 7 default)
-```
-
-### **Method 2: Using NVM (Most Reliable for RHEL 7)**
-```bash
-# Install NVM (Node Version Manager) - works on any system
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-
-# Reload shell configuration
-source ~/.bashrc
-
-# Install Node.js 16 LTS (RHEL 7 compatible)
-nvm install 16
-nvm use 16
-nvm alias default 16
-
-# Verify installation
-node --version  # Should show v16.x.x
-npm --version   # Should show 8.x.x
-
-# List available versions if needed
-nvm ls-remote --lts
-```
-
-### **Method 3: Pre-compiled Binaries (If repositories fail)**
-```bash
-# Download Node.js 16 pre-compiled binary (RHEL 7 compatible)
-cd /tmp
-wget https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz
-
-# Extract and install
-sudo tar -xJf node-v16.20.2-linux-x64.tar.xz -C /usr/local --strip-components=1
-
-# Add to PATH if needed
-echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
-source ~/.bashrc
-
-# Verify installation
-node --version  # Should show v16.20.2
-npm --version   # Should show 8.x.x
-
-# Clean up
-rm -f /tmp/node-v16.20.2-linux-x64.tar.xz
-```
-
-## 📁 Step 3: Get the Application
-
-### **Clone or Download**
-```bash
-# Option 1: Clone with git
-git clone <your-repository-url>
-cd Core-Repository
-
-# Option 2: If you have the files already
-# Just navigate to your project directory
-cd /path/to/Core-Repository
-
-# Make sure you're in the right directory
-pwd
-ls -la  # You should see backend/, frontend/, README.md, etc.
-```
-
-## 🔧 Step 4: Verify System Compatibility
-
-### **Check RHEL 7 System Requirements**
-```bash
-# Check glibc version (should be 2.17 for RHEL 7)
-ldd --version
-
-# Check system architecture
-uname -m  # Should show x86_64
-
-# Check available memory (Node.js needs at least 512MB)
-free -h
-
-# Check disk space
-df -h
-```
-
-## 🔧 Step 5: Configure npm for RHEL 7
-
-### **Set npm Configuration (Important for RHEL 7)**
-```bash
-# Set npm to use compatible settings for RHEL 7
-npm config set python python2
-npm config set unsafe-perm true
-
-# Increase npm timeout for slower connections
-npm config set timeout 300000
-
-# Set legacy peer deps (helps with older npm versions)
-npm config set legacy-peer-deps true
-
-# If behind corporate firewall, you may need:
-# npm config set strict-ssl false
-# npm config set registry http://registry.npmjs.org/
-```
-
-## 🔧 Step 6: Install Dependencies
-
-```bash
-# Install backend dependencies
-cd backend
-npm install
-
-# If you encounter permission errors, try:
-# sudo npm install --unsafe-perm=true
-
-# Install frontend dependencies
-cd ../frontend
-npm install
-
-# If installation fails due to memory issues:
-# npm install --max_old_space_size=4096
-```
-
-## 🗄 Step 7: Setup Database
-
-```bash
-# Navigate to backend directory
-cd backend
-
-# Initialize the database
-node init_db.js
-
-# Run database migrations
-node migration_script.js
-
-# You should see: "Database initialized successfully" and "Migration completed successfully"
-
-# Verify database was created
-ls -la ../network_routes.db
-# Should show the database file with proper permissions
-```
-
-## 🚀 Step 8: Configure Firewall (Optional but Recommended)
-
-### **Configure firewalld for Development**
-```bash
-# Check if firewalld is running
-sudo systemctl status firewalld
-
-# If firewalld is active, allow development ports
-sudo firewall-cmd --zone=public --add-port=3000/tcp --permanent
-sudo firewall-cmd --zone=public --add-port=4000/tcp --permanent
-sudo firewall-cmd --reload
-
-# Verify rules
-sudo firewall-cmd --list-ports
-```
-
-### **Alternative: Temporarily Disable firewall (Less Secure)**
-```bash
-# Only if you have issues with firewall
-sudo systemctl stop firewalld
-sudo systemctl disable firewalld
-```
-
-## 🚀 Step 9: Start the Application
-
-### **Terminal 1 - Start Backend**
-```bash
-cd backend
-npm start
-# You should see: "Server running on port 4000"
-
-# If you get EACCES errors on RHEL 7:
-# sudo npm start
-```
-
-### **Terminal 2 - Start Frontend**
-```bash
-# Open a new terminal window/tab
-cd frontend
-npm start
-# You should see: "Local: http://localhost:3000"
-
-# If port 3000 is blocked, specify a different port:
-# PORT=3001 npm start
-```
-
-## ✅ Step 10: Access the Application
-
-1. **Open your web browser** (Firefox, Chrome, or any modern browser)
-2. **Navigate to**: `http://localhost:3000`
-3. **Login with default credentials**:
-   - **Username**: `admin`
-   - **Password**: `admin123`
-
-### **If you can't access the application:**
-```bash
-# Check if services are running
-curl http://localhost:4000/health  # Backend health check
-curl http://localhost:3000         # Frontend check
-
-# Check what's listening on ports
-sudo netstat -tulpn | grep :3000
-sudo netstat -tulpn | grep :4000
-
-# Check firewall status
-sudo firewall-cmd --list-all
-```
-
-🎉 **That's it! You're running the Network Inventory Management System on RHEL 7!**
-
-## 🔧 Development Commands
-
-### **Backend Commands**
-```bash
-cd backend
-
-# Start backend (development mode with auto-restart)
-npm run dev
-
-# Start backend (production mode)
-npm start
-
-# Check if database exists
-ls -la ../network_routes.db
-```
-
-### **Frontend Commands**
-```bash
-cd frontend
-
-# Start development server
-npm start
-
-# Build for production
-npm run build
-
-# Test the build
-npx serve -s build
-```
-
-## 🛠 Common Development Tasks
-
-### **Reset Database**
-```bash
-cd backend
-rm ../network_routes.db
-node init_db.js
-node migration_script.js
-```
-
-### **Update Dependencies**
-```bash
-# Update backend
-cd backend
-npm update
-
-# Update frontend
-cd frontend
-npm update
-```
-
-### **Check Application Status**
-```bash
-# Check if backend is running
-curl http://localhost:4000/health
-
-# Check if frontend is accessible
-curl http://localhost:3000
-```
-
-## 🔍 RHEL 7 Specific Troubleshooting
-
-### **Groups File Issues**
-```bash
-# If you get "there is no installed groups file" error:
-sudo yum groups mark convert
-# Error: there is no installed groups file
-
-# Solution: Install packages individually instead
-sudo yum install -y make gcc gcc-c++ kernel-devel autoconf automake libtool
-
-# Skip group installations entirely and use individual package names
-# This is actually more reliable on RHEL 7 minimal installations
-```
-
-### **Port Already in Use**
-```bash
-# Find what's using port 4000
-sudo netstat -tulpn | grep :4000
-# Or use ss command (modern alternative)
-sudo ss -tulpn | grep :4000
-
-# Kill the process if needed
-sudo kill -9 <PID>
-
-# Find what's using port 3000
-sudo netstat -tulpn | grep :3000
-sudo kill -9 <PID>
-```
-
-### **Firewall Issues**
-```bash
-# Check firewall status
-sudo systemctl status firewalld
-sudo firewall-cmd --list-all
-
-# Allow ports if blocked
-sudo firewall-cmd --zone=public --add-port=3000/tcp --permanent
-sudo firewall-cmd --zone=public --add-port=4000/tcp --permanent
-sudo firewall-cmd --reload
-
-# Temporarily disable firewall for testing
-sudo systemctl stop firewalld
-```
-
-### **SELinux Issues**
-```bash
-# Check SELinux status
-getenforce
-
-# If SELinux is enforcing and causing issues:
-sudo setenforce 0  # Temporary disable
-
-# For permanent disable (requires reboot):
-sudo sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
-```
-
-### **Permission Issues**
-```bash
-# Make sure you own the project directory
-sudo chown -R $USER:$USER /path/to/Core-Repository
-
-# Make sure database is writable
-chmod 664 network_routes.db
-
-# If running as root, you may need:
-# npm config set unsafe-perm true
-```
-
-### **Node.js Compatibility Issues (Most Common)**
-```bash
-# Check if you're trying to install incompatible Node.js version
-node --version
-ldd --version  # Should show glibc 2.17 for RHEL 7
-
-# If you get glibc version errors, use Node.js 16 instead of 18+
-# Uninstall incompatible version first
-sudo yum remove -y nodejs npm
-
-# Install compatible version
-curl -fsSL https://rpm.nodesource.com/setup_16.x | sudo bash -
-sudo yum install -y nodejs
-
-# Or use NVM method (most reliable)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-source ~/.bashrc
-nvm install 16
-nvm use 16
-```
-
-### **Node.js/npm Issues on RHEL 7**
-```bash
-# Clear npm cache
-npm cache clean --force
-
-# Remove node_modules and reinstall
-rm -rf node_modules package-lock.json
-npm install
-
-# If native module compilation fails:
-sudo yum install -y python-devel gcc gcc-c++
-npm rebuild
-
-# For memory issues during install:
-npm install --max_old_space_size=4096
-
-# If npm install fails with EACCES:
-npm config set unsafe-perm true
-npm install
-```
-
-### **Database Issues**
-```bash
-# Check if database file exists
-ls -la network_routes.db
-
-# Check database permissions
-ls -la network_routes.db
-# Should show: -rw-rw-r-- 1 username username
-
-# Check if SQLite is working
-node -e "const sqlite3 = require('sqlite3'); console.log('SQLite OK');"
-
-# Reinitialize database if corrupted
-rm network_routes.db
-node init_db.js
-node migration_script.js
-```
-
-### **Network/Corporate Environment Issues**
-```bash
-# If behind corporate proxy, configure npm:
-npm config set proxy http://proxy.company.com:8080
-npm config set https-proxy http://proxy.company.com:8080
-
-# If SSL certificate issues:
-npm config set strict-ssl false
-
-# Use internal npm registry if needed:
-npm config set registry http://internal-registry.company.com/
-```
-
-### **System Resource Issues**
-```bash
-# Check available memory
-free -h
-
-# Check disk space
-df -h
-
-# Check system load
-uptime
-
-# If system is slow/unresponsive:
-# Reduce Node.js memory usage
-export NODE_OPTIONS="--max-old-space-size=1024"
-```
-
-## 📱 Access from Other Devices (RHEL 7)
-
-If you want to access the application from other devices on your network:
-
-### **Find Your IP Address**
-```bash
-# Get your local IP address (RHEL 7 methods)
-ip route get 1.1.1.1 | awk '{print $7; exit}'
-# or
-ip addr show | grep 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d'/' -f1
-# or traditional method
-ifconfig | grep 'inet ' | grep -v '127.0.0.1' | awk '{print $2}'
-```
-
-### **Configure Firewall for Network Access**
-```bash
-# Allow access from your network (replace 192.168.1.0/24 with your network)
-sudo firewall-cmd --zone=public --add-rich-rule='rule family="ipv4" source address="192.168.1.0/24" port protocol="tcp" port="3000" accept' --permanent
-sudo firewall-cmd --zone=public --add-rich-rule='rule family="ipv4" source address="192.168.1.0/24" port protocol="tcp" port="4000" accept' --permanent
-sudo firewall-cmd --reload
-
-# Or allow all network access (less secure)
-sudo firewall-cmd --zone=public --add-port=3000/tcp --permanent
-sudo firewall-cmd --zone=public --add-port=4000/tcp --permanent
-sudo firewall-cmd --reload
-```
-
-### **Update Frontend Configuration**
-```bash
-# Edit frontend package.json
-vi frontend/package.json
-
-# Find the "start" script and modify it:
-"start": "HOST=0.0.0.0 react-scripts start"
-
-# Or set environment variable
-export HOST=0.0.0.0
-cd frontend
-npm start
-```
-
-### **Configure SELinux (if enabled)**
-```bash
-# Allow network connections if SELinux is enforcing
-sudo setsebool -P httpd_can_network_connect 1
-sudo setsebool -P httpd_can_network_relay 1
-```
-
-Now you can access from other devices:
-- **Frontend**: `http://YOUR_IP:3000`
-- **Backend API**: `http://YOUR_IP:4000`
-
-## 🔄 Stopping the Application
-
-### **Stop Services Properly**
-```bash
-# In each terminal window, press:
-Ctrl + C
-
-# Or if running in background:
-pkill -f "node"
-pkill -f "react-scripts"
-
-# Check that processes are stopped
-ps aux | grep node
-ps aux | grep react-scripts
-```
-
-## 📊 RHEL 7 Development vs Production
-
-| Feature | RHEL 7 Development | RHEL 7 Production |
-|---------|-------------------|-------------------|
-| **Setup Time** | 10 minutes | 3+ hours |
-| **Security** | Basic + SELinux | Enterprise-grade |
-| **Performance** | Basic | Optimized |
-| **SSL/HTTPS** | No | Yes |
-| **Process Management** | Manual | systemd + PM2 |
-| **Web Server** | Development | Apache/Nginx |
-| **Monitoring** | Console logs | Full monitoring |
-| **Backups** | Manual | Automated |
-| **Updates** | Manual | Scripted |
-| **Firewall** | firewalld basic | firewalld hardened |
-| **SELinux** | Permissive/Disabled | Enforcing |
-
-## 🎯 RHEL 7 Specific Next Steps
-
-1. **Change default password** in User Management
-2. **Configure SELinux** properly if using in production
-3. **Review firewall rules** for your network requirements
-4. **Test with corporate proxy** if in enterprise environment
-5. **Monitor system resources** during development
-6. **Consider using systemd** for service management
-7. **Plan for Red Hat subscription** management if going to production
-
-## 📞 RHEL 7 Specific Help
-
-### **Check System Status**
-```bash
-# Check RHEL version and subscription
-cat /etc/redhat-release
-sudo subscription-manager status
-
-# Check system resources
-free -h
-df -h
-uptime
-
-# Check network connectivity
-ping -c 3 8.8.8.8
-curl -I https://registry.npmjs.org
-```
-
-### **Check Application Logs**
-```bash
-# Backend logs (in the terminal where backend is running)
-# Frontend logs (in the terminal where frontend is running)
-# Browser console (F12 → Console tab)
-
-# System logs
-sudo journalctl -f
-sudo tail -f /var/log/messages
-```
-
-### **Quick Health Check**
-```bash
-# Test backend
-curl http://localhost:4000/health
-
-# Test database
-cd backend
-node -e "const db = require('./db'); console.log('Database OK');"
-
-# Test system services
-sudo systemctl status firewalld
-sudo systemctl status NetworkManager
-```
-
-## 🛡️ RHEL 7 Security Considerations
-
-### **For Development Environment**
-```bash
-# Minimal security for development
-sudo setenforce 0  # Disable SELinux temporarily
-sudo systemctl stop firewalld  # Stop firewall for testing
-
-# Re-enable for production testing
-sudo setenforce 1
-sudo systemctl start firewalld
-```
-
-### **For Production Preparation**
-```bash
-# Keep security enabled
-sudo setenforce 1
-sudo systemctl enable firewalld
-sudo systemctl start firewalld
-
-# Configure proper firewall rules
-sudo firewall-cmd --permanent --add-service=http
-sudo firewall-cmd --permanent --add-service=https
-sudo firewall-cmd --reload
-```
-
-## 🔧 RHEL 7 System Maintenance
-
-### **Keep System Updated**
-```bash
-# Check for updates
-sudo yum check-update
-
-# Update system (careful in production)
-sudo yum update -y
-
-# Update only security patches
-sudo yum update --security -y
-```
-
-### **Monitor Resources**
-```bash
-# Check disk usage
-df -h
-du -sh /path/to/Core-Repository
-
-# Check memory usage
-free -h
-cat /proc/meminfo
-
-# Check CPU usage
-top
-htop  # if installed: sudo yum install htop
+# Install additional utilities
+sudo yum install -y \
+    curl \
+    wget \
+    unzip \
+    tar \
+    which
+
+# Verify build tools installation
+gcc --version
+make --version
 ```
 
 ---
 
-**🎉 Happy Development on RHEL 7!** 
+## 🟢 **Step 2: Node.js Installation (RHEL 7 Compatible)**
 
-You now have a fully functional Network Inventory Management System running on Red Hat Enterprise Linux 7 for development and testing!
+### **⚠️ CRITICAL: Use Node.js 12-16 Only**
 
-## 📋 RHEL 7 Quick Reference
+**Node.js 18+ will NOT work on RHEL 7** due to glibc version requirements.
 
-### **Essential Commands Summary**
+### **Method 1: Manual Binary Installation (Most Reliable)**
 ```bash
-# System Information
-cat /etc/redhat-release
-sudo subscription-manager status
-free -h && df -h
+# Download Node.js 16 LTS (RHEL 7 compatible)
+cd /tmp
+wget https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz
 
-# Package Management
-sudo yum install <package>
-sudo yum update -y
-sudo yum groupinstall "Development Tools"
+# Extract to /opt
+sudo mkdir -p /opt/nodejs
+sudo tar -xJf node-v16.20.2-linux-x64.tar.xz -C /opt/nodejs --strip-components=1
 
-# Service Management
-sudo systemctl status <service>
-sudo systemctl start/stop/restart <service>
-sudo systemctl enable/disable <service>
+# Add to PATH
+echo 'export PATH=/opt/nodejs/bin:$PATH' | sudo tee -a /etc/profile
+source /etc/profile
 
-# Firewall Management
-sudo firewall-cmd --list-all
-sudo firewall-cmd --add-port=3000/tcp --permanent
-sudo firewall-cmd --reload
-
-# SELinux Management
-getenforce
-sudo setenforce 0/1
-sudo setsebool -P <boolean> on/off
-
-# Network Troubleshooting
-sudo netstat -tulpn | grep :port
-sudo ss -tulpn | grep :port
-ip addr show
+# Verify installation
+node --version  # Should show v16.20.2
+npm --version   # Should show 8.x.x
 ```
 
-### **Application Quick Start Commands**
+### **Method 2: NVM (Alternative)**
 ```bash
-# One-time setup (copy and paste) - RHEL 7 Compatible
-sudo yum install -y epel-release
-sudo yum install -y make gcc gcc-c++ kernel-devel python-devel openssl-devel
+# Install NVM (Node Version Manager)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+source ~/.bashrc
+
+# Install Node.js 16 LTS
+nvm install 16.20.2
+nvm use 16.20.2
+nvm alias default 16.20.2
+
+# Verify
+node --version
+```
+
+### **Method 3: Repository (Last Resort)**
+```bash
+# Only if manual installation fails
 curl -fsSL https://rpm.nodesource.com/setup_16.x | sudo bash -
 sudo yum install -y nodejs
 
-# Configure npm for RHEL 7
-npm config set python python2
-npm config set unsafe-perm true
-
-# Start application (every time)
-cd /path/to/Core-Repository
-cd backend && npm start &
-cd ../frontend && npm start &
-
-# Stop application
-pkill -f "node"
+# If you get "No package nodejs available" error:
+# Use Method 1 (Manual Binary) instead
 ```
 
-## 🔗 Additional RHEL 7 Resources
+---
 
-- **Red Hat Customer Portal**: https://access.redhat.com
-- **RHEL 7 Documentation**: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/
-- **Node.js on RHEL**: https://developers.redhat.com/products/nodejs/overview
-- **SELinux Guide**: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/selinux_users_and_administrators_guide/
-- **Firewalld Documentation**: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/security_guide/sec-using_firewalls 
+## 📁 **Step 3: Application Deployment**
+
+### **🚨 Deployment Methods**
+
+Choose the deployment method that works best for your environment:
+
+### **Option A: Direct Git Download and Unzip (Recommended)**
+```bash
+# Create project directory
+cd /root
+
+# Download project directly from Git repository as zip
+# Replace YOUR_GITHUB_USERNAME and YOUR_REPO_NAME with actual values
+wget https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/archive/refs/heads/main.zip -O Core-Repository.zip
+
+# Unzip the downloaded file
+unzip Core-Repository.zip
+
+# Rename to standard directory name (adjust name if needed)
+mv YOUR_REPO_NAME-main Core-Repository
+
+# Navigate to project directory
+cd Core-Repository
+
+# Verify files are present
+ls -la  # Should show backend/, frontend/, README.md, etc.
+```
+
+### **Option B: Direct File Transfer**
+```bash
+# Create project directory
+sudo mkdir -p /root/Core-Repository
+cd /root/Core-Repository
+
+# Transfer files via SCP/SFTP from your development machine:
+# scp -r Core-Repository/ root@server-ip:/root/
+# Or use file transfer tools like WinSCP, FileZilla, etc.
+```
+
+### **Option C: Download Archive (if available)**
+```bash
+# If you have a project archive
+cd /root
+wget http://your-server/Core-Repository.tar.gz
+tar -xzf Core-Repository.tar.gz
+cd Core-Repository
+```
+
+### **Option D: Manual File Creation**
+```bash
+# Copy individual files via terminal/SSH
+# Create each file manually using nano/vi
+cd /root/Core-Repository
+nano package.json  # Copy content from development machine
+```
+
+---
+
+## 🔧 **Step 4: Critical Dependency Fixes**
+
+### **🚨 SQLite3 Version Fix (REQUIRED)**
+
+**Must use SQLite3 5.0.2 - newer versions cause native binding issues on RHEL 7**
+
+```bash
+cd /root/Core-Repository/backend
+
+# Remove any existing SQLite3
+npm uninstall sqlite3
+
+# Install specific version that works on RHEL 7
+npm install sqlite3@5.0.2
+
+# Verify installation
+npm list sqlite3
+# Should show: sqlite3@5.0.2
+```
+
+### **🚨 bcrypt to bcryptjs Migration (REQUIRED)**
+
+**bcrypt native compilation fails on RHEL 7 - must use pure JavaScript alternative**
+
+```bash
+cd /root/Core-Repository/backend
+
+# Remove bcrypt
+npm uninstall bcrypt
+
+# Install bcryptjs (pure JavaScript, no compilation required)
+npm install bcryptjs
+
+# Update auth.js file to use bcryptjs using nano
+nano auth.js
+
+# In nano editor:
+# 1. Find the line with: const bcrypt = require('bcrypt');
+# 2. Change it to: const bcrypt = require('bcryptjs');
+# 3. Save with: Ctrl+O, then Enter
+# 4. Exit with: Ctrl+X
+
+# Verify the change
+grep -n "bcryptjs" auth.js
+# Should show: const bcrypt = require('bcryptjs');
+```
+
+### **🚨 Fix Optional Chaining Syntax (if using older Node.js)**
+
+```bash
+# If you get syntax errors about optional chaining (?.):
+cd /root/Core-Repository/backend
+
+# Replace optional chaining with compatible syntax
+sed -i 's/error\.response?.data/error.response \&\& error.response.data/g' *.js
+sed -i 's/\.stack?.length/.stack \&\& .stack.length/g' *.js
+
+# Or upgrade to Node.js 14+ which supports optional chaining
+```
+
+---
+
+## 🏗️ **Step 5: Application Setup**
+
+### **Backend Setup**
+```bash
+cd /root/Core-Repository/backend
+
+# Install dependencies
+npm install
+
+# If npm install fails with native module errors:
+npm install --build-from-source
+# Or:
+npm install --no-optional
+
+# Initialize database
+node init_db.js
+
+# Test backend startup
+node index.js
+# Should start without errors, press Ctrl+C to stop
+```
+
+### **Frontend Setup**
+```bash
+cd /root/Core-Repository/frontend
+
+# Install dependencies
+npm install
+
+# If memory issues during install:
+npm install --max_old_space_size=4096
+
+# Create environment configuration
+echo "REACT_APP_API_URL=http://$(hostname -I | awk '{print $1}'):4000" > .env
+
+# Test frontend build
+npm run build
+# Should complete without errors
+```
+
+---
+
+## 🚀 **Step 6: Production Deployment with PM2**
+
+### **Install PM2**
+```bash
+# Install PM2 globally
+npm install -g pm2
+
+# Verify installation
+pm2 --version
+```
+
+### **Deploy with PM2**
+```bash
+cd /root/Core-Repository
+
+# Create logs directory
+mkdir -p logs
+
+# Start applications
+pm2 start ecosystem.config.js
+
+# Save configuration for auto-restart
+pm2 save
+
+# Setup auto-startup on boot
+pm2 startup
+# Follow the command it shows
+
+# Check status
+pm2 list
+```
+
+---
+
+## 🛠️ **Troubleshooting Guide**
+
+### **🚨 Native Module Compilation Errors**
+
+**Problem**: `Error: Could not locate the bindings file`
+```bash
+# Solution 1: Reinstall with specific version
+cd /root/Core-Repository/backend
+npm uninstall sqlite3
+npm install sqlite3@5.0.2
+
+# Solution 2: Use better-sqlite3 (alternative)
+npm uninstall sqlite3
+npm install better-sqlite3
+# Note: Requires code changes in db.js
+
+# Solution 3: Force rebuild
+npm rebuild sqlite3
+```
+
+### **🚨 bcrypt Compilation Errors**
+
+**Problem**: `node-pre-gyp ERR! build error`
+```bash
+# Solution: Switch to bcryptjs (no compilation required)
+cd /root/Core-Repository/backend
+npm uninstall bcrypt
+npm install bcryptjs
+
+# Update all references in code
+find . -name "*.js" -exec sed -i 's/require.*bcrypt.*/require("bcryptjs")/g' {} +
+```
+
+### **🚨 Node.js Version Issues**
+
+**Problem**: `GLIBC_2.28 not found`
+```bash
+# Check your glibc version
+ldd --version
+
+# RHEL 7 has glibc 2.17, incompatible with Node.js 18+
+# Solution: Downgrade to Node.js 16
+sudo rm -rf /opt/nodejs  # If using manual install
+# Reinstall Node.js 16 using Method 1 above
+```
+
+### **🚨 Permission Issues**
+```bash
+# Fix file permissions
+sudo chown -R $USER:$USER /root/Core-Repository
+chmod 644 network_routes.db
+
+# If running as root:
+npm config set unsafe-perm true
+```
+
+### **🚨 Port Conflicts**
+```bash
+# Check what's using ports 3000/4000
+netstat -tulpn | grep -E ":3000|:4000"
+
+# Kill conflicting processes
+sudo kill -9 <PID>
+
+# Or change ports in ecosystem.config.js
+```
+
+### **🚨 Memory Issues**
+```bash
+# Check available memory
+free -h
+
+# If low memory, increase swap:
+sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+sudo mkswap /swapfile
+sudo swapon /swapfile
+
+# Or reduce PM2 memory limits in ecosystem.config.js
+```
+
+---
+
+## 📊 **Production Monitoring**
+
+### **Health Checks**
+```bash
+# Check PM2 processes
+pm2 list
+
+# Check application health
+curl http://localhost:4000/health
+
+# Monitor logs
+pm2 logs --lines 50
+
+# Monitor resource usage
+pm2 monit
+```
+
+### **Database Maintenance**
+```bash
+# Backup database
+cp network_routes.db network_routes.db.backup.$(date +%Y%m%d)
+
+# Check database integrity
+sqlite3 network_routes.db "PRAGMA integrity_check;"
+
+# Vacuum database (optimize)
+sqlite3 network_routes.db "VACUUM;"
+```
+
+---
+
+## 🔒 **Security Considerations**
+
+### **Production Hardening**
+```bash
+# Set secure JWT secret
+export JWT_SECRET="your-super-secure-secret-here"
+
+# Configure firewall
+sudo firewall-cmd --permanent --add-port=3000/tcp
+sudo firewall-cmd --permanent --add-port=4000/tcp
+sudo firewall-cmd --reload
+
+# Disable SELinux if causing issues (not recommended for production)
+sudo setenforce 0
+```
+
+---
+
+## 📞 **Getting Help**
+
+### **Log Locations**
+- **PM2 Logs**: `~/.pm2/logs/`
+- **Application Logs**: `/root/Core-Repository/logs/`
+- **System Logs**: `/var/log/messages`
+
+### **Common Commands**
+```bash
+# Restart everything
+pm2 restart all
+
+# View errors only
+pm2 logs --err
+
+# Emergency stop
+pm2 kill
+
+# Check Node.js compatibility
+node -e "console.log(process.versions)"
+```
+
+### **Support Files**
+- **PM2 Guide**: `pm2` file in project root
+- **Quick Reference**: `PM2_QUICK_REFERENCE.md`
+- **Application Manual**: `APPLICATION_WALKTHROUGH.md`
+
+---
+
+## 🏁 **Success Checklist**
+
+- [ ] Node.js 16.x installed and working
+- [ ] SQLite3 5.0.2 specifically installed
+- [ ] bcryptjs (not bcrypt) installed  
+- [ ] Backend starts without errors
+- [ ] Frontend builds successfully
+- [ ] PM2 processes running
+- [ ] Health check returns success: `curl http://localhost:4000/health`
+- [ ] Can access frontend: `http://server-ip:3000`
+- [ ] Can login with admin/admin123
+
+**🎉 If all checks pass, your Network Inventory Management System is ready for production!** 
