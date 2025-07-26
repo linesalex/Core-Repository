@@ -114,7 +114,8 @@ export const locationDataApi = {
 export const exchangeRatesApi = {
   getExchangeRates: () => api.get(`${API_BASE_URL}/exchange_rates`).then(res => res.data),
   addExchangeRate: (data) => api.post(`${API_BASE_URL}/exchange_rates`, data),
-  updateExchangeRate: (id, data) => api.put(`${API_BASE_URL}/exchange_rates/${id}`, data)
+  updateExchangeRate: (id, data) => api.put(`${API_BASE_URL}/exchange_rates/${id}`, data),
+  deleteExchangeRate: (id) => api.delete(`${API_BASE_URL}/exchange_rates/${id}`)
 };
 
 // Network Design & Pricing

@@ -17,6 +17,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import { locationDataApi } from './api';
 import { API_BASE_URL } from './config';
 import axios from 'axios';
+import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 
 const LocationDataManager = ({ hasPermission }) => {
   const [locations, setLocations] = useState([]);
@@ -49,6 +50,23 @@ const LocationDataManager = ({ hasPermission }) => {
     provider: '',
     access_info: ''
   });
+
+  // Validation states
+  const [formErrors, setFormErrors] = useState({});
+
+  // Validation rules for Location form
+  const locationValidationRules = {
+    location_code: { type: 'required', message: 'POP Code is required' },
+    region: { type: 'required', message: 'Region is required' },
+    city: { type: 'required', message: 'City is required' },
+    country: { type: 'required', message: 'Country is required' },
+    provider: { type: 'required', message: 'Provider is required' },
+    datacenter_name: { type: 'required', message: 'Datacenter Name is required' },
+    datacenter_address: { type: 'required', message: 'Address is required' }
+  };
+
+  // Validation function
+  const validate = createValidator(locationValidationRules);
 
   // POP Capabilities structure
   const popCapabilitiesFields = [
@@ -104,6 +122,7 @@ const LocationDataManager = ({ hasPermission }) => {
     setSelectedLocation(null);
     setFormData({
       location_code: '',
+      region: 'AMERs',
       city: '',
       country: '',
       datacenter_name: '',
@@ -113,6 +132,7 @@ const LocationDataManager = ({ hasPermission }) => {
       provider: '',
       access_info: ''
     });
+    setFormErrors({}); // Clear validation errors
     setDialogOpen(true);
   };
 
@@ -131,6 +151,7 @@ const LocationDataManager = ({ hasPermission }) => {
       provider: location.provider || '',
       access_info: location.access_info || ''
     });
+    setFormErrors({}); // Clear validation errors
     setDialogOpen(true);
   };
 
@@ -139,22 +160,57 @@ const LocationDataManager = ({ hasPermission }) => {
     setDeleteDialogOpen(true);
   };
 
+  // Normalize text for duplicate checking
+  const normalizeText = (text) => {
+    if (!text) return '';
+    return text.trim().replace(/\s+/g, ' ').toLowerCase();
+  };
+
   const handleSubmit = async () => {
     try {
+      // Validate form using validation framework
+      const validationErrors = validate(formData);
+      setFormErrors(validationErrors);
+
+      // Check if there are validation errors
+      if (Object.keys(validationErrors).length > 0) {
+        scrollToFirstError(validationErrors);
+        return;
+      }
+
+      // Duplicate prevention - check for existing locations with same POP Code (normalized)
       if (dialogMode === 'add') {
-        if (!formData.location_code || !formData.city || !formData.country) {
-          setError('Please fill in all required fields (POP Code, City, Country)');
+        const normalizedLocationCode = normalizeText(formData.location_code);
+        const existingLocation = locations.find(location => 
+          normalizeText(location.location_code) === normalizedLocationCode
+        );
+        
+        if (existingLocation) {
+          setError(`A location with POP Code "${formData.location_code}" already exists. Please use a different POP Code.`);
           return;
         }
 
         await locationDataApi.createLocation(formData);
         setSuccess('Location created successfully');
       } else {
+        // For edit mode, check duplicates excluding current location
+        const normalizedLocationCode = normalizeText(formData.location_code);
+        const existingLocation = locations.find(location => 
+          location.id !== selectedLocation.id && 
+          normalizeText(location.location_code) === normalizedLocationCode
+        );
+        
+        if (existingLocation) {
+          setError(`A location with POP Code "${formData.location_code}" already exists. Please use a different POP Code.`);
+          return;
+        }
+
         await locationDataApi.updateLocation(selectedLocation.id, formData);
         setSuccess('Location updated successfully');
       }
 
       setDialogOpen(false);
+      setFormErrors({}); // Clear validation errors on success
       await loadLocations();
 
     } catch (err) {
@@ -459,101 +515,120 @@ const LocationDataManager = ({ hasPermission }) => {
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="POP Code *"
                 value={formData.location_code}
                 onChange={(e) => handleInputChange('location_code', e.target.value)}
                 disabled={dialogMode === 'edit'}
+                field="location_code"
+                errors={formErrors}
+                required
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <FormControl fullWidth required>
-                <InputLabel>Region *</InputLabel>
-                <Select
-                  value={formData.region}
-                  label="Region *"
-                  onChange={(e) => handleInputChange('region', e.target.value)}
-                >
-                  <MenuItem value="AMERs">AMERs</MenuItem>
-                  <MenuItem value="EMEA">EMEA</MenuItem>
-                  <MenuItem value="APAC">APAC</MenuItem>
-                </Select>
-              </FormControl>
+              <ValidatedSelect
+                fullWidth
+                label="Region *"
+                value={formData.region}
+                onChange={(e) => handleInputChange('region', e.target.value)}
+                field="region"
+                errors={formErrors}
+                required
+              >
+                <MenuItem value="AMERs">AMERs</MenuItem>
+                <MenuItem value="EMEA">EMEA</MenuItem>
+                <MenuItem value="APAC">APAC</MenuItem>
+              </ValidatedSelect>
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="City *"
                 value={formData.city}
                 onChange={(e) => handleInputChange('city', e.target.value)}
+                field="city"
+                errors={formErrors}
+                required
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="Country *"
                 value={formData.country}
                 onChange={(e) => handleInputChange('country', e.target.value)}
+                field="country"
+                errors={formErrors}
+                required
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
-                label="Provider"
+                label="Provider *"
                 value={formData.provider}
                 onChange={(e) => handleInputChange('provider', e.target.value)}
+                field="provider"
+                errors={formErrors}
+                required
               />
             </Grid>
             <Grid item xs={12}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
-                label="Datacenter Name"
+                label="Datacenter Name *"
                 value={formData.datacenter_name}
                 onChange={(e) => handleInputChange('datacenter_name', e.target.value)}
+                field="datacenter_name"
+                errors={formErrors}
+                required
               />
             </Grid>
             <Grid item xs={12}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
-                label="Address"
+                label="Address *"
                 value={formData.datacenter_address}
                 onChange={(e) => handleInputChange('datacenter_address', e.target.value)}
+                field="datacenter_address"
+                errors={formErrors}
+                required
                 multiline
                 rows={2}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>POP Type</InputLabel>
-                <Select
-                  value={formData.pop_type}
-                  onChange={(e) => handleInputChange('pop_type', e.target.value)}
-                  label="POP Type"
-                >
-                  <MenuItem value="Tier 1">Tier 1</MenuItem>
-                  <MenuItem value="Tier 2">Tier 2</MenuItem>
-                  <MenuItem value="Tier 3">Tier 3</MenuItem>
-                  <MenuItem value="Exchange">Exchange</MenuItem>
-                </Select>
-              </FormControl>
+              <ValidatedSelect
+                fullWidth
+                label="POP Type"
+                value={formData.pop_type}
+                onChange={(e) => handleInputChange('pop_type', e.target.value)}
+                field="pop_type"
+                errors={formErrors}
+              >
+                <MenuItem value="Tier 1">Tier 1</MenuItem>
+                <MenuItem value="Tier 2">Tier 2</MenuItem>
+                <MenuItem value="Tier 3">Tier 3</MenuItem>
+                <MenuItem value="Exchange">Exchange</MenuItem>
+              </ValidatedSelect>
             </Grid>
             <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select
-                  value={formData.status}
-                  onChange={(e) => handleInputChange('status', e.target.value)}
-                  label="Status"
-                >
-                  <MenuItem value="Active">Active</MenuItem>
-                  <MenuItem value="Under Decommission">Under Decommission</MenuItem>
-                  <MenuItem value="Under Construction">Under Construction</MenuItem>
-                </Select>
-              </FormControl>
+              <ValidatedSelect
+                fullWidth
+                label="Status"
+                value={formData.status}
+                onChange={(e) => handleInputChange('status', e.target.value)}
+                field="status"
+                errors={formErrors}
+              >
+                <MenuItem value="Active">Active</MenuItem>
+                <MenuItem value="Under Decommission">Under Decommission</MenuItem>
+                <MenuItem value="Under Construction">Under Construction</MenuItem>
+              </ValidatedSelect>
             </Grid>
             <Grid item xs={12}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="Access Info"
                 value={formData.access_info}
@@ -561,6 +636,8 @@ const LocationDataManager = ({ hasPermission }) => {
                 multiline
                 rows={3}
                 placeholder="Enter access information, instructions, or notes..."
+                field="access_info"
+                errors={formErrors}
               />
             </Grid>
           </Grid>

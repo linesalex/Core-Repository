@@ -8,6 +8,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import BookmarkIcon from '@mui/icons-material/Bookmark';
 import BookmarkBorderIcon from '@mui/icons-material/BookmarkBorder';
 import { getDarkFiberDetails, addDarkFiberDetail, editDarkFiberDetail, deleteDarkFiberDetail, reserveDarkFiber, releaseDarkFiber } from './api';
+import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 
 const defaultForm = {
   dwdm_wavelength: '',
@@ -21,11 +22,28 @@ const defaultForm = {
 function DarkFiberFormDialog({ open, onClose, onSubmit, initialData, mode }) {
   const [formData, setFormData] = useState(initialData || defaultForm);
   const [validationError, setValidationError] = useState('');
+  
+  // Validation states
+  const [formErrors, setFormErrors] = useState({});
+
+  // Validation rules for Dark Fiber form
+  const darkFiberValidationRules = {
+    dwdm_wavelength: { type: 'required', message: 'DWDM Wavelength is required' },
+    equipment: { type: 'required', message: 'Equipment is required' },
+    capex_cost_to_light: [
+      { type: 'number', message: 'CAPEX Cost must be a valid number' },
+      { type: 'min', min: 0, message: 'CAPEX Cost must be greater than or equal to 0' }
+    ]
+  };
+
+  // Validation function
+  const validate = createValidator(darkFiberValidationRules);
 
   useEffect(() => {
     if (open) {
       setFormData(initialData || defaultForm);
       setValidationError('');
+      setFormErrors({}); // Clear validation errors
     }
   }, [open, initialData]);
 
@@ -38,13 +56,24 @@ function DarkFiberFormDialog({ open, onClose, onSubmit, initialData, mode }) {
   };
 
   const handleSubmit = () => {
-    // Validate: Bandwidth is required when DWDM UCN has a value
+    // Validate form using validation framework
+    const validationErrors = validate(formData);
+    setFormErrors(validationErrors);
+
+    // Check if there are validation errors
+    if (Object.keys(validationErrors).length > 0) {
+      scrollToFirstError(validationErrors);
+      return;
+    }
+
+    // Custom validation: Bandwidth is required when DWDM UCN has a value
     if (formData.dwdm_ucn && formData.dwdm_ucn.trim() !== '' && (!formData.dark_fiber_bandwidth || formData.dark_fiber_bandwidth.trim() === '')) {
       setValidationError('Bandwidth is required when DWDM UCN is specified');
       return;
     }
     
     setValidationError('');
+    setFormErrors({}); // Clear validation errors on success
     onSubmit(formData);
   };
 
@@ -66,55 +95,67 @@ function DarkFiberFormDialog({ open, onClose, onSubmit, initialData, mode }) {
             {validationError}
           </Alert>
         )}
-        <TextField
-          label="DWDM Wavelength"
+        <ValidatedTextField
+          label="DWDM Wavelength *"
           name="dwdm_wavelength"
           value={formData.dwdm_wavelength}
           onChange={handleChange}
           fullWidth
+          required
+          field="dwdm_wavelength"
+          errors={formErrors}
           sx={{ mb: 2 }}
         />
-        <TextField
+        <ValidatedTextField
           label="DWDM UCN"
           name="dwdm_ucn"
           value={formData.dwdm_ucn}
           onChange={handleChange}
           fullWidth
+          field="dwdm_ucn"
+          errors={formErrors}
           sx={{ mb: 2 }}
           helperText="Individual circuit ID to distinguish DWDM channels"
         />
-        <FormControl fullWidth sx={{ mb: 2 }}>
-          <InputLabel>DWDM Bandwidth</InputLabel>
-          <Select
-            name="dark_fiber_bandwidth"
-            value={formData.dark_fiber_bandwidth}
-            onChange={handleChange}
-            label="DWDM Bandwidth"
-          >
-            <MenuItem value="">
-              <em>Select Bandwidth</em>
-            </MenuItem>
-            {bandwidthOptions.map(option => (
-              <MenuItem key={option} value={option}>{option}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <TextField
-          label="Equipment"
+        <ValidatedSelect
+          fullWidth
+          label="DWDM Bandwidth"
+          value={formData.dark_fiber_bandwidth}
+          onChange={handleChange}
+          name="dark_fiber_bandwidth"
+          field="dark_fiber_bandwidth"
+          errors={formErrors}
+          sx={{ mb: 2 }}
+        >
+          <MenuItem value="">
+            <em>Select Bandwidth</em>
+          </MenuItem>
+          {bandwidthOptions.map(option => (
+            <MenuItem key={option} value={option}>{option}</MenuItem>
+          ))}
+        </ValidatedSelect>
+        <ValidatedTextField
+          label="Equipment *"
           name="equipment"
           value={formData.equipment}
           onChange={handleChange}
           fullWidth
+          required
+          field="equipment"
+          errors={formErrors}
           sx={{ mb: 2 }}
         />
-        <TextField
+        <ValidatedTextField
           label="CAPEX Cost to Light"
           name="capex_cost_to_light"
           value={formData.capex_cost_to_light}
           onChange={handleChange}
           type="number"
           fullWidth
+          field="capex_cost_to_light"
+          errors={formErrors}
           sx={{ mb: 2 }}
+          inputProps={{ min: 0, step: 0.01 }}
         />
         <div>
           <Checkbox

@@ -4,9 +4,10 @@ import {
   TextField, Button, Grid, Checkbox, FormControlLabel, Typography, Box, Chip, Stack, Divider, Alert,
   Select, MenuItem, FormControl, InputLabel, Autocomplete
 } from '@mui/material';
-import { uploadTestResults, getTestResultsFiles, deleteTestResultsFile } from './api';
+import { uploadTestResults, getTestResultsFiles, deleteTestResultsFile, locationDataApi } from './api';
 import { API_BASE_URL } from './config';
 import axios from 'axios';
+import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 
 const CIRCUIT_ID_REGEX = /^[A-Z]{6}[0-9]{6}$/;
 
@@ -28,7 +29,7 @@ const defaultValues = {
   more_details: '',
   local_loop_carriers_a: '',
   local_loop_carriers_b: '',
-  equipment_type: 'Nokia'
+  equipment_type: ''
 };
 
 function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit = false, onFileDeleted }) {
@@ -38,6 +39,32 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
   const [existingFiles, setExistingFiles] = useState([]);
   const [error, setError] = useState('');
   const [fileLoading, setFileLoading] = useState(false);
+  
+  // Validation states
+  const [formErrors, setFormErrors] = useState({});
+  
+  // Validation rules for Network Routes form
+  const routeValidationRules = {
+    circuit_id: [
+      { type: 'required', message: 'Circuit ID is required' },
+      { type: 'pattern', pattern: CIRCUIT_ID_REGEX, message: 'Circuit ID must be exactly 6 uppercase letters followed by 6 digits (e.g., ABCDEF123456)' }
+    ],
+    mtu: { type: 'required', message: 'MTU is required' },
+    expected_latency: { type: 'required', message: 'Expected Latency is required' },
+    cost: { type: 'required', message: 'Cost is required' },
+    underlying_carrier: { type: 'required', message: 'Underlying Carrier is required' },
+    equipment_type: { type: 'required', message: 'Equipment Type is required' },
+    bandwidth: { type: 'required', message: 'Bandwidth is required' }
+  };
+  
+  // Validation function
+  const validate = createValidator(routeValidationRules);
+  
+  // Normalize text for duplicate checking
+  const normalizeText = (text) => {
+    if (!text) return '';
+    return text.trim().replace(/\s+/g, ' ').toLowerCase();
+  };
   const [carrierOptions, setCarrierOptions] = useState([]);
   const [carrierInputValue, setCarrierInputValue] = useState('');
   const [selectedCarrier, setSelectedCarrier] = useState(null);
@@ -45,11 +72,31 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
   const [selectedLocalLoopCarriersB, setSelectedLocalLoopCarriersB] = useState([]);
   const [localLoopCarrierInputValueA, setLocalLoopCarrierInputValueA] = useState('');
   const [localLoopCarrierInputValueB, setLocalLoopCarrierInputValueB] = useState('');
+  const [locationOptions, setLocationOptions] = useState([]);
+  const [selectedLocationA, setSelectedLocationA] = useState(null);
+  const [selectedLocationB, setSelectedLocationB] = useState(null);
+  const [locationInputValueA, setLocationInputValueA] = useState('');
+  const [locationInputValueB, setLocationInputValueB] = useState('');
+
+  // Load locations on component mount
+  useEffect(() => {
+    if (open) {
+      loadLocations();
+      setFormErrors({}); // Clear validation errors when dialog opens
+      setError(''); // Clear general errors
+    }
+  }, [open]);
 
   useEffect(() => {
     if (isEdit && initialValues && Object.keys(initialValues).length > 0) {
-      // When editing, populate with existing values
-      setValues({ ...defaultValues, ...initialValues });
+      // When editing, populate with existing values (filter out null/undefined values)
+      const cleanInitialValues = Object.keys(initialValues).reduce((acc, key) => {
+        if (initialValues[key] !== null && initialValues[key] !== undefined) {
+          acc[key] = initialValues[key];
+        }
+        return acc;
+      }, {});
+      setValues({ ...defaultValues, ...cleanInitialValues });
       
       // Set the selected carrier based on underlying_carrier value
       if (initialValues.underlying_carrier) {
@@ -76,6 +123,23 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
         })).filter(carrier => carrier.carrier_name);
         setSelectedLocalLoopCarriersB(carriersB);
       }
+
+      // Set the selected locations based on location codes
+      if (initialValues.location_a) {
+        setSelectedLocationA({ 
+          location_code: initialValues.location_a,
+          id: null
+        });
+        setLocationInputValueA(initialValues.location_a);
+      }
+
+      if (initialValues.location_b) {
+        setSelectedLocationB({ 
+          location_code: initialValues.location_b,
+          id: null
+        });
+        setLocationInputValueB(initialValues.location_b);
+      }
       
       // Load existing test results files
       loadExistingFiles(initialValues.circuit_id);
@@ -89,6 +153,10 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
       setSelectedLocalLoopCarriersB([]);
       setLocalLoopCarrierInputValueA('');
       setLocalLoopCarrierInputValueB('');
+      setSelectedLocationA(null);
+      setSelectedLocationB(null);
+      setLocationInputValueA('');
+      setLocationInputValueB('');
     }
     setFile(null);
     setTestResultsFiles([]);
@@ -112,7 +180,33 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setValues(v => ({ ...v, [name]: type === 'checkbox' ? checked : value }));
+    
+    // Auto-uppercase Circuit ID and limit to 12 characters
+    if (name === 'circuit_id') {
+      const upperValue = value.toUpperCase().slice(0, 12);
+      setValues(v => ({ ...v, [name]: type === 'checkbox' ? checked : upperValue }));
+      
+      // Real-time Circuit ID validation (only for add mode)
+      if (!isEdit) {
+        if (upperValue && !CIRCUIT_ID_REGEX.test(upperValue)) {
+          setError('Circuit ID must be exactly 6 uppercase letters followed by 6 digits (e.g., ABCDEF123456)');
+        } else {
+          setError('');
+        }
+      }
+    } else {
+      setValues(v => ({ ...v, [name]: type === 'checkbox' ? checked : value }));
+    }
+  };
+
+  const loadLocations = async () => {
+    try {
+      const locations = await locationDataApi.getLocations();
+      setLocationOptions(locations || []);
+    } catch (error) {
+      console.error('Error loading locations:', error);
+      setLocationOptions([]);
+    }
   };
 
   const searchCarriers = async (inputValue) => {
@@ -147,25 +241,12 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
     setCarrierInputValue(newInputValue);
     searchCarriers(newInputValue);
     
-    // Reset selected carrier if input doesn't match any option
+    // Only clear selection if input is completely empty
     if (!newInputValue) {
       setSelectedCarrier(null);
       setValues({ ...values, underlying_carrier: '' });
-    } else {
-      // Check if the input matches any existing carrier option
-      const matchingCarrier = carrierOptions.find(option => 
-        option.carrier_name.toLowerCase() === newInputValue.toLowerCase()
-      );
-      
-      if (matchingCarrier && matchingCarrier !== selectedCarrier) {
-        setSelectedCarrier(matchingCarrier);
-        setValues({ ...values, underlying_carrier: matchingCarrier.carrier_name });
-      } else if (!matchingCarrier && selectedCarrier) {
-        // Input doesn't match any carrier, clear selection
-        setSelectedCarrier(null);
-        setValues({ ...values, underlying_carrier: '' });
-      }
     }
+    // No auto-selection - user must click to select
   };
 
   const handleLocalLoopCarrierChangeA = (event, newValue) => {
@@ -188,6 +269,46 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
   const handleLocalLoopCarrierInputChangeB = (event, newInputValue) => {
     setLocalLoopCarrierInputValueB(newInputValue);
     searchCarriers(newInputValue);
+  };
+
+  const handleLocationAChange = (event, newValue) => {
+    setSelectedLocationA(newValue);
+    if (newValue) {
+      setValues({ ...values, location_a: newValue.location_code });
+    } else {
+      setValues({ ...values, location_a: '' });
+    }
+  };
+
+  const handleLocationBChange = (event, newValue) => {
+    setSelectedLocationB(newValue);
+    if (newValue) {
+      setValues({ ...values, location_b: newValue.location_code });
+    } else {
+      setValues({ ...values, location_b: '' });
+    }
+  };
+
+  const handleLocationInputChangeA = (event, newInputValue) => {
+    setLocationInputValueA(newInputValue);
+    
+    // Only clear selection if input is completely empty
+    if (!newInputValue) {
+      setSelectedLocationA(null);
+      setValues({ ...values, location_a: '' });
+    }
+    // No auto-selection - user must click to select
+  };
+
+  const handleLocationInputChangeB = (event, newInputValue) => {
+    setLocationInputValueB(newInputValue);
+    
+    // Only clear selection if input is completely empty
+    if (!newInputValue) {
+      setSelectedLocationB(null);
+      setValues({ ...values, location_b: '' });
+    }
+    // No auto-selection - user must click to select
   };
 
   const handleFileChange = (e) => {
@@ -236,25 +357,78 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
     return !isNaN(numericValue) && numericValue > 0;
   };
 
-  const handleSubmit = () => {
-    if (!isEdit && !CIRCUIT_ID_REGEX.test(values.circuit_id)) {
-      setError('Circuit ID must be 6 uppercase letters followed by 6 digits');
-      return;
+  const handleSubmit = async () => {
+    try {
+      // Validate form using validation framework
+      let validationErrors;
+      if (isEdit) {
+        // For edit mode, don't require circuit_id validation (it's disabled)
+        const editValidationRules = {
+          mtu: { type: 'required', message: 'MTU is required' },
+          expected_latency: { type: 'required', message: 'Expected Latency is required' },
+          cost: { type: 'required', message: 'Cost is required' },
+          underlying_carrier: { type: 'required', message: 'Underlying Carrier is required' },
+          equipment_type: { type: 'required', message: 'Equipment Type is required' },
+          bandwidth: { type: 'required', message: 'Bandwidth is required' }
+        };
+        const editValidate = createValidator(editValidationRules);
+        validationErrors = editValidate(values);
+      } else {
+        validationErrors = validate(values);
+      }
+
+      setFormErrors(validationErrors);
+
+      // Check if there are validation errors
+      if (Object.keys(validationErrors).length > 0) {
+        scrollToFirstError(validationErrors);
+        return;
+      }
+
+      // Location validations
+      if (!selectedLocationA) {
+        setError('Location A is required');
+        return;
+      }
+      
+      if (!selectedLocationB) {
+        setError('Location B is required');
+        return;
+      }
+
+      // Validate underlying carrier - must be from database
+      if (!selectedCarrier) {
+        setError('Please select a valid carrier from the list');
+        return;
+      }
+
+      // Bandwidth validation
+      if (!validateBandwidth(values.bandwidth)) {
+        setError('Bandwidth must be either "Dark Fiber" or a numeric value');
+        return;
+      }
+
+      // Circuit ID duplicate prevention (only for add mode)
+      if (!isEdit) {
+        // You would need to get existing routes here and check for duplicates
+        // For now, we'll implement the framework and you can add the actual API call
+        const normalizedCircuitId = normalizeText(values.circuit_id);
+        // TODO: Add actual duplicate checking against existing routes
+        // const existingRoute = existingRoutes.find(route => 
+        //   normalizeText(route.circuit_id) === normalizedCircuitId
+        // );
+        // if (existingRoute) {
+        //   setError(`A route with Circuit ID "${values.circuit_id}" already exists. Please use a different Circuit ID.`);
+        //   return;
+        // }
+      }
+
+      setError('');
+      setFormErrors({}); // Clear validation errors on success
+      onSubmit({ ...values }, file, testResultsFiles);
+    } catch (err) {
+      setError('An error occurred during validation');
     }
-    
-    if (!validateBandwidth(values.bandwidth)) {
-      setError('Bandwidth must be either "Dark Fiber" or a numeric value');
-      return;
-    }
-    
-    // Validate underlying carrier - must be from database or empty
-    if (values.underlying_carrier && !selectedCarrier) {
-      setError('Please select a valid carrier from the list or leave empty');
-      return;
-    }
-    
-    setError('');
-    onSubmit({ ...values }, file, testResultsFiles);
   };
 
   return (
@@ -270,16 +444,19 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
       <DialogContent>
         <Grid container spacing={3} sx={{ mt: 1 }}>
           <Grid item xs={12}>
-            <TextField
-              label="Circuit ID - UCN"
+            <ValidatedTextField
+              label="Circuit ID - UCN *"
               name="circuit_id"
               value={values.circuit_id}
               onChange={handleChange}
               fullWidth
               required
               disabled={isEdit}
-              error={!!error}
-              helperText={isEdit ? 'Circuit ID cannot be changed' : error}
+              placeholder="ABCDEF123456"
+              inputProps={{ maxLength: 12 }}
+              helperText={isEdit ? 'Circuit ID cannot be changed' : 'Format: 6 uppercase letters + 6 digits (e.g., ABCDEF123456)'}
+              field="circuit_id"
+              errors={formErrors}
               sx={{
                 '& .MuiInputBase-input': {
                   backgroundColor: isEdit ? '#f5f5f5' : 'transparent',
@@ -288,35 +465,43 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              label="MTU"
+            <ValidatedTextField
+              label="MTU (bytes) *"
               name="mtu"
               value={values.mtu}
               onChange={handleChange}
               type="number"
               fullWidth
+              required
+              field="mtu"
+              errors={formErrors}
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              label="SLA Latency"
+            <ValidatedTextField
+              label="SLA Latency (ms)"
               name="sla_latency"
               value={values.sla_latency}
               onChange={handleChange}
               type="number"
               step="0.1"
               fullWidth
+              field="sla_latency"
+              errors={formErrors}
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              label="Expected Latency"
+            <ValidatedTextField
+              label="Expected Latency (ms) *"
               name="expected_latency"
               value={values.expected_latency}
               onChange={handleChange}
               type="number"
               step="0.1"
               fullWidth
+              required
+              field="expected_latency"
+              errors={formErrors}
             />
           </Grid>
           <Grid item xs={12}>
@@ -391,18 +576,20 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
             </Box>
           </Grid>
           <Grid item xs={12}>
-            <TextField
+            <ValidatedTextField
               label="Cable System"
               name="cable_system"
               value={values.cable_system}
               onChange={handleChange}
               fullWidth
+              field="cable_system"
+              errors={formErrors}
             />
           </Grid>
           <Grid item xs={12}>
             <Autocomplete
               options={carrierOptions}
-              getOptionLabel={(option) => option.carrier_name}
+              getOptionLabel={(option) => option.display_name || option.carrier_name}
               value={selectedCarrier}
               onChange={handleCarrierChange}
               inputValue={carrierInputValue}
@@ -413,10 +600,12 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
                   label="Underlying Carrier"
                   placeholder="Search carriers..."
                   fullWidth
+                  required
                 />
               )}
-              clearOnBlur
-              selectOnFocus
+              clearOnBlur={false}
+              selectOnFocus={false}
+              autoSelect={false}
               handleHomeEndKeys
               noOptionsText="No carriers found - type at least 2 characters to search"
             />
@@ -425,7 +614,7 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
             <Autocomplete
               multiple
               options={carrierOptions}
-              getOptionLabel={(option) => option.carrier_name}
+              getOptionLabel={(option) => option.display_name || option.carrier_name}
               value={selectedLocalLoopCarriersA}
               onChange={handleLocalLoopCarrierChangeA}
               inputValue={localLoopCarrierInputValueA}
@@ -439,8 +628,9 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
                   helperText="Select multiple carriers from the database"
                 />
               )}
-              clearOnBlur
-              selectOnFocus
+              clearOnBlur={false}
+              selectOnFocus={false}
+              autoSelect={false}
               handleHomeEndKeys
               noOptionsText="No carriers found - type at least 2 characters to search"
               freeSolo
@@ -451,7 +641,7 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
             <Autocomplete
               multiple
               options={carrierOptions}
-              getOptionLabel={(option) => option.carrier_name}
+              getOptionLabel={(option) => option.display_name || option.carrier_name}
               value={selectedLocalLoopCarriersB}
               onChange={handleLocalLoopCarrierChangeB}
               inputValue={localLoopCarrierInputValueB}
@@ -465,8 +655,9 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
                   helperText="Select multiple carriers from the database"
                 />
               )}
-              clearOnBlur
-              selectOnFocus
+              clearOnBlur={false}
+              selectOnFocus={false}
+              autoSelect={false}
               handleHomeEndKeys
               noOptionsText="No carriers found - type at least 2 characters to search"
               freeSolo
@@ -474,50 +665,86 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
             />
           </Grid>
           <Grid item xs={12}>
-            <FormControl fullWidth>
-              <InputLabel>Equipment Type</InputLabel>
-              <Select
-                name="equipment_type"
-                value={values.equipment_type}
-                onChange={handleChange}
-                label="Equipment Type"
-              >
-                <MenuItem value="Nokia">Nokia</MenuItem>
-                <MenuItem value="Cisco">Cisco</MenuItem>
-                <MenuItem value="Mixed">Mixed</MenuItem>
-              </Select>
-            </FormControl>
+            <ValidatedSelect
+              fullWidth
+              label="Equipment Type *"
+              value={values.equipment_type}
+              onChange={(e) => handleChange(e)}
+              name="equipment_type"
+              required
+              field="equipment_type"
+              errors={formErrors}
+            >
+              <MenuItem value="Nokia">Nokia</MenuItem>
+              <MenuItem value="Cisco">Cisco</MenuItem>
+              <MenuItem value="Mixed">Mixed</MenuItem>
+            </ValidatedSelect>
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              label="Location A"
-              name="location_a"
-              value={values.location_a}
-              onChange={handleChange}
-              fullWidth
+            <Autocomplete
+              options={locationOptions}
+              getOptionLabel={(option) => option.location_code}
+              value={selectedLocationA}
+              onChange={handleLocationAChange}
+              inputValue={locationInputValueA}
+              onInputChange={handleLocationInputChangeA}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Location A"
+                  placeholder="Search POP codes..."
+                  fullWidth
+                  required
+                />
+              )}
+              clearOnBlur={false}
+              selectOnFocus={false}
+              autoSelect={false}
+              handleHomeEndKeys
+              noOptionsText="No locations found"
+              isOptionEqualToValue={(option, value) => option.location_code === value.location_code}
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              label="Location B"
-              name="location_b"
-              value={values.location_b}
-              onChange={handleChange}
-              fullWidth
+            <Autocomplete
+              options={locationOptions}
+              getOptionLabel={(option) => option.location_code}
+              value={selectedLocationB}
+              onChange={handleLocationBChange}
+              inputValue={locationInputValueB}
+              onInputChange={handleLocationInputChangeB}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Location B"
+                  placeholder="Search POP codes..."
+                  fullWidth
+                  required
+                />
+              )}
+              clearOnBlur={false}
+              selectOnFocus={false}
+              autoSelect={false}
+              handleHomeEndKeys
+              noOptionsText="No locations found"
+              isOptionEqualToValue={(option, value) => option.location_code === value.location_code}
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              label="Bandwidth"
+            <ValidatedTextField
+              label="Bandwidth *"
               name="bandwidth"
               value={values.bandwidth}
               onChange={handleChange}
               fullWidth
+              required
               helperText="Enter numeric value (Mbps) or 'Dark Fiber'"
+              field="bandwidth"
+              errors={formErrors}
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField
+            <ValidatedTextField
               label="Capacity Usage %"
               name="capacity_usage_percent"
               value={values.capacity_usage_percent}
@@ -528,37 +755,42 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
               max="1000"
               fullWidth
               helperText="Percentage value (0-1000%)"
+              field="capacity_usage_percent"
+              errors={formErrors}
             />
           </Grid>
           <Grid item xs={12} md={6}>
-            <TextField
-              label="Cost"
+            <ValidatedTextField
+              label="Cost *"
               name="cost"
               value={values.cost}
               onChange={handleChange}
               type="number"
               step="0.01"
               fullWidth
+              required
               helperText="Monthly cost (hidden from main table)"
+              field="cost"
+              errors={formErrors}
             />
           </Grid>
           <Grid item xs={12} md={6}>
-            <FormControl fullWidth>
-              <InputLabel>Currency</InputLabel>
-              <Select
-                name="currency"
-                value={values.currency}
-                onChange={handleChange}
-                label="Currency"
-              >
-                <MenuItem value="USD">USD - US Dollar</MenuItem>
-                <MenuItem value="EUR">EUR - Euro</MenuItem>
-                <MenuItem value="GBP">GBP - British Pound</MenuItem>
-                <MenuItem value="JPY">JPY - Japanese Yen</MenuItem>
-                <MenuItem value="AUD">AUD - Australian Dollar</MenuItem>
-                <MenuItem value="CAD">CAD - Canadian Dollar</MenuItem>
-              </Select>
-            </FormControl>
+            <ValidatedSelect
+              fullWidth
+              label="Currency"
+              value={values.currency}
+              onChange={(e) => handleChange(e)}
+              name="currency"
+              field="currency"
+              errors={formErrors}
+            >
+              <MenuItem value="USD">USD - US Dollar</MenuItem>
+              <MenuItem value="EUR">EUR - Euro</MenuItem>
+              <MenuItem value="GBP">GBP - British Pound</MenuItem>
+              <MenuItem value="JPY">JPY - Japanese Yen</MenuItem>
+              <MenuItem value="AUD">AUD - Australian Dollar</MenuItem>
+              <MenuItem value="CAD">CAD - Canadian Dollar</MenuItem>
+            </ValidatedSelect>
           </Grid>
           <Grid item xs={12}>
             <FormControlLabel
@@ -567,7 +799,7 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField
+            <ValidatedTextField
               label="More Details"
               name="more_details"
               value={values.more_details}
@@ -575,6 +807,8 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
               fullWidth
               multiline
               minRows={2}
+              field="more_details"
+              errors={formErrors}
             />
           </Grid>
         </Grid>

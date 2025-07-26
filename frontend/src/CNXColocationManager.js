@@ -14,9 +14,13 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import InfoIcon from '@mui/icons-material/Info';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import DownloadIcon from '@mui/icons-material/Download';
+import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
+import CloseIcon from '@mui/icons-material/Close';
 import { API_BASE_URL } from './config';
 import axios from 'axios';
 import LoadingIndicator from './components/LoadingIndicator';
+import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 
 const CNXColocationManager = ({ hasPermission }) => {
   const [locations, setLocations] = useState([]);
@@ -61,6 +65,46 @@ const CNXColocationManager = ({ hasPermission }) => {
     more_info: ''
   });
   const [clientDesignFile, setClientDesignFile] = useState(null);
+
+  // Validation states
+  const [clientErrors, setClientErrors] = useState({});
+  const [rackErrors, setRackErrors] = useState({});
+
+  // Validation rules for Client form
+  const clientValidationRules = {
+    client_name: { type: 'required', message: 'Client Name is required' },
+    power_purchased: [
+      { type: 'required', message: 'Power Purchased is required' },
+      { type: 'number', message: 'Power Purchased must be a valid number' },
+      { type: 'min', min: 0, message: 'Power Purchased must be greater than or equal to 0' }
+    ],
+    ru_purchased: [
+      { type: 'required', message: 'RU Purchased is required' },
+      { type: 'number', message: 'RU Purchased must be a valid number' },
+      { type: 'min', min: 1, message: 'RU Purchased must be at least 1' },
+      { type: 'max', max: 30, message: 'RU Purchased cannot exceed 30' }
+    ]
+  };
+
+  // Validation rules for Rack form
+  const rackValidationRules = {
+    rack_id: { type: 'required', message: 'Rack ID is required' },
+    total_power_kva: [
+      { type: 'required', message: 'Total Power is required' },
+      { type: 'number', message: 'Total Power must be a valid number' }
+    ],
+    network_infrastructure: { type: 'required', message: 'Network Infrastructure is required' }
+  };
+
+  // Validation functions
+  const validateClient = createValidator(clientValidationRules);
+  const validateRack = createValidator(rackValidationRules);
+
+  // Normalize text for duplicate checking
+  const normalizeText = (text) => {
+    if (!text) return '';
+    return text.trim().replace(/\s+/g, ' ').toLowerCase();
+  };
 
   // Load data on component mount
   useEffect(() => {
@@ -209,9 +253,17 @@ const CNXColocationManager = ({ hasPermission }) => {
   const getDesignFileIndicator = (location) => {
     if (location.design_file) {
       return (
-        <Tooltip title="Design file available">
-          <CheckCircleIcon color="success" />
-        </Tooltip>
+        <Button
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDownloadLocationDesign(location.id);
+          }}
+          color="success"
+          size="small"
+          startIcon={<CheckCircleIcon color="success" />}
+        >
+          <CloudDownloadIcon fontSize="small" />
+        </Button>
       );
     } else {
       return (
@@ -233,6 +285,7 @@ const CNXColocationManager = ({ hasPermission }) => {
       more_info: ''
     });
     setPricingInfoFile(null);
+    setRackErrors({}); // Clear validation errors
     setRackDialogOpen(true);
   };
 
@@ -246,11 +299,49 @@ const CNXColocationManager = ({ hasPermission }) => {
       more_info: rack.more_info || ''
     });
     setPricingInfoFile(null);
+    setRackErrors({}); // Clear validation errors
     setRackDialogOpen(true);
   };
 
   const handleRackSave = async () => {
     try {
+      // Validate form using validation framework
+      const validationErrors = validateRack(rackFormData);
+      setRackErrors(validationErrors);
+
+      // Check if there are validation errors
+      if (Object.keys(validationErrors).length > 0) {
+        scrollToFirstError(validationErrors);
+        return;
+      }
+
+      // Duplicate prevention - check for existing rack IDs within the same location
+      const locationId = rackDialogMode === 'add' ? selectedLocation.id : selectedRack.location_id;
+      const existingRacks = rackData[locationId] || [];
+      const normalizedRackId = normalizeText(rackFormData.rack_id);
+      
+      if (rackDialogMode === 'add') {
+        const existingRack = existingRacks.find(rack => 
+          normalizeText(rack.rack_id) === normalizedRackId
+        );
+        
+        if (existingRack) {
+          setError(`A rack with ID "${rackFormData.rack_id}" already exists in this location. Please use a different rack ID.`);
+          return;
+        }
+      } else {
+        // For edit mode, check duplicates excluding current rack
+        const existingRack = existingRacks.find(rack => 
+          rack.id !== selectedRack.id && 
+          normalizeText(rack.rack_id) === normalizedRackId
+        );
+        
+        if (existingRack) {
+          setError(`A rack with ID "${rackFormData.rack_id}" already exists in this location. Please use a different rack ID.`);
+          return;
+        }
+      }
+
       const formData = new FormData();
       Object.keys(rackFormData).forEach(key => {
         formData.append(key, rackFormData[key]);
@@ -286,8 +377,9 @@ const CNXColocationManager = ({ hasPermission }) => {
       }
 
       setRackDialogOpen(false);
+      setRackErrors({}); // Clear validation errors on success
+      
       // Reload racks for the location
-      const locationId = rackDialogMode === 'add' ? selectedLocation.id : selectedRack.location_id;
       await loadRacks(locationId);
     } catch (err) {
       setError('Failed to save rack: ' + err.message);
@@ -323,6 +415,7 @@ const CNXColocationManager = ({ hasPermission }) => {
       more_info: ''
     });
     setClientDesignFile(null);
+    setClientErrors({}); // Clear validation errors
     setClientDialogOpen(true);
   };
 
@@ -336,11 +429,64 @@ const CNXColocationManager = ({ hasPermission }) => {
       more_info: client.more_info || ''
     });
     setClientDesignFile(null);
+    setClientErrors({}); // Clear validation errors
     setClientDialogOpen(true);
   };
 
   const handleClientSave = async () => {
     try {
+      // Validate form using validation framework
+      const validationErrors = validateClient(clientFormData);
+      setClientErrors(validationErrors);
+
+      // Check if there are validation errors
+      if (Object.keys(validationErrors).length > 0) {
+        scrollToFirstError(validationErrors);
+        return;
+      }
+
+      // RU validation - ensure total doesn't exceed 30
+      const ruPurchased = parseInt(clientFormData.ru_purchased);
+      const rackId = clientDialogMode === 'add' ? selectedRack.id : selectedClient.rack_id;
+      const existingClients = clientData[rackId] || [];
+      
+      // Calculate current RU allocation
+      const currentRU = existingClients.reduce((total, client) => {
+        // Exclude current client in edit mode
+        if (clientDialogMode === 'edit' && client.id === selectedClient.id) return total;
+        return total + parseInt(client.ru_purchased || 0);
+      }, 0);
+      
+      if (currentRU + ruPurchased > 30) {
+        setError(`Cannot ${clientDialogMode === 'add' ? 'add' : 'update'} client: Total RU would exceed 30 (currently ${currentRU}/30 allocated, trying to ${clientDialogMode === 'add' ? 'add' : 'change to'} ${ruPurchased} RU)`);
+        return;
+      }
+
+      // Duplicate prevention - check for existing client names within the same rack
+      const normalizedClientName = normalizeText(clientFormData.client_name);
+      
+      if (clientDialogMode === 'add') {
+        const existingClient = existingClients.find(client => 
+          normalizeText(client.client_name) === normalizedClientName
+        );
+        
+        if (existingClient) {
+          setError(`A client with the name "${clientFormData.client_name}" already exists in this rack. Please use a different client name.`);
+          return;
+        }
+      } else {
+        // For edit mode, check duplicates excluding current client
+        const existingClient = existingClients.find(client => 
+          client.id !== selectedClient.id && 
+          normalizeText(client.client_name) === normalizedClientName
+        );
+        
+        if (existingClient) {
+          setError(`A client with the name "${clientFormData.client_name}" already exists in this rack. Please use a different client name.`);
+          return;
+        }
+      }
+
       const formData = new FormData();
       Object.keys(clientFormData).forEach(key => {
         formData.append(key, clientFormData[key]);
@@ -376,8 +522,9 @@ const CNXColocationManager = ({ hasPermission }) => {
       }
 
       setClientDialogOpen(false);
+      setClientErrors({}); // Clear validation errors on success
+      
       // Reload clients for the rack and racks for the location
-      const rackId = clientDialogMode === 'add' ? selectedRack.id : selectedClient.rack_id;
       await loadClients(rackId);
       
       // Also reload racks to update calculations
@@ -430,6 +577,134 @@ const CNXColocationManager = ({ hasPermission }) => {
         return;
       }
       setPricingInfoFile(file);
+    }
+  };
+
+  // Download handlers
+  const handleDownloadLocationDesign = async (locationId) => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/cnx-colocation/locations/${locationId}/download`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        },
+        responseType: 'blob'
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `location_design_${locationId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('Failed to download design file: ' + err.message);
+    }
+  };
+
+  const handleDownloadRackPricing = async (rackId) => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/download`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        },
+        responseType: 'blob'
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `rack_pricing_${rackId}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('Failed to download pricing file: ' + err.message);
+    }
+  };
+
+  const handleDownloadClientDesign = async (clientId) => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/cnx-colocation/clients/${clientId}/download`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        },
+        responseType: 'blob'
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `client_design_${clientId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('Failed to download design file: ' + err.message);
+    }
+  };
+
+  // Delete file handlers
+  const handleDeleteLocationDesign = async (locationId) => {
+    if (!window.confirm('Are you sure you want to delete this design file?')) return;
+    
+    try {
+      await axios.delete(`${API_BASE_URL}/cnx-colocation/locations/${locationId}/design-file`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      setSuccess('Design file deleted successfully');
+      await loadCNXColocationLocations();
+    } catch (err) {
+      setError('Failed to delete design file: ' + err.message);
+    }
+  };
+
+  const handleDeleteRackPricing = async (rackId) => {
+    if (!window.confirm('Are you sure you want to delete this pricing file?')) return;
+    
+    try {
+      await axios.delete(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/pricing-file`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      setSuccess('Pricing file deleted successfully');
+      // Reload the specific location's racks
+      const rack = rackData[Object.keys(rackData).find(locationId => 
+        rackData[locationId]?.find(r => r.id === rackId)
+      )]?.find(r => r.id === rackId);
+      if (rack) {
+        await loadRacks(rack.location_id);
+      }
+    } catch (err) {
+      setError('Failed to delete pricing file: ' + err.message);
+    }
+  };
+
+  const handleDeleteClientDesign = async (clientId) => {
+    if (!window.confirm('Are you sure you want to delete this design file?')) return;
+    
+    try {
+      await axios.delete(`${API_BASE_URL}/cnx-colocation/clients/${clientId}/design-file`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      setSuccess('Design file deleted successfully');
+      // Reload the specific rack's clients
+      const client = clientData[Object.keys(clientData).find(rackId => 
+        clientData[rackId]?.find(c => c.id === clientId)
+      )]?.find(c => c.id === clientId);
+      if (client) {
+        await loadClients(client.rack_id);
+      }
+    } catch (err) {
+      setError('Failed to delete design file: ' + err.message);
     }
   };
 
@@ -650,9 +925,17 @@ const CNXColocationManager = ({ hasPermission }) => {
                                       <TableCell>{rack.network_infrastructure}</TableCell>
                                       <TableCell align="center">
                                         {rack.pricing_info_file ? (
-                                          <Tooltip title="Pricing file available">
-                                            <CheckCircleIcon color="success" />
-                                          </Tooltip>
+                                          <Button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDownloadRackPricing(rack.id);
+                                            }}
+                                            color="success"
+                                            size="small"
+                                            startIcon={<CheckCircleIcon color="success" />}
+                                          >
+                                            <CloudDownloadIcon fontSize="small" />
+                                          </Button>
                                         ) : (
                                           <Tooltip title="No pricing file">
                                             <CancelIcon color="error" />
@@ -729,9 +1012,17 @@ const CNXColocationManager = ({ hasPermission }) => {
                                                       <TableCell>{client.ru_purchased}</TableCell>
                                                       <TableCell align="center">
                                                         {client.design_file ? (
-                                                          <Tooltip title="Design file available">
-                                                            <CheckCircleIcon color="success" />
-                                                          </Tooltip>
+                                                          <Button
+                                                            onClick={(e) => {
+                                                              e.stopPropagation();
+                                                              handleDownloadClientDesign(client.id);
+                                                            }}
+                                                            color="success"
+                                                            size="small"
+                                                            startIcon={<CheckCircleIcon color="success" />}
+                                                          >
+                                                            <CloudDownloadIcon fontSize="small" />
+                                                          </Button>
                                                         ) : (
                                                           <Tooltip title="No design file">
                                                             <CancelIcon color="error" />
@@ -833,9 +1124,19 @@ const CNXColocationManager = ({ hasPermission }) => {
                 )}
               </Box>
               {selectedLocation?.design_file && (
-                <Typography variant="body2" color="text.secondary">
-                  Current: Design file exists
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Current: Design file exists
+                  </Typography>
+                  <Button
+                    size="small"
+                    color="error"
+                    startIcon={<CloseIcon />}
+                    onClick={() => handleDeleteLocationDesign(selectedLocation.id)}
+                  >
+                    Remove
+                  </Button>
+                </Box>
               )}
             </Box>
 
@@ -910,16 +1211,18 @@ const CNXColocationManager = ({ hasPermission }) => {
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="Rack ID *"
                 value={rackFormData.rack_id}
                 onChange={(e) => setRackFormData(prev => ({...prev, rack_id: e.target.value}))}
                 required
+                field="rack_id"
+                errors={rackErrors}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="Total Power (kVA) *"
                 type="number"
@@ -927,15 +1230,19 @@ const CNXColocationManager = ({ hasPermission }) => {
                 value={rackFormData.total_power_kva}
                 onChange={(e) => setRackFormData(prev => ({...prev, total_power_kva: e.target.value}))}
                 required
+                field="total_power_kva"
+                errors={rackErrors}
               />
             </Grid>
             <Grid item xs={12}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="Network Infrastructure *"
                 value={rackFormData.network_infrastructure}
                 onChange={(e) => setRackFormData(prev => ({...prev, network_infrastructure: e.target.value}))}
                 required
+                field="network_infrastructure"
+                errors={rackErrors}
               />
             </Grid>
             <Grid item xs={12}>
@@ -963,13 +1270,23 @@ const CNXColocationManager = ({ hasPermission }) => {
                 )}
               </Box>
               {selectedRack?.pricing_info_file && (
-                <Typography variant="body2" color="text.secondary">
-                  Current: Pricing file exists
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Current: Pricing file exists
+                  </Typography>
+                  <Button
+                    size="small"
+                    color="error"
+                    startIcon={<CloseIcon />}
+                    onClick={() => handleDeleteRackPricing(selectedRack.id)}
+                  >
+                    Remove
+                  </Button>
+                </Box>
               )}
             </Grid>
             <Grid item xs={12}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="More Info"
                 multiline
@@ -977,6 +1294,8 @@ const CNXColocationManager = ({ hasPermission }) => {
                 value={rackFormData.more_info}
                 onChange={(e) => setRackFormData(prev => ({...prev, more_info: e.target.value}))}
                 placeholder="Enter additional information about this rack..."
+                field="more_info"
+                errors={rackErrors}
               />
             </Grid>
           </Grid>
@@ -997,16 +1316,18 @@ const CNXColocationManager = ({ hasPermission }) => {
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="Client Name *"
                 value={clientFormData.client_name}
                 onChange={(e) => setClientFormData(prev => ({...prev, client_name: e.target.value}))}
                 required
+                field="client_name"
+                errors={clientErrors}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="Power Purchased (kVA) *"
                 type="number"
@@ -1014,16 +1335,20 @@ const CNXColocationManager = ({ hasPermission }) => {
                 value={clientFormData.power_purchased}
                 onChange={(e) => setClientFormData(prev => ({...prev, power_purchased: e.target.value}))}
                 required
+                field="power_purchased"
+                errors={clientErrors}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="RU Purchased *"
                 type="number"
                 value={clientFormData.ru_purchased}
                 onChange={(e) => setClientFormData(prev => ({...prev, ru_purchased: e.target.value}))}
                 required
+                field="ru_purchased"
+                errors={clientErrors}
               />
             </Grid>
             <Grid item xs={12}>
@@ -1051,13 +1376,23 @@ const CNXColocationManager = ({ hasPermission }) => {
                 )}
               </Box>
               {selectedClient?.design_file && (
-                <Typography variant="body2" color="text.secondary">
-                  Current: Design file exists
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Current: Design file exists
+                  </Typography>
+                  <Button
+                    size="small"
+                    color="error"
+                    startIcon={<CloseIcon />}
+                    onClick={() => handleDeleteClientDesign(selectedClient.id)}
+                  >
+                    Remove
+                  </Button>
+                </Box>
               )}
             </Grid>
             <Grid item xs={12}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="More Info"
                 multiline
@@ -1065,6 +1400,8 @@ const CNXColocationManager = ({ hasPermission }) => {
                 value={clientFormData.more_info}
                 onChange={(e) => setClientFormData(prev => ({...prev, more_info: e.target.value}))}
                 placeholder="Enter additional information about this client..."
+                field="more_info"
+                errors={clientErrors}
               />
             </Grid>
           </Grid>

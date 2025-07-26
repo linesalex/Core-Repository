@@ -7,6 +7,7 @@ import {
 import EditIcon from '@mui/icons-material/Edit';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { locationDataApi } from './api';
+import { ValidatedTextField, createValidator, scrollToFirstError } from './components/FormValidation';
 
 const MinimumPricingManager = ({ hasPermission }) => {
   const [locations, setLocations] = useState([]);
@@ -23,6 +24,36 @@ const MinimumPricingManager = ({ hasPermission }) => {
     min_price_1000_to_2999mb: 0,
     min_price_3000mb_plus: 0
   });
+
+  // Validation states
+  const [pricingErrors, setPricingErrors] = useState({});
+
+  // Validation rules for Minimum Pricing form
+  const pricingValidationRules = {
+    min_price_under_100mb: [
+      { type: 'required', message: 'Price for <100Mb is required' },
+      { type: 'number', message: 'Price must be a valid number' },
+      { type: 'min', min: 0, message: 'Price must be greater than or equal to 0' }
+    ],
+    min_price_100_to_999mb: [
+      { type: 'required', message: 'Price for 100-999Mb is required' },
+      { type: 'number', message: 'Price must be a valid number' },
+      { type: 'min', min: 0, message: 'Price must be greater than or equal to 0' }
+    ],
+    min_price_1000_to_2999mb: [
+      { type: 'required', message: 'Price for 1000-2999Mb is required' },
+      { type: 'number', message: 'Price must be a valid number' },
+      { type: 'min', min: 0, message: 'Price must be greater than or equal to 0' }
+    ],
+    min_price_3000mb_plus: [
+      { type: 'required', message: 'Price for 3000Mb+ is required' },
+      { type: 'number', message: 'Price must be a valid number' },
+      { type: 'min', min: 0, message: 'Price must be greater than or equal to 0' }
+    ]
+  };
+
+  // Validation function
+  const validatePricing = createValidator(pricingValidationRules);
 
   // Load locations on component mount
   useEffect(() => {
@@ -49,14 +80,26 @@ const MinimumPricingManager = ({ hasPermission }) => {
       min_price_1000_to_2999mb: location.min_price_1000_to_2999mb || 0,
       min_price_3000mb_plus: location.min_price_3000mb_plus || 0
     });
+    setPricingErrors({}); // Clear validation errors
     setMinimumPricingDialogOpen(true);
   };
 
   const handleMinimumPricingSave = async () => {
     try {
+      // Validate form using validation framework
+      const validationErrors = validatePricing(currentMinimumPricing);
+      setPricingErrors(validationErrors);
+
+      // Check if there are validation errors
+      if (Object.keys(validationErrors).length > 0) {
+        scrollToFirstError(validationErrors);
+        return;
+      }
+
       await locationDataApi.updateMinimumPricing(selectedLocation.id, currentMinimumPricing);
       setSuccess('Minimum pricing updated successfully');
       setMinimumPricingDialogOpen(false);
+      setPricingErrors({}); // Clear validation errors on success
       await loadLocations();
     } catch (err) {
       setError('Failed to update minimum pricing: ' + err.message);
@@ -152,59 +195,71 @@ const MinimumPricingManager = ({ hasPermission }) => {
           </Typography>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
-                label="< 100Mb (USD)"
-                type="text"
+                label="< 100Mb (USD) *"
+                type="number"
                 value={currentMinimumPricing.min_price_under_100mb}
                 onChange={(e) => setCurrentMinimumPricing(prev => ({
                   ...prev,
                   min_price_under_100mb: parseFloat(e.target.value) || 0
                 }))}
                 placeholder="0.00"
-                inputProps={{ pattern: '[0-9]*\\.?[0-9]*' }}
+                required
+                field="min_price_under_100mb"
+                errors={pricingErrors}
+                inputProps={{ min: 0, step: 0.01 }}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
-                label="100-999Mb (USD)"
-                type="text"
+                label="100-999Mb (USD) *"
+                type="number"
                 value={currentMinimumPricing.min_price_100_to_999mb}
                 onChange={(e) => setCurrentMinimumPricing(prev => ({
                   ...prev,
                   min_price_100_to_999mb: parseFloat(e.target.value) || 0
                 }))}
                 placeholder="0.00"
-                inputProps={{ pattern: '[0-9]*\\.?[0-9]*' }}
+                required
+                field="min_price_100_to_999mb"
+                errors={pricingErrors}
+                inputProps={{ min: 0, step: 0.01 }}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
-                label="1000-2999Mb (USD)"
-                type="text"
+                label="1000-2999Mb (USD) *"
+                type="number"
                 value={currentMinimumPricing.min_price_1000_to_2999mb}
                 onChange={(e) => setCurrentMinimumPricing(prev => ({
                   ...prev,
                   min_price_1000_to_2999mb: parseFloat(e.target.value) || 0
                 }))}
                 placeholder="0.00"
-                inputProps={{ pattern: '[0-9]*\\.?[0-9]*' }}
+                required
+                field="min_price_1000_to_2999mb"
+                errors={pricingErrors}
+                inputProps={{ min: 0, step: 0.01 }}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
-                label="3000Mb+ (USD)"
-                type="text"
+                label="3000Mb+ (USD) *"
+                type="number"
                 value={currentMinimumPricing.min_price_3000mb_plus}
                 onChange={(e) => setCurrentMinimumPricing(prev => ({
                   ...prev,
                   min_price_3000mb_plus: parseFloat(e.target.value) || 0
                 }))}
                 placeholder="0.00"
-                inputProps={{ pattern: '[0-9]*\\.?[0-9]*' }}
+                required
+                field="min_price_3000mb_plus"
+                errors={pricingErrors}
+                inputProps={{ min: 0, step: 0.01 }}
               />
             </Grid>
           </Grid>

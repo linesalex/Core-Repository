@@ -495,6 +495,14 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_audit_logs_action_type ON audit_logs(action_type);
       CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
     `
+  },
+  {
+    name: 'Add CNX Colocation support to location_reference table',
+    sql: `
+      -- Add CNX Colocation columns to location_reference table
+      ALTER TABLE location_reference ADD COLUMN more_info TEXT;
+      ALTER TABLE location_reference ADD COLUMN design_file TEXT;
+    `
   }
 ];
 

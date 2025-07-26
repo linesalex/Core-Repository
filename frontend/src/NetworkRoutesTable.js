@@ -5,6 +5,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import { downloadTestResults } from './api';
+import { API_BASE_URL } from './config';
 
 const columns = [
   { id: 'location_a', label: 'Location\nA', vertical: true },
@@ -19,7 +20,7 @@ const columns = [
   { id: 'capacity_usage_percent', label: 'Capacity\nUsage %', vertical: true },
   { id: 'kmz_file_path', label: 'KMZ\nFile', align: 'center', vertical: true },
   { id: 'test_results_file', label: 'Test\nResults', align: 'center', vertical: true },
-  { id: 'mtu', label: 'MTU' },
+  { id: 'mtu', label: 'MTU\n(bytes)', vertical: true },
   { id: 'sla_latency', label: 'SLA\nLatency\n(ms)', vertical: true },
   { id: 'more_details', label: 'More\nDetails', vertical: true, align: 'center' },
 ];
@@ -80,8 +81,38 @@ const darkFiberLinkStyle = {
 };
 
 function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onOpenDarkFiber }) {
-  const handleDownloadKMZ = (filename) => {
-    window.open(`/backend/kmz_files/${filename}`, '_blank');
+  const handleDownloadKMZ = async (filename) => {
+    try {
+      // Use fetch with authorization header
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(`${API_BASE_URL}/download_kmz/${filename}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Download failed');
+      }
+      
+      // Get the file blob
+      const blob = await response.blob();
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('KMZ download failed:', error);
+      alert('Failed to download KMZ file');
+    }
   };
   const handleDownloadTestResults = async (circuit_id) => {
     try {

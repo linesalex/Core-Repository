@@ -19,6 +19,7 @@ import axios from 'axios';
 import { API_BASE_URL } from './config';
 import { useAuth } from './AuthContext';
 import LoadingIndicator from './components/LoadingIndicator';
+import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 
 const CarriersManager = ({ hasPermission }) => {
   const { user } = useAuth();
@@ -59,6 +60,28 @@ const CarriersManager = ({ hasPermission }) => {
     contact_phone: '',
     notes: ''
   });
+
+  // Validation states
+  const [contactErrors, setContactErrors] = useState({});
+
+  // Validation rules for Carrier contact form
+  const carrierContactValidationRules = {
+    contact_type: { type: 'required', message: 'Contact Type is required' },
+    contact_name: { type: 'required', message: 'Contact Name is required' },
+    contact_function: { type: 'required', message: 'Contact Function is required' },
+    contact_email: { 
+      type: 'oneOf', 
+      fields: ['contact_email', 'contact_phone'], 
+      message: 'Either Contact Email or Contact Phone is required' 
+    },
+    contact_phone: { 
+      type: 'oneOf', 
+      fields: ['contact_email', 'contact_phone'], 
+      message: 'Either Contact Email or Contact Phone is required' 
+    }
+  };
+
+  const validateCarrierContact = createValidator(carrierContactValidationRules);
 
   const regions = ['AMERs', 'APAC', 'EMEA'];
 
@@ -181,6 +204,7 @@ const CarriersManager = ({ hasPermission }) => {
       contact_phone: '',
       notes: ''
     });
+    setContactErrors({});
     setContactDialogOpen(true);
   };
 
@@ -197,6 +221,7 @@ const CarriersManager = ({ hasPermission }) => {
       contact_phone: contact.contact_phone || '',
       notes: contact.notes || ''
     });
+    setContactErrors({});
     setContactDialogOpen(true);
   };
 
@@ -236,6 +261,15 @@ const CarriersManager = ({ hasPermission }) => {
 
   const handleContactSubmit = async () => {
     try {
+      // Validate the form
+      const errors = validateCarrierContact(contactFormData);
+      setContactErrors(errors);
+      
+      if (Object.keys(errors).length > 0) {
+        scrollToFirstError(errors);
+        return;
+      }
+
       const headers = {
         'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
         'Content-Type': 'application/json'
@@ -250,6 +284,7 @@ const CarriersManager = ({ hasPermission }) => {
       }
 
       setContactDialogOpen(false);
+      setContactErrors({});
       await loadContacts(selectedCarrier.id);
 
     } catch (err) {
@@ -731,52 +766,75 @@ const CarriersManager = ({ hasPermission }) => {
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="contact_type"
+                errors={contactErrors}
+                required
                 fullWidth
                 label="Contact Type"
+                name="contact_type"
                 value={contactFormData.contact_type}
                 onChange={(e) => handleContactInputChange('contact_type', e.target.value)}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="contact_level"
+                errors={contactErrors}
                 fullWidth
                 label="Contact Level"
+                name="contact_level"
                 value={contactFormData.contact_level}
                 onChange={(e) => handleContactInputChange('contact_level', e.target.value)}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="contact_name"
+                errors={contactErrors}
+                required
                 fullWidth
                 label="Contact Name"
+                name="contact_name"
                 value={contactFormData.contact_name}
                 onChange={(e) => handleContactInputChange('contact_name', e.target.value)}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="contact_function"
+                errors={contactErrors}
+                required
                 fullWidth
                 label="Contact Function"
+                name="contact_function"
                 value={contactFormData.contact_function}
                 onChange={(e) => handleContactInputChange('contact_function', e.target.value)}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="contact_email"
+                errors={contactErrors}
                 fullWidth
                 label="Contact Email"
                 type="email"
+                name="contact_email"
                 value={contactFormData.contact_email}
                 onChange={(e) => handleContactInputChange('contact_email', e.target.value)}
+                helperText="Required if Contact Phone is not provided"
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="contact_phone"
+                errors={contactErrors}
                 fullWidth
                 label="Contact Phone"
+                name="contact_phone"
                 value={contactFormData.contact_phone}
                 onChange={(e) => handleContactInputChange('contact_phone', e.target.value)}
+                helperText="Required if Contact Email is not provided"
               />
             </Grid>
             <Grid item xs={12}>

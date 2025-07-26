@@ -21,8 +21,9 @@ const ChangeLogsViewer = () => {
   
   // Filters
   const [filters, setFilters] = useState({
-    table_name: '',
+    module: '',
     user_id: '',
+    search: '',
     limit: 50,
     offset: 0
   });
@@ -41,7 +42,14 @@ const ChangeLogsViewer = () => {
       
       Object.entries(filters).forEach(([key, value]) => {
         if (value) {
-          params.append(key, value);
+          // Convert module to table_names for backend
+          if (key === 'module' && modules[value]) {
+            modules[value].tables.forEach(table => {
+              params.append('table_names', table);
+            });
+          } else {
+            params.append(key, value);
+          }
         }
       });
       
@@ -88,15 +96,63 @@ const ChangeLogsViewer = () => {
     return <Chip label={action} color={colors[action] || 'default'} size="small" />;
   };
 
+  // Module definitions with their sub-tables
+  const modules = {
+    'network_routes': {
+      name: 'Network Routes',
+      tables: ['network_routes', 'dark_fiber_details']
+    },
+    'network_design_pricing': {
+      name: 'Network Design & Pricing',
+      tables: ['network_design_searches', 'pricing_logic_config', 'promo_pricing_rules']
+    },
+    'exchange_data': {
+      name: 'Exchange Data',
+      tables: ['exchanges', 'exchange_feeds', 'exchange_contacts']
+    },
+    'exchange_rates': {
+      name: 'Exchange Rates',
+      tables: ['exchange_rates']
+    },
+    'network_data': {
+      name: 'Network Data',
+      tables: ['location_reference', 'pop_capabilities', 'carriers', 'carrier_contacts', 'cnx_colocation_racks', 'cnx_colocation_clients']
+    },
+    'user_management': {
+      name: 'User Management',
+      tables: ['users', 'user_module_visibility', 'user_activity']
+    },
+    'bulk_updates': {
+      name: 'Bulk Updates',
+      tables: ['bulk_upload', 'bulk_upload_templates', 'bulk_upload_database']
+    }
+  };
+
   const getTableName = (tableName) => {
     const nameMap = {
       'network_routes': 'Network Routes',
+      'dark_fiber_details': 'Dark Fiber Details',
+      'network_design_searches': 'Network Design Searches',
+      'pricing_logic_config': 'Pricing Logic Configuration',
+      'promo_pricing_rules': 'Promo Pricing Rules',
+      'exchanges': 'Exchanges',
+      'exchange_feeds': 'Exchange Feeds',
+      'exchange_contacts': 'Exchange Contacts',
+      'exchange_rates': 'Exchange Rates',
       'location_reference': 'Locations',
-      'carriers': 'Carriers',
-      'users': 'Users',
-      'dark_fiber_details': 'Dark Fiber',
       'pop_capabilities': 'POP Capabilities',
-      'user_activity': 'User Activity'
+      'carriers': 'Carriers',
+      'carrier_contacts': 'Carrier Contacts',
+      'cnx_colocation_racks': 'CNX Colocation Racks',
+      'cnx_colocation_clients': 'CNX Colocation Clients',
+      'users': 'Users',
+      'user_module_visibility': 'User Module Visibility',
+      'user_activity': 'User Activity',
+      'bulk_upload': 'Bulk Upload',
+      'bulk_upload_templates': 'Bulk Upload Templates',
+      'bulk_upload_database': 'Bulk Upload Database',
+      'audit_logs': 'Audit Logs',
+      'change_logs': 'Change Logs'
     };
     return nameMap[tableName] || tableName;
   };
@@ -113,16 +169,6 @@ const ChangeLogsViewer = () => {
       return jsonString;
     }
   };
-
-  const tableNames = [
-    'network_routes',
-    'location_reference',
-    'carriers',
-    'users',
-    'dark_fiber_details',
-    'pop_capabilities',
-    'user_activity'
-  ];
 
   return (
     <Box sx={{ width: '100%' }}>
@@ -150,20 +196,30 @@ const ChangeLogsViewer = () => {
           <Grid container spacing={2}>
             <Grid item xs={12} md={4}>
               <FormControl fullWidth>
-                <InputLabel>Table/Module</InputLabel>
+                <InputLabel>Module</InputLabel>
                 <Select
-                  value={filters.table_name}
-                  onChange={(e) => handleFilterChange('table_name', e.target.value)}
-                  label="Table/Module"
+                  value={filters.module}
+                  onChange={(e) => handleFilterChange('module', e.target.value)}
+                  label="Module"
                 >
                   <MenuItem value="">All Modules</MenuItem>
-                  {tableNames.map((table) => (
-                    <MenuItem key={table} value={table}>
-                      {getTableName(table)}
+                  {Object.entries(modules).map(([moduleKey, moduleData]) => (
+                    <MenuItem key={moduleKey} value={moduleKey}>
+                      {moduleData.name}
                     </MenuItem>
                   ))}
                 </Select>
               </FormControl>
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <TextField
+                fullWidth
+                label="Search"
+                placeholder="Search by record ID, user, or changes..."
+                value={filters.search}
+                onChange={(e) => handleFilterChange('search', e.target.value)}
+                variant="outlined"
+              />
             </Grid>
             <Grid item xs={12} md={4}>
               <FormControl fullWidth>

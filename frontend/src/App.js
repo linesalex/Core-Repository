@@ -81,7 +81,9 @@ function AuthenticatedApp() {
   
   // Load network routes data - moved before early returns to follow Rules of Hooks
   useEffect(() => {
-    if (isAuthenticated && hasModuleAccess('network_routes')) {
+    // Extra safeguard: ensure token exists before making API calls
+    const token = localStorage.getItem('authToken');
+    if (isAuthenticated && hasModuleAccess('network_routes') && token) {
       setLoading(true);
       fetchRoutes()
         .then(data => {
@@ -89,6 +91,7 @@ function AuthenticatedApp() {
           setLoading(false);
         })
         .catch(err => {
+          console.error('Network routes fetch error:', err);
           setError('Failed to fetch data');
           setLoading(false);
         });

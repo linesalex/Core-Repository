@@ -11,6 +11,7 @@ import {
   CloudUpload, Download, History, CheckCircle, Error
 } from '@mui/icons-material';
 import { useAuth } from './AuthContext';
+import { ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 import {
   getBulkUploadModules, downloadBulkUploadTemplate, downloadBulkUploadDatabase,
   uploadBulkData, getBulkUploadHistory
@@ -25,6 +26,18 @@ const BulkUpload = () => {
   const [uploadResult, setUploadResult] = useState(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  // Validation states
+  const [formErrors, setFormErrors] = useState({});
+
+  // Validation rules for Bulk Upload form
+  const bulkUploadValidationRules = {
+    selectedModule: { type: 'required', message: 'Please select a module' },
+    uploadFile: { type: 'required', message: 'Please select a CSV file to upload' }
+  };
+
+  // Validation function
+  const validate = createValidator(bulkUploadValidationRules);
   
   // History dialog state
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -45,13 +58,19 @@ const BulkUpload = () => {
   };
 
   const handleTemplateDownload = async () => {
-    if (!selectedModule) {
+    // Validate module selection
+    const validationErrors = validate({ selectedModule, uploadFile: null });
+    
+    if (validationErrors.selectedModule) {
+      setFormErrors({ selectedModule: validationErrors.selectedModule });
       setError('Please select a module first');
+      scrollToFirstError(validationErrors);
       return;
     }
 
     try {
       setError('');
+      setFormErrors({});
       await downloadBulkUploadTemplate(selectedModule);
       setSuccess('Template downloaded successfully');
     } catch (err) {
@@ -60,13 +79,19 @@ const BulkUpload = () => {
   };
 
   const handleDatabaseDownload = async () => {
-    if (!selectedModule) {
+    // Validate module selection
+    const validationErrors = validate({ selectedModule, uploadFile: null });
+    
+    if (validationErrors.selectedModule) {
+      setFormErrors({ selectedModule: validationErrors.selectedModule });
       setError('Please select a module first');
+      scrollToFirstError(validationErrors);
       return;
     }
 
     try {
       setError('');
+      setFormErrors({});
       await downloadBulkUploadDatabase(selectedModule);
       setSuccess('Database export downloaded successfully');
     } catch (err) {
@@ -75,13 +100,22 @@ const BulkUpload = () => {
   };
 
   const handleFileUpload = async () => {
-    if (!selectedModule) {
-      setError('Please select a module first');
-      return;
-    }
+    // Validate form using validation framework
+    const validationData = { 
+      selectedModule, 
+      uploadFile: uploadFile ? uploadFile.name : null 
+    };
+    const validationErrors = validate(validationData);
+    setFormErrors(validationErrors);
 
-    if (!uploadFile) {
-      setError('Please select a CSV file to upload');
+    // Check if there are validation errors
+    if (Object.keys(validationErrors).length > 0) {
+      if (validationErrors.selectedModule) {
+        setError('Please select a module first');
+      } else if (validationErrors.uploadFile) {
+        setError('Please select a CSV file to upload');
+      }
+      scrollToFirstError(validationErrors);
       return;
     }
 
@@ -89,6 +123,7 @@ const BulkUpload = () => {
     setError('');
     setSuccess('');
     setUploadResult(null);
+    setFormErrors({}); // Clear validation errors
 
     try {
       const response = await uploadBulkData(selectedModule, uploadFile);
@@ -118,11 +153,22 @@ const BulkUpload = () => {
     if (file) {
       if (!file.name.endsWith('.csv')) {
         setError('Please select a CSV file');
+        setFormErrors({ uploadFile: ['Please select a CSV file'] });
         event.target.value = '';
         return;
       }
+      
+      // File size validation (limit to 50MB)
+      if (file.size > 50 * 1024 * 1024) {
+        setError('File size must be less than 50MB');
+        setFormErrors({ uploadFile: ['File size must be less than 50MB'] });
+        event.target.value = '';
+        return;
+      }
+      
       setUploadFile(file);
       setError('');
+      setFormErrors({}); // Clear validation errors
       setUploadResult(null);
     }
   };
@@ -202,20 +248,25 @@ const BulkUpload = () => {
                 1. Select Module
               </Typography>
               
-              <FormControl fullWidth sx={{ mb: 2 }}>
-                <InputLabel>Choose Module</InputLabel>
-                <Select
-                  value={selectedModule}
-                  onChange={(e) => setSelectedModule(e.target.value)}
-                  label="Choose Module"
-                >
-                  {modules.map((module) => (
-                    <MenuItem key={module.id} value={module.id}>
-                      {module.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <ValidatedSelect
+                fullWidth
+                label="Choose Module *"
+                value={selectedModule}
+                onChange={(e) => {
+                  setSelectedModule(e.target.value);
+                  setFormErrors({}); // Clear validation errors when module changes
+                }}
+                required
+                field="selectedModule"
+                errors={formErrors}
+                sx={{ mb: 2 }}
+              >
+                {modules.map((module) => (
+                  <MenuItem key={module.id} value={module.id}>
+                    {module.name}
+                  </MenuItem>
+                ))}
+              </ValidatedSelect>
 
               {selectedModuleInfo && (
                 <Typography variant="body2" color="text.secondary">

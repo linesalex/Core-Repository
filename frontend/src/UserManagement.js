@@ -14,6 +14,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { API_BASE_URL } from './config';
+import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 
 const UserManagement = () => {
   const [users, setUsers] = useState([]);
@@ -57,6 +58,26 @@ const UserManagement = () => {
     status: 'active'
   });
 
+  // Validation states
+  const [formErrors, setFormErrors] = useState({});
+
+  // Validation rules for User form
+  const userValidationRules = {
+    username: { type: 'required', message: 'Username is required' },
+    password: { type: 'required', message: 'Password is required' },
+    user_role: { type: 'required', message: 'Role is required' },
+    email: { type: 'email', message: 'Please enter a valid email address' }
+  };
+
+  // Validation function
+  const validate = createValidator(userValidationRules);
+
+  // Normalize text for duplicate checking
+  const normalizeText = (text) => {
+    if (!text) return '';
+    return text.trim().replace(/\s+/g, ' ').toLowerCase();
+  };
+
   const { user: currentUser, isAuthenticated } = useAuth();
 
   // Load users on component mount, but only if authenticated
@@ -89,6 +110,7 @@ const UserManagement = () => {
       user_role: 'read_only',
       status: 'active'
     });
+    setFormErrors({}); // Clear validation errors
     setDialogOpen(true);
   };
 
@@ -103,6 +125,7 @@ const UserManagement = () => {
       user_role: user.user_role,
       status: user.status
     });
+    setFormErrors({}); // Clear validation errors
     setDialogOpen(true);
   };
 
@@ -113,15 +136,57 @@ const UserManagement = () => {
 
   const handleSubmit = async () => {
     try {
+      // Validate form using validation framework
+      let validationErrors;
       if (dialogMode === 'add') {
-        if (!formData.username || !formData.password || !formData.user_role) {
-          setError('Please fill in all required fields');
+        // For add mode, validate all fields including password
+        validationErrors = validate(formData);
+      } else {
+        // For edit mode, don't require password (it's optional)
+        const editValidationRules = {
+          username: { type: 'required', message: 'Username is required' },
+          user_role: { type: 'required', message: 'Role is required' },
+          email: { type: 'email', message: 'Please enter a valid email address' }
+        };
+        const editValidate = createValidator(editValidationRules);
+        validationErrors = editValidate(formData);
+      }
+
+      setFormErrors(validationErrors);
+
+      // Check if there are validation errors
+      if (Object.keys(validationErrors).length > 0) {
+        scrollToFirstError(validationErrors);
+        return;
+      }
+
+      if (dialogMode === 'add') {
+        // Duplicate prevention - check for existing username (normalized)
+        const normalizedUsername = normalizeText(formData.username);
+        const existingUser = users.find(user => 
+          normalizeText(user.username) === normalizedUsername
+        );
+        
+        if (existingUser) {
+          setError(`A user with username "${formData.username}" already exists. Please choose a different username.`);
           return;
         }
 
         await axios.post(`${API_BASE_URL}/users`, formData);
         setSuccess('User created successfully');
       } else {
+        // For edit mode, check username duplicates excluding current user
+        const normalizedUsername = normalizeText(formData.username);
+        const existingUser = users.find(user => 
+          user.id !== selectedUser.id && 
+          normalizeText(user.username) === normalizedUsername
+        );
+        
+        if (existingUser) {
+          setError(`A user with username "${formData.username}" already exists. Please choose a different username.`);
+          return;
+        }
+
         // For edit mode, don't send password if it's empty
         const updateData = {
           email: formData.email,
@@ -135,6 +200,7 @@ const UserManagement = () => {
       }
 
       setDialogOpen(false);
+      setFormErrors({}); // Clear validation errors on success
       await loadUsers();
 
     } catch (err) {
@@ -333,78 +399,87 @@ const UserManagement = () => {
           <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
             <Grid container spacing={2} sx={{ mt: 1 }}>
               <Grid item xs={12}>
-                              <TextField
-                label="Username"
-                value={formData.username}
-                onChange={(e) => handleInputChange('username', e.target.value)}
-                fullWidth
-                required
-                disabled={dialogMode === 'edit'}
-                helperText={dialogMode === 'edit' ? 'Username cannot be changed' : ''}
-                autoComplete="username"
-              />
+                <ValidatedTextField
+                  label="Username *"
+                  value={formData.username}
+                  onChange={(e) => handleInputChange('username', e.target.value)}
+                  fullWidth
+                  required
+                  disabled={dialogMode === 'edit'}
+                  helperText={dialogMode === 'edit' ? 'Username cannot be changed' : ''}
+                  autoComplete="username"
+                  field="username"
+                  errors={formErrors}
+                />
               </Grid>
               
               {dialogMode === 'add' && (
                 <Grid item xs={12}>
-                  <TextField
-                    label="Password"
+                  <ValidatedTextField
+                    label="Password *"
                     type="password"
                     value={formData.password}
                     onChange={(e) => handleInputChange('password', e.target.value)}
                     fullWidth
                     required
                     autoComplete="new-password"
+                    field="password"
+                    errors={formErrors}
                   />
                 </Grid>
               )}
             
             <Grid item xs={12}>
-              <TextField
+              <ValidatedTextField
                 label="Full Name"
                 value={formData.full_name}
                 onChange={(e) => handleInputChange('full_name', e.target.value)}
                 fullWidth
+                field="full_name"
+                errors={formErrors}
               />
             </Grid>
             
             <Grid item xs={12}>
-              <TextField
+              <ValidatedTextField
                 label="Email"
                 type="email"
                 value={formData.email}
                 onChange={(e) => handleInputChange('email', e.target.value)}
                 fullWidth
+                field="email"
+                errors={formErrors}
               />
             </Grid>
             
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Role</InputLabel>
-                <Select
-                  value={formData.user_role}
-                  onChange={(e) => handleInputChange('user_role', e.target.value)}
-                  label="Role"
-                >
-                  <MenuItem value="read_only">Read Only</MenuItem>
-                  <MenuItem value="provisioner">Provisioner</MenuItem>
-                  <MenuItem value="administrator">Administrator</MenuItem>
-                </Select>
-              </FormControl>
+              <ValidatedSelect
+                fullWidth
+                label="Role *"
+                value={formData.user_role}
+                onChange={(e) => handleInputChange('user_role', e.target.value)}
+                required
+                field="user_role"
+                errors={formErrors}
+              >
+                <MenuItem value="read_only">Read Only</MenuItem>
+                <MenuItem value="provisioner">Provisioner</MenuItem>
+                <MenuItem value="administrator">Administrator</MenuItem>
+              </ValidatedSelect>
             </Grid>
             
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select
-                  value={formData.status}
-                  onChange={(e) => handleInputChange('status', e.target.value)}
-                  label="Status"
-                >
-                  <MenuItem value="active">Active</MenuItem>
-                  <MenuItem value="inactive">Inactive</MenuItem>
-                </Select>
-              </FormControl>
+              <ValidatedSelect
+                fullWidth
+                label="Status"
+                value={formData.status}
+                onChange={(e) => handleInputChange('status', e.target.value)}
+                field="status"
+                errors={formErrors}
+              >
+                <MenuItem value="active">Active</MenuItem>
+                <MenuItem value="inactive">Inactive</MenuItem>
+              </ValidatedSelect>
             </Grid>
           </Grid>
           </form>

@@ -16,6 +16,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import DownloadIcon from '@mui/icons-material/Download';
+import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import InfoIcon from '@mui/icons-material/Info';
 import WarningIcon from '@mui/icons-material/Warning';
@@ -23,6 +24,7 @@ import CheckIcon from '@mui/icons-material/Check';
 import { API_BASE_URL } from './config';
 import axios from 'axios';
 import LoadingIndicator from './components/LoadingIndicator';
+import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 
 
 const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
@@ -118,6 +120,47 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     daily_contact: false,
     more_info: ''
   });
+
+  // Validation states
+  const [contactErrors, setContactErrors] = useState({});
+  const [feedErrors, setFeedErrors] = useState({});
+  const [exchangeErrors, setExchangeErrors] = useState({});
+
+  // Validation rules for Exchange contact form
+  const contactValidationRules = {
+    contact_name: { type: 'required', message: 'Contact Name is required' },
+    job_title: { type: 'required', message: 'Job Title is required' },
+    contact_type: { type: 'required', message: 'Contact Type is required' },
+    phone_number: { 
+      type: 'oneOf', 
+      fields: ['phone_number', 'email'], 
+      message: 'Either Phone Number or Email is required' 
+    },
+    email: { 
+      type: 'oneOf', 
+      fields: ['phone_number', 'email'], 
+      message: 'Either Phone Number or Email is required' 
+    }
+  };
+
+  // Validation rules for Exchange Feed form
+  const feedValidationRules = {
+    feed_name: { type: 'required', message: 'Feed Name is required' },
+    feed_delivery: { type: 'required', message: 'Feed Delivery is required' },
+    feed_type: { type: 'required', message: 'Feed Type is required' },
+    pass_through_currency: { type: 'required', message: 'Pass Through Currency is required' }
+  };
+
+  // Validation rules for Exchange form
+  const exchangeValidationRules = {
+    exchange_name: { type: 'required', message: 'Exchange Name is required' },
+    region: { type: 'required', message: 'Region is required' }
+  };
+
+  // Validation functions
+  const validateContact = createValidator(contactValidationRules);
+  const validateFeed = createValidator(feedValidationRules);
+  const validateExchange = createValidator(exchangeValidationRules);
 
   const regions = ['AMERs', 'APAC', 'EMEA'];
 
@@ -295,9 +338,34 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
           return;
         }
 
+        // Duplicate prevention - check for existing exchanges with same name and region (normalized)
+        const normalizedExchangeName = normalizeText(exchangeFormData.exchange_name);
+        const existingExchange = exchanges.find(exchange => 
+          normalizeText(exchange.exchange_name) === normalizedExchangeName &&
+          exchange.region === exchangeFormData.region
+        );
+        
+        if (existingExchange) {
+          setError(`An exchange with the name "${exchangeFormData.exchange_name}" already exists in the ${exchangeFormData.region} region. Please use a different exchange name.`);
+          return;
+        }
+
         await axios.post(`${API_BASE_URL}/exchanges`, exchangeFormData, { headers });
         setSuccess('Exchange created successfully');
       } else {
+        // For edit mode, check duplicates excluding current exchange
+        const normalizedExchangeName = normalizeText(exchangeFormData.exchange_name);
+        const existingExchange = exchanges.find(exchange => 
+          exchange.id !== selectedExchange.id &&
+          normalizeText(exchange.exchange_name) === normalizedExchangeName &&
+          exchange.region === exchangeFormData.region
+        );
+        
+        if (existingExchange) {
+          setError(`An exchange with the name "${exchangeFormData.exchange_name}" already exists in the ${exchangeFormData.region} region. Please use a different exchange name.`);
+          return;
+        }
+
         await axios.put(`${API_BASE_URL}/exchanges/${selectedExchange.id}`, exchangeFormData, { headers });
         setSuccess('Exchange updated successfully');
       }
@@ -344,6 +412,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     
     // Refresh currencies to ensure sync with Exchange Rates
     await loadCurrencies();
+    setFeedErrors({}); // Clear validation errors
     setFeedDialogOpen(true);
   };
 
@@ -383,6 +452,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     
     // Refresh currencies to ensure sync with Exchange Rates
     await loadCurrencies();
+    setFeedErrors({}); // Clear validation errors
     setFeedDialogOpen(true);
   };
 
@@ -392,21 +462,48 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     setDeleteDialogOpen(true);
   };
 
+  // Normalize text for duplicate checking
+  const normalizeText = (text) => {
+    if (!text) return '';
+    return text.trim().replace(/\s+/g, ' ').toLowerCase();
+  };
+
   const handleFeedSubmit = async () => {
     try {
-      if (!feedFormData.feed_name) {
-        setError('Feed name is required');
+      // Validate form using validation framework
+      const validationErrors = validateFeed(feedFormData);
+      setFeedErrors(validationErrors);
+
+      // Check if there are validation errors
+      if (Object.keys(validationErrors).length > 0) {
+        scrollToFirstError(validationErrors);
         return;
       }
+
+      // Duplicate prevention - check for existing feeds with same name within the exchange (normalized)
+      const exchangeFeeds = feeds[selectedExchange.id] || [];
+      const normalizedFeedName = normalizeText(feedFormData.feed_name);
       
-      if (!feedFormData.feed_delivery) {
-        setError('Feed delivery is required');
-        return;
-      }
-      
-      if (!feedFormData.feed_type) {
-        setError('Feed type is required');
-        return;
+      if (feedDialogMode === 'add') {
+        const existingFeed = exchangeFeeds.find(feed => 
+          normalizeText(feed.feed_name) === normalizedFeedName
+        );
+        
+        if (existingFeed) {
+          setError(`A feed with the name "${feedFormData.feed_name}" already exists in this exchange. Please use a different feed name.`);
+          return;
+        }
+      } else {
+        // For edit mode, check duplicates excluding current feed
+        const existingFeed = exchangeFeeds.find(feed => 
+          feed.id !== selectedFeed.id && 
+          normalizeText(feed.feed_name) === normalizedFeedName
+        );
+        
+        if (existingFeed) {
+          setError(`A feed with the name "${feedFormData.feed_name}" already exists in this exchange. Please use a different feed name.`);
+          return;
+        }
       }
 
       // ISF validation: if enabled, at least one field must be filled
@@ -446,6 +543,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       }
 
       setFeedDialogOpen(false);
+      setFeedErrors({}); // Clear validation errors on success
       await loadFeeds(selectedExchange.id);
 
     } catch (err) {
@@ -468,6 +566,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       daily_contact: false,
       more_info: ''
     });
+    setContactErrors({});
     setContactDialogOpen(true);
   };
 
@@ -485,6 +584,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       daily_contact: Boolean(contact.daily_contact),
       more_info: contact.more_info || ''
     });
+    setContactErrors({});
     setContactDialogOpen(true);
   };
 
@@ -496,8 +596,12 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
 
   const handleContactSubmit = async () => {
     try {
-      if (!contactFormData.contact_name) {
-        setError('Contact name is required');
+      // Validate the form
+      const errors = validateContact(contactFormData);
+      setContactErrors(errors);
+      
+      if (Object.keys(errors).length > 0) {
+        scrollToFirstError(errors);
         return;
       }
 
@@ -515,6 +619,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       }
 
       setContactDialogOpen(false);
+      setContactErrors({});
       await loadContacts(selectedExchange.id);
 
     } catch (err) {
@@ -643,16 +748,14 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
   const renderDesignFileCell = (feed, exchangeId) => {
     if (feed.design_file_path) {
       return (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <CheckCircleIcon sx={{ color: 'green', fontSize: 16 }} />
-          <Button
-            size="small"
-            startIcon={<DownloadIcon />}
-            onClick={() => handleDownloadDesign(exchangeId, feed.id)}
-          >
-            Download
-          </Button>
-        </Box>
+        <Button
+          onClick={() => handleDownloadDesign(exchangeId, feed.id)}
+          color="success"
+          size="small"
+          startIcon={<CheckCircleIcon color="success" />}
+        >
+          <CloudDownloadIcon fontSize="small" />
+        </Button>
       );
     } else {
       return <CancelIcon sx={{ color: 'red', fontSize: 16 }} />;
@@ -1009,17 +1112,16 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                           <TableCell align="center">
                             <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
                               {hasPermission && hasPermission('exchange_data', 'edit') && (
-                                <Tooltip title="Add Contact">
-                                  <IconButton
-                                    size="small"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleAddContact(exchange);
-                                    }}
-                                  >
-                                    <AddIcon />
-                                  </IconButton>
-                                </Tooltip>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAddContact(exchange);
+                                  }}
+                                >
+                                  Add Contact
+                                </Button>
                               )}
                             </Box>
                           </TableCell>
@@ -1245,47 +1347,52 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
                 fullWidth
                 label="Feed Name *"
                 value={feedFormData.feed_name}
                 onChange={(e) => handleFeedInputChange('feed_name', e.target.value)}
+                required
+                field="feed_name"
+                errors={feedErrors}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Feed Delivery *</InputLabel>
-                <Select
-                  value={feedFormData.feed_delivery}
-                  onChange={(e) => handleFeedInputChange('feed_delivery', e.target.value)}
-                  label="Feed Delivery *"
-                >
-                  <MenuItem value="Unicast">Unicast</MenuItem>
-                  <MenuItem value="Multicast">Multicast</MenuItem>
-                </Select>
-              </FormControl>
+              <ValidatedSelect
+                fullWidth
+                label="Feed Delivery *"
+                value={feedFormData.feed_delivery}
+                onChange={(e) => handleFeedInputChange('feed_delivery', e.target.value)}
+                required
+                field="feed_delivery"
+                errors={feedErrors}
+              >
+                <MenuItem value="Unicast">Unicast</MenuItem>
+                <MenuItem value="Multicast">Multicast</MenuItem>
+              </ValidatedSelect>
             </Grid>
             <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Feed Type *</InputLabel>
-                <Select
-                  value={feedFormData.feed_type}
-                  onChange={(e) => handleFeedInputChange('feed_type', e.target.value)}
-                  label="Feed Type *"
-                >
-                  <MenuItem value="Equities">Equities</MenuItem>
-                  <MenuItem value="Futures">Futures</MenuItem>
-                  <MenuItem value="Options">Options</MenuItem>
-                  <MenuItem value="Fixed Income">Fixed Income</MenuItem>
-                  <MenuItem value="FX">FX</MenuItem>
-                  <MenuItem value="Commodities">Commodities</MenuItem>
-                  <MenuItem value="Indices">Indices</MenuItem>
-                  <MenuItem value="ETFs">ETFs</MenuItem>
-                  <MenuItem value="Alternative Data">Alternative Data</MenuItem>
-                  <MenuItem value="Reference Data">Reference Data</MenuItem>
-                  <MenuItem value="Mixed">Mixed</MenuItem>
-                </Select>
-              </FormControl>
+              <ValidatedSelect
+                fullWidth
+                label="Feed Type *"
+                value={feedFormData.feed_type}
+                onChange={(e) => handleFeedInputChange('feed_type', e.target.value)}
+                required
+                field="feed_type"
+                errors={feedErrors}
+              >
+                <MenuItem value="Equities">Equities</MenuItem>
+                <MenuItem value="Futures">Futures</MenuItem>
+                <MenuItem value="Options">Options</MenuItem>
+                <MenuItem value="Fixed Income">Fixed Income</MenuItem>
+                <MenuItem value="FX">FX</MenuItem>
+                <MenuItem value="Commodities">Commodities</MenuItem>
+                <MenuItem value="Indices">Indices</MenuItem>
+                <MenuItem value="ETFs">ETFs</MenuItem>
+                <MenuItem value="Alternative Data">Alternative Data</MenuItem>
+                <MenuItem value="Reference Data">Reference Data</MenuItem>
+                <MenuItem value="Mixed">Mixed</MenuItem>
+              </ValidatedSelect>
             </Grid>
             <Grid item xs={12} sm={6}>
               <FormControlLabel
@@ -1586,50 +1693,73 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="contact_name"
+                errors={contactErrors}
+                required
                 fullWidth
-                label="Name *"
+                label="Contact Name"
+                name="contact_name"
                 value={contactFormData.contact_name}
                 onChange={(e) => handleContactInputChange('contact_name', e.target.value)}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="job_title"
+                errors={contactErrors}
+                required
                 fullWidth
                 label="Job Title"
+                name="job_title"
                 value={contactFormData.job_title}
                 onChange={(e) => handleContactInputChange('job_title', e.target.value)}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="country"
+                errors={contactErrors}
                 fullWidth
                 label="Country"
+                name="country"
                 value={contactFormData.country}
                 onChange={(e) => handleContactInputChange('country', e.target.value)}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="phone_number"
+                errors={contactErrors}
                 fullWidth
                 label="Phone Number"
+                name="phone_number"
                 value={contactFormData.phone_number}
                 onChange={(e) => handleContactInputChange('phone_number', e.target.value)}
+                helperText="Required if Email is not provided"
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="email"
+                errors={contactErrors}
                 fullWidth
                 label="Email"
                 type="email"
+                name="email"
                 value={contactFormData.email}
                 onChange={(e) => handleContactInputChange('email', e.target.value)}
+                helperText="Required if Phone Number is not provided"
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ValidatedTextField
+                field="contact_type"
+                errors={contactErrors}
+                required
                 fullWidth
                 label="Contact Type"
+                name="contact_type"
                 value={contactFormData.contact_type}
                 onChange={(e) => handleContactInputChange('contact_type', e.target.value)}
               />

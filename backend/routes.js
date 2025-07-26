@@ -69,6 +69,20 @@ if (!fs.existsSync(testResultsDir)) {
 
 // Helper function to log changes with enhanced error handling
 const logChange = (userId, tableName, recordId, action, oldValues, newValues, req) => {
+  // Validate required parameters
+  if (!tableName || !action) {
+    console.error('logChange: Missing required parameters (tableName, action)');
+    return;
+  }
+  
+  // Handle missing recordId by providing a default value
+  const safeRecordId = recordId || 'N/A';
+  
+  // Log warning for operations that should have record IDs but don't
+  if ((recordId === null || recordId === undefined) && (action === 'CREATE' || action === 'UPDATE' || action === 'DELETE')) {
+    console.warn(`logChange: No record_id provided for ${tableName} ${action} operation - using 'N/A'`);
+  }
+  
   const changes = [];
   if (oldValues && newValues) {
     Object.keys(newValues).forEach(key => {
@@ -79,15 +93,16 @@ const logChange = (userId, tableName, recordId, action, oldValues, newValues, re
   }
   
   const changesSummary = changes.length > 0 ? changes.join(', ') : `${action} operation`;
-  const ipAddress = req.ip || req.connection.remoteAddress || 'Unknown';
-  const userAgent = req.get('User-Agent') || 'Unknown';
+  const ipAddress = req?.ip || req?.connection?.remoteAddress || 'Unknown';
+  const userAgent = req?.get?.('User-Agent') || 'Unknown';
   
   db.run(
     'INSERT INTO change_logs (user_id, table_name, record_id, action, old_values, new_values, changes_summary, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [userId, tableName, recordId, action, JSON.stringify(oldValues), JSON.stringify(newValues), changesSummary, ipAddress, userAgent],
+    [userId, tableName, safeRecordId, action, JSON.stringify(oldValues), JSON.stringify(newValues), changesSummary, ipAddress, userAgent],
     function(err) {
       if (err) {
         console.error('Failed to log change:', err.message);
+        console.error('logChange parameters:', { userId, tableName, recordId: safeRecordId, action });
         // Don't throw - logging failures shouldn't break the main operation
       }
     }
@@ -377,8 +392,20 @@ router.post('/users', authenticateToken, authorizePermission('user_management', 
             }
             return res.status(500).json({ error: 'Failed to create user.' });
           }
-          logChange(req.user.id, 'users', this.lastID, 'CREATE', null, { username: trimmedUsername, email, full_name, user_role }, req);
-          res.status(201).json({ id: this.lastID, username: trimmedUsername, message: 'User created successfully' });
+          // Capture lastID to avoid context issues
+          const recordId = this.lastID;
+          
+          // Use username as record ID if lastID is not available
+          const logRecordId = recordId || trimmedUsername;
+          
+          // Log the change with proper error handling
+          try {
+            logChange(req.user?.id || null, 'users', logRecordId, 'CREATE', null, { username: trimmedUsername, email, full_name, user_role }, req);
+          } catch (logError) {
+            console.error('Failed to log user creation:', logError);
+          }
+          
+          res.status(201).json({ id: recordId, username: trimmedUsername, message: 'User created successfully' });
         }
       );
     } catch (error) {
@@ -405,7 +432,7 @@ router.put('/users/:id', authenticateToken, authorizePermission('user_management
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
         
-        logChange(req.user.id, 'users', userId, 'UPDATE', oldUser, { email, full_name, user_role, status }, req);
+        logChange(req.user.id, 'users', oldUser.username, 'UPDATE', oldUser, { email, full_name, user_role, status }, req);
         
         res.json({ message: 'User updated successfully' });
       }
@@ -422,16 +449,21 @@ router.delete('/users/:id', authenticateToken, authorizePermission('user_managem
     return res.status(400).json({ error: 'Cannot delete your own account' });
   }
   
-  // Get user data for change logging
+  // Get user data for change logging and protection checks
   db.get('SELECT * FROM users WHERE id = ?', [userId], (err, user) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    // Prevent deleting the protected 'linesa' user
+    if (user.username && user.username.toLowerCase() === 'linesa') {
+      return res.status(400).json({ error: 'User "linesa" cannot be deleted as it is a protected system account' });
+    }
     
     db.run('DELETE FROM users WHERE id = ?', [userId], function(err) {
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
       
-      logChange(req.user.id, 'users', userId, 'DELETE', user, null, req);
+      logChange(req.user.id, 'users', user.username, 'DELETE', user, null, req);
       
       res.json({ message: 'User deleted successfully' });
     });
@@ -504,7 +536,7 @@ router.put('/users/:id/module-visibility', authenticateToken, authorizePermissio
 
 // Get change logs (admin and provisioner can view)
 router.get('/change-logs', authenticateToken, authorizePermission('change_logs', 'view'), (req, res) => {
-  const { table_name, user_id, limit = 100, offset = 0 } = req.query;
+  const { table_name, table_names, user_id, search, limit = 100, offset = 0 } = req.query;
   
   let query = `
     SELECT cl.*, u.username, u.full_name 
@@ -514,14 +546,35 @@ router.get('/change-logs', authenticateToken, authorizePermission('change_logs',
   let params = [];
   let conditions = [];
   
+  // Handle single table_name (legacy support)
   if (table_name) {
     conditions.push('cl.table_name = ?');
     params.push(table_name);
   }
   
+  // Handle multiple table_names (new module-based filtering)
+  if (table_names) {
+    const tableNamesArray = Array.isArray(table_names) ? table_names : [table_names];
+    const placeholders = tableNamesArray.map(() => '?').join(',');
+    conditions.push(`cl.table_name IN (${placeholders})`);
+    params.push(...tableNamesArray);
+  }
+  
   if (user_id) {
     conditions.push('cl.user_id = ?');
     params.push(user_id);
+  }
+  
+  if (search) {
+    conditions.push(`(
+      cl.record_id LIKE ? OR 
+      cl.changes_summary LIKE ? OR 
+      u.username LIKE ? OR 
+      u.full_name LIKE ? OR
+      cl.action LIKE ?
+    )`);
+    const searchPattern = `%${search}%`;
+    params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
   }
   
   if (conditions.length > 0) {
@@ -571,11 +624,25 @@ router.get('/carriers/search', authenticateToken, (req, res) => {
   }
   
   db.all(
-    'SELECT id, carrier_name FROM carriers WHERE carrier_name LIKE ? AND status = "active" ORDER BY carrier_name LIMIT 10',
+    'SELECT id, carrier_name, region FROM carriers WHERE carrier_name LIKE ? AND status = "active" ORDER BY carrier_name LIMIT 10',
     [`%${q}%`],
     (err, carriers) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json(carriers);
+      
+      // Map database region values back to frontend values and format display name
+      const regionMapping = {
+        'North America': 'AMERs',
+        'Asia Pacific': 'APAC',
+        'Europe': 'EMEA'
+      };
+      
+      const mappedCarriers = carriers.map(carrier => ({
+        ...carrier,
+        region: regionMapping[carrier.region] || carrier.region,
+        display_name: `${carrier.carrier_name} (${regionMapping[carrier.region] || carrier.region})`
+      }));
+      
+      res.json(mappedCarriers);
     }
   );
 });
@@ -588,6 +655,13 @@ router.post('/carriers', authenticateToken, authorizePermission('carriers', 'cre
     return res.status(400).json({ error: 'Carrier name is required' });
   }
   
+  // Trim whitespace and normalize for duplicate checking (including multiple internal spaces)
+  const normalizedCarrierName = carrier_name.trim().replace(/\s+/g, ' ');
+  
+  if (!normalizedCarrierName) {
+    return res.status(400).json({ error: 'Carrier name cannot be empty or only whitespace' });
+  }
+  
   // Map frontend region values to database values
   const regionMapping = {
     'AMERs': 'North America',
@@ -597,20 +671,51 @@ router.post('/carriers', authenticateToken, authorizePermission('carriers', 'cre
   
   const dbRegion = regionMapping[region] || region;
   
-  db.run(
-    'INSERT INTO carriers (carrier_name, previously_known_as, status, region, created_by) VALUES (?, ?, ?, ?, ?)',
-    [carrier_name, previously_known_as, status || 'active', dbRegion, req.user.id],
-    function(err) {
+  // Check for duplicates with case-insensitive and whitespace-normalized comparison
+  // This handles multiple spaces by normalizing both the input and database values
+  db.get(
+    `SELECT id, carrier_name FROM carriers 
+     WHERE TRIM(REPLACE(REPLACE(REPLACE(LOWER(carrier_name), '   ', ' '), '  ', ' '), '  ', ' ')) = ? 
+     AND region = ?`,
+    [normalizedCarrierName.toLowerCase(), dbRegion],
+    (err, existingCarrier) => {
       if (err) {
-        if (err.message.includes('UNIQUE constraint failed')) {
-          return res.status(400).json({ error: `Carrier '${carrier_name}' already exists in region '${region || dbRegion}'. Same carrier names are allowed in different regions.` });
-        }
         return res.status(500).json({ error: err.message });
       }
       
-      logChange(req.user.id, 'carriers', this.lastID, 'CREATE', null, { carrier_name, previously_known_as, status, region }, req);
+      if (existingCarrier) {
+        return res.status(400).json({ 
+          error: `Carrier already exists in this region. Found: "${existingCarrier.carrier_name}" in region "${region || dbRegion}". Same carrier names are allowed in different regions.` 
+        });
+      }
       
-      res.status(201).json({ id: this.lastID, carrier_name, message: 'Carrier created successfully' });
+      // Insert new carrier using the trimmed name
+      db.run(
+        'INSERT INTO carriers (carrier_name, previously_known_as, status, region, created_by) VALUES (?, ?, ?, ?, ?)',
+        [normalizedCarrierName, previously_known_as, status || 'active', dbRegion, req.user.id],
+        function(err) {
+          if (err) {
+            return res.status(500).json({ error: err.message });
+          }
+          
+          // Capture lastID to avoid this context issues
+          const recordId = this.lastID;
+          
+          // Use carrier_name as record ID if lastID is not available
+          const logRecordId = recordId || normalizedCarrierName;
+          
+          // Log the change with proper error handling (don't block if logging fails)
+          try {
+            logChange(req.user.id, 'carriers', logRecordId, 'CREATE', null, { 
+              carrier_name: normalizedCarrierName, previously_known_as, status, region 
+            }, req);
+          } catch (logError) {
+            console.error('Failed to log carrier creation:', logError);
+          }
+          
+          res.status(201).json({ id: recordId, carrier_name: normalizedCarrierName, message: 'Carrier created successfully' });
+        }
+      );
     }
   );
 });
@@ -646,7 +751,7 @@ router.put('/carriers/:id', authenticateToken, authorizePermission('carriers', '
         }
         if (this.changes === 0) return res.status(404).json({ error: 'Carrier not found' });
         
-        logChange(req.user.id, 'carriers', carrierId, 'UPDATE', oldCarrier, { carrier_name, previously_known_as, status, region }, req);
+        logChange(req.user.id, 'carriers', oldCarrier.carrier_name, 'UPDATE', oldCarrier, { carrier_name, previously_known_as, status, region }, req);
         
         res.json({ message: 'Carrier updated successfully' });
       }
@@ -677,7 +782,7 @@ router.delete('/carriers/:id', authenticateToken, authorizePermission('carriers'
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Carrier not found' });
         
-        logChange(req.user.id, 'carriers', carrierId, 'DELETE', carrier, null, req);
+        logChange(req.user.id, 'carriers', carrier.carrier_name, 'DELETE', carrier, null, req);
         
         res.json({ message: 'Carrier deleted successfully' });
       });
@@ -709,9 +814,20 @@ router.post('/carriers/:id/contacts', authenticateToken, authorizePermission('ca
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
-      logChange(req.user.id, 'carrier_contacts', this.lastID, 'CREATE', null, { carrier_id: carrierId, contact_type, contact_level, contact_name, contact_function, contact_email, contact_phone, notes }, req);
+      // Capture lastID to avoid context issues
+      const recordId = this.lastID;
       
-      res.status(201).json({ id: this.lastID, message: 'Contact created successfully' });
+      // Use contact_name as record ID if lastID is not available
+      const logRecordId = recordId || contact_name;
+      
+      // Log the change with proper error handling
+      try {
+        logChange(req.user.id, 'carrier_contacts', logRecordId, 'CREATE', null, { carrier_id: carrierId, contact_type, contact_level, contact_name, contact_function, contact_email, contact_phone, notes }, req);
+      } catch (logError) {
+        console.error('Failed to log carrier contact creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId, message: 'Contact created successfully' });
     }
   );
 });
@@ -756,7 +872,7 @@ router.delete('/carriers/:id/contacts/:contactId', authenticateToken, authorizeP
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
       
-      logChange(req.user.id, 'carrier_contacts', contactId, 'DELETE', contact, null, req);
+      logChange(null, 'carrier_contacts', contactId, 'DELETE', contact, null, req);
       
       res.json({ message: 'Contact deleted successfully' });
     });
@@ -821,7 +937,7 @@ router.post('/carriers/:id/contacts/:contactId/approve', authenticateToken, auth
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
         
-        logChange(req.user.id, 'carrier_contacts', contactId, 'YEARLY_APPROVE', contact, { approved_by: req.user.id, approved_at: new Date().toISOString() }, req);
+        logChange(null, 'carrier_contacts', contactId, 'YEARLY_APPROVE', contact, { approved_by: req.user.id, approved_at: new Date().toISOString() }, req);
         
         res.json({ message: 'Contact yearly update approved successfully' });
       }
@@ -913,7 +1029,7 @@ router.post('/live_latency/batch', (req, res) => {
 });
 
 // Get all routes
-router.get('/network_routes', (req, res) => {
+router.get('/network_routes', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
   const { repository_type_id } = req.query;
   let query = 'SELECT * FROM network_routes';
   let params = [];
@@ -930,7 +1046,7 @@ router.get('/network_routes', (req, res) => {
 });
 
 // Get single route by circuit_id
-router.get('/network_routes/:circuit_id', (req, res) => {
+router.get('/network_routes/:circuit_id', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
   const { circuit_id } = req.params;
   db.get('SELECT * FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -953,23 +1069,42 @@ function isValidBandwidth(bandwidth) {
 
 // Validate underlying carrier field
 function validateUnderlyingCarrier(carrierName, callback) {
-  if (!carrierName) {
+  if (!carrierName || carrierName.trim() === '') {
     return callback(null, true); // Allow empty carrier
   }
   
-  db.get(
-    'SELECT id FROM carriers WHERE carrier_name = ? AND status = "active"',
-    [carrierName],
-    (err, row) => {
-      if (err) return callback(err);
-      callback(null, !!row); // Return true if carrier exists
+  // First check if carriers table exists and has data
+  db.get('SELECT COUNT(*) as count FROM carriers', [], (err, countResult) => {
+    if (err) {
+      console.error('Error checking carriers table:', err);
+      return callback(null, true); // Allow if table check fails
     }
-  );
+    
+    if (countResult.count === 0) {
+      console.warn('No carriers found in database, allowing all carrier names');
+      return callback(null, true); // Allow if no carriers exist
+    }
+    
+    // Check for specific carrier
+    db.get(
+      'SELECT id FROM carriers WHERE carrier_name = ? AND status = "active"',
+      [carrierName],
+      (err, row) => {
+        if (err) {
+          console.error('Error validating carrier:', err, 'for carrier:', carrierName);
+          return callback(null, true); // Allow if validation fails
+        }
+                callback(null, !!row); // Return true if carrier exists
+      }
+    );
+  });
 }
 
-// Create new route
-router.post('/network_routes', (req, res) => {
+// Create new route  
+router.post('/network_routes', authenticateToken, authorizePermission('network_routes', 'create'), (req, res) => {
   const data = req.body;
+
+  
   if (!isValidCircuitId(data.circuit_id)) {
     return res.status(400).json({ error: 'Invalid circuit_id format' });
   }
@@ -980,7 +1115,10 @@ router.post('/network_routes', (req, res) => {
   
   // Validate underlying carrier
   validateUnderlyingCarrier(data.underlying_carrier, (err, isValid) => {
-    if (err) return res.status(500).json({ error: 'Database error validating carrier' });
+    if (err) {
+      console.error('Database error validating carrier:', err);
+      return res.status(500).json({ error: 'Database error validating carrier' });
+    }
     if (!isValid) {
       return res.status(400).json({ error: 'Invalid underlying carrier. Please select a valid carrier from the database.' });
     }
@@ -994,7 +1132,14 @@ router.post('/network_routes', (req, res) => {
       `INSERT INTO network_routes (${fields.join(',')}) VALUES (${placeholders})`,
       values,
       function(err) {
-        if (err) return res.status(500).json({ error: err.message });
+        if (err) {
+          console.error('Database insertion error:', err);
+          return res.status(500).json({ error: err.message });
+        }
+        
+        // Log the creation
+        logChange(req.user.id, 'network_routes', data.circuit_id, 'CREATE', null, data, req);
+        
         res.status(201).json({ circuit_id: data.circuit_id });
       }
     );
@@ -1002,7 +1147,7 @@ router.post('/network_routes', (req, res) => {
 });
 
 // Update route
-router.put('/network_routes/:circuit_id', (req, res) => {
+router.put('/network_routes/:circuit_id', authenticateToken, authorizePermission('network_routes', 'edit'), (req, res) => {
   const { circuit_id } = req.params;
   const data = req.body;
   if (!isValidCircuitId(circuit_id)) {
@@ -1013,61 +1158,96 @@ router.put('/network_routes/:circuit_id', (req, res) => {
     return res.status(400).json({ error: 'Bandwidth must be either "Dark Fiber" or a numeric value' });
   }
   
-  // Validate underlying carrier
-  validateUnderlyingCarrier(data.underlying_carrier, (err, isValid) => {
-    if (err) return res.status(500).json({ error: 'Database error validating carrier' });
-    if (!isValid) {
-      return res.status(400).json({ error: 'Invalid underlying carrier. Please select a valid carrier from the database.' });
-    }
-    
-    const fields = [
-      'repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type'
-    ];
-    const setClause = fields.map(f => `${f} = ?`).join(', ');
-    const values = fields.map(f => data[f] ?? null);
-    values.push(circuit_id);
-    db.run(
-      `UPDATE network_routes SET ${setClause} WHERE circuit_id = ?`,
-      values,
-      function(err) {
-        if (err) return res.status(500).json({ error: err.message });
-        if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
-        res.json({ message: 'Updated' });
+      // Validate underlying carrier
+    validateUnderlyingCarrier(data.underlying_carrier, (err, isValid) => {
+      if (err) return res.status(500).json({ error: 'Database error validating carrier' });
+      if (!isValid) {
+        return res.status(400).json({ error: 'Invalid underlying carrier. Please select a valid carrier from the database.' });
       }
-    );
-  });
+      
+      // Get old values for change logging
+      db.get('SELECT * FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, oldRoute) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!oldRoute) return res.status(404).json({ error: 'Route not found' });
+        
+        const fields = [
+          'repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type'
+        ];
+        const setClause = fields.map(f => `${f} = ?`).join(', ');
+        const values = fields.map(f => data[f] ?? null);
+        values.push(circuit_id);
+        db.run(
+          `UPDATE network_routes SET ${setClause} WHERE circuit_id = ?`,
+          values,
+          function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
+            
+            // Log the update
+            logChange(req.user.id, 'network_routes', circuit_id, 'UPDATE', oldRoute, data, req);
+            
+            res.json({ message: 'Updated' });
+          }
+        );
+      });
+    });
 });
 
 // Delete route
-router.delete('/network_routes/:circuit_id', (req, res) => {
+router.delete('/network_routes/:circuit_id', authenticateToken, authorizePermission('network_routes', 'delete'), (req, res) => {
   const { circuit_id } = req.params;
-  db.run('DELETE FROM network_routes WHERE circuit_id = ?', [circuit_id], function(err) {
+  
+  // Get old values for change logging before deletion
+  db.get('SELECT * FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, oldRoute) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
-    res.json({ message: 'Deleted' });
+    if (!oldRoute) return res.status(404).json({ error: 'Route not found' });
+    
+    db.run('DELETE FROM network_routes WHERE circuit_id = ?', [circuit_id], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
+      
+      // Log the deletion
+      logChange(req.user.id, 'network_routes', circuit_id, 'DELETE', oldRoute, null, req);
+      
+      res.json({ message: 'Deleted' });
+    });
   });
 });
 
 // Upload KMZ file and update kmz_file_path for a circuit_id
-router.post('/network_routes/:circuit_id/upload_kmz', upload.single('kmz_file'), (req, res) => {
+router.post('/network_routes/:circuit_id/upload_kmz', authenticateToken, authorizePermission('network_routes', 'edit'), upload.single('kmz_file'), (req, res) => {
   const { circuit_id } = req.params;
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
   const kmzPath = req.file.filename;
-  db.run(
-    'UPDATE network_routes SET kmz_file_path = ? WHERE circuit_id = ?',
-    [kmzPath, circuit_id],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
-      res.json({ message: 'KMZ file uploaded', kmz_file_path: kmzPath });
-    }
-  );
+  
+  // Get old values for change logging
+  db.get('SELECT kmz_file_path FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, oldRoute) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldRoute) return res.status(404).json({ error: 'Route not found' });
+    
+    db.run(
+      'UPDATE network_routes SET kmz_file_path = ? WHERE circuit_id = ?',
+      [kmzPath, circuit_id],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
+        
+        // Log the KMZ file upload
+        logChange(req.user.id, 'network_routes', circuit_id, 'UPDATE', 
+          { kmz_file_path: oldRoute.kmz_file_path }, 
+          { kmz_file_path: kmzPath, file_action: 'KMZ_UPLOAD', filename: req.file.originalname }, 
+          req);
+        
+        res.json({ message: 'KMZ file uploaded', kmz_file_path: kmzPath });
+      }
+    );
+  });
 });
 
 // Export network_routes as CSV
-router.get('/network_routes_export', (req, res) => {
+router.get('/network_routes_export', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
   db.all('SELECT circuit_id, outage_tickets_last_30d, maintenance_tickets_last_30d, kmz_file_path, live_latency, expected_latency, test_results_link, cable_system, is_special, underlying_carrier, location_a, location_b, bandwidth, more_details, mtu, sla_latency, capacity_usage_percent FROM network_routes', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     const fields = ['circuit_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
@@ -1080,7 +1260,7 @@ router.get('/network_routes_export', (req, res) => {
 });
 
 // Search/filter network_routes by query params (visible fields only)
-router.get('/network_routes_search', (req, res) => {
+router.get('/network_routes_search', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
   const allowedFields = ['circuit_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
   const filters = [];
   const values = [];
@@ -1172,7 +1352,7 @@ router.get('/dark_fiber_details/:circuit_id', (req, res) => {
 });
 
 // Add a dark fiber detail
-router.post('/dark_fiber_details', (req, res) => {
+router.post('/dark_fiber_details', authenticateToken, (req, res) => {
   const { circuit_id, dwdm_wavelength, dwdm_ucn, equipment, in_use, capex_cost_to_light, bandwidth } = req.body;
   
   // Bandwidth validation: required when DWDM UCN has a value
@@ -1191,13 +1371,29 @@ router.post('/dark_fiber_details', (req, res) => {
     [circuit_id, dwdm_wavelength, dwdm_ucn, equipment, in_use ? 1 : 0, capex_cost_to_light, bandwidth || null],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({ id: this.lastID });
+      
+      // Capture lastID to avoid context issues
+      const recordId = this.lastID;
+      
+      // Use circuit_id as record ID if lastID is not available
+      const logRecordId = recordId || circuit_id;
+      
+      // Log the creation with proper error handling
+      try {
+        logChange(req.user.id, 'dark_fiber_details', logRecordId, 'CREATE', null, {
+          circuit_id, dwdm_wavelength, dwdm_ucn, equipment, in_use, capex_cost_to_light, bandwidth
+        }, req);
+      } catch (logError) {
+        console.error('Failed to log dark fiber detail creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId });
     }
   );
 });
 
 // Edit a dark fiber detail by id
-router.put('/dark_fiber_details/:id', (req, res) => {
+router.put('/dark_fiber_details/:id', authenticateToken, (req, res) => {
   const { dwdm_wavelength, dwdm_ucn, equipment, in_use, capex_cost_to_light, bandwidth } = req.body;
   
   // Bandwidth validation: required when DWDM UCN has a value
@@ -1211,28 +1407,50 @@ router.put('/dark_fiber_details/:id', (req, res) => {
     return res.status(400).json({ error: `Invalid bandwidth. Must be one of: ${validBandwidths.join(', ')}` });
   }
   
-  db.run(
-    'UPDATE dark_fiber_details SET dwdm_wavelength = ?, dwdm_ucn = ?, equipment = ?, in_use = ?, capex_cost_to_light = ?, bandwidth = ? WHERE id = ?',
-    [dwdm_wavelength, dwdm_ucn, equipment, in_use ? 1 : 0, capex_cost_to_light, bandwidth || null, req.params.id],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
-      res.json({ message: 'Updated' });
-    }
-  );
+  // Get old values for change logging
+  db.get('SELECT * FROM dark_fiber_details WHERE id = ?', [req.params.id], (err, oldValues) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldValues) return res.status(404).json({ error: 'Not found' });
+    
+    db.run(
+      'UPDATE dark_fiber_details SET dwdm_wavelength = ?, dwdm_ucn = ?, equipment = ?, in_use = ?, capex_cost_to_light = ?, bandwidth = ? WHERE id = ?',
+      [dwdm_wavelength, dwdm_ucn, equipment, in_use ? 1 : 0, capex_cost_to_light, bandwidth || null, req.params.id],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
+        
+        // Log the update
+        logChange(req.user.id, 'dark_fiber_details', req.params.id, 'UPDATE', oldValues, {
+          dwdm_wavelength, dwdm_ucn, equipment, in_use, capex_cost_to_light, bandwidth
+        }, req);
+        
+        res.json({ message: 'Updated' });
+      }
+    );
+  });
 });
 
 // Delete a dark fiber detail by id
-router.delete('/dark_fiber_details/:id', (req, res) => {
-  db.run('DELETE FROM dark_fiber_details WHERE id = ?', [req.params.id], function(err) {
+router.delete('/dark_fiber_details/:id', authenticateToken, (req, res) => {
+  // Get old values for change logging
+  db.get('SELECT * FROM dark_fiber_details WHERE id = ?', [req.params.id], (err, oldValues) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
-    res.json({ message: 'Deleted' });
+    if (!oldValues) return res.status(404).json({ error: 'Not found' });
+    
+    db.run('DELETE FROM dark_fiber_details WHERE id = ?', [req.params.id], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
+      
+      // Log the deletion
+      logChange(req.user.id, 'dark_fiber_details', req.params.id, 'DELETE', oldValues, null, req);
+      
+      res.json({ message: 'Deleted' });
+    });
   });
 });
 
 // Reserve a DWDM UCN for 60 days
-router.post('/dark_fiber_details/:id/reserve', (req, res) => {
+router.post('/dark_fiber_details/:id/reserve', authenticateToken, (req, res) => {
   const { id } = req.params;
   const { reserved_by } = req.body;
   
@@ -1250,18 +1468,11 @@ router.post('/dark_fiber_details/:id/reserve', (req, res) => {
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0) return res.status(400).json({ error: 'Cannot reserve - already reserved or not found' });
       
-      // Log the reservation
-      db.get('SELECT * FROM dark_fiber_details WHERE id = ?', [id], (err, row) => {
-        if (err) return res.status(500).json({ error: err.message });
-        
-        db.run(
-          'INSERT INTO reservation_logs (dark_fiber_id, circuit_id, dwdm_ucn, action, reserved_by, expiry_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [id, row.circuit_id, row.dwdm_ucn, 'RESERVED', reserved_by, expiresAt.toISOString(), '60-day reservation'],
-          function(logErr) {
-            if (logErr) console.error('Failed to log reservation:', logErr);
-          }
-        );
-      });
+      // Log the reservation with standard logChange
+      logChange(req.user.id, 'dark_fiber_details', id, 'RESERVE', null, {
+        reserved_by, reserved_at: reservedAt.toISOString(), reservation_expires_at: expiresAt.toISOString(),
+        action: 'RESERVE', duration: '60 days'
+      }, req);
       
       res.json({ 
         message: 'Reserved successfully', 
@@ -1273,7 +1484,7 @@ router.post('/dark_fiber_details/:id/reserve', (req, res) => {
 });
 
 // Release a reservation
-router.post('/dark_fiber_details/:id/release', (req, res) => {
+router.post('/dark_fiber_details/:id/release', authenticateToken, (req, res) => {
   const { id } = req.params;
   const { released_by } = req.body;
   
@@ -1284,18 +1495,11 @@ router.post('/dark_fiber_details/:id/release', (req, res) => {
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0) return res.status(400).json({ error: 'Cannot release - not reserved or not found' });
       
-      // Log the release
-      db.get('SELECT * FROM dark_fiber_details WHERE id = ?', [id], (err, row) => {
-        if (err) return res.status(500).json({ error: err.message });
-        
-        db.run(
-          'INSERT INTO reservation_logs (dark_fiber_id, circuit_id, dwdm_ucn, action, reserved_by, notes) VALUES (?, ?, ?, ?, ?, ?)',
-          [id, row.circuit_id, row.dwdm_ucn, 'RELEASED', released_by || 'Unknown', 'Manual release'],
-          function(logErr) {
-            if (logErr) console.error('Failed to log release:', logErr);
-          }
-        );
-      });
+      // Log the release with standard logChange
+      logChange(req.user.id, 'dark_fiber_details', id, 'RELEASE', null, {
+        released_by: released_by || req.user.username, released_at: new Date().toISOString(),
+        action: 'RELEASE'
+      }, req);
       
       res.json({ message: 'Released successfully' });
     }
@@ -1303,7 +1507,7 @@ router.post('/dark_fiber_details/:id/release', (req, res) => {
 });
 
 // Upload Test Results files (multiple files support)
-router.post('/network_routes/:circuit_id/upload_test_results', testResultsUpload.array('test_results_files', 10), (req, res) => {
+router.post('/network_routes/:circuit_id/upload_test_results', authenticateToken, authorizePermission('network_routes', 'edit'), testResultsUpload.array('test_results_files', 10), (req, res) => {
   const { circuit_id } = req.params;
   
   if (!req.files || req.files.length === 0) {
@@ -1349,6 +1553,16 @@ router.post('/network_routes/:circuit_id/upload_test_results', testResultsUpload
           }
         );
         
+        // Log the test results file upload
+        logChange(req.user.id, 'network_routes', circuit_id, 'UPDATE', 
+          null, 
+          { 
+            file_action: 'TEST_RESULTS_UPLOAD', 
+            files_uploaded: results.map(r => r.original_name),
+            file_count: results.length
+          }, 
+          req);
+        
         res.json({ message: 'Test Results files uploaded', files: results });
       })
       .catch(err => {
@@ -1358,7 +1572,7 @@ router.post('/network_routes/:circuit_id/upload_test_results', testResultsUpload
 });
 
 // Get all test results files for a circuit
-router.get('/network_routes/:circuit_id/test_results_files', (req, res) => {
+router.get('/network_routes/:circuit_id/test_results_files', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
   const { circuit_id } = req.params;
   db.all('SELECT * FROM test_results_files WHERE circuit_id = ? ORDER BY uploaded_at DESC', [circuit_id], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -1367,7 +1581,7 @@ router.get('/network_routes/:circuit_id/test_results_files', (req, res) => {
 });
 
 // Download Test Results files as ZIP
-router.get('/network_routes/:circuit_id/download_test_results', (req, res) => {
+router.get('/network_routes/:circuit_id/download_test_results', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
   const { circuit_id } = req.params;
   db.all('SELECT * FROM test_results_files WHERE circuit_id = ?', [circuit_id], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -1390,13 +1604,19 @@ router.get('/network_routes/:circuit_id/download_test_results', (req, res) => {
 });
 
 // Delete a test results file
-router.delete('/test_results_files/:id', (req, res) => {
+router.delete('/test_results_files/:id', authenticateToken, authorizePermission('network_routes', 'edit'), (req, res) => {
   const { id } = req.params;
   db.get('SELECT * FROM test_results_files WHERE id = ?', [id], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!row) return res.status(404).json({ error: 'File not found' });
     
     const circuitId = row.circuit_id;
+    const deletedFileInfo = {
+      id: row.id,
+      original_name: row.original_name,
+      filename: row.filename,
+      file_size: row.file_size
+    };
     
     // Delete from filesystem
     const filePath = path.join(testResultsDir, row.filename);
@@ -1407,6 +1627,16 @@ router.delete('/test_results_files/:id', (req, res) => {
     // Delete from database
     db.run('DELETE FROM test_results_files WHERE id = ?', [id], function(err) {
       if (err) return res.status(500).json({ error: err.message });
+      
+      // Log the test results file deletion
+      logChange(req.user.id, 'network_routes', circuitId, 'UPDATE', 
+        null, 
+        { 
+          file_action: 'TEST_RESULTS_DELETE', 
+          deleted_file: deletedFileInfo.original_name,
+          file_id: deletedFileInfo.id
+        }, 
+        req);
       
       // Update the main network_routes table to reflect remaining files
       db.all('SELECT original_name FROM test_results_files WHERE circuit_id = ?', [circuitId], (err, remainingFiles) => {
@@ -1449,7 +1679,7 @@ router.get('/locations', authenticateToken, authorizePermission('locations', 'vi
 
 // Create location
 router.post('/locations', authenticateToken, authorizePermission('locations', 'create'), (req, res) => {
-  const { location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, 
+  const { location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, 
           min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus } = req.body;
   
   if (!location_code || !city || !country) {
@@ -1457,22 +1687,37 @@ router.post('/locations', authenticateToken, authorizePermission('locations', 'c
   }
   
   db.run(
-    'INSERT INTO location_reference (location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type || 'Tier 1', status || 'Active', provider, access_info, 
+    'INSERT INTO location_reference (location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [location_code, region || 'AMERs', city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type || 'Tier 1', status || 'Active', provider, access_info, 
      min_price_under_100mb || 0, min_price_100_to_999mb || 0, min_price_1000_to_2999mb || 0, min_price_3000mb_plus || 0, req.user.id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
-      logChange(req.user.id, 'location_reference', this.lastID, 'CREATE', null, { location_code, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus }, req);
+      // Capture lastID to avoid this context issues
+      const recordId = this.lastID;
       
-      res.status(201).json({ id: this.lastID, location_code });
+      // Use location_code as record ID if lastID is not available
+      const logRecordId = recordId || location_code;
+      
+      // Log the change with proper error handling (don't block if logging fails)
+      try {
+        logChange(req.user.id, 'location_reference', logRecordId, 'CREATE', null, { 
+          location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, 
+          time_zone, pop_type, status, provider, access_info, min_price_under_100mb, 
+          min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus 
+        }, req);
+      } catch (logError) {
+        console.error('Failed to log location creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId, location_code });
     }
   );
 });
 
 // Update location
 router.put('/locations/:id', authenticateToken, authorizePermission('locations', 'edit'), (req, res) => {
-  const { city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info,
+  const { region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info,
           min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus } = req.body;
   const locationId = req.params.id;
   
@@ -1482,14 +1727,14 @@ router.put('/locations/:id', authenticateToken, authorizePermission('locations',
     if (!oldLocation) return res.status(404).json({ error: 'Location not found' });
     
     db.run(
-      'UPDATE location_reference SET city = ?, country = ?, datacenter_name = ?, datacenter_address = ?, latitude = ?, longitude = ?, time_zone = ?, pop_type = ?, status = ?, provider = ?, access_info = ?, min_price_under_100mb = ?, min_price_100_to_999mb = ?, min_price_1000_to_2999mb = ?, min_price_3000mb_plus = ?, updated_by = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?',
-      [city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, 
+      'UPDATE location_reference SET region = ?, city = ?, country = ?, datacenter_name = ?, datacenter_address = ?, latitude = ?, longitude = ?, time_zone = ?, pop_type = ?, status = ?, provider = ?, access_info = ?, min_price_under_100mb = ?, min_price_100_to_999mb = ?, min_price_1000_to_2999mb = ?, min_price_3000mb_plus = ?, updated_by = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?',
+      [region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, 
        min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus, req.user.id, locationId],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
         
-        logChange(req.user.id, 'location_reference', locationId, 'UPDATE', oldLocation, { city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus }, req);
+        logChange(req.user.id, 'location_reference', oldLocation.location_code, 'UPDATE', oldLocation, { region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus }, req);
         
         res.json({ message: 'Location updated' });
       }
@@ -1510,7 +1755,7 @@ router.delete('/locations/:id', authenticateToken, authorizePermission('location
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
       
-      logChange(req.user.id, 'location_reference', locationId, 'DELETE', location, null, req);
+      logChange(req.user.id, 'location_reference', location.location_code, 'DELETE', location, null, req);
       
       res.json({ message: 'Location deleted' });
     });
@@ -1539,7 +1784,7 @@ router.put('/locations/:id/minimum-pricing', authenticateToken, (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
         
-        logChange(req.user.id, 'location_reference', locationId, 'UPDATE_PRICING', 
+        logChange(req.user.id, 'location_reference', oldLocation.location_code, 'UPDATE_PRICING', 
           { min_price_under_100mb: oldLocation.min_price_under_100mb, min_price_100_to_999mb: oldLocation.min_price_100_to_999mb, 
             min_price_1000_to_2999mb: oldLocation.min_price_1000_to_2999mb, min_price_3000mb_plus: oldLocation.min_price_3000mb_plus }, 
           { min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus }, req);
@@ -1628,9 +1873,20 @@ router.post('/locations/:id/capabilities', authenticateToken, authorizePermissio
         function(err) {
           if (err) return res.status(500).json({ error: err.message });
           
-          logChange(req.user.id, 'pop_capabilities', this.lastID, 'CREATE', null, capabilities, req);
+          // Capture lastID to avoid context issues
+          const recordId = this.lastID;
           
-          res.status(201).json({ id: this.lastID, message: 'POP capabilities created' });
+          // Use location_id as record ID if lastID is not available
+          const logRecordId = recordId || locationId;
+          
+          // Log the creation with proper error handling
+          try {
+            logChange(req.user.id, 'pop_capabilities', logRecordId, 'CREATE', null, capabilities, req);
+          } catch (logError) {
+            console.error('Failed to log POP capabilities creation:', logError);
+          }
+          
+          res.status(201).json({ id: recordId, message: 'POP capabilities created' });
         }
       );
     }
@@ -1645,35 +1901,111 @@ router.get('/exchange_rates', (req, res) => {
   });
 });
 
-router.post('/exchange_rates', (req, res) => {
+router.post('/exchange_rates', authenticateToken, (req, res) => {
   const { currency_code, exchange_rate, updated_by } = req.body;
   const nextUpdate = new Date();
   nextUpdate.setDate(nextUpdate.getDate() + 30);
   
   db.run(
     'INSERT INTO exchange_rates (currency_code, exchange_rate, next_update_due, updated_by) VALUES (?, ?, ?, ?)',
-    [currency_code, exchange_rate, nextUpdate.toISOString(), updated_by],
+    [currency_code, exchange_rate, nextUpdate.toISOString(), updated_by || req.user.id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({ id: this.lastID, currency_code });
+      
+      // Capture lastID to avoid context issues
+      const recordId = this.lastID;
+      
+      // Use currency_code as record ID if lastID is not available
+      const logRecordId = recordId || currency_code;
+      
+      // Log the creation with proper error handling
+      try {
+        logChange(req.user.id, 'exchange_rates', logRecordId, 'CREATE', null, {
+          currency_code, exchange_rate, next_update_due: nextUpdate.toISOString(), updated_by: updated_by || req.user.id
+        }, req);
+      } catch (logError) {
+        console.error('Failed to log exchange rate creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId, currency_code });
     }
   );
 });
 
-router.put('/exchange_rates/:id', (req, res) => {
+router.put('/exchange_rates/:id', authenticateToken, (req, res) => {
   const { exchange_rate, updated_by } = req.body;
   const nextUpdate = new Date();
   nextUpdate.setDate(nextUpdate.getDate() + 30);
   
-  db.run(
-    'UPDATE exchange_rates SET exchange_rate = ?, last_updated = CURRENT_TIMESTAMP, next_update_due = ?, updated_by = ? WHERE id = ?',
-    [exchange_rate, nextUpdate.toISOString(), updated_by, req.params.id],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Exchange rate not found' });
-      res.json({ message: 'Exchange rate updated' });
+  // Get old values for change logging
+  db.get('SELECT * FROM exchange_rates WHERE id = ?', [req.params.id], (err, oldValues) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldValues) return res.status(404).json({ error: 'Exchange rate not found' });
+    
+    db.run(
+      'UPDATE exchange_rates SET exchange_rate = ?, last_updated = CURRENT_TIMESTAMP, next_update_due = ?, updated_by = ? WHERE id = ?',
+      [exchange_rate, nextUpdate.toISOString(), updated_by || req.user.id, req.params.id],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Exchange rate not found' });
+        
+        // Log the update
+        logChange(req.user.id, 'exchange_rates', req.params.id, 'UPDATE', oldValues, {
+          exchange_rate, next_update_due: nextUpdate.toISOString(), updated_by: updated_by || req.user.id
+        }, req);
+        
+        res.json({ message: 'Exchange rate updated' });
+      }
+    );
+  });
+});
+
+router.delete('/exchange_rates/:id', authenticateToken, authorizePermission('exchange_rates', 'delete'), (req, res) => {
+  const rateId = req.params.id;
+  
+  // Get the exchange rate details for validation and logging
+  db.get('SELECT * FROM exchange_rates WHERE id = ?', [rateId], (err, rate) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rate) return res.status(404).json({ error: 'Exchange rate not found' });
+    
+    // Prevent deletion of USD base currency
+    if (rate.currency_code === 'USD') {
+      return res.status(400).json({ error: 'USD is the base currency and cannot be deleted' });
     }
-  );
+    
+    // Check if exchange rate is used in network routes
+    db.get('SELECT COUNT(*) as count FROM network_routes WHERE currency = ?', [rate.currency_code], (err, routeUsage) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      if (routeUsage.count > 0) {
+        return res.status(400).json({ 
+          error: 'Exchange Rate in use - Please remove from any live function before deletion'
+        });
+      }
+      
+      // Check if exchange rate is used in exchange feeds pass through fees
+      db.get('SELECT COUNT(*) as count FROM exchange_feeds WHERE pass_through_currency = ?', [rate.currency_code], (err, feedUsage) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        if (feedUsage.count > 0) {
+          return res.status(400).json({ 
+            error: 'Exchange Rate in use - Please remove from any live function before deletion'
+          });
+        }
+        
+        // If not in use, proceed with deletion
+        db.run('DELETE FROM exchange_rates WHERE id = ?', [rateId], function(err) {
+          if (err) return res.status(500).json({ error: err.message });
+          if (this.changes === 0) return res.status(404).json({ error: 'Exchange rate not found' });
+          
+          // Log the deletion
+          logChange(req.user.id, 'exchange_rates', rate.currency_code, 'DELETE', rate, null, req);
+          
+          res.json({ message: 'Exchange rate deleted successfully' });
+        });
+      });
+    });
+  });
 });
 
 // Exchange currencies endpoint for Exchange Data currency dropdowns
@@ -2629,7 +2961,7 @@ router.post('/network_design/generate_kmz', (req, res) => {
 });
 
 // Save/Load Network Design Searches
-router.post('/network_design/save_search', (req, res) => {
+router.post('/network_design/save_search', authenticateToken, (req, res) => {
   const { search_name, source_location, destination_location, bandwidth_required, 
           bandwidth_unit, include_ull, protection_required, max_latency, 
           carrier_avoidance, output_currency, contract_term, search_results } = req.body;
@@ -2639,7 +2971,24 @@ router.post('/network_design/save_search', (req, res) => {
     [search_name, source_location, destination_location, bandwidth_required, bandwidth_unit, include_ull, protection_required, max_latency, carrier_avoidance, output_currency, contract_term, JSON.stringify(search_results)],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({ id: this.lastID, message: 'Search saved successfully' });
+      
+      // Capture lastID to avoid context issues
+      const recordId = this.lastID;
+      
+      // Use search_name as record ID if lastID is not available
+      const logRecordId = recordId || search_name;
+      
+      // Log the creation with proper error handling
+      try {
+        logChange(req.user.id, 'network_design_searches', logRecordId, 'CREATE', null, {
+          search_name, source_location, destination_location, bandwidth_required, bandwidth_unit,
+          include_ull, protection_required, max_latency, carrier_avoidance, output_currency, contract_term
+        }, req);
+      } catch (logError) {
+        console.error('Failed to log network design search creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId, message: 'Search saved successfully' });
     }
   );
 });
@@ -2665,11 +3014,21 @@ router.get('/network_design/saved_searches/:id', (req, res) => {
   });
 });
 
-router.delete('/network_design/saved_searches/:id', (req, res) => {
-  db.run('DELETE FROM network_design_searches WHERE id = ?', [req.params.id], function(err) {
+router.delete('/network_design/saved_searches/:id', authenticateToken, (req, res) => {
+  // Get old values for change logging
+  db.get('SELECT * FROM network_design_searches WHERE id = ?', [req.params.id], (err, oldValues) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0) return res.status(404).json({ error: 'Search not found' });
-    res.json({ message: 'Search deleted successfully' });
+    if (!oldValues) return res.status(404).json({ error: 'Search not found' });
+    
+    db.run('DELETE FROM network_design_searches WHERE id = ?', [req.params.id], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Search not found' });
+      
+      // Log the deletion
+      logChange(req.user.id, 'network_design_searches', req.params.id, 'DELETE', oldValues, null, req);
+      
+      res.json({ message: 'Search deleted successfully' });
+    });
   });
 });
 
@@ -2725,7 +3084,7 @@ router.delete('/network_design/audit_logs', authenticateToken, (req, res) => {
     }
     
     // Log the clear action
-    logChange(req.user.id, 'audit_logs', null, 'CLEAR_ALL', null, { 
+    logChange(null, 'audit_logs', null, 'CLEAR_ALL', null, { 
       cleared_count: this.changes,
       action: 'Clear all audit logs'
     }, req);
@@ -2776,7 +3135,7 @@ router.get('/network_design/audit_logs/export', authenticateToken, (req, res) =>
     const csvContent = csvHeaders + csvRows.join('\n');
     
     // Log the export action
-    logChange(req.user.id, 'audit_logs', null, 'EXPORT', null, { 
+    logChange(null, 'audit_logs', null, 'EXPORT', null, { 
       exported_count: rows.length,
       action: 'Export audit logs to CSV'
     }, req);
@@ -2788,7 +3147,7 @@ router.get('/network_design/audit_logs/export', authenticateToken, (req, res) =>
 });
 
 // Download KMZ file
-router.get('/download_kmz/:filename', (req, res) => {
+router.get('/download_kmz/:filename', authenticateToken, (req, res) => {
   const filename = req.params.filename;
   const filePath = path.join(kmzDir, filename);
   
@@ -2978,7 +3337,7 @@ router.put('/cnx-colocation/locations/:id', authenticateToken, authorizePermissi
           if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
           
           // Log the change
-          logChange(req.user.id, 'location_reference', locationId, 'UPDATE_CNX_COLOCATION', 
+          logChange(req.user.id, 'location_reference', location.location_code, 'UPDATE_CNX_COLOCATION', 
             { more_info: location.more_info, design_file: location.design_file }, 
             updateData, req);
           
@@ -3040,10 +3399,21 @@ router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, au
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         
-        logChange(req.user.id, 'cnx_colocation_racks', this.lastID, 'CREATE', null, 
-          { locationId, rack_id, total_power_kva, network_infrastructure, pricing_info_file: pricingInfoFile, more_info }, req);
+        // Capture lastID to avoid context issues
+        const recordId = this.lastID;
         
-        res.status(201).json({ id: this.lastID, rack_id, message: 'Rack created successfully' });
+        // Use rack_id as record ID if lastID is not available
+        const logRecordId = recordId || rack_id;
+        
+        // Log the creation with proper error handling
+        try {
+          logChange(req.user.id, 'cnx_colocation_racks', logRecordId, 'CREATE', null, 
+            { locationId, rack_id, total_power_kva, network_infrastructure, pricing_info_file: pricingInfoFile, more_info }, req);
+        } catch (logError) {
+          console.error('Failed to log CNX colocation rack creation:', logError);
+        }
+        
+        res.status(201).json({ id: recordId, rack_id, message: 'Rack created successfully' });
       }
     );
   });
@@ -3098,7 +3468,7 @@ router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizePermissi
           if (updateErr) return res.status(500).json({ error: updateErr.message });
           if (this.changes === 0) return res.status(404).json({ error: 'Rack not found' });
           
-          logChange(req.user.id, 'cnx_colocation_racks', rackId, 'UPDATE', rack, updateData, req);
+          logChange(req.user.id, 'cnx_colocation_racks', rack.rack_id, 'UPDATE', rack, updateData, req);
           
           res.json({ message: 'Rack updated successfully' });
         }
@@ -3136,7 +3506,7 @@ router.delete('/cnx-colocation/racks/:rackId', authenticateToken, authorizePermi
           });
         }
         
-        logChange(req.user.id, 'cnx_colocation_racks', rackId, 'DELETE', rack, null, req);
+        logChange(req.user.id, 'cnx_colocation_racks', rack.rack_id, 'DELETE', rack, null, req);
         
         res.json({ message: 'Rack deleted successfully' });
       });
@@ -3167,20 +3537,51 @@ router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authoriz
     return res.status(400).json({ error: 'Client Name, Power Purchased, and RU Purchased are required' });
   }
   
-  const clientDesignFile = req.file ? req.file.filename : null;
+  // Validate RU allocation doesn't exceed 30
+  const ruPurchasedInt = parseInt(ru_purchased);
+  if (ruPurchasedInt <= 0) {
+    return res.status(400).json({ error: 'RU Purchased must be greater than 0' });
+  }
   
-  db.run(
-    'INSERT INTO cnx_colocation_clients (rack_id, client_name, power_purchased, ru_purchased, more_info, design_file, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [rackId, client_name, parseFloat(power_purchased), parseInt(ru_purchased), more_info || null, clientDesignFile, req.user.id],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      
-      logChange(req.user.id, 'cnx_colocation_clients', this.lastID, 'CREATE', null, 
-        { rackId, client_name, power_purchased, ru_purchased, more_info, design_file: clientDesignFile }, req);
-      
-      res.status(201).json({ id: this.lastID, client_name, message: 'Client created successfully' });
+  // Check current RU allocation for this rack
+  db.get('SELECT COALESCE(SUM(ru_purchased), 0) as current_ru FROM cnx_colocation_clients WHERE rack_id = ?', [rackId], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    const currentRU = result.current_ru;
+    const totalRU = currentRU + ruPurchasedInt;
+    
+    if (totalRU > 30) {
+      return res.status(400).json({ 
+        error: `Cannot add client: Total RU would exceed 30 (currently ${currentRU}/30 allocated, trying to add ${ruPurchasedInt} RU)` 
+      });
     }
-  );
+    
+    const clientDesignFile = req.file ? req.file.filename : null;
+  
+    db.run(
+      'INSERT INTO cnx_colocation_clients (rack_id, client_name, power_purchased, ru_purchased, more_info, design_file, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [rackId, client_name, parseFloat(power_purchased), parseInt(ru_purchased), more_info || null, clientDesignFile, req.user.id],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        // Capture lastID to avoid context issues
+        const recordId = this.lastID;
+        
+        // Use client_name as record ID if lastID is not available
+        const logRecordId = recordId || client_name;
+        
+        // Log the creation with proper error handling
+        try {
+          logChange(req.user.id, 'cnx_colocation_clients', logRecordId, 'CREATE', null, 
+            { rackId, client_name, power_purchased, ru_purchased, more_info, design_file: clientDesignFile }, req);
+        } catch (logError) {
+          console.error('Failed to log CNX colocation client creation:', logError);
+        }
+        
+        res.status(201).json({ id: recordId, client_name, message: 'Client created successfully' });
+      }
+    );
+  });
 });
 
 // Update client
@@ -3197,13 +3598,33 @@ router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizePerm
     if (err) return res.status(500).json({ error: err.message });
     if (!client) return res.status(404).json({ error: 'Client not found' });
     
-    // Prepare update data
-    let updateData = {
-      client_name,
-      power_purchased: parseFloat(power_purchased),
-      ru_purchased: parseInt(ru_purchased),
-      more_info: more_info || null
-    };
+    // Validate RU allocation doesn't exceed 30
+    const ruPurchasedInt = parseInt(ru_purchased);
+    if (ruPurchasedInt <= 0) {
+      return res.status(400).json({ error: 'RU Purchased must be greater than 0' });
+    }
+    
+    // Check current RU allocation for this rack (excluding current client)
+    db.get('SELECT COALESCE(SUM(ru_purchased), 0) as current_ru FROM cnx_colocation_clients WHERE rack_id = ? AND id != ?', 
+      [client.rack_id, clientId], (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      const currentRU = result.current_ru;
+      const totalRU = currentRU + ruPurchasedInt;
+      
+      if (totalRU > 30) {
+        return res.status(400).json({ 
+          error: `Cannot update client: Total RU would exceed 30 (currently ${currentRU + client.ru_purchased}/30 allocated, trying to change to ${ruPurchasedInt} RU)` 
+        });
+      }
+      
+      // Prepare update data
+      let updateData = {
+        client_name,
+        power_purchased: parseFloat(power_purchased),
+        ru_purchased: ruPurchasedInt,
+        more_info: more_info || null
+      };
     
     // Handle design file upload
     if (req.file) {
@@ -3221,18 +3642,19 @@ router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizePerm
     const updateValues = Object.values(updateData);
     const setClause = updateFields.map(field => `${field} = ?`).join(', ');
     
-    db.run(
-      `UPDATE cnx_colocation_clients SET ${setClause}, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [...updateValues, req.user.id, clientId],
-      function(updateErr) {
-        if (updateErr) return res.status(500).json({ error: updateErr.message });
-        if (this.changes === 0) return res.status(404).json({ error: 'Client not found' });
-        
-        logChange(req.user.id, 'cnx_colocation_clients', clientId, 'UPDATE', client, updateData, req);
-        
-        res.json({ message: 'Client updated successfully' });
-      }
-    );
+      db.run(
+        `UPDATE cnx_colocation_clients SET ${setClause}, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [...updateValues, req.user.id, clientId],
+        function(updateErr) {
+          if (updateErr) return res.status(500).json({ error: updateErr.message });
+          if (this.changes === 0) return res.status(404).json({ error: 'Client not found' });
+          
+          logChange(req.user.id, 'cnx_colocation_clients', client.client_name, 'UPDATE', client, updateData, req);
+          
+          res.json({ message: 'Client updated successfully' });
+        }
+      );
+    });
   });
 });
 
@@ -3257,9 +3679,178 @@ router.delete('/cnx-colocation/clients/:clientId', authenticateToken, authorizeP
         });
       }
       
-      logChange(req.user.id, 'cnx_colocation_clients', clientId, 'DELETE', client, null, req);
+      logChange(req.user.id, 'cnx_colocation_clients', client.client_name, 'DELETE', client, null, req);
       
       res.json({ message: 'Client deleted successfully' });
+    });
+  });
+});
+
+// ====================================
+// CNX COLOCATION FILE DOWNLOAD ENDPOINTS
+// ====================================
+
+// Download location design file
+router.get('/cnx-colocation/locations/:id/download', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+  const locationId = req.params.id;
+  
+  db.get('SELECT design_file FROM location_reference WHERE id = ?', [locationId], (err, location) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!location) return res.status(404).json({ error: 'Location not found' });
+    if (!location.design_file) return res.status(404).json({ error: 'No design file found for this location' });
+    
+    const filePath = path.join(__dirname, 'colocation_files', location.design_file);
+    
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Design file not found on server' });
+    }
+    
+    // Set headers for file download
+    res.setHeader('Content-Disposition', `attachment; filename="${location.design_file}"`);
+    res.setHeader('Content-Type', 'application/pdf');
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+    
+    fileStream.on('error', (err) => {
+      console.error('Error streaming location design file:', err);
+      res.status(500).json({ error: 'Failed to download file' });
+    });
+  });
+});
+
+// Download rack pricing file
+router.get('/cnx-colocation/racks/:id/download', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+  const rackId = req.params.id;
+  
+  db.get('SELECT pricing_info_file FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rack) return res.status(404).json({ error: 'Rack not found' });
+    if (!rack.pricing_info_file) return res.status(404).json({ error: 'No pricing file found for this rack' });
+    
+    const filePath = path.join(__dirname, 'colocation_files', rack.pricing_info_file);
+    
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Pricing file not found on server' });
+    }
+    
+    // Set headers for file download
+    res.setHeader('Content-Disposition', `attachment; filename="${rack.pricing_info_file}"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+    
+    fileStream.on('error', (err) => {
+      console.error('Error streaming rack pricing file:', err);
+      res.status(500).json({ error: 'Failed to download file' });
+    });
+  });
+});
+
+// Download client design file
+router.get('/cnx-colocation/clients/:id/download', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+  const clientId = req.params.id;
+  
+  db.get('SELECT design_file FROM cnx_colocation_clients WHERE id = ?', [clientId], (err, client) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    if (!client.design_file) return res.status(404).json({ error: 'No design file found for this client' });
+    
+    const filePath = path.join(__dirname, 'colocation_files', client.design_file);
+    
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Design file not found on server' });
+    }
+    
+    // Set headers for file download
+    res.setHeader('Content-Disposition', `attachment; filename="${client.design_file}"`);
+    res.setHeader('Content-Type', 'application/pdf');
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+    
+    fileStream.on('error', (err) => {
+      console.error('Error streaming client design file:', err);
+      res.status(500).json({ error: 'Failed to download file' });
+    });
+  });
+});
+
+// Delete location design file
+router.delete('/cnx-colocation/locations/:id/design-file', authenticateToken, authorizePermission('cnx_colocation', 'edit'), (req, res) => {
+  const locationId = req.params.id;
+  
+  db.get('SELECT design_file FROM location_reference WHERE id = ?', [locationId], (err, location) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!location) return res.status(404).json({ error: 'Location not found' });
+    if (!location.design_file) return res.status(404).json({ error: 'No design file to delete' });
+    
+    // Delete the file from filesystem
+    const filePath = path.join(__dirname, 'colocation_files', location.design_file);
+    fs.unlink(filePath, (unlinkErr) => {
+      if (unlinkErr) console.error('Failed to delete location design file:', unlinkErr);
+    });
+    
+    // Remove file reference from database
+    db.run('UPDATE location_reference SET design_file = NULL WHERE id = ?', [locationId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      res.json({ message: 'Design file deleted successfully' });
+    });
+  });
+});
+
+// Delete rack pricing file
+router.delete('/cnx-colocation/racks/:id/pricing-file', authenticateToken, authorizePermission('cnx_colocation', 'edit'), (req, res) => {
+  const rackId = req.params.id;
+  
+  db.get('SELECT pricing_info_file FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rack) return res.status(404).json({ error: 'Rack not found' });
+    if (!rack.pricing_info_file) return res.status(404).json({ error: 'No pricing file to delete' });
+    
+    // Delete the file from filesystem
+    const filePath = path.join(__dirname, 'colocation_files', rack.pricing_info_file);
+    fs.unlink(filePath, (unlinkErr) => {
+      if (unlinkErr) console.error('Failed to delete rack pricing file:', unlinkErr);
+    });
+    
+    // Remove file reference from database
+    db.run('UPDATE cnx_colocation_racks SET pricing_info_file = NULL WHERE id = ?', [rackId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      res.json({ message: 'Pricing file deleted successfully' });
+    });
+  });
+});
+
+// Delete client design file
+router.delete('/cnx-colocation/clients/:id/design-file', authenticateToken, authorizePermission('cnx_colocation', 'edit'), (req, res) => {
+  const clientId = req.params.id;
+  
+  db.get('SELECT design_file FROM cnx_colocation_clients WHERE id = ?', [clientId], (err, client) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    if (!client.design_file) return res.status(404).json({ error: 'No design file to delete' });
+    
+    // Delete the file from filesystem
+    const filePath = path.join(__dirname, 'colocation_files', client.design_file);
+    fs.unlink(filePath, (unlinkErr) => {
+      if (unlinkErr) console.error('Failed to delete client design file:', unlinkErr);
+    });
+    
+    // Remove file reference from database
+    db.run('UPDATE cnx_colocation_clients SET design_file = NULL WHERE id = ?', [clientId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      res.json({ message: 'Design file deleted successfully' });
     });
   });
 });
@@ -3344,9 +3935,22 @@ router.post('/exchanges', authenticateToken, authorizePermission('exchange_data'
         return res.status(500).json({ error: err.message });
       }
       
-      logChange(req.user.id, 'exchanges', this.lastID, 'CREATE', null, { exchange_name, region, salesperson_assigned, available }, req);
+      // Capture lastID to avoid this context issues
+      const recordId = this.lastID;
       
-      res.status(201).json({ id: this.lastID, exchange_name, message: 'Exchange created successfully' });
+      // Use exchange_name as record ID if lastID is not available
+      const logRecordId = recordId || exchange_name;
+      
+      // Log the change with proper error handling (don't block if logging fails)
+      try {
+        logChange(req.user.id, 'exchanges', logRecordId, 'CREATE', null, { 
+          exchange_name, region, salesperson_assigned, available 
+        }, req);
+      } catch (logError) {
+        console.error('Failed to log exchange creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId, exchange_name, message: 'Exchange created successfully' });
     }
   );
 });
@@ -3483,8 +4087,9 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
     }
   }
   
-  // Validate feed type
+  // Validate feed type - now using direct frontend values
   const validFeedTypes = ['Equities', 'Futures', 'Options', 'Fixed Income', 'FX', 'Commodities', 'Indices', 'ETFs', 'Alternative Data', 'Reference Data', 'Mixed'];
+  
   if (!validFeedTypes.includes(feed_type)) {
     return res.status(400).json({ error: `Invalid feed type. Must be one of: ${validFeedTypes.join(', ')}` });
   }
@@ -3521,28 +4126,42 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
       order_entry_cost ? parseFloat(order_entry_cost) : null, req.user.id
     ],
     function(err) {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) {
+        console.error('Exchange feed creation database error:', err);
+        return res.status(500).json({ error: err.message });
+      }
+      
+      // Capture lastID to avoid this context issues
+      const recordId = this.lastID;
       
       // If file was uploaded, record it in exchange_files table
-      if (req.file) {
+      if (req.file && recordId) {
         db.run(
           'INSERT INTO exchange_files (exchange_feed_id, filename, original_name, file_size) VALUES (?, ?, ?, ?)',
-          [this.lastID, req.file.filename, req.file.originalname, req.file.size],
+          [recordId, req.file.filename, req.file.originalname, req.file.size],
           (err) => {
             if (err) console.error('Failed to record file upload:', err);
           }
         );
       }
       
-      logChange(req.user.id, 'exchange_feeds', this.lastID, 'CREATE', null, {
-        exchange_id: exchangeId, feed_name, feed_delivery, feed_type, isf_enabled, 
-        isf_a, isf_b, isf_site_code_a, isf_site_code_b, isf_dr_a, isf_dr_b,
-        isf_dr_site_code_a, isf_dr_site_code_b, dr_type, order_entry_isf, unicast_isf,
-        dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
-        pass_through_currency, pass_through_fees_info, more_info
-      }, req);
+      // Use feed_name as record ID if lastID is not available
+      const logRecordId = recordId || feed_name;
       
-      res.status(201).json({ id: this.lastID, feed_name, message: 'Exchange feed created successfully' });
+      // Log the change with proper error handling (don't block if logging fails)
+      try {
+        logChange(req.user.id, 'exchange_feeds', logRecordId, 'CREATE', null, {
+          exchange_id: exchangeId, feed_name, feed_delivery, feed_type, isf_enabled, 
+          isf_a, isf_b, isf_site_code_a, isf_site_code_b, isf_dr_a, isf_dr_b,
+          isf_dr_site_code_a, isf_dr_site_code_b, dr_type, order_entry_isf, unicast_isf,
+          dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
+          pass_through_currency, pass_through_fees_info, more_info
+        }, req);
+      } catch (logError) {
+        console.error('Failed to log exchange feed creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId, feed_name, message: 'Exchange feed created successfully' });
     }
   );
 });
@@ -3571,10 +4190,13 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
     }
   }
   
-  // Validate feed type
-  const validFeedTypes = ['Equities', 'Futures', 'Options', 'Fixed Income', 'FX', 'Commodities', 'Indices', 'ETFs', 'Alternative Data', 'Reference Data', 'Mixed'];
-  if (feed_type && !validFeedTypes.includes(feed_type)) {
-    return res.status(400).json({ error: `Invalid feed type. Must be one of: ${validFeedTypes.join(', ')}` });
+  // Validate feed type - now using direct frontend values
+  if (feed_type) {
+    const validFeedTypes = ['Equities', 'Futures', 'Options', 'Fixed Income', 'FX', 'Commodities', 'Indices', 'ETFs', 'Alternative Data', 'Reference Data', 'Mixed'];
+    
+    if (!validFeedTypes.includes(feed_type)) {
+      return res.status(400).json({ error: `Invalid feed type. Must be one of: ${validFeedTypes.join(', ')}` });
+    }
   }
 
   // Quick Quote validation: if enabled, minimum cost is required
@@ -3672,7 +4294,7 @@ router.delete('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authori
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0) return res.status(404).json({ error: 'Exchange feed not found' });
       
-      logChange(req.user.id, 'exchange_feeds', feedId, 'DELETE', oldFeed, null, req);
+              logChange(req.user.id, 'exchange_feeds', feedId, 'DELETE', oldFeed, null, req);
       
       res.json({ message: 'Exchange feed deleted successfully' });
     });
@@ -3732,12 +4354,23 @@ router.post('/exchanges/:id/contacts', authenticateToken, authorizePermission('e
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
-      logChange(req.user.id, 'exchange_contacts', this.lastID, 'CREATE', null, {
-        exchange_id: exchangeId, contact_name, job_title, country, phone_number,
-        email, contact_type, daily_contact, more_info
-      }, req);
+      // Capture lastID to avoid this context issues
+      const recordId = this.lastID;
       
-      res.status(201).json({ id: this.lastID, contact_name, message: 'Exchange contact created successfully' });
+      // Use contact_name as record ID if lastID is not available
+      const logRecordId = recordId || contact_name;
+      
+      // Log the change with proper error handling (don't block if logging fails)
+      try {
+        logChange(req.user.id, 'exchange_contacts', logRecordId, 'CREATE', null, {
+          exchange_id: exchangeId, contact_name, job_title, country, phone_number,
+          email, contact_type, daily_contact, more_info
+        }, req);
+      } catch (logError) {
+        console.error('Failed to log exchange contact creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId, contact_name, message: 'Exchange contact created successfully' });
     }
   );
 });
@@ -3792,7 +4425,7 @@ router.delete('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, a
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0) return res.status(404).json({ error: 'Exchange contact not found' });
       
-      logChange(req.user.id, 'exchange_contacts', contactId, 'DELETE', oldContact, null, req);
+              logChange(req.user.id, 'exchange_contacts', contactId, 'DELETE', oldContact, null, req);
       
       res.json({ message: 'Exchange contact deleted successfully' });
     });
@@ -3839,7 +4472,7 @@ router.post('/exchanges/:exchangeId/contacts/:contactId/approve', authenticateTo
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Exchange contact not found' });
         
-        logChange(req.user.id, 'exchange_contacts', contactId, 'APPROVE_YEARLY_UPDATE', contact, {
+        logChange(null, 'exchange_contacts', contactId, 'APPROVE_YEARLY_UPDATE', contact, {
           approved_by: req.user.id,
           approved_at: new Date().toISOString()
         }, req);
@@ -4121,7 +4754,7 @@ router.get('/bulk-upload/template/:module', authenticateToken, authorizeRole('ad
     res.send(csv);
     
     // Log template download
-    logChange(req.user.id, 'bulk_upload_templates', null, 'DOWNLOAD', null, { module }, req);
+    logChange(null, 'bulk_upload_templates', null, 'DOWNLOAD', null, { module }, req);
   } catch (error) {
     res.status(500).json({ error: 'Failed to generate template: ' + error.message });
   }
@@ -4150,7 +4783,7 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
       res.send(csv);
       
       // Log database export
-      logChange(req.user.id, 'bulk_upload_database', null, 'EXPORT', null, { module, rows_exported: rows.length }, req);
+      logChange(null, 'bulk_upload_database', null, 'EXPORT', null, { module, rows_exported: rows.length }, req);
     } catch (error) {
       res.status(500).json({ error: 'Failed to export database: ' + error.message });
     }
@@ -4314,7 +4947,7 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                     }
                     
                     // Log successful bulk upload
-                    logChange(req.user.id, 'bulk_upload', null, 'BULK_IMPORT', null, {
+                    logChange(null, 'bulk_upload', null, 'BULK_IMPORT', null, {
                       module,
                       rows_imported: results.length,
                       filename: req.file.originalname
@@ -4829,7 +5462,7 @@ router.post('/promo-pricing', authenticateToken, (req, res) => {
                 dbInstance.run('COMMIT');
 
                 // Log the change
-                logChange(req.user.id, 'promo_pricing_rules', promoRuleId, 'CREATE', null, {
+                logChange(req.user.id, 'promo_pricing_rules', rule_name, 'CREATE', null, {
                   rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
                 }, req);
 
@@ -4860,7 +5493,7 @@ router.post('/promo-pricing', authenticateToken, (req, res) => {
                 dbInstance.run('COMMIT');
 
                 // Log the change
-                logChange(req.user.id, 'promo_pricing_rules', promoRuleId, 'CREATE', null, {
+                logChange(req.user.id, 'promo_pricing_rules', rule_name, 'CREATE', null, {
                   rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
                 }, req);
 
@@ -4965,7 +5598,7 @@ router.put('/promo-pricing/:id', authenticateToken, (req, res) => {
                         dbInstance.run('COMMIT');
 
                         // Log the change
-                        logChange(req.user.id, 'promo_pricing_rules', promoRuleId, 'UPDATE', oldRule, {
+                        logChange(req.user.id, 'promo_pricing_rules', rule_name, 'UPDATE', oldRule, {
                           rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
                         }, req);
 
@@ -4995,7 +5628,7 @@ router.put('/promo-pricing/:id', authenticateToken, (req, res) => {
                         dbInstance.run('COMMIT');
 
                         // Log the change
-                        logChange(req.user.id, 'promo_pricing_rules', promoRuleId, 'UPDATE', oldRule, {
+                        logChange(req.user.id, 'promo_pricing_rules', rule_name, 'UPDATE', oldRule, {
                           rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
                         }, req);
 
@@ -5038,7 +5671,7 @@ router.delete('/promo-pricing/:id', authenticateToken, (req, res) => {
         if (this.changes === 0) return res.status(404).json({ error: 'Promo rule not found' });
 
         // Log the change
-        logChange(req.user.id, 'promo_pricing_rules', promoRuleId, 'DELETE', rule, null, req);
+        logChange(req.user.id, 'promo_pricing_rules', rule.rule_name, 'DELETE', rule, null, req);
 
         res.json({
           success: true,
@@ -5404,7 +6037,7 @@ router.delete('/exchange-pricing/audit_logs', authenticateToken, (req, res) => {
     }
     
     // Log the clear action
-    logChange(req.user.id, 'audit_logs', null, 'CLEAR_EXCHANGE_PRICING', null, { 
+    logChange(null, 'audit_logs', null, 'CLEAR_EXCHANGE_PRICING', null, { 
       cleared_count: this.changes,
       action: 'Clear exchange pricing audit logs'
     }, req);
@@ -5430,7 +6063,7 @@ router.delete('/exchange-pricing/quotes/clear', authenticateToken, (req, res) =>
     }
     
     // Log the clear action
-    logChange(req.user.id, 'quote_requests', null, 'CLEAR_ALL_QUOTES', null, { 
+    logChange(null, 'quote_requests', null, 'CLEAR_ALL_QUOTES', null, { 
       cleared_count: this.changes,
       action: 'Clear all exchange pricing quote history'
     }, req);
@@ -5486,7 +6119,7 @@ router.get('/exchange-pricing/audit_logs/export', authenticateToken, (req, res) 
     const csvContent = csvHeaders + csvRows.join('\n');
     
     // Log the export action
-    logChange(req.user.id, 'audit_logs', null, 'EXPORT_EXCHANGE_PRICING', null, { 
+    logChange(null, 'audit_logs', null, 'EXPORT_EXCHANGE_PRICING', null, { 
       exported_count: rows.length,
       action: 'Export exchange pricing audit logs to CSV'
     }, req);
@@ -5496,5 +6129,7 @@ router.get('/exchange-pricing/audit_logs/export', authenticateToken, (req, res) 
     res.send(csvContent);
   });
 });
+
+
 
 module.exports = router; 
