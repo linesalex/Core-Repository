@@ -19,11 +19,11 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-network_routes.db
+# Database files (commented out to allow database commits)
+# *.db
+# *.sqlite
+# *.sqlite3
+# network_routes.db
 
 # Archives and compressed files
 *.tar.gz

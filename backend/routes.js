@@ -198,6 +198,9 @@ router.post('/login', async (req, res) => {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
       
+      // Check if password change is required
+      const passwordResetRequired = user.password_reset_required === 1;
+      
       // Update last login
       db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
       
@@ -250,7 +253,8 @@ router.post('/login', async (req, res) => {
                 role: user.user_role
               },
               permissions,
-              moduleVisibility
+              moduleVisibility,
+              passwordResetRequired
             });
           }
         );
@@ -263,7 +267,7 @@ router.post('/login', async (req, res) => {
 
 // Get current user info
 router.get('/me', authenticateToken, (req, res) => {
-  db.get('SELECT id, username, email, full_name, user_role FROM users WHERE id = ?', [req.user.id], (err, user) => {
+  db.get('SELECT id, username, email, full_name, user_role, password_reset_required FROM users WHERE id = ?', [req.user.id], (err, user) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!user) return res.status(404).json({ error: 'User not found' });
     
@@ -302,7 +306,8 @@ router.get('/me', authenticateToken, (req, res) => {
               role: user.user_role
             },
             permissions,
-            moduleVisibility
+            moduleVisibility,
+            passwordResetRequired: user.password_reset_required === 1
           });
         }
       );
@@ -346,6 +351,59 @@ router.put('/change-password', authenticateToken, async (req, res) => {
   }
 });
 
+// Forced password change (for reset passwords)
+router.put('/forced-password-change', authenticateToken, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current password and new password are required' });
+  }
+  
+  if (newPassword === 'abc123') {
+    return res.status(400).json({ error: 'New password cannot be the default reset password' });
+  }
+  
+  try {
+    db.get('SELECT password_hash, password_reset_required FROM users WHERE id = ?', [req.user.id], async (err, user) => {
+      if (err) return res.status(500).json({ error: 'Database error' });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      
+      // Verify current password
+      const validPassword = await comparePassword(currentPassword, user.password_hash);
+      if (!validPassword) {
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+      
+      // Hash new password
+      const hashedNewPassword = await hashPassword(newPassword);
+      
+      // Update password and clear reset flag
+      db.run(
+        'UPDATE users SET password_hash = ?, password_reset_required = 0 WHERE id = ?', 
+        [hashedNewPassword, req.user.id], 
+        function(err) {
+          if (err) return res.status(500).json({ error: 'Failed to update password' });
+          
+          // Log the password change
+          logUserActivity(req.user.id, 'FORCED_PASSWORD_CHANGE', {
+            ipAddress: req.ip || req.connection.remoteAddress,
+            userAgent: req.get('User-Agent'),
+            reason: 'Password reset completion'
+          });
+          
+          res.json({ 
+            message: 'Password changed successfully. Please log in again with your new password.',
+            logout: true
+          });
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Forced password change error:', error);
+    res.status(500).json({ error: 'Password change failed' });
+  }
+});
+
 // ====================================
 // USER MANAGEMENT ENDPOINTS
 // ====================================
@@ -360,10 +418,10 @@ router.get('/users', authenticateToken, authorizePermission('user_management', '
 
 // Create user (admin only)
 router.post('/users', authenticateToken, authorizePermission('user_management', 'create'), (req, res) => {
-  const { username, password, email, full_name, user_role } = req.body;
+  const { username, email, full_name, user_role, status } = req.body;
 
-  if (!username || !password || !user_role) {
-    return res.status(400).json({ error: 'Username, password, and role are required' });
+  if (!username || !user_role) {
+    return res.status(400).json({ error: 'Username and role are required' });
   }
 
   const trimmedUsername = username.trim();
@@ -380,10 +438,12 @@ router.post('/users', authenticateToken, authorizePermission('user_management', 
     }
 
     try {
-      const hashedPassword = await hashPassword(password);
+      // Always set default password to 'abc123' for new users
+      const hashedPassword = await hashPassword('abc123');
+      
       db.run(
-        'INSERT INTO users (username, password_hash, email, full_name, user_role) VALUES (?, ?, ?, ?, ?)',
-        [trimmedUsername, hashedPassword, email || null, full_name || null, user_role],
+        'INSERT INTO users (username, password_hash, email, full_name, user_role, status, password_reset_required) VALUES (?, ?, ?, ?, ?, ?, 1)',
+        [trimmedUsername, hashedPassword, email || null, full_name || null, user_role, status || 'active'],
         function (err) {
           if (err) {
             console.error('Error creating user:', err);
@@ -400,12 +460,19 @@ router.post('/users', authenticateToken, authorizePermission('user_management', 
           
           // Log the change with proper error handling
           try {
-            logChange(req.user?.id || null, 'users', logRecordId, 'CREATE', null, { username: trimmedUsername, email, full_name, user_role }, req);
+            logChange(req.user?.id || null, 'users', logRecordId, 'CREATE', null, { 
+              username: trimmedUsername, email, full_name, user_role, status, 
+              default_password: 'abc123', password_reset_required: true 
+            }, req);
           } catch (logError) {
             console.error('Failed to log user creation:', logError);
           }
           
-          res.status(201).json({ id: recordId, username: trimmedUsername, message: 'User created successfully' });
+          res.status(201).json({ 
+            id: recordId, 
+            username: trimmedUsername, 
+            message: 'User created successfully with default password. User will be required to change password on first login.' 
+          });
         }
       );
     } catch (error) {
@@ -467,6 +534,49 @@ router.delete('/users/:id', authenticateToken, authorizePermission('user_managem
       
       res.json({ message: 'User deleted successfully' });
     });
+  });
+});
+
+// Reset user password (admin only)
+router.post('/users/:id/reset-password', authenticateToken, authorizePermission('user_management', 'edit'), async (req, res) => {
+  const userId = req.params.id;
+  
+  // Get user data for logging
+  db.get('SELECT username FROM users WHERE id = ?', [userId], async (err, user) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    try {
+      // Hash the default password 'abc123'
+      const hashedPassword = await hashPassword('abc123');
+      
+      // Update the user's password and mark for forced password change
+      db.run(
+        'UPDATE users SET password_hash = ?, password_reset_required = 1 WHERE id = ?', 
+        [hashedPassword, userId], 
+        function(err) {
+          if (err) return res.status(500).json({ error: err.message });
+          if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
+          
+          // Log the password reset activity
+          logChange(req.user.id, 'users', user.username, 'PASSWORD_RESET', null, {
+            reset_by: req.user.username,
+            action: 'Admin password reset to abc123',
+            new_password: 'abc123',
+            requires_password_change: true
+          }, req);
+          
+          res.json({ 
+            message: 'Password reset to abc123 successfully. User will be required to change password on next login.',
+            username: user.username
+          });
+        }
+      );
+    
+    } catch (error) {
+      console.error('Error hashing password:', error);
+      res.status(500).json({ error: 'Password reset failed due to a server error.' });
+    }
   });
 });
 
@@ -1246,6 +1356,49 @@ router.post('/network_routes/:circuit_id/upload_kmz', authenticateToken, authori
   });
 });
 
+// Delete KMZ file for a circuit_id
+router.delete('/network_routes/:circuit_id/delete_kmz', authenticateToken, authorizePermission('network_routes', 'edit'), (req, res) => {
+  const { circuit_id } = req.params;
+  
+  // Get current route data for logging and file deletion
+  db.get('SELECT kmz_file_path FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, route) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!route) return res.status(404).json({ error: 'Route not found' });
+    if (!route.kmz_file_path) return res.status(400).json({ error: 'No KMZ file to delete' });
+    
+    const oldKmzPath = route.kmz_file_path;
+    
+    // Update database to remove KMZ file path
+    db.run(
+      'UPDATE network_routes SET kmz_file_path = NULL WHERE circuit_id = ?',
+      [circuit_id],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Route not found' });
+        
+        // Delete physical file from filesystem
+        const filePath = path.join(kmzDir, oldKmzPath);
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (fileErr) {
+            console.error('Failed to delete KMZ file from filesystem:', fileErr);
+            // Don't fail the request if file deletion fails
+          }
+        }
+        
+        // Log the KMZ file deletion
+        logChange(req.user.id, 'network_routes', circuit_id, 'UPDATE', 
+          { kmz_file_path: oldKmzPath }, 
+          { kmz_file_path: null, file_action: 'KMZ_DELETE', deleted_filename: oldKmzPath }, 
+          req);
+        
+        res.json({ message: 'KMZ file deleted successfully' });
+      }
+    );
+  });
+});
+
 // Export network_routes as CSV
 router.get('/network_routes_export', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
   db.all('SELECT circuit_id, outage_tickets_last_30d, maintenance_tickets_last_30d, kmz_file_path, live_latency, expected_latency, test_results_link, cable_system, is_special, underlying_carrier, location_a, location_b, bandwidth, more_details, mtu, sla_latency, capacity_usage_percent FROM network_routes', [], (err, rows) => {
@@ -1696,21 +1849,49 @@ router.post('/locations', authenticateToken, authorizePermission('locations', 'c
       // Capture lastID to avoid this context issues
       const recordId = this.lastID;
       
-      // Use location_code as record ID if lastID is not available
-      const logRecordId = recordId || location_code;
-      
-      // Log the change with proper error handling (don't block if logging fails)
-      try {
-        logChange(req.user.id, 'location_reference', logRecordId, 'CREATE', null, { 
-          location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, 
-          time_zone, pop_type, status, provider, access_info, min_price_under_100mb, 
-          min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus 
-        }, req);
-      } catch (logError) {
-        console.error('Failed to log location creation:', logError);
+      // If lastID is not available, query the database to get the ID
+      if (!recordId) {
+        db.get('SELECT id FROM location_reference WHERE location_code = ? ORDER BY id DESC LIMIT 1', [location_code], (selectErr, row) => {
+          if (selectErr) {
+            console.error('Error querying for location ID:', selectErr);
+            return res.status(500).json({ error: 'Failed to get location ID' });
+          }
+          
+          const foundId = row ? row.id : null;
+          
+          // Use location_code as record ID for logging
+          const logRecordId = foundId || location_code;
+          
+          // Log the change with proper error handling (don't block if logging fails)
+          try {
+            logChange(req.user.id, 'location_reference', logRecordId, 'CREATE', null, { 
+              location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, 
+              time_zone, pop_type, status, provider, access_info, min_price_under_100mb, 
+              min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus 
+            }, req);
+          } catch (logError) {
+            console.error('Failed to log location creation:', logError);
+          }
+          
+          res.status(201).json({ id: foundId, location_code });
+        });
+      } else {
+        // Use location_code as record ID if lastID is not available
+        const logRecordId = recordId || location_code;
+        
+        // Log the change with proper error handling (don't block if logging fails)
+        try {
+          logChange(req.user.id, 'location_reference', logRecordId, 'CREATE', null, { 
+            location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, 
+            time_zone, pop_type, status, provider, access_info, min_price_under_100mb, 
+            min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus 
+          }, req);
+        } catch (logError) {
+          console.error('Failed to log location creation:', logError);
+        }
+        
+        res.status(201).json({ id: recordId, location_code });
       }
-      
-      res.status(201).json({ id: recordId, location_code });
     }
   );
 });

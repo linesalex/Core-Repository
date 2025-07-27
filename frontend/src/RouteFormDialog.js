@@ -39,6 +39,7 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
   const [existingFiles, setExistingFiles] = useState([]);
   const [error, setError] = useState('');
   const [fileLoading, setFileLoading] = useState(false);
+  const [kmzDeleteLoading, setKmzDeleteLoading] = useState(false);
   
   // Validation states
   const [formErrors, setFormErrors] = useState({});
@@ -346,6 +347,43 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
     }
   };
 
+  const handleDeleteKMZ = async () => {
+    if (!window.confirm('Are you sure you want to delete the KMZ file? This action cannot be undone.')) {
+      return;
+    }
+
+    setKmzDeleteLoading(true);
+    try {
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(`${API_BASE_URL}/network_routes/${initialValues.circuit_id}/delete_kmz`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete KMZ file');
+      }
+      
+      // Update the form state to reflect KMZ file removal
+      setValues(prev => ({ ...prev, kmz_file_path: '' }));
+      setFile(null);
+      
+      // Notify parent component if needed
+      if (onFileDeleted) {
+        onFileDeleted();
+      }
+      
+      setError(''); // Clear any existing errors
+    } catch (err) {
+      console.error('Failed to delete KMZ file:', err);
+      setError('Failed to delete KMZ file: ' + err.message);
+    } finally {
+      setKmzDeleteLoading(false);
+    }
+  };
+
   const validateBandwidth = (bandwidth) => {
     if (!bandwidth) return true; // Allow empty bandwidth
     
@@ -505,10 +543,34 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
             />
           </Grid>
           <Grid item xs={12}>
-            <Button variant="outlined" component="label" fullWidth>
-              {file ? file.name : (values.kmz_file_path ? values.kmz_file_path : 'Upload KMZ File')}
-              <input type="file" accept=".kmz" hidden onChange={handleFileChange} />
-            </Button>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Typography variant="body2" color="text.secondary">
+                KMZ File
+              </Typography>
+              
+              {values.kmz_file_path && !file ? (
+                // Show existing KMZ file with delete option
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, border: '1px solid #ddd', borderRadius: 1 }}>
+                  <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                    Current file: {values.kmz_file_path}
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    size="small"
+                    onClick={handleDeleteKMZ}
+                    disabled={kmzDeleteLoading}
+                  >
+                    {kmzDeleteLoading ? 'Deleting...' : 'Delete'}
+                  </Button>
+                </Box>
+              ) : null}
+              
+              <Button variant="outlined" component="label" fullWidth>
+                {file ? file.name : (values.kmz_file_path ? 'Replace KMZ File' : 'Upload KMZ File')}
+                <input type="file" accept=".kmz" hidden onChange={handleFileChange} />
+              </Button>
+            </Box>
           </Grid>
           <Grid item xs={12}>
             <Box>

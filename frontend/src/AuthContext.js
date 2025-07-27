@@ -21,6 +21,7 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(localStorage.getItem('authToken'));
   const [connectionError, setConnectionError] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passwordResetRequired, setPasswordResetRequired] = useState(false);
   
   // Session timeout refs (using useRef to avoid re-renders)
   const sessionTimeoutRef = useRef(null);
@@ -157,7 +158,7 @@ export const AuthProvider = ({ children }) => {
         password
       });
 
-      const { token, user, permissions, moduleVisibility } = response.data;
+      const { token, user, permissions, moduleVisibility, passwordResetRequired } = response.data;
       
       // Set axios headers IMMEDIATELY to prevent race condition
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
@@ -170,9 +171,10 @@ export const AuthProvider = ({ children }) => {
       setUser(user);
       setPermissions(permissions);
       setModuleVisibility(moduleVisibility || {});
+      setPasswordResetRequired(passwordResetRequired || false);
       setIsAuthenticated(true);
       
-      return { success: true };
+      return { success: true, passwordResetRequired: passwordResetRequired || false };
     } catch (error) {
       const errorMessage = getErrorMessage(error);
       
@@ -197,6 +199,7 @@ export const AuthProvider = ({ children }) => {
     setPermissions({});
     setModuleVisibility({});
     setIsAuthenticated(false);
+    setPasswordResetRequired(false);
     setShowTimeoutWarning(false);
     localStorage.removeItem('authToken');
     delete axios.defaults.headers.common['Authorization'];
@@ -210,8 +213,34 @@ export const AuthProvider = ({ children }) => {
       });
       return { success: true };
     } catch (error) {
-      console.error('Password change failed:', error);
-      throw error.response?.data || { error: 'Password change failed' };
+      return { 
+        success: false, 
+        error: getErrorMessage(error)
+      };
+    }
+  };
+
+  const forcedPasswordChange = async (currentPassword, newPassword) => {
+    try {
+      const response = await axios.put(`${API_BASE_URL}/forced-password-change`, {
+        currentPassword,
+        newPassword
+      });
+      
+      // If backend says to logout, clear everything and return logout flag
+      if (response.data.logout) {
+        logout();
+        return { success: true, logout: true, message: response.data.message };
+      }
+      
+      // Otherwise just clear the password reset flag
+      setPasswordResetRequired(false);
+      return { success: true, message: response.data.message };
+    } catch (error) {
+      return { 
+        success: false, 
+        error: getErrorMessage(error)
+      };
     }
   };
 
@@ -265,6 +294,8 @@ export const AuthProvider = ({ children }) => {
     login,
     logout,
     changePassword,
+    forcedPasswordChange,
+    passwordResetRequired,
     clearConnectionError,
     hasPermission,
     hasModuleAccess,

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Paper,
@@ -21,6 +21,7 @@ import {
   Lock
 } from '@mui/icons-material';
 import { useAuth } from './AuthContext';
+import ForcedPasswordChange from './ForcedPasswordChange';
 
 const LoginForm = () => {
   const [credentials, setCredentials] = useState({
@@ -30,8 +31,16 @@ const LoginForm = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showForcedPasswordChange, setShowForcedPasswordChange] = useState(false);
   
-  const { login, connectionError, clearConnectionError } = useAuth();
+  const { login, connectionError, clearConnectionError, passwordResetRequired, isAuthenticated } = useAuth();
+
+  // Watch for passwordResetRequired changes (e.g., admin resets password while user is logged in)
+  useEffect(() => {
+    if (isAuthenticated && passwordResetRequired) {
+      setShowForcedPasswordChange(true);
+    }
+  }, [isAuthenticated, passwordResetRequired]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -59,15 +68,25 @@ const LoginForm = () => {
     try {
       const result = await login(credentials.username, credentials.password);
       
-      if (!result.success) {
+      if (result.success) {
+        if (result.passwordResetRequired) {
+          setShowForcedPasswordChange(true);
+        }
+        // If no password reset required, the AuthContext will handle the redirect
+      } else {
         setError(result.error || 'Login failed');
       }
-      // If successful, the AuthContext will handle the redirect
     } catch (error) {
       setError('Login failed. Please try again.');
     }
     
     setLoading(false);
+  };
+
+  const handleForcedPasswordChangeClose = () => {
+    setShowForcedPasswordChange(false);
+    // Clear credentials for security
+    setCredentials({ username: '', password: '' });
   };
 
   const togglePasswordVisibility = () => {
@@ -196,6 +215,13 @@ const LoginForm = () => {
           <em>Please change the password after first login</em>
         </Typography>
       </Paper>
+
+      {showForcedPasswordChange && (
+        <ForcedPasswordChange
+          open={showForcedPasswordChange}
+          onClose={handleForcedPasswordChangeClose}
+        />
+      )}
     </Container>
   );
 };

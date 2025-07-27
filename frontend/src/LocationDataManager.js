@@ -51,12 +51,65 @@ const LocationDataManager = ({ hasPermission }) => {
     access_info: ''
   });
 
+  // Add POP capabilities form state for creation
+  const [formCapabilities, setFormCapabilities] = useState({
+    cnx_extranet_wan: false,
+    cnx_ethernet: false,
+    cnx_voice: false,
+    tdm_gateway: false,
+    cnx_unigy: false,
+    cnx_alpha: false,
+    cnx_chrono: false,
+    cnx_sdwan: false,
+    csp_on_ramp: false,
+    exchange_on_ramp: false,
+    internet_on_ramp: false,
+    transport_only_pop: false,
+    cnx_colocation: false
+  });
+
+  // Function to get suggested city and country based on historical data
+  const getSuggestedLocation = async (popCode) => {
+    if (!popCode || popCode.length < 6) return { city: '', country: '', region: '' };
+    
+    // Extract city code (characters 4-6, e.g., "LON" from "IPCLON9")
+    const cityCode = popCode.substring(3, 6).toUpperCase();
+    
+    try {
+      // Find existing locations with the same city code pattern
+      const existingLocation = locations.find(location => 
+        location.location_code && 
+        location.location_code.length >= 6 &&
+        location.location_code.substring(3, 6).toUpperCase() === cityCode &&
+        location.city && location.country
+      );
+      
+      if (existingLocation) {
+        return {
+          city: existingLocation.city,
+          country: existingLocation.country,
+          region: existingLocation.region || 'AMERs'
+        };
+      }
+    } catch (error) {
+      console.error('Error getting suggested location:', error);
+    }
+    
+    return { city: '', country: '', region: '' };
+  };
+
+  // POP code validation regex: IPC + 3 letters + 1-2 digits
+  const POP_CODE_REGEX = /^IPC[A-Z]{3}([1-9]|[1-9][0-9])$/;
+
   // Validation states
   const [formErrors, setFormErrors] = useState({});
 
-  // Validation rules for Location form
+  // Enhanced validation rules for Location form with POP code format
   const locationValidationRules = {
-    location_code: { type: 'required', message: 'POP Code is required' },
+    location_code: [
+      { type: 'required', message: 'POP Code is required' },
+      { type: 'pattern', pattern: POP_CODE_REGEX, message: 'POP code must follow format: IPC[3 LETTERS][1-99] (e.g., IPCLON9, IPCNYC12)' }
+    ],
     region: { type: 'required', message: 'Region is required' },
     city: { type: 'required', message: 'City is required' },
     country: { type: 'required', message: 'Country is required' },
@@ -132,6 +185,21 @@ const LocationDataManager = ({ hasPermission }) => {
       provider: '',
       access_info: ''
     });
+    setFormCapabilities({ // Reset capabilities for new location
+      cnx_extranet_wan: false,
+      cnx_ethernet: false,
+      cnx_voice: false,
+      tdm_gateway: false,
+      cnx_unigy: false,
+      cnx_alpha: false,
+      cnx_chrono: false,
+      cnx_sdwan: false,
+      csp_on_ramp: false,
+      exchange_on_ramp: false,
+      internet_on_ramp: false,
+      transport_only_pop: false,
+      cnx_colocation: false
+    });
     setFormErrors({}); // Clear validation errors
     setDialogOpen(true);
   };
@@ -166,6 +234,68 @@ const LocationDataManager = ({ hasPermission }) => {
     return text.trim().replace(/\s+/g, ' ').toLowerCase();
   };
 
+  const handleInputChange = (field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+
+    // Auto-populate city and country when POP code is entered
+    if (field === 'location_code' && dialogMode === 'add' && value && value.length >= 6) {
+      getSuggestedLocation(value).then(suggestion => {
+        if (suggestion.city && suggestion.country) {
+          setFormData(prev => ({
+            ...prev,
+            city: suggestion.city,
+            country: suggestion.country,
+            region: suggestion.region // Add region to formData
+          }));
+        }
+      });
+    }
+  };
+
+  const handleCapabilityChange = (key, value) => {
+    setFormCapabilities(prev => ({
+      ...prev,
+      [key]: value
+    }));
+  };
+
+  const handlePopCapabilitiesClick = async (location) => {
+    setSelectedLocation(location);
+    const capabilities = await loadCapabilities(location.id);
+    setCurrentCapabilities(capabilities);
+    setPopCapabilitiesDialogOpen(true);
+  };
+
+  const handleExistingCapabilityChange = async (key, value) => {
+    // Special handling for CNX Colocation - check for existing data before allowing disable
+    if (key === 'cnx_colocation' && !value && currentCapabilities[key]) {
+      try {
+        // Check if there are any racks for this location
+        const response = await axios.get(`${API_BASE_URL}/cnx-colocation/locations/${selectedLocation.id}/racks`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          }
+        });
+        
+        if (response.data && response.data.length > 0) {
+          setError(`Cannot disable CNX Colocation. This location has ${response.data.length} rack(s) with associated data. Please delete all racks first.`);
+          return; // Don't update the capability
+        }
+      } catch (err) {
+        // If we can't check, allow the change (fail safe)
+        console.warn('Could not check for existing rack data:', err);
+      }
+    }
+    
+    setCurrentCapabilities(prev => ({
+      ...prev,
+      [key]: value
+    }));
+  };
+
   const handleSubmit = async () => {
     try {
       // Validate form using validation framework
@@ -190,8 +320,44 @@ const LocationDataManager = ({ hasPermission }) => {
           return;
         }
 
-        await locationDataApi.createLocation(formData);
-        setSuccess('Location created successfully');
+        // Create location first
+        const createdLocation = await locationDataApi.createLocation(formData);
+        
+        // Save capabilities for new location if any are enabled
+        const hasEnabledCapabilities = Object.values(formCapabilities).some(Boolean);
+        
+        if (hasEnabledCapabilities) {
+          try {
+            // The backend returns { id, location_code }, so use createdLocation.id
+            let locationId = createdLocation.id;
+            
+            if (!locationId) {
+              // Fallback: find the location ID by location_code
+              const allLocations = await locationDataApi.getLocations();
+              const foundLocation = allLocations.find(loc => loc.location_code === createdLocation.location_code);
+              locationId = foundLocation ? foundLocation.id : null;
+            }
+            
+            if (!locationId) {
+              throw new Error('Location ID is missing from creation response and could not be found by location code');
+            }
+            
+            // Convert boolean values to ensure backend compatibility
+            const capabilitiesForBackend = {};
+            Object.keys(formCapabilities).forEach(key => {
+              capabilitiesForBackend[key] = formCapabilities[key] ? 1 : 0;
+            });
+            
+            const capabilitiesResponse = await locationDataApi.updateCapabilities(locationId, capabilitiesForBackend);
+            setSuccess('Location and capabilities created successfully');
+          } catch (capErr) {
+            console.error('Failed to save capabilities during location creation:', capErr);
+            setError(`Location created but failed to save capabilities: ${capErr.message}`);
+            // Continue to show location as created successfully but note capabilities issue
+          }
+        } else {
+          setSuccess('Location created successfully');
+        }
       } else {
         // For edit mode, check duplicates excluding current location
         const normalizedLocationCode = normalizeText(formData.location_code);
@@ -229,13 +395,6 @@ const LocationDataManager = ({ hasPermission }) => {
     }
   };
 
-  const handleInputChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
   const handleAccessInfoClick = (location) => {
     setSelectedLocation(location);
     setCurrentAccessInfo(location.access_info || '');
@@ -254,40 +413,6 @@ const LocationDataManager = ({ hasPermission }) => {
     } catch (err) {
       setError('Failed to update access info: ' + err.message);
     }
-  };
-
-  const handlePopCapabilitiesClick = async (location) => {
-    setSelectedLocation(location);
-    const capabilities = await loadCapabilities(location.id);
-    setCurrentCapabilities(capabilities);
-    setPopCapabilitiesDialogOpen(true);
-  };
-
-  const handleCapabilityChange = async (key, value) => {
-    // Special handling for CNX Colocation - check for existing data before allowing disable
-    if (key === 'cnx_colocation' && !value && currentCapabilities[key]) {
-      try {
-        // Check if there are any racks for this location
-        const response = await axios.get(`${API_BASE_URL}/cnx-colocation/locations/${selectedLocation.id}/racks`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-          }
-        });
-        
-        if (response.data && response.data.length > 0) {
-          setError(`Cannot disable CNX Colocation. This location has ${response.data.length} rack(s) with associated data. Please delete all racks first.`);
-          return; // Don't update the capability
-        }
-      } catch (err) {
-        // If we can't check, allow the change (fail safe)
-        console.warn('Could not check for existing rack data:', err);
-      }
-    }
-    
-    setCurrentCapabilities(prev => ({
-      ...prev,
-      [key]: value
-    }));
   };
 
   const handleCapabilitiesSave = async () => {
@@ -640,6 +765,34 @@ const LocationDataManager = ({ hasPermission }) => {
                 errors={formErrors}
               />
             </Grid>
+
+            {/* POP Capabilities Section - Only show in Add mode */}
+            {dialogMode === 'add' && (
+              <>
+                <Grid item xs={12}>
+                  <Typography variant="h6" sx={{ mt: 2, mb: 1 }}>
+                    POP Capabilities
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Select the capabilities available at this location. These can be modified later.
+                  </Typography>
+                </Grid>
+                
+                {popCapabilitiesFields.map((field) => (
+                  <Grid item xs={12} sm={6} key={field.key}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={Boolean(formCapabilities[field.key])}
+                          onChange={(e) => handleCapabilityChange(field.key, e.target.checked)}
+                        />
+                      }
+                      label={field.label}
+                    />
+                  </Grid>
+                ))}
+              </>
+            )}
           </Grid>
         </DialogContent>
         <DialogActions>
@@ -699,7 +852,7 @@ const LocationDataManager = ({ hasPermission }) => {
                       control={
                         <Checkbox
                           checked={Boolean(currentCapabilities[field.key])}
-                          onChange={(e) => handleCapabilityChange(field.key, e.target.checked)}
+                          onChange={(e) => handleExistingCapabilityChange(field.key, e.target.checked)}
                           disabled={!hasPermission || !hasPermission('locations', 'edit')}
                         />
                       }

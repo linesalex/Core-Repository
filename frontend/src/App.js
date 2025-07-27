@@ -48,12 +48,13 @@ import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, delete
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
 import DarkFiberModal from './DarkFiberModal';
+import ForcedPasswordChange from './ForcedPasswordChange';
 
 const drawerWidth = 280;
 
 // Main authenticated application component
 function AuthenticatedApp() {
-  const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, isModuleVisible, hasPermission, hasRole, permissions, connectionError } = useAuth();
+  const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, isModuleVisible, hasPermission, hasRole, permissions, connectionError, passwordResetRequired } = useAuth();
   
   const [openDetails, setOpenDetails] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
@@ -98,55 +99,8 @@ function AuthenticatedApp() {
     }
   }, [isAuthenticated, hasModuleAccess]);
 
-  // Auto-select first available module when user logs in
-  useEffect(() => {
-    if (isAuthenticated && currentTab === 'welcome') {
-      // List of modules in order of preference
-      const modulePreferences = [
-        'network-routes',
-        'network-design',
-        'minimum-pricing',
-        'pricing-logic',
-        'location-data',
-        'cnx-colocation',
-        'carriers',
-        'exchange-rates',
-        'exchange-feeds',
-        'exchange-contacts',
-        'change-logs',
-        'user-management'
-      ];
-      
-      // Find the first module the user has access to
-      const firstAvailableModule = modulePreferences.find(module => {
-        const moduleMap = {
-          'network-routes': 'network_routes',
-          'network-design': 'network_design',
-          'minimum-pricing': 'locations',
-          'pricing-logic': 'administrator', // Admin-only access
-          'location-data': 'locations',
-          'cnx-colocation': 'cnx_colocation',
-          'carriers': 'carriers',
-          'exchange-rates': 'exchange_rates',
-          'exchange-feeds': 'exchange_data',
-          'exchange-contacts': 'exchange_data',
-          'exchange-pricing': 'exchange_data',
-          'change-logs': 'change_logs',
-          'user-management': 'user_management'
-        };
-        // Special case for admin-only modules
-        if (moduleMap[module] === 'administrator') {
-          return hasRole('administrator');
-        }
-        return hasModuleAccess(moduleMap[module]);
-      });
-      
-      // If we found an available module, switch to it
-      if (firstAvailableModule) {
-        setCurrentTab(firstAvailableModule);
-      }
-    }
-  }, [isAuthenticated, hasModuleAccess, currentTab]);
+  // Keep users on welcome page - let them choose where to go
+  // Removed auto-selection logic to prevent permission errors
   
   // Show loading spinner while checking authentication
   if (authLoading) {
@@ -439,21 +393,13 @@ function AuthenticatedApp() {
       case 'welcome':
       default:
         return (
-          <Paper sx={{ p: 3 }}>
+          <Paper sx={{ p: 4, textAlign: 'center' }}>
             <Typography variant="h4" gutterBottom color="primary">
-              Welcome to Network Inventory
+              Welcome to the Network Repository
             </Typography>
-            <Typography variant="h6" gutterBottom color="text.secondary">
-              Hello, {user?.full_name || user?.username}!
+            <Typography variant="h6" color="text.secondary" sx={{ mt: 2 }}>
+              Please use the left sidebar to view available modules
             </Typography>
-            <Typography variant="body1" sx={{ mt: 2, mb: 2 }}>
-              Select a module from the sidebar to get started with managing your network infrastructure.
-            </Typography>
-            {Object.keys(permissions || {}).length === 0 && (
-              <Alert severity="info" sx={{ mt: 2 }}>
-                You don't have access to any modules yet. Please contact your administrator to grant you the necessary permissions.
-              </Alert>
-            )}
           </Paper>
         );
     }
@@ -975,6 +921,11 @@ function AuthenticatedApp() {
         open={darkFiberOpen}
         onClose={() => setDarkFiberOpen(false)}
         circuitId={darkFiberCircuitId}
+      />
+
+      <ForcedPasswordChange 
+        open={passwordResetRequired || false}
+        onClose={() => {}} // Will close automatically when passwordResetRequired becomes false
       />
     </Box>
   );

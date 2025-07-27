@@ -11,6 +11,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import PersonIcon from '@mui/icons-material/Person';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import LockResetIcon from '@mui/icons-material/LockReset';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { API_BASE_URL } from './config';
@@ -28,6 +29,7 @@ const UserManagement = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [visibilityDialogOpen, setVisibilityDialogOpen] = useState(false);
+  const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
   
   // Module visibility state
   const [moduleVisibility, setModuleVisibility] = useState({});
@@ -51,7 +53,6 @@ const UserManagement = () => {
   // Form data
   const [formData, setFormData] = useState({
     username: '',
-    password: '',
     email: '',
     full_name: '',
     user_role: 'read_only',
@@ -64,7 +65,6 @@ const UserManagement = () => {
   // Validation rules for User form
   const userValidationRules = {
     username: { type: 'required', message: 'Username is required' },
-    password: { type: 'required', message: 'Password is required' },
     user_role: { type: 'required', message: 'Role is required' },
     email: { type: 'email', message: 'Please enter a valid email address' }
   };
@@ -104,7 +104,6 @@ const UserManagement = () => {
     setSelectedUser(null);
     setFormData({
       username: '',
-      password: '',
       email: '',
       full_name: '',
       user_role: 'read_only',
@@ -119,7 +118,6 @@ const UserManagement = () => {
     setSelectedUser(user);
     setFormData({
       username: user.username,
-      password: '', // Don't show password
       email: user.email || '',
       full_name: user.full_name || '',
       user_role: user.user_role,
@@ -137,21 +135,7 @@ const UserManagement = () => {
   const handleSubmit = async () => {
     try {
       // Validate form using validation framework
-      let validationErrors;
-      if (dialogMode === 'add') {
-        // For add mode, validate all fields including password
-        validationErrors = validate(formData);
-      } else {
-        // For edit mode, don't require password (it's optional)
-        const editValidationRules = {
-          username: { type: 'required', message: 'Username is required' },
-          user_role: { type: 'required', message: 'Role is required' },
-          email: { type: 'email', message: 'Please enter a valid email address' }
-        };
-        const editValidate = createValidator(editValidationRules);
-        validationErrors = editValidate(formData);
-      }
-
+      const validationErrors = validate(formData);
       setFormErrors(validationErrors);
 
       // Check if there are validation errors
@@ -172,8 +156,17 @@ const UserManagement = () => {
           return;
         }
 
-        await axios.post(`${API_BASE_URL}/users`, formData);
-        setSuccess('User created successfully');
+        // Send user data without password - backend will set default password
+        const userData = {
+          username: formData.username,
+          email: formData.email,
+          full_name: formData.full_name,
+          user_role: formData.user_role,
+          status: formData.status
+        };
+
+        await axios.post(`${API_BASE_URL}/users`, userData);
+        setSuccess(`User created successfully. Default password is 'abc123'. User will be required to change password on first login.`);
       } else {
         // For edit mode, check username duplicates excluding current user
         const normalizedUsername = normalizeText(formData.username);
@@ -251,6 +244,25 @@ const UserManagement = () => {
       setVisibilityDialogOpen(false);
     } catch (err) {
       setError('Failed to update module visibility: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleResetPassword = (user) => {
+    setSelectedUser(user);
+    setResetPasswordDialogOpen(true);
+  };
+
+  const handleResetPasswordConfirm = async () => {
+    try {
+      await axios.post(`${API_BASE_URL}/users/${selectedUser.id}/reset-password`, {}, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      setSuccess(`Password reset to 'abc123' for user ${selectedUser.username}. User will be prompted to change password on next login.`);
+      setResetPasswordDialogOpen(false);
+    } catch (err) {
+      setError('Failed to reset password: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -365,6 +377,15 @@ const UserManagement = () => {
                       <VisibilityIcon />
                     </IconButton>
                   </Tooltip>
+                  <Tooltip title="Reset Password">
+                    <IconButton 
+                      size="small" 
+                      onClick={() => handleResetPassword(user)}
+                      color="warning"
+                    >
+                      <LockResetIcon />
+                    </IconButton>
+                  </Tooltip>
                   {user.id !== currentUser.id && (
                     <Tooltip title="Delete">
                       <IconButton 
@@ -396,6 +417,12 @@ const UserManagement = () => {
           {dialogMode === 'add' ? 'Add User' : 'Edit User'}
         </DialogTitle>
         <DialogContent>
+          {dialogMode === 'add' && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              New users will automatically receive the default password 'abc123' and must change it on first login.
+            </Alert>
+          )}
+          
           <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
             <Grid container spacing={2} sx={{ mt: 1 }}>
               <Grid item xs={12}>
@@ -413,19 +440,11 @@ const UserManagement = () => {
                 />
               </Grid>
               
-              {dialogMode === 'add' && (
+              {dialogMode === 'edit' && (
                 <Grid item xs={12}>
-                  <ValidatedTextField
-                    label="Password *"
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => handleInputChange('password', e.target.value)}
-                    fullWidth
-                    required
-                    autoComplete="new-password"
-                    field="password"
-                    errors={formErrors}
-                  />
+                  <Alert severity="info" sx={{ mb: 1 }}>
+                    To reset this user's password, use the Reset Password button in the user table.
+                  </Alert>
                 </Grid>
               )}
             
@@ -539,7 +558,7 @@ const UserManagement = () => {
                 <FormControlLabel
                   control={
                     <Switch
-                      checked={moduleVisibility[module.key] !== false}
+                      checked={moduleVisibility[module.key] === true}
                       onChange={(e) => handleVisibilityChange(module.key, e.target.checked)}
                       color="primary"
                     />
@@ -554,6 +573,30 @@ const UserManagement = () => {
           <Button onClick={() => setVisibilityDialogOpen(false)}>Cancel</Button>
           <Button onClick={handleSaveVisibility} variant="contained" color="primary">
             Save Changes
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Reset Password Confirmation Dialog */}
+      <Dialog 
+        open={resetPasswordDialogOpen} 
+        onClose={() => setResetPasswordDialogOpen(false)}
+        disableRestoreFocus
+        aria-labelledby="reset-password-dialog-title"
+      >
+        <DialogTitle id="reset-password-dialog-title">Reset Password</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to reset the password for user <strong>{selectedUser?.username}</strong>?
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            This will set the password to 'abc123' and the user will be prompted to change it on their next login.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setResetPasswordDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleResetPasswordConfirm} color="warning" variant="contained">
+            Reset Password
           </Button>
         </DialogActions>
       </Dialog>
