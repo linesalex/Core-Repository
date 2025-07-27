@@ -158,13 +158,18 @@ export const networkDesignApi = {
 // Get list of available modules for bulk upload
 export const getBulkUploadModules = () => {
   return Promise.resolve([
-    { id: 'network_routes', name: 'Network Routes', description: 'Bulk upload network route data' },
-    { id: 'exchange_feeds', name: 'Exchange Feeds', description: 'Bulk upload exchange feed data' },
-    { id: 'exchange_contacts', name: 'Exchange Contacts', description: 'Bulk upload exchange contact data' },
-    { id: 'exchange_rates', name: 'Exchange Rates', description: 'Bulk upload exchange rate data' },
-    { id: 'locations', name: 'Manage Locations', description: 'Bulk upload location reference data' },
-    { id: 'carriers', name: 'Manage Carriers', description: 'Bulk upload carrier data' },
-    { id: 'users', name: 'User Management', description: 'Bulk upload user account data' }
+    { id: 'network_routes', name: 'Network Routes', description: 'Bulk upload network route data with locations and carriers' },
+    { id: 'exchange_feeds', name: 'Exchange Feeds', description: 'Bulk upload exchange feed data with ISF and pricing information' },
+    { id: 'exchange_contacts', name: 'Exchange Contacts', description: 'Bulk upload exchange contact information' },
+    { id: 'exchange_rates', name: 'Exchange Rates', description: 'Bulk upload currency exchange rates for pricing calculations' },
+    { id: 'locations', name: 'Manage Locations', description: 'Bulk upload POP locations with pricing and capability data' },
+    { id: 'carriers', name: 'Manage Carriers', description: 'Bulk upload carrier information with regional coverage' },
+    { id: 'carrier_contacts', name: 'Carrier Contacts', description: 'Bulk upload carrier contact information and details' },
+    { id: 'pop_capabilities', name: 'POP Capabilities', description: 'Bulk upload location capability matrix and service availability' },
+    { id: 'exchanges', name: 'Exchange Providers', description: 'Bulk upload exchange provider information and details' },
+    { id: 'cnx_colocation_racks', name: 'CNX Colocation Racks', description: 'Bulk upload colocation rack inventory with power and space allocation' },
+    { id: 'cnx_colocation_clients', name: 'CNX Colocation Clients', description: 'Bulk upload colocation client information and allocations' },
+    { id: 'users', name: 'User Management', description: 'Bulk upload user accounts with roles and permissions' }
   ]);
 };
 

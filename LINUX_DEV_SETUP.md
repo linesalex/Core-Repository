@@ -161,13 +161,13 @@ cd /root
 
 # Download project directly from Git repository as zip
 # Replace YOUR_GITHUB_USERNAME and YOUR_REPO_NAME with actual values
-wget https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/archive/refs/heads/main.zip -O Core-Repository.zip
+wget https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/archive/refs/heads/Version-V2.3.zip -O Core-Repository.zip
 
 # Unzip the downloaded file
 unzip Core-Repository.zip
 
 # Rename to standard directory name (adjust name if needed)
-mv YOUR_REPO_NAME-main Core-Repository
+mv YOUR_REPO_NAME-Version-V2.3 Core-Repository
 
 # Navigate to project directory
 cd Core-Repository

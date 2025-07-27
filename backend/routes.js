@@ -4713,7 +4713,7 @@ const bulkUploadModules = {
       'cable_system', 'is_special', 'underlying_carrier', 'cost', 'currency',
       'location_a', 'location_b', 'bandwidth', 'capacity_usage_percent', 'more_details', 'test_results_file'
     ],
-    requiredFields: ['circuit_id'],
+    requiredFields: ['circuit_id', 'location_a', 'location_b', 'underlying_carrier'],
     sampleData: {
       circuit_id: 'SAMPLE123456',
       repository_type_id: '1',
@@ -4749,7 +4749,7 @@ const bulkUploadModules = {
       'pass_through_fees', 'pass_through_currency', 'pass_through_fees_info',
       'quick_quote_min_cost', 'order_entry_cost', 'more_info'
     ],
-    requiredFields: ['exchange_id', 'feed_name', 'feed_delivery', 'feed_type'],
+    requiredFields: ['exchange_id', 'feed_name', 'feed_delivery', 'feed_type', 'isf_enabled'],
     sampleData: {
       exchange_id: '1',
       feed_name: 'Sample Feed',
@@ -4816,7 +4816,7 @@ const bulkUploadModules = {
       'latitude', 'longitude', 'time_zone', 'pop_type', 'status', 'provider', 'access_info',
       'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus'
     ],
-    requiredFields: ['location_code', 'city', 'country'],
+    requiredFields: ['location_code', 'city', 'country', 'datacenter_name', 'pop_type', 'status'],
     sampleData: {
       location_code: 'LONLON',
       city: 'London',
@@ -4839,7 +4839,7 @@ const bulkUploadModules = {
   carriers: {
     table: 'carriers',
     templateFields: ['carrier_name', 'previously_known_as', 'status', 'region'],
-    requiredFields: ['carrier_name', 'region'],
+    requiredFields: ['carrier_name', 'region', 'status'],
     sampleData: {
       carrier_name: 'Sample Carrier Inc.',
       previously_known_as: 'Old Carrier Name',
@@ -4850,7 +4850,7 @@ const bulkUploadModules = {
   users: {
     table: 'users',
     templateFields: ['username', 'password', 'email', 'full_name', 'user_role', 'status'],
-    requiredFields: ['username', 'password', 'user_role'],
+    requiredFields: ['username', 'password', 'email', 'full_name', 'user_role'],
     sampleData: {
       username: 'newuser',
       password: 'temppassword123',
@@ -4911,6 +4911,84 @@ const bulkUploadModules = {
       contact_info: 'support@sampleexchange.com',
       website: 'https://www.sampleexchange.com',
       more_info: 'Leading financial data exchange'
+    }
+  },
+  exchange_rates: {
+    table: 'exchange_rates',
+    templateFields: ['currency_code', 'rate_to_usd', 'last_updated'],
+    requiredFields: ['currency_code', 'rate_to_usd'],
+    sampleData: {
+      currency_code: 'EUR',
+      rate_to_usd: '1.09',
+      last_updated: '2024-01-15 10:30:00'
+    }
+  },
+  exchange_contacts: {
+    table: 'exchange_contacts',
+    templateFields: [
+      'exchange_id', 'contact_name', 'contact_title', 'email', 'phone', 'department', 'is_primary', 'notes'
+    ],
+    requiredFields: ['exchange_id', 'contact_name', 'email'],
+    sampleData: {
+      exchange_id: '1',
+      contact_name: 'Jane Doe',
+      contact_title: 'Technical Support Manager',
+      email: 'jane.doe@exchange.com',
+      phone: '+1-555-0123',
+      department: 'Technical Support',
+      is_primary: 'true',
+      notes: 'Primary technical contact for feed setup'
+    }
+  },
+  cnx_colocation_racks: {
+    table: 'cnx_colocation_racks',
+    templateFields: [
+      'location_id', 'rack_name', 'power_allocated', 'power_used', 'ru_allocated', 'ru_used',
+      'rack_type', 'cabinet_number', 'circuit_id', 'cost_per_ru', 'cost_per_amp',
+      'cross_connect_cost', 'smart_hands_cost', 'notes', 'status'
+    ],
+    requiredFields: ['location_id', 'rack_name', 'power_allocated', 'ru_allocated'],
+    sampleData: {
+      location_id: '1',
+      rack_name: 'CNX-LON-R001',
+      power_allocated: '20',
+      power_used: '0',
+      ru_allocated: '30',
+      ru_used: '0',
+      rack_type: 'Full Rack',
+      cabinet_number: 'CAB-001',
+      circuit_id: 'CIR-LON-001',
+      cost_per_ru: '50',
+      cost_per_amp: '100',
+      cross_connect_cost: '25',
+      smart_hands_cost: '150',
+      notes: 'Primary colocation rack in London facility',
+      status: 'Active'
+    }
+  },
+  cnx_colocation_clients: {
+    table: 'cnx_colocation_clients',
+    templateFields: [
+      'rack_id', 'client_name', 'power_allocation', 'ru_allocation', 'monthly_cost',
+      'setup_fee', 'billing_contact', 'technical_contact', 'contract_start',
+      'contract_end', 'auto_renew', 'sla_level', 'notes', 'status'
+    ],
+    requiredFields: ['rack_id', 'client_name', 'power_allocation', 'ru_allocation'],
+    sampleData: {
+      rack_id: '1',
+      client_name: 'Sample Client Corp',
+      power_allocation: '5',
+      ru_allocation: '10',
+      monthly_cost: '1500',
+      setup_fee: '500',
+      billing_contact: 'billing@sampleclient.com',
+      technical_contact: 'tech@sampleclient.com',
+      contract_start: '2024-01-01',
+      contract_end: '2024-12-31',
+      auto_renew: 'true',
+      sla_level: 'Premium',
+      notes: 'High-priority client with 24/7 support',
+      status: 'Active'
     }
   }
 };
@@ -5006,6 +5084,100 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
           cleanedRow[field] = row[field].trim();
         }
       });
+
+      // Perform additional data validation based on module
+      const validationErrors = [];
+      if (module === 'users') {
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (cleanedRow.email && !emailRegex.test(cleanedRow.email)) {
+          validationErrors.push('Invalid email format');
+        }
+        // Validate user role
+        const validRoles = ['administrator', 'provisioner', 'read_only'];
+        if (cleanedRow.user_role && !validRoles.includes(cleanedRow.user_role)) {
+          validationErrors.push('Invalid user role. Must be: administrator, provisioner, or read_only');
+        }
+        // Validate password strength
+        if (cleanedRow.password && cleanedRow.password.length < 8) {
+          validationErrors.push('Password must be at least 8 characters long');
+        }
+      } else if (module === 'exchange_rates') {
+        // Validate currency code format (3 letters)
+        if (cleanedRow.currency_code && !/^[A-Z]{3}$/.test(cleanedRow.currency_code)) {
+          validationErrors.push('Currency code must be 3 uppercase letters (e.g., USD, EUR)');
+        }
+        // Validate exchange rate is numeric and positive
+        if (cleanedRow.rate_to_usd && (isNaN(cleanedRow.rate_to_usd) || parseFloat(cleanedRow.rate_to_usd) <= 0)) {
+          validationErrors.push('Exchange rate must be a positive number');
+        }
+      } else if (module === 'network_routes') {
+        // Validate numeric fields
+        if (cleanedRow.cost && cleanedRow.cost !== '' && isNaN(cleanedRow.cost)) {
+          validationErrors.push('Cost must be a valid number');
+        }
+        if (cleanedRow.capacity_usage_percent && cleanedRow.capacity_usage_percent !== '' && 
+            (isNaN(cleanedRow.capacity_usage_percent) || parseFloat(cleanedRow.capacity_usage_percent) < 0 || parseFloat(cleanedRow.capacity_usage_percent) > 100)) {
+          validationErrors.push('Capacity usage percent must be between 0 and 100');
+        }
+        // Validate boolean fields
+        if (cleanedRow.is_special && !['true', 'false', '1', '0'].includes(cleanedRow.is_special.toLowerCase())) {
+          validationErrors.push('is_special must be true/false or 1/0');
+        }
+      } else if (module === 'cnx_colocation_racks') {
+        // Validate numeric fields for racks
+        ['power_allocated', 'power_used', 'ru_allocated', 'ru_used'].forEach(field => {
+          if (cleanedRow[field] && cleanedRow[field] !== '' && (isNaN(cleanedRow[field]) || parseFloat(cleanedRow[field]) < 0)) {
+            validationErrors.push(`${field} must be a non-negative number`);
+          }
+        });
+        // Validate that used values don't exceed allocated values
+        if (cleanedRow.power_used && cleanedRow.power_allocated && 
+            parseFloat(cleanedRow.power_used) > parseFloat(cleanedRow.power_allocated)) {
+          validationErrors.push('Power used cannot exceed power allocated');
+        }
+        if (cleanedRow.ru_used && cleanedRow.ru_allocated && 
+            parseFloat(cleanedRow.ru_used) > parseFloat(cleanedRow.ru_allocated)) {
+          validationErrors.push('RU used cannot exceed RU allocated');
+        }
+      } else if (module === 'cnx_colocation_clients') {
+        // Validate numeric fields for clients
+        ['power_allocation', 'ru_allocation', 'monthly_cost', 'setup_fee'].forEach(field => {
+          if (cleanedRow[field] && cleanedRow[field] !== '' && (isNaN(cleanedRow[field]) || parseFloat(cleanedRow[field]) < 0)) {
+            validationErrors.push(`${field} must be a non-negative number`);
+          }
+        });
+        // Validate email formats
+        ['billing_contact', 'technical_contact'].forEach(field => {
+          if (cleanedRow[field] && cleanedRow[field] !== '') {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(cleanedRow[field])) {
+              validationErrors.push(`${field} must be a valid email address`);
+            }
+          }
+        });
+        // Validate date formats
+        ['contract_start', 'contract_end'].forEach(field => {
+          if (cleanedRow[field] && cleanedRow[field] !== '') {
+            const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+            if (!dateRegex.test(cleanedRow[field])) {
+              validationErrors.push(`${field} must be in YYYY-MM-DD format`);
+            }
+          }
+        });
+        // Validate boolean fields
+        if (cleanedRow.auto_renew && !['true', 'false', '1', '0'].includes(cleanedRow.auto_renew.toLowerCase())) {
+          validationErrors.push('auto_renew must be true/false or 1/0');
+        }
+      }
+
+      if (validationErrors.length > 0) {
+        errors.push(`Row ${results.length + 1}: ${validationErrors.join(', ')}`);
+        return;
+      }
+
+      // Foreign key validation (will be checked synchronously during processing)
+      cleanedRow._needsForeignKeyValidation = true;
       
       // Module-specific validations
       if (module === 'network_routes') {
@@ -5072,9 +5244,89 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
           const insertErrors = [];
           
           results.forEach((row, index) => {
+            // Foreign key validation function
+            const validateForeignKeys = (callback) => {
+              const validationPromises = [];
+              
+              if (module === 'carrier_contacts') {
+                validationPromises.push(new Promise((resolve, reject) => {
+                  db.get('SELECT id FROM carriers WHERE id = ?', [row.carrier_id], (err, result) => {
+                    if (err) reject(err);
+                    else if (!result) reject(new Error(`Invalid carrier_id: ${row.carrier_id} does not exist`));
+                    else resolve();
+                  });
+                }));
+              } else if (module === 'pop_capabilities') {
+                validationPromises.push(new Promise((resolve, reject) => {
+                  db.get('SELECT id FROM location_reference WHERE id = ?', [row.location_id], (err, result) => {
+                    if (err) reject(err);
+                    else if (!result) reject(new Error(`Invalid location_id: ${row.location_id} does not exist`));
+                    else resolve();
+                  });
+                }));
+              } else if (module === 'exchange_feeds') {
+                validationPromises.push(new Promise((resolve, reject) => {
+                  db.get('SELECT id FROM exchanges WHERE id = ?', [row.exchange_id], (err, result) => {
+                    if (err) reject(err);
+                    else if (!result) reject(new Error(`Invalid exchange_id: ${row.exchange_id} does not exist`));
+                    else resolve();
+                  });
+                }));
+              } else if (module === 'exchange_contacts') {
+                validationPromises.push(new Promise((resolve, reject) => {
+                  db.get('SELECT id FROM exchanges WHERE id = ?', [row.exchange_id], (err, result) => {
+                    if (err) reject(err);
+                    else if (!result) reject(new Error(`Invalid exchange_id: ${row.exchange_id} does not exist`));
+                    else resolve();
+                  });
+                }));
+              } else if (module === 'cnx_colocation_racks') {
+                validationPromises.push(new Promise((resolve, reject) => {
+                  db.get('SELECT id FROM location_reference WHERE id = ?', [row.location_id], (err, result) => {
+                    if (err) reject(err);
+                    else if (!result) reject(new Error(`Invalid location_id: ${row.location_id} does not exist`));
+                    else resolve();
+                  });
+                }));
+              } else if (module === 'cnx_colocation_clients') {
+                validationPromises.push(new Promise((resolve, reject) => {
+                  db.get('SELECT id FROM cnx_colocation_racks WHERE id = ?', [row.rack_id], (err, result) => {
+                    if (err) reject(err);
+                    else if (!result) reject(new Error(`Invalid rack_id: ${row.rack_id} does not exist`));
+                    else resolve();
+                  });
+                }));
+              }
+              
+              Promise.all(validationPromises)
+                .then(() => callback(null))
+                .catch(err => callback(err));
+            };
+
             let sql, values;
             
-            // Generate SQL for each module
+            // Validate foreign keys first
+            validateForeignKeys((fkErr) => {
+              if (fkErr) {
+                failed = true;
+                insertErrors.push(`Row ${index + 1}: ${fkErr.message}`);
+                completed++;
+                
+                // Check if all operations are complete
+                if (completed === results.length) {
+                  db.run('ROLLBACK', (rollbackErr) => {
+                    if (rollbackErr) console.error('Rollback failed:', rollbackErr);
+                    res.status(400).json({
+                      error: 'Bulk upload failed',
+                      errors: insertErrors,
+                      message: 'Transaction rolled back. No data was imported.'
+                    });
+                  });
+                }
+                return;
+              }
+              
+              // Generate SQL for each module
             if (module === 'network_routes') {
               sql = `INSERT INTO network_routes (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
               values = config.templateFields.map(field => row[field] || null);
@@ -5097,6 +5349,21 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               // Hash password for users
               row.password = hashPassword(row.password);
               sql = `INSERT INTO users (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+              values = config.templateFields.map(field => row[field] || null);
+            } else if (module === 'carrier_contacts') {
+              sql = `INSERT INTO carrier_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+              values = config.templateFields.map(field => row[field] || null);
+            } else if (module === 'pop_capabilities') {
+              sql = `INSERT OR REPLACE INTO pop_capabilities (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+              values = config.templateFields.map(field => row[field] || null);
+            } else if (module === 'exchanges') {
+              sql = `INSERT INTO exchanges (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+              values = config.templateFields.map(field => row[field] || null);
+            } else if (module === 'cnx_colocation_racks') {
+              sql = `INSERT INTO cnx_colocation_racks (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+              values = config.templateFields.map(field => row[field] || null);
+            } else if (module === 'cnx_colocation_clients') {
+              sql = `INSERT INTO cnx_colocation_clients (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
               values = config.templateFields.map(field => row[field] || null);
             }
             
@@ -5144,6 +5411,7 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                 }
               }
             });
+            }); // Close validateForeignKeys callback
           });
         });
       });
