@@ -616,7 +616,6 @@ router.get('/users/:id/module-visibility', authenticateToken, authorizePermissio
     }
   );
 });
-
 // Update user module visibility (admin only)
 router.put('/users/:id/module-visibility', authenticateToken, authorizePermission('user_management', 'edit'), (req, res) => {
   const userId = req.params.id;
@@ -1250,7 +1249,7 @@ router.post('/network_routes', authenticateToken, authorizePermission('network_r
     const placeholders = fields.map(() => '?').join(',');
     const values = fields.map(f => data[f] ?? (f === 'repository_type_id' ? 1 : null));
     db.run(
-      `INSERT INTO network_routes (${fields.join(',')}) VALUES (${placeholders})`,
+      `INSERT OR REPLACE INTO network_routes (${fields.join(',')}) VALUES (${placeholders})`,
       values,
       function(err) {
         if (err) {
@@ -1266,7 +1265,6 @@ router.post('/network_routes', authenticateToken, authorizePermission('network_r
     );
   });
 });
-
 // Update route
 router.put('/network_routes/:circuit_id', authenticateToken, authorizePermission('network_routes', 'edit'), (req, res) => {
   const { circuit_id } = req.params;
@@ -1850,7 +1848,7 @@ router.post('/locations', authenticateToken, authorizePermission('locations', 'c
   }
   
   db.run(
-    'INSERT INTO location_reference (location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT OR REPLACE INTO location_reference (location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [location_code, region || 'AMERs', city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type || 'Tier 1', status || 'Active', provider, access_info, 
      min_price_under_100mb || 0, min_price_100_to_999mb || 0, min_price_1000_to_2999mb || 0, min_price_3000mb_plus || 0, req.user.id],
     function(err) {
@@ -1905,7 +1903,6 @@ router.post('/locations', authenticateToken, authorizePermission('locations', 'c
     }
   );
 });
-
 // Update location
 router.put('/locations/:id', authenticateToken, authorizePermission('locations', 'edit'), (req, res) => {
   const { region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info,
@@ -3582,7 +3579,7 @@ router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, au
     const pricingInfoFile = req.file ? req.file.filename : null;
     
     db.run(
-      'INSERT INTO cnx_colocation_racks (location_id, rack_id, total_power_kva, network_infrastructure, pricing_info_file, more_info, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT OR REPLACE INTO cnx_colocation_racks (location_id, rack_id, total_power_kva, network_infrastructure, pricing_info_file, more_info, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [locationId, rack_id, parseFloat(total_power_kva), network_infrastructure, pricingInfoFile, more_info || null, req.user.id],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
@@ -3747,7 +3744,7 @@ router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authoriz
     const clientDesignFile = req.file ? req.file.filename : null;
   
     db.run(
-      'INSERT INTO cnx_colocation_clients (rack_id, client_name, power_purchased, ru_purchased, more_info, design_file, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT OR REPLACE INTO cnx_colocation_clients (rack_id, client_name, power_purchased, ru_purchased, more_info, design_file, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [rackId, client_name, parseFloat(power_purchased), parseInt(ru_purchased), more_info || null, clientDesignFile, req.user.id],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
@@ -3994,7 +3991,6 @@ router.delete('/cnx-colocation/locations/:id/design-file', authenticateToken, au
     });
   });
 });
-
 // Delete rack pricing file
 router.delete('/cnx-colocation/racks/:id/pricing-file', authenticateToken, authorizePermission('cnx_colocation', 'edit'), (req, res) => {
   const rackId = req.params.id;
@@ -4113,7 +4109,7 @@ router.post('/exchanges', authenticateToken, authorizePermission('exchange_data'
   }
   
   db.run(
-    'INSERT INTO exchanges (exchange_name, region, salesperson_assigned, available, created_by) VALUES (?, ?, ?, ?, ?)',
+    'INSERT OR REPLACE INTO exchanges (exchange_name, region, salesperson_assigned, available, created_by) VALUES (?, ?, ?, ?, ?)',
     [exchange_name, region, salesperson_assigned || null, available !== false ? 1 : 0, req.user.id],
     function(err) {
       if (err) {
@@ -4161,8 +4157,8 @@ router.put('/exchanges/:id', authenticateToken, authorizePermission('exchange_da
         if (!oldExchange) return res.status(404).json({ error: 'Exchange not found' });
         
         db.run(
-          'UPDATE exchanges SET exchange_name = ?, region = ?, salesperson_assigned = ?, available = ?, updated_by = ? WHERE id = ?',
-          [exchange_name, region, salesperson_assigned || null, available !== false ? 1 : 0, req.user.id, exchangeId],
+          'INSERT OR REPLACE INTO exchanges (id, exchange_name, region, salesperson_assigned, available, updated_by) VALUES (?, ?, ?, ?, ?, ?)',
+          [exchangeId, exchange_name, region, salesperson_assigned || null, available !== false ? 1 : 0, req.user.id],
           function(err) {
             if (err) {
               if (err.message.includes('UNIQUE constraint failed')) {
@@ -4291,7 +4287,7 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
   const designFilePath = req.file ? req.file.filename : null;
   
   db.run(
-    `INSERT INTO exchange_feeds (
+    `INSERT OR REPLACE INTO exchange_feeds (
       exchange_id, feed_name, feed_delivery, feed_type, isf_enabled, 
       isf_a, isf_b, isf_site_code_a, isf_site_code_b,
       isf_dr_a, isf_dr_b, isf_dr_site_code_a, isf_dr_site_code_b, 
@@ -4324,7 +4320,7 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
       // If file was uploaded, record it in exchange_files table
       if (req.file && recordId) {
         db.run(
-          'INSERT INTO exchange_files (exchange_feed_id, filename, original_name, file_size) VALUES (?, ?, ?, ?)',
+          'INSERT OR REPLACE INTO exchange_files (exchange_feed_id, filename, original_name, file_size) VALUES (?, ?, ?, ?)',
           [recordId, req.file.filename, req.file.originalname, req.file.size],
           (err) => {
             if (err) console.error('Failed to record file upload:', err);
@@ -4413,7 +4409,7 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
       
       // Record new file
       db.run(
-        'INSERT INTO exchange_files (exchange_feed_id, filename, original_name, file_size) VALUES (?, ?, ?, ?)',
+        'INSERT OR REPLACE INTO exchange_files (exchange_feed_id, filename, original_name, file_size) VALUES (?, ?, ?, ?)',
         [feedId, req.file.filename, req.file.originalname, req.file.size],
         (err) => {
           if (err) console.error('Failed to record file upload:', err);
@@ -4422,17 +4418,17 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
     }
     
     db.run(
-      `UPDATE exchange_feeds SET 
-        feed_name = ?, feed_delivery = ?, feed_type = ?, isf_enabled = ?, 
-        isf_a = ?, isf_b = ?, isf_site_code_a = ?, isf_site_code_b = ?,
-        isf_dr_a = ?, isf_dr_b = ?, isf_dr_site_code_a = ?, isf_dr_site_code_b = ?,
-        dr_type = ?, order_entry_isf = ?, dr_order_entry_isf = ?, unicast_isf = ?,
-        dr_available = ?, bandwidth_1ms = ?, available_now = ?, quick_quote = ?, 
-        pass_through_fees = ?, pass_through_currency = ?, pass_through_fees_info = ?, 
-        design_file_path = ?, more_info = ?, quick_quote_min_cost = ?, order_entry_cost = ?, updated_by = ?
-      WHERE id = ? AND exchange_id = ?`,
+      `INSERT OR REPLACE INTO exchange_feeds (
+        id, exchange_id, feed_name, feed_delivery, feed_type, isf_enabled, 
+        isf_a, isf_b, isf_site_code_a, isf_site_code_b,
+        isf_dr_a, isf_dr_b, isf_dr_site_code_a, isf_dr_site_code_b,
+        dr_type, order_entry_isf, dr_order_entry_isf, unicast_isf,
+        dr_available, bandwidth_1ms, available_now, quick_quote, 
+        pass_through_fees, pass_through_currency, pass_through_fees_info, 
+        design_file_path, more_info, quick_quote_min_cost, order_entry_cost, updated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        feed_name, feed_delivery, feed_type, isf_enabled === 'true' ? 1 : 0, 
+        feedId, exchangeId, feed_name, feed_delivery, feed_type, isf_enabled === 'true' ? 1 : 0, 
         isf_a || null, isf_b || null, isf_site_code_a || null, isf_site_code_b || null,
         isf_dr_a || null, isf_dr_b || null, isf_dr_site_code_a || null, isf_dr_site_code_b || null,
         dr_type || null, order_entry_isf || null, dr_order_entry_isf || null, unicast_isf || null,
@@ -4441,7 +4437,7 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
         parseInt(pass_through_fees) || 0, pass_through_currency || 'USD', 
         pass_through_fees_info || '', designFilePath, more_info,
         quick_quote_min_cost ? parseFloat(quick_quote_min_cost) : null,
-        order_entry_cost ? parseFloat(order_entry_cost) : null, req.user.id, feedId, exchangeId
+        order_entry_cost ? parseFloat(order_entry_cost) : null, req.user.id
       ],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
@@ -4530,7 +4526,7 @@ router.post('/exchanges/:id/contacts', authenticateToken, authorizePermission('e
   }
   
   db.run(
-    `INSERT INTO exchange_contacts (
+    `INSERT OR REPLACE INTO exchange_contacts (
       exchange_id, contact_name, job_title, country, phone_number, email,
       contact_type, daily_contact, more_info, created_by
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -4576,13 +4572,13 @@ router.put('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, auth
     if (!oldContact) return res.status(404).json({ error: 'Exchange contact not found' });
     
     db.run(
-      `UPDATE exchange_contacts SET 
-        contact_name = ?, job_title = ?, country = ?, phone_number = ?, email = ?,
-        contact_type = ?, daily_contact = ?, more_info = ?, last_updated = CURRENT_TIMESTAMP, updated_by = ?
-      WHERE id = ? AND exchange_id = ?`,
+      `INSERT OR REPLACE INTO exchange_contacts (
+        id, exchange_id, contact_name, job_title, country, phone_number, email,
+        contact_type, daily_contact, more_info, last_updated, updated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
       [
-        contact_name, job_title, country, phone_number, email,
-        contact_type, (daily_contact === 'true' || daily_contact === true) ? 1 : 0, more_info, req.user.id, contactId, exchangeId
+        contactId, exchangeId, contact_name, job_title, country, phone_number, email,
+        contact_type, (daily_contact === 'true' || daily_contact === true) ? 1 : 0, more_info, req.user.id
       ],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
@@ -4638,7 +4634,6 @@ router.get('/exchanges/overdue-contacts', authenticateToken, authorizePermission
     res.json(contacts);
   });
 });
-
 // Approve exchange contact yearly update
 router.post('/exchanges/:exchangeId/contacts/:contactId/approve', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
   const { exchangeId, contactId } = req.params;
@@ -4649,12 +4644,11 @@ router.post('/exchanges/:exchangeId/contacts/:contactId/approve', authenticateTo
     if (!contact) return res.status(404).json({ error: 'Exchange contact not found' });
     
     db.run(
-      `UPDATE exchange_contacts SET 
-        last_updated = CURRENT_TIMESTAMP, 
-        approved_by = ?, 
-        approved_at = CURRENT_TIMESTAMP 
-      WHERE id = ? AND exchange_id = ?`,
-      [req.user.id, contactId, exchangeId],
+      `INSERT OR REPLACE INTO exchange_contacts (id, exchange_id, contact_name, job_title, country, phone_number, email,
+        contact_type, daily_contact, more_info, last_updated, updated_by, approved_by, approved_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP)`,
+      [contactId, exchangeId, contact.contact_name, contact.job_title, contact.country, contact.phone_number, contact.email,
+        contact.contact_type, contact.daily_contact, contact.more_info, req.user.id, req.user.id],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Exchange contact not found' });
@@ -5061,7 +5055,6 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
     }
   });
 });
-
 // Bulk upload data for a module
 router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administrator'), csvUpload.single('csv_file'), (req, res) => {
   const { module } = req.params;
@@ -5488,41 +5481,41 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
             console.log(`[BULK UPLOAD] Generated SQL:`, sql);
             console.log(`[BULK UPLOAD] Values for row ${index + 1}:`, values);
           } else if (module === 'exchange_feeds') {
-            sql = `INSERT INTO exchange_feeds (${config.templateFields.join(', ')}, created_by) VALUES (${config.templateFields.map(() => '?').join(', ')}, ?)`;
+            sql = `INSERT OR REPLACE INTO exchange_feeds (${config.templateFields.join(', ')}, created_by) VALUES (${config.templateFields.map(() => '?').join(', ')}, ?)`;
             values = [...config.templateFields.map(field => row[field] || null), req.user.id];
           } else if (module === 'exchange_contacts') {
-            sql = `INSERT INTO exchange_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            sql = `INSERT OR REPLACE INTO exchange_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           } else if (module === 'exchange_rates') {
             sql = `INSERT OR REPLACE INTO exchange_rates (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           } else if (module === 'locations') {
-            sql = `INSERT INTO location_reference (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            sql = `INSERT OR REPLACE INTO location_reference (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           } else if (module === 'carriers') {
-            sql = `INSERT INTO carriers (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            sql = `INSERT OR REPLACE INTO carriers (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           } else if (module === 'users') {
             // Hash password for users - but if password_hash is already provided, use it
             if (row.password_hash && !row.password_hash.startsWith('$2b$')) {
               row.password_hash = hashPassword(row.password_hash);
             }
-            sql = `INSERT INTO users (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            sql = `INSERT OR REPLACE INTO users (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           } else if (module === 'carrier_contacts') {
-            sql = `INSERT INTO carrier_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            sql = `INSERT OR REPLACE INTO carrier_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           } else if (module === 'pop_capabilities') {
             sql = `INSERT OR REPLACE INTO pop_capabilities (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           } else if (module === 'exchanges') {
-            sql = `INSERT INTO exchanges (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            sql = `INSERT OR REPLACE INTO exchanges (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           } else if (module === 'cnx_colocation_racks') {
-            sql = `INSERT INTO cnx_colocation_racks (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            sql = `INSERT OR REPLACE INTO cnx_colocation_racks (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           } else if (module === 'cnx_colocation_clients') {
-            sql = `INSERT INTO cnx_colocation_clients (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            sql = `INSERT OR REPLACE INTO cnx_colocation_clients (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           }
           
@@ -5669,6 +5662,11 @@ router.get('/bulk-upload/progress/:sessionId', authenticateToken, authorizeRole(
   }
   
   res.json(uploadInfo);
+
+  // Automatically clean up sessions that have finished processing to avoid unnecessary backend work
+  if (uploadInfo.status === 'completed' || uploadInfo.status === 'error') {
+    activeUploads.delete(sessionId);
+  }
 });
 
 // Get bulk upload history (admin only)
@@ -5706,7 +5704,6 @@ router.get('/bulk-upload/history', authenticateToken, authorizeRole('administrat
     }
   );
 });
-
 // PRICING LOGIC CONFIGURATION APIs (Admin Only)
 
 // Get current pricing logic configuration
@@ -6121,7 +6118,7 @@ router.post('/promo-pricing', authenticateToken, (req, res) => {
 
   // Insert the promo rule
   dbInstance.run(
-    `INSERT INTO promo_pricing_rules 
+    `INSERT OR REPLACE INTO promo_pricing_rules 
      (rule_name, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus, created_by) 
      VALUES (?, ?, ?, ?, ?, ?)`,
     [rule_name, price_under_100mb || 0, price_100_to_999mb || 0, price_1000_to_2999mb || 0, price_3000mb_plus || 0, req.user.id],
@@ -6139,7 +6136,7 @@ router.post('/promo-pricing', authenticateToken, (req, res) => {
       // Insert source locations
       source_locations.forEach(locationCode => {
         dbInstance.run(
-          'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+          'INSERT OR REPLACE INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
           [promoRuleId, locationCode, 'source'],
           function(err) {
             if (err && !hasError) {
@@ -6170,7 +6167,7 @@ router.post('/promo-pricing', authenticateToken, (req, res) => {
       // Insert destination locations
       destination_locations.forEach(locationCode => {
         dbInstance.run(
-          'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+          'INSERT OR REPLACE INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
           [promoRuleId, locationCode, 'destination'],
           function(err) {
             if (err && !hasError) {
@@ -6246,10 +6243,10 @@ router.put('/promo-pricing/:id', authenticateToken, (req, res) => {
 
     // Update the promo rule
     dbInstance.run(
-      `UPDATE promo_pricing_rules 
-       SET rule_name = ?, price_under_100mb = ?, price_100_to_999mb = ?, price_1000_to_2999mb = ?, price_3000mb_plus = ?, updated_by = ?
-       WHERE id = ?`,
-      [rule_name, price_under_100mb || 0, price_100_to_999mb || 0, price_1000_to_2999mb || 0, price_3000mb_plus || 0, req.user.id, promoRuleId],
+      `INSERT OR REPLACE INTO promo_pricing_rules 
+       (id, rule_name, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus, updated_by) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [promoRuleId, rule_name, price_under_100mb || 0, price_100_to_999mb || 0, price_1000_to_2999mb || 0, price_3000mb_plus || 0, req.user.id],
       function(err) {
         if (err) {
           dbInstance.run('ROLLBACK');
@@ -6273,7 +6270,7 @@ router.put('/promo-pricing/:id', authenticateToken, (req, res) => {
             // Insert new source locations
             source_locations.forEach(locationCode => {
               dbInstance.run(
-                'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                'INSERT OR REPLACE INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
                 [promoRuleId, locationCode, 'source'],
                 function(err) {
                   if (err && !hasError) {
@@ -6303,7 +6300,7 @@ router.put('/promo-pricing/:id', authenticateToken, (req, res) => {
             // Insert new destination locations
             destination_locations.forEach(locationCode => {
               dbInstance.run(
-                'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                'INSERT OR REPLACE INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
                 [promoRuleId, locationCode, 'destination'],
                 function(err) {
                   if (err && !hasError) {
@@ -6335,7 +6332,6 @@ router.put('/promo-pricing/:id', authenticateToken, (req, res) => {
     );
   });
 });
-
 // Delete promo pricing rule
 router.delete('/promo-pricing/:id', authenticateToken, (req, res) => {
   // Check if user is admin
