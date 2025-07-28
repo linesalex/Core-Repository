@@ -178,6 +178,15 @@ const dbWrapper = {
   
   // Execute query with enhanced error handling
   run: (sql, params, callback) => {
+    // Handle optional params argument so callers can use db.run(sql, callback)
+    if (typeof params === 'function') {
+      callback = params;
+      params = [];
+    }
+    // Ensure params is at least an empty array when undefined/null
+    if (params === undefined || params === null) {
+      params = [];
+    }
     if (!db) {
       const error = new Error('Database not connected');
       const userError = createUserFriendlyError(DatabaseErrorTypes.CONNECTION_FAILED, error);
