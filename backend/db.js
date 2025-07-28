@@ -161,6 +161,21 @@ const dbWrapper = {
   // Check if database is connected
   isConnected: () => db !== null,
   
+  // Serialize method for transaction support
+  serialize: (callback) => {
+    if (!db) {
+      const error = new Error('Database not connected');
+      const userError = createUserFriendlyError(DatabaseErrorTypes.CONNECTION_FAILED, error);
+      console.error('Database serialize error: not connected');
+      return;
+    }
+    
+    // Execute the callback immediately since SQLite is inherently serialized
+    if (typeof callback === 'function') {
+      callback();
+    }
+  },
+  
   // Execute query with enhanced error handling
   run: (sql, params, callback) => {
     if (!db) {
