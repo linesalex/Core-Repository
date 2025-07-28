@@ -138,3 +138,8 @@ temp/
 config.local.*
 settings.local.* 
 complete_project_updated.tar.gz
+
+# SQLite3 native binaries - these should be rebuilt per platform
+**/node_modules/sqlite3/build/
+**/node_modules/sqlite3/lib/binding/
+*.node
