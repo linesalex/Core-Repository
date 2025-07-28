@@ -7,6 +7,9 @@ const fs = require('fs');
 const { Parser } = require('json2csv');
 const archiver = require('archiver');
 const csv = require('csv-parser');
+
+// Store active upload sessions for progress tracking
+const activeUploads = new Map();
 const { 
   hashPassword, 
   comparePassword, 
@@ -4714,32 +4717,35 @@ const bulkUploadModules = {
       'circuit_id', 'repository_type_id', 'outage_tickets_last_30d', 'maintenance_tickets_last_30d',
       'kmz_file_path', 'mtu', 'sla_latency', 'live_latency', 'expected_latency', 'test_results_link',
       'cable_system', 'is_special', 'underlying_carrier', 'cost', 'currency',
-      'location_a', 'location_b', 'bandwidth', 'capacity_usage_percent', 'more_details', 'test_results_file'
+      'location_a', 'location_b', 'bandwidth', 'more_details', 'test_results_file',
+      'local_loop_carriers_a', 'local_loop_carriers_b', 'equipment_type'
     ],
     requiredFields: ['circuit_id', 'location_a', 'location_b', 'underlying_carrier'],
-    sampleData: {
-      circuit_id: 'SAMPLE123456',
-      repository_type_id: '1',
-      outage_tickets_last_30d: '2',
-      maintenance_tickets_last_30d: '1',
-      kmz_file_path: '',
-      mtu: '1500',
-      sla_latency: '10',
-      live_latency: '8.5',
-      expected_latency: '8',
-      test_results_link: 'http://example.com/test-results',
-      cable_system: 'Sample Cable System',
-      is_special: 'false',
-      underlying_carrier: 'Sample Carrier',
-      cost: '1000',
-      currency: 'USD',
-      location_a: 'LONLON',
-      location_b: 'NYCNYC',
-      bandwidth: '10 Gbps',
-      capacity_usage_percent: '75',
-      more_details: 'Sample route details',
-      test_results_file: ''
-    }
+          sampleData: {
+        circuit_id: 'SAMPLE123456',
+        repository_type_id: '1',
+        outage_tickets_last_30d: '2',
+        maintenance_tickets_last_30d: '1',
+        kmz_file_path: '',
+        mtu: '1500',
+        sla_latency: '10',
+        live_latency: '8.5',
+        expected_latency: '8',
+        test_results_link: 'http://example.com/test-results',
+        cable_system: 'Sample Cable System',
+        is_special: 'false',
+        underlying_carrier: 'Sample Carrier',
+        cost: '1000',
+        currency: 'USD',
+        location_a: 'LONLON',
+        location_b: 'NYCNYC',
+        bandwidth: '10 Gbps',
+        more_details: 'Sample route details',
+        test_results_file: '',
+        local_loop_carriers_a: 'Carrier A',
+        local_loop_carriers_b: 'Carrier B',
+        equipment_type: 'Optical'
+      }
   },
   exchange_feeds: {
     table: 'exchange_feeds',
@@ -4817,27 +4823,31 @@ const bulkUploadModules = {
     templateFields: [
       'location_code', 'city', 'country', 'datacenter_name', 'datacenter_address',
       'latitude', 'longitude', 'time_zone', 'pop_type', 'status', 'provider', 'access_info',
-      'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus'
+      'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus',
+      'region', 'more_info', 'design_file'
     ],
     requiredFields: ['location_code', 'city', 'country', 'datacenter_name', 'pop_type', 'status'],
-    sampleData: {
-      location_code: 'LONLON',
-      city: 'London',
-      country: 'United Kingdom',
-      datacenter_name: 'London Data Center 1',
-      datacenter_address: '123 Tech Street, London, UK',
-      latitude: '51.5074',
-      longitude: '-0.1278',
-      time_zone: 'GMT',
-      pop_type: 'Primary',
-      status: 'Active',
-      provider: 'Sample Provider',
-      access_info: 'Secure access, 24/7 support available',
-      min_price_under_100mb: '100',
-      min_price_100_to_999mb: '200',
-      min_price_1000_to_2999mb: '500',
-      min_price_3000mb_plus: '1000'
-    }
+          sampleData: {
+        location_code: 'LONLON',
+        city: 'London',
+        country: 'United Kingdom',
+        datacenter_name: 'London Data Center 1',
+        datacenter_address: '123 Tech Street, London, UK',
+        latitude: '51.5074',
+        longitude: '-0.1278',
+        time_zone: 'GMT',
+        pop_type: 'Primary',
+        status: 'Active',
+        provider: 'Sample Provider',
+        access_info: 'Secure access, 24/7 support available',
+        min_price_under_100mb: '100',
+        min_price_100_to_999mb: '200',
+        min_price_1000_to_2999mb: '500',
+        min_price_3000mb_plus: '1000',
+        region: 'Europe',
+        more_info: 'Additional location information',
+        design_file: ''
+      }
   },
   carriers: {
     table: 'carriers',
@@ -4852,15 +4862,16 @@ const bulkUploadModules = {
   },
   users: {
     table: 'users',
-    templateFields: ['username', 'password', 'email', 'full_name', 'user_role', 'status'],
-    requiredFields: ['username', 'password', 'email', 'full_name', 'user_role'],
+    templateFields: ['username', 'password_hash', 'email', 'full_name', 'user_role', 'status', 'password_reset_required'],
+    requiredFields: ['username', 'password_hash', 'email', 'full_name', 'user_role'],
     sampleData: {
       username: 'newuser',
-      password: 'temppassword123',
+      password_hash: 'temppassword123',
       email: 'newuser@example.com',
       full_name: 'New User',
       user_role: 'read_only',
-      status: 'active'
+      status: 'active',
+      password_reset_required: 'true'
     }
   },
   // Add missing bulk upload modules
@@ -5230,8 +5241,8 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
           cleanedRow.is_special = cleanedRow.is_special.toLowerCase() === 'true' ? 1 : 0;
         }
       } else if (module === 'users') {
-        if (!['administrator', 'provisioner', 'read_only'].includes(cleanedRow.role)) {
-          errors.push(`Row ${results.length + 1}: Invalid role. Must be administrator, provisioner, or read_only`);
+        if (!['administrator', 'provisioner', 'read_only'].includes(cleanedRow.user_role)) {
+          errors.push(`Row ${results.length + 1}: Invalid user_role. Must be administrator, provisioner, or read_only`);
           return;
         }
       } else if (module === 'exchange_feeds') {
@@ -5492,8 +5503,10 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
             sql = `INSERT INTO carriers (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           } else if (module === 'users') {
-            // Hash password for users
-            row.password = hashPassword(row.password);
+            // Hash password for users - but if password_hash is already provided, use it
+            if (row.password_hash && !row.password_hash.startsWith('$2b$')) {
+              row.password_hash = hashPassword(row.password_hash);
+            }
             sql = `INSERT INTO users (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
           } else if (module === 'carrier_contacts') {
@@ -5645,9 +5658,6 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
       res.status(500).json({ error: 'Failed to process CSV file: ' + error.message, sessionId });
     });
 });
-
-// Store active upload sessions for progress tracking
-const activeUploads = new Map();
 
 // Get upload progress
 router.get('/bulk-upload/progress/:sessionId', authenticateToken, authorizeRole('administrator'), (req, res) => {
