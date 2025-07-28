@@ -75,6 +75,15 @@ const logChange = (userId, tableName, recordId, action, oldValues, newValues, re
     return;
   }
   
+  // Handle missing userId - skip logging if user_id is required but not provided
+  if (!userId && !req?.user?.id) {
+    console.warn(`logChange: No user_id available for ${tableName} ${action} operation - skipping log`);
+    return;
+  }
+  
+  // Use provided userId or extract from request
+  const safeUserId = userId || req?.user?.id;
+  
   // Handle missing recordId by providing a default value
   const safeRecordId = recordId || 'N/A';
   
@@ -98,11 +107,11 @@ const logChange = (userId, tableName, recordId, action, oldValues, newValues, re
   
   db.run(
     'INSERT INTO change_logs (user_id, table_name, record_id, action, old_values, new_values, changes_summary, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [userId, tableName, safeRecordId, action, JSON.stringify(oldValues), JSON.stringify(newValues), changesSummary, ipAddress, userAgent],
+    [safeUserId, tableName, safeRecordId, action, JSON.stringify(oldValues), JSON.stringify(newValues), changesSummary, ipAddress, userAgent],
     function(err) {
       if (err) {
         console.error('Failed to log change:', err.message);
-        console.error('logChange parameters:', { userId, tableName, recordId: safeRecordId, action });
+        console.error('logChange parameters:', { userId: safeUserId, tableName, recordId: safeRecordId, action });
         // Don't throw - logging failures shouldn't break the main operation
       }
     }
@@ -756,7 +765,6 @@ router.get('/carriers/search', authenticateToken, (req, res) => {
     }
   );
 });
-
 // Create carrier
 router.post('/carriers', authenticateToken, authorizePermission('carriers', 'create'), (req, res) => {
   const { carrier_name, previously_known_as, status, region } = req.body;
@@ -1544,7 +1552,6 @@ router.post('/dark_fiber_details', authenticateToken, (req, res) => {
     }
   );
 });
-
 // Edit a dark fiber detail by id
 router.put('/dark_fiber_details/:id', authenticateToken, (req, res) => {
   const { dwdm_wavelength, dwdm_ucn, equipment, in_use, capex_cost_to_light, bandwidth } = req.body;
@@ -2196,7 +2203,6 @@ router.get('/exchange-currencies', (req, res) => {
     res.json(rows);
   });
 });
-
 // Network Design Path Finding with Dijkstra Algorithm
 router.post('/network_design/find_path', (req, res) => {
   const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false, use_cisco_only_routes = false } = req.body;
@@ -2744,7 +2750,6 @@ router.post('/network_design/find_path', (req, res) => {
     });
   });
 });
-
 // Network Design with Enhanced Pricing
 router.post('/network_design/calculate_pricing', async (req, res) => {
   const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, bandwidth, source, destination, protection_required = false } = req.body;
@@ -3531,7 +3536,6 @@ router.put('/cnx-colocation/locations/:id', authenticateToken, authorizePermissi
      });
    });
  });
-
 // ====================================
 // CNX COLOCATION RACKS ENDPOINTS
 // ====================================
@@ -4231,7 +4235,6 @@ router.get('/exchanges/:id/feeds', authenticateToken, authorizePermission('excha
     res.json(feeds);
   });
 });
-
 // Create exchange feed
 router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exchange_data', 'edit'), exchangeUpload.single('design_file'), (req, res) => {
   const exchangeId = req.params.id;
@@ -5018,7 +5021,6 @@ router.get('/bulk-upload/template/:module', authenticateToken, authorizeRole('ad
     res.status(500).json({ error: 'Failed to generate template: ' + error.message });
   }
 });
-
 // Get database data for a module (to help with template creation)
 router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('administrator'), (req, res) => {
   const { module } = req.params;
@@ -5233,186 +5235,184 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
       }
       
       // Begin transaction for bulk insert
-      db.serialize(() => {
-        db.run('BEGIN TRANSACTION', (err) => {
-          if (err) {
-            return res.status(500).json({ error: 'Failed to begin transaction: ' + err.message });
-          }
-          
-          let completed = 0;
-          let failed = false;
-          const insertErrors = [];
-          
-          results.forEach((row, index) => {
-            // Foreign key validation function
-            const validateForeignKeys = (callback) => {
-              const validationPromises = [];
-              
-              if (module === 'carrier_contacts') {
-                validationPromises.push(new Promise((resolve, reject) => {
-                  db.get('SELECT id FROM carriers WHERE id = ?', [row.carrier_id], (err, result) => {
-                    if (err) reject(err);
-                    else if (!result) reject(new Error(`Invalid carrier_id: ${row.carrier_id} does not exist`));
-                    else resolve();
-                  });
-                }));
-              } else if (module === 'pop_capabilities') {
-                validationPromises.push(new Promise((resolve, reject) => {
-                  db.get('SELECT id FROM location_reference WHERE id = ?', [row.location_id], (err, result) => {
-                    if (err) reject(err);
-                    else if (!result) reject(new Error(`Invalid location_id: ${row.location_id} does not exist`));
-                    else resolve();
-                  });
-                }));
-              } else if (module === 'exchange_feeds') {
-                validationPromises.push(new Promise((resolve, reject) => {
-                  db.get('SELECT id FROM exchanges WHERE id = ?', [row.exchange_id], (err, result) => {
-                    if (err) reject(err);
-                    else if (!result) reject(new Error(`Invalid exchange_id: ${row.exchange_id} does not exist`));
-                    else resolve();
-                  });
-                }));
-              } else if (module === 'exchange_contacts') {
-                validationPromises.push(new Promise((resolve, reject) => {
-                  db.get('SELECT id FROM exchanges WHERE id = ?', [row.exchange_id], (err, result) => {
-                    if (err) reject(err);
-                    else if (!result) reject(new Error(`Invalid exchange_id: ${row.exchange_id} does not exist`));
-                    else resolve();
-                  });
-                }));
-              } else if (module === 'cnx_colocation_racks') {
-                validationPromises.push(new Promise((resolve, reject) => {
-                  db.get('SELECT id FROM location_reference WHERE id = ?', [row.location_id], (err, result) => {
-                    if (err) reject(err);
-                    else if (!result) reject(new Error(`Invalid location_id: ${row.location_id} does not exist`));
-                    else resolve();
-                  });
-                }));
-              } else if (module === 'cnx_colocation_clients') {
-                validationPromises.push(new Promise((resolve, reject) => {
-                  db.get('SELECT id FROM cnx_colocation_racks WHERE id = ?', [row.rack_id], (err, result) => {
-                    if (err) reject(err);
-                    else if (!result) reject(new Error(`Invalid rack_id: ${row.rack_id} does not exist`));
-                    else resolve();
-                  });
-                }));
-              }
-              
-              Promise.all(validationPromises)
-                .then(() => callback(null))
-                .catch(err => callback(err));
-            };
-
-            let sql, values;
+      db.run('BEGIN TRANSACTION', (err) => {
+        if (err) {
+          return res.status(500).json({ error: 'Failed to begin transaction: ' + err.message });
+        }
+        
+        let completed = 0;
+        let failed = false;
+        const insertErrors = [];
+        
+        results.forEach((row, index) => {
+          // Foreign key validation function
+          const validateForeignKeys = (callback) => {
+            const validationPromises = [];
             
-            // Validate foreign keys first
-            validateForeignKeys((fkErr) => {
-              if (fkErr) {
-                failed = true;
-                insertErrors.push(`Row ${index + 1}: ${fkErr.message}`);
-                completed++;
-                
-                // Check if all operations are complete
-                if (completed === results.length) {
-                  db.run('ROLLBACK', (rollbackErr) => {
-                    if (rollbackErr) console.error('Rollback failed:', rollbackErr);
-                    res.status(400).json({
-                      error: 'Bulk upload failed',
-                      errors: insertErrors,
-                      message: 'Transaction rolled back. No data was imported.'
-                    });
-                  });
-                }
-                return;
-              }
-              
-              // Generate SQL for each module
-            if (module === 'network_routes') {
-              sql = `INSERT INTO network_routes (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-              values = config.templateFields.map(field => row[field] || null);
-            } else if (module === 'exchange_feeds') {
-              sql = `INSERT INTO exchange_feeds (${config.templateFields.join(', ')}, created_by) VALUES (${config.templateFields.map(() => '?').join(', ')}, ?)`;
-              values = [...config.templateFields.map(field => row[field] || null), req.user.id];
-            } else if (module === 'exchange_contacts') {
-              sql = `INSERT INTO exchange_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-              values = config.templateFields.map(field => row[field] || null);
-            } else if (module === 'exchange_rates') {
-              sql = `INSERT OR REPLACE INTO exchange_rates (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-              values = config.templateFields.map(field => row[field] || null);
-            } else if (module === 'locations') {
-              sql = `INSERT INTO location_reference (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-              values = config.templateFields.map(field => row[field] || null);
-            } else if (module === 'carriers') {
-              sql = `INSERT INTO carriers (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-              values = config.templateFields.map(field => row[field] || null);
-            } else if (module === 'users') {
-              // Hash password for users
-              row.password = hashPassword(row.password);
-              sql = `INSERT INTO users (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-              values = config.templateFields.map(field => row[field] || null);
-            } else if (module === 'carrier_contacts') {
-              sql = `INSERT INTO carrier_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-              values = config.templateFields.map(field => row[field] || null);
+            if (module === 'carrier_contacts') {
+              validationPromises.push(new Promise((resolve, reject) => {
+                db.get('SELECT id FROM carriers WHERE id = ?', [row.carrier_id], (err, result) => {
+                  if (err) reject(err);
+                  else if (!result) reject(new Error(`Invalid carrier_id: ${row.carrier_id} does not exist`));
+                  else resolve();
+                });
+              }));
             } else if (module === 'pop_capabilities') {
-              sql = `INSERT OR REPLACE INTO pop_capabilities (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-              values = config.templateFields.map(field => row[field] || null);
-            } else if (module === 'exchanges') {
-              sql = `INSERT INTO exchanges (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-              values = config.templateFields.map(field => row[field] || null);
+              validationPromises.push(new Promise((resolve, reject) => {
+                db.get('SELECT id FROM location_reference WHERE id = ?', [row.location_id], (err, result) => {
+                  if (err) reject(err);
+                  else if (!result) reject(new Error(`Invalid location_id: ${row.location_id} does not exist`));
+                  else resolve();
+                });
+              }));
+            } else if (module === 'exchange_feeds') {
+              validationPromises.push(new Promise((resolve, reject) => {
+                db.get('SELECT id FROM exchanges WHERE id = ?', [row.exchange_id], (err, result) => {
+                  if (err) reject(err);
+                  else if (!result) reject(new Error(`Invalid exchange_id: ${row.exchange_id} does not exist`));
+                  else resolve();
+                });
+              }));
+            } else if (module === 'exchange_contacts') {
+              validationPromises.push(new Promise((resolve, reject) => {
+                db.get('SELECT id FROM exchanges WHERE id = ?', [row.exchange_id], (err, result) => {
+                  if (err) reject(err);
+                  else if (!result) reject(new Error(`Invalid exchange_id: ${row.exchange_id} does not exist`));
+                  else resolve();
+                });
+              }));
             } else if (module === 'cnx_colocation_racks') {
-              sql = `INSERT INTO cnx_colocation_racks (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-              values = config.templateFields.map(field => row[field] || null);
+              validationPromises.push(new Promise((resolve, reject) => {
+                db.get('SELECT id FROM location_reference WHERE id = ?', [row.location_id], (err, result) => {
+                  if (err) reject(err);
+                  else if (!result) reject(new Error(`Invalid location_id: ${row.location_id} does not exist`));
+                  else resolve();
+                });
+              }));
             } else if (module === 'cnx_colocation_clients') {
-              sql = `INSERT INTO cnx_colocation_clients (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-              values = config.templateFields.map(field => row[field] || null);
+              validationPromises.push(new Promise((resolve, reject) => {
+                db.get('SELECT id FROM cnx_colocation_racks WHERE id = ?', [row.rack_id], (err, result) => {
+                  if (err) reject(err);
+                  else if (!result) reject(new Error(`Invalid rack_id: ${row.rack_id} does not exist`));
+                  else resolve();
+                });
+              }));
             }
             
-            db.run(sql, values, function(err) {
-              if (err) {
-                failed = true;
-                insertErrors.push(`Row ${index + 1}: ${err.message}`);
-              }
-              
+            Promise.all(validationPromises)
+              .then(() => callback(null))
+              .catch(err => callback(err));
+          };
+
+          let sql, values;
+          
+          // Validate foreign keys first
+          validateForeignKeys((fkErr) => {
+            if (fkErr) {
+              failed = true;
+              insertErrors.push(`Row ${index + 1}: ${fkErr.message}`);
               completed++;
               
               // Check if all operations are complete
               if (completed === results.length) {
-                if (failed) {
-                  // Rollback transaction
-                  db.run('ROLLBACK', (rollbackErr) => {
-                    if (rollbackErr) console.error('Rollback failed:', rollbackErr);
-                    res.status(400).json({
-                      error: 'Bulk upload failed',
-                      errors: insertErrors,
-                      message: 'Transaction rolled back. No data was imported.'
-                    });
+                db.run('ROLLBACK', (rollbackErr) => {
+                  if (rollbackErr) console.error('Rollback failed:', rollbackErr);
+                  res.status(400).json({
+                    error: 'Bulk upload failed',
+                    errors: insertErrors,
+                    message: 'Transaction rolled back. No data was imported.'
                   });
-                } else {
-                  // Commit transaction
-                  db.run('COMMIT', (commitErr) => {
-                    if (commitErr) {
-                      return res.status(500).json({ error: 'Failed to commit transaction: ' + commitErr.message });
-                    }
-                    
-                    // Log successful bulk upload
-                    logChange(null, 'bulk_upload', null, 'BULK_IMPORT', null, {
-                      module,
-                      rows_imported: results.length,
-                      filename: req.file.originalname
-                    }, req);
-                    
-                    res.json({
-                      message: 'Bulk upload successful',
-                      module,
-                      rows_imported: results.length,
-                      total_rows: results.length
-                    });
-                  });
-                }
+                });
               }
-            });
-            }); // Close validateForeignKeys callback
+              return;
+            }
+            
+            // Generate SQL for each module
+          if (module === 'network_routes') {
+            sql = `INSERT INTO network_routes (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            values = config.templateFields.map(field => row[field] || null);
+          } else if (module === 'exchange_feeds') {
+            sql = `INSERT INTO exchange_feeds (${config.templateFields.join(', ')}, created_by) VALUES (${config.templateFields.map(() => '?').join(', ')}, ?)`;
+            values = [...config.templateFields.map(field => row[field] || null), req.user.id];
+          } else if (module === 'exchange_contacts') {
+            sql = `INSERT INTO exchange_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            values = config.templateFields.map(field => row[field] || null);
+          } else if (module === 'exchange_rates') {
+            sql = `INSERT OR REPLACE INTO exchange_rates (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            values = config.templateFields.map(field => row[field] || null);
+          } else if (module === 'locations') {
+            sql = `INSERT INTO location_reference (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            values = config.templateFields.map(field => row[field] || null);
+          } else if (module === 'carriers') {
+            sql = `INSERT INTO carriers (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            values = config.templateFields.map(field => row[field] || null);
+          } else if (module === 'users') {
+            // Hash password for users
+            row.password = hashPassword(row.password);
+            sql = `INSERT INTO users (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            values = config.templateFields.map(field => row[field] || null);
+          } else if (module === 'carrier_contacts') {
+            sql = `INSERT INTO carrier_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            values = config.templateFields.map(field => row[field] || null);
+          } else if (module === 'pop_capabilities') {
+            sql = `INSERT OR REPLACE INTO pop_capabilities (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            values = config.templateFields.map(field => row[field] || null);
+          } else if (module === 'exchanges') {
+            sql = `INSERT INTO exchanges (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            values = config.templateFields.map(field => row[field] || null);
+          } else if (module === 'cnx_colocation_racks') {
+            sql = `INSERT INTO cnx_colocation_racks (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            values = config.templateFields.map(field => row[field] || null);
+          } else if (module === 'cnx_colocation_clients') {
+            sql = `INSERT INTO cnx_colocation_clients (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            values = config.templateFields.map(field => row[field] || null);
+          }
+          
+          db.run(sql, values, function(err) {
+            if (err) {
+              failed = true;
+              insertErrors.push(`Row ${index + 1}: ${err.message}`);
+            }
+            
+            completed++;
+            
+            // Check if all operations are complete
+            if (completed === results.length) {
+              if (failed) {
+                // Rollback transaction
+                db.run('ROLLBACK', (rollbackErr) => {
+                  if (rollbackErr) console.error('Rollback failed:', rollbackErr);
+                  res.status(400).json({
+                    error: 'Bulk upload failed',
+                    errors: insertErrors,
+                    message: 'Transaction rolled back. No data was imported.'
+                  });
+                });
+              } else {
+                // Commit transaction
+                db.run('COMMIT', (commitErr) => {
+                  if (commitErr) {
+                    return res.status(500).json({ error: 'Failed to commit transaction: ' + commitErr.message });
+                  }
+                  
+                  // Log successful bulk upload
+                  logChange(null, 'bulk_upload', null, 'BULK_IMPORT', null, {
+                    module,
+                    rows_imported: results.length,
+                    filename: req.file.originalname
+                  }, req);
+                  
+                  res.json({
+                    message: 'Bulk upload successful',
+                    module,
+                    rows_imported: results.length,
+                    total_rows: results.length
+                  });
+                });
+              }
+            }
           });
+          }); // Close validateForeignKeys callback
         });
       });
     })
@@ -5600,24 +5600,23 @@ router.put('/pricing_logic/config', authenticateToken, (req, res) => {
     return res.status(500).json({ error: 'Database connection not available' });
   }
 
-  dbInstance.serialize(() => {
-    dbInstance.run('BEGIN TRANSACTION');
+  dbInstance.run('BEGIN TRANSACTION');
 
-    let completed = 0;
-    let hasError = false;
+  let completed = 0;
+  let hasError = false;
 
-    updateOperations.forEach(operation => {
-      dbInstance.run(
-        'INSERT OR REPLACE INTO pricing_logic_config (config_key, config_value, updated_by, updated_date) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
-        [operation.key, operation.value.toString(), req.user.id],
-        function(err) {
-          if (err && !hasError) {
-            hasError = true;
-            dbInstance.run('ROLLBACK');
-            return res.status(500).json({ error: 'Failed to update pricing configuration: ' + err.message });
-          }
+  updateOperations.forEach(operation => {
+    dbInstance.run(
+      'INSERT OR REPLACE INTO pricing_logic_config (config_key, config_value, updated_by, updated_date) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+      [operation.key, operation.value.toString(), req.user.id],
+      function(err) {
+        if (err && !hasError) {
+          hasError = true;
+          dbInstance.run('ROLLBACK');
+          return res.status(500).json({ error: 'Failed to update pricing configuration: ' + err.message });
+        }
 
-          completed++;
+        completed++;
           if (completed === updateOperations.length && !hasError) {
             dbInstance.run('COMMIT');
 
@@ -5635,7 +5634,6 @@ router.put('/pricing_logic/config', authenticateToken, (req, res) => {
       );
     });
   });
-});
 
 // Find matching promo pricing rules for a route
 const findPromoPrice = (sourceLocation, destinationLocation, bandwidth) => {
@@ -5804,7 +5802,6 @@ const getPromoRulesWithLocations = () => {
     });
   });
 };
-
 // Get all promo pricing rules
 router.get('/promo-pricing', authenticateToken, (req, res) => {
   // Check if user is admin
@@ -5874,90 +5871,88 @@ router.post('/promo-pricing', authenticateToken, (req, res) => {
     return res.status(500).json({ error: 'Database connection not available' });
   }
 
-  dbInstance.serialize(() => {
-    dbInstance.run('BEGIN TRANSACTION');
+  dbInstance.run('BEGIN TRANSACTION');
 
-    // Insert the promo rule
-    dbInstance.run(
-      `INSERT INTO promo_pricing_rules 
-       (rule_name, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus, created_by) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [rule_name, price_under_100mb || 0, price_100_to_999mb || 0, price_1000_to_2999mb || 0, price_3000mb_plus || 0, req.user.id],
-      function(err) {
-        if (err) {
-          dbInstance.run('ROLLBACK');
-          return res.status(500).json({ error: 'Failed to create promo rule: ' + err.message });
-        }
-
-        const promoRuleId = this.lastID;
-        let completed = 0;
-        let hasError = false;
-        const totalLocations = source_locations.length + destination_locations.length;
-
-        // Insert source locations
-        source_locations.forEach(locationCode => {
-          dbInstance.run(
-            'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
-            [promoRuleId, locationCode, 'source'],
-            function(err) {
-              if (err && !hasError) {
-                hasError = true;
-                dbInstance.run('ROLLBACK');
-                return res.status(500).json({ error: 'Failed to add source locations: ' + err.message });
-              }
-
-              completed++;
-              if (completed === totalLocations && !hasError) {
-                dbInstance.run('COMMIT');
-
-                // Log the change
-                logChange(req.user.id, 'promo_pricing_rules', rule_name, 'CREATE', null, {
-                  rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
-                }, req);
-
-                res.status(201).json({
-                  success: true,
-                  message: 'Promo pricing rule created successfully',
-                  id: promoRuleId
-                });
-              }
-            }
-          );
-        });
-
-        // Insert destination locations
-        destination_locations.forEach(locationCode => {
-          dbInstance.run(
-            'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
-            [promoRuleId, locationCode, 'destination'],
-            function(err) {
-              if (err && !hasError) {
-                hasError = true;
-                dbInstance.run('ROLLBACK');
-                return res.status(500).json({ error: 'Failed to add destination locations: ' + err.message });
-              }
-
-              completed++;
-              if (completed === totalLocations && !hasError) {
-                dbInstance.run('COMMIT');
-
-                // Log the change
-                logChange(req.user.id, 'promo_pricing_rules', rule_name, 'CREATE', null, {
-                  rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
-                }, req);
-
-                res.status(201).json({
-                  success: true,
-                  message: 'Promo pricing rule created successfully',
-                  id: promoRuleId
-                });
-              }
-            }
-          );
-        });
+  // Insert the promo rule
+  dbInstance.run(
+    `INSERT INTO promo_pricing_rules 
+     (rule_name, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus, created_by) 
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [rule_name, price_under_100mb || 0, price_100_to_999mb || 0, price_1000_to_2999mb || 0, price_3000mb_plus || 0, req.user.id],
+    function(err) {
+      if (err) {
+        dbInstance.run('ROLLBACK');
+        return res.status(500).json({ error: 'Failed to create promo rule: ' + err.message });
       }
-    );
-  });
+
+      const promoRuleId = this.lastID;
+      let completed = 0;
+      let hasError = false;
+      const totalLocations = source_locations.length + destination_locations.length;
+
+      // Insert source locations
+      source_locations.forEach(locationCode => {
+        dbInstance.run(
+          'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+          [promoRuleId, locationCode, 'source'],
+          function(err) {
+            if (err && !hasError) {
+              hasError = true;
+              dbInstance.run('ROLLBACK');
+              return res.status(500).json({ error: 'Failed to add source locations: ' + err.message });
+            }
+
+            completed++;
+            if (completed === totalLocations && !hasError) {
+              dbInstance.run('COMMIT');
+
+              // Log the change
+              logChange(req.user.id, 'promo_pricing_rules', rule_name, 'CREATE', null, {
+                rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+              }, req);
+
+              res.status(201).json({
+                success: true,
+                message: 'Promo pricing rule created successfully',
+                id: promoRuleId
+              });
+            }
+          }
+        );
+      });
+
+      // Insert destination locations
+      destination_locations.forEach(locationCode => {
+        dbInstance.run(
+          'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+          [promoRuleId, locationCode, 'destination'],
+          function(err) {
+            if (err && !hasError) {
+              hasError = true;
+              dbInstance.run('ROLLBACK');
+              return res.status(500).json({ error: 'Failed to add destination locations: ' + err.message });
+            }
+
+            completed++;
+            if (completed === totalLocations && !hasError) {
+              dbInstance.run('COMMIT');
+
+              // Log the change
+              logChange(req.user.id, 'promo_pricing_rules', rule_name, 'CREATE', null, {
+                rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+              }, req);
+
+              res.status(201).json({
+                success: true,
+                message: 'Promo pricing rule created successfully',
+                id: promoRuleId
+              });
+            }
+          }
+        );
+      });
+    }
+  );
 });
 
 // Update promo pricing rule
@@ -6001,99 +5996,97 @@ router.put('/promo-pricing/:id', authenticateToken, (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!oldRule) return res.status(404).json({ error: 'Promo rule not found' });
 
-    dbInstance.serialize(() => {
-      dbInstance.run('BEGIN TRANSACTION');
+    dbInstance.run('BEGIN TRANSACTION');
 
-      // Update the promo rule
-      dbInstance.run(
-        `UPDATE promo_pricing_rules 
-         SET rule_name = ?, price_under_100mb = ?, price_100_to_999mb = ?, price_1000_to_2999mb = ?, price_3000mb_plus = ?, updated_by = ?
-         WHERE id = ?`,
-        [rule_name, price_under_100mb || 0, price_100_to_999mb || 0, price_1000_to_2999mb || 0, price_3000mb_plus || 0, req.user.id, promoRuleId],
-        function(err) {
-          if (err) {
-            dbInstance.run('ROLLBACK');
-            return res.status(500).json({ error: 'Failed to update promo rule: ' + err.message });
-          }
-
-                      // Delete existing locations
-            dbInstance.run(
-              'DELETE FROM promo_pricing_locations WHERE promo_rule_id = ?',
-              [promoRuleId],
-              function(err) {
-                if (err) {
-                  dbInstance.run('ROLLBACK');
-                  return res.status(500).json({ error: 'Failed to update locations: ' + err.message });
-                }
-
-                let completed = 0;
-                let hasError = false;
-                const totalLocations = source_locations.length + destination_locations.length;
-
-                // Insert new source locations
-                source_locations.forEach(locationCode => {
-                  dbInstance.run(
-                    'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
-                    [promoRuleId, locationCode, 'source'],
-                    function(err) {
-                      if (err && !hasError) {
-                        hasError = true;
-                        dbInstance.run('ROLLBACK');
-                        return res.status(500).json({ error: 'Failed to add source locations: ' + err.message });
-                      }
-
-                      completed++;
-                      if (completed === totalLocations && !hasError) {
-                        dbInstance.run('COMMIT');
-
-                        // Log the change
-                        logChange(req.user.id, 'promo_pricing_rules', rule_name, 'UPDATE', oldRule, {
-                          rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
-                        }, req);
-
-                        res.json({
-                          success: true,
-                          message: 'Promo pricing rule updated successfully'
-                        });
-                      }
-                    }
-                  );
-                });
-
-                // Insert new destination locations
-                destination_locations.forEach(locationCode => {
-                  dbInstance.run(
-                    'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
-                    [promoRuleId, locationCode, 'destination'],
-                    function(err) {
-                      if (err && !hasError) {
-                        hasError = true;
-                        dbInstance.run('ROLLBACK');
-                        return res.status(500).json({ error: 'Failed to add destination locations: ' + err.message });
-                      }
-
-                      completed++;
-                      if (completed === totalLocations && !hasError) {
-                        dbInstance.run('COMMIT');
-
-                        // Log the change
-                        logChange(req.user.id, 'promo_pricing_rules', rule_name, 'UPDATE', oldRule, {
-                          rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
-                        }, req);
-
-                        res.json({
-                          success: true,
-                          message: 'Promo pricing rule updated successfully'
-                        });
-                      }
-                    }
-                  );
-                });
-              }
-            );
+    // Update the promo rule
+    dbInstance.run(
+      `UPDATE promo_pricing_rules 
+       SET rule_name = ?, price_under_100mb = ?, price_100_to_999mb = ?, price_1000_to_2999mb = ?, price_3000mb_plus = ?, updated_by = ?
+       WHERE id = ?`,
+      [rule_name, price_under_100mb || 0, price_100_to_999mb || 0, price_1000_to_2999mb || 0, price_3000mb_plus || 0, req.user.id, promoRuleId],
+      function(err) {
+        if (err) {
+          dbInstance.run('ROLLBACK');
+          return res.status(500).json({ error: 'Failed to update promo rule: ' + err.message });
         }
-      );
-    });
+
+        // Delete existing locations
+        dbInstance.run(
+          'DELETE FROM promo_pricing_locations WHERE promo_rule_id = ?',
+          [promoRuleId],
+          function(err) {
+            if (err) {
+              dbInstance.run('ROLLBACK');
+              return res.status(500).json({ error: 'Failed to update locations: ' + err.message });
+            }
+
+            let completed = 0;
+            let hasError = false;
+            const totalLocations = source_locations.length + destination_locations.length;
+
+            // Insert new source locations
+            source_locations.forEach(locationCode => {
+              dbInstance.run(
+                'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                [promoRuleId, locationCode, 'source'],
+                function(err) {
+                  if (err && !hasError) {
+                    hasError = true;
+                    dbInstance.run('ROLLBACK');
+                    return res.status(500).json({ error: 'Failed to add source locations: ' + err.message });
+                  }
+
+                  completed++;
+                  if (completed === totalLocations && !hasError) {
+                    dbInstance.run('COMMIT');
+
+                    // Log the change
+                    logChange(req.user.id, 'promo_pricing_rules', rule_name, 'UPDATE', oldRule, {
+                      rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+                    }, req);
+
+                    res.json({
+                      success: true,
+                      message: 'Promo pricing rule updated successfully'
+                    });
+                  }
+                }
+              );
+            });
+
+            // Insert new destination locations
+            destination_locations.forEach(locationCode => {
+              dbInstance.run(
+                'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                [promoRuleId, locationCode, 'destination'],
+                function(err) {
+                  if (err && !hasError) {
+                    hasError = true;
+                    dbInstance.run('ROLLBACK');
+                    return res.status(500).json({ error: 'Failed to add destination locations: ' + err.message });
+                  }
+
+                  completed++;
+                  if (completed === totalLocations && !hasError) {
+                    dbInstance.run('COMMIT');
+
+                    // Log the change
+                    logChange(req.user.id, 'promo_pricing_rules', rule_name, 'UPDATE', oldRule, {
+                      rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+                    }, req);
+
+                    res.json({
+                      success: true,
+                      message: 'Promo pricing rule updated successfully'
+                    });
+                  }
+                }
+              );
+            });
+          }
+        );
+      }
+    );
   });
 });
 

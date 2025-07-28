@@ -1,0 +1,2 @@
+circuit_id,source_location,destination_location,bandwidth,bandwidth_unit,carrier_id
+ABCDEF123456,NYC,LAX,100,Mbps,1
