@@ -5483,7 +5483,7 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
           if (module === 'network_routes') {
             console.log(`[BULK UPLOAD] Processing row ${index + 1} for network_routes:`, JSON.stringify(row, null, 2));
             console.log(`[BULK UPLOAD] Expected fields:`, config.templateFields);
-            sql = `INSERT INTO network_routes (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+            sql = `INSERT OR REPLACE INTO network_routes (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
             console.log(`[BULK UPLOAD] Generated SQL:`, sql);
             console.log(`[BULK UPLOAD] Values for row ${index + 1}:`, values);
