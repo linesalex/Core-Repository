@@ -5334,10 +5334,25 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
           status: 'processing'
         });
         
+        // Set a timeout to prevent hanging uploads
+        const uploadTimeout = setTimeout(() => {
+          console.log(`[BULK UPLOAD] Upload timeout reached for session: ${sessionId}`);
+          uploadInfo = activeUploads.get(sessionId);
+          if (uploadInfo && uploadInfo.status !== 'completed') {
+            uploadInfo.status = 'error';
+            uploadInfo.stage = 'Upload timed out';
+            uploadInfo.errors = ['Upload process timed out after 5 minutes'];
+            setTimeout(() => activeUploads.delete(sessionId), 60000);
+          }
+        }, 5 * 60 * 1000); // 5 minute timeout
+        
                // Begin transaction for bulk insert
          db.run('BEGIN TRANSACTION', (err) => {
            if (err) {
              console.log(`[BULK UPLOAD] Failed to begin transaction for module: ${module}, error: ${err.message}`);
+             
+             // Clear the timeout since transaction failed
+             clearTimeout(uploadTimeout);
              
                            // Update progress tracking
               uploadInfo = activeUploads.get(sessionId);
@@ -5351,6 +5366,8 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
            }
            
            console.log(`[BULK UPLOAD] Transaction started for module: ${module}`);
+           console.log(`[BULK UPLOAD] About to process ${results.length} rows`);
+           console.log(`[BULK UPLOAD] First row sample:`, JSON.stringify(results[0], null, 2));
            
            let completed = 0;
            let failed = false;
@@ -5453,8 +5470,12 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
             
             // Generate SQL for each module
           if (module === 'network_routes') {
+            console.log(`[BULK UPLOAD] Processing row ${index + 1} for network_routes:`, JSON.stringify(row, null, 2));
+            console.log(`[BULK UPLOAD] Expected fields:`, config.templateFields);
             sql = `INSERT INTO network_routes (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => row[field] || null);
+            console.log(`[BULK UPLOAD] Generated SQL:`, sql);
+            console.log(`[BULK UPLOAD] Values for row ${index + 1}:`, values);
           } else if (module === 'exchange_feeds') {
             sql = `INSERT INTO exchange_feeds (${config.templateFields.join(', ')}, created_by) VALUES (${config.templateFields.map(() => '?').join(', ')}, ?)`;
             values = [...config.templateFields.map(field => row[field] || null), req.user.id];
@@ -5496,9 +5517,22 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
             if (err) {
               failed = true;
               insertErrors.push(`Row ${index + 1}: ${err.message}`);
+              console.error(`[BULK UPLOAD] Insert error for row ${index + 1} in module ${module}:`, err.message);
+              console.error(`[BULK UPLOAD] SQL:`, sql);
+              console.error(`[BULK UPLOAD] Values:`, values);
+            } else {
+              console.log(`[BULK UPLOAD] Successfully inserted row ${index + 1}/${results.length} for module: ${module}`);
             }
             
             completed++;
+            
+            // Update progress tracking for each insert
+            uploadInfo = activeUploads.get(sessionId);
+            if (uploadInfo) {
+              const insertProgress = Math.floor(completed / results.length * 40); // 40% for insertion
+              uploadInfo.progress = 60 + insertProgress; // Start from 60%
+              uploadInfo.stage = `Inserting row ${completed} of ${results.length}...`;
+            }
             
             // Check if all operations are complete
             if (completed === results.length) {
@@ -5507,6 +5541,9 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               
               if (failed) {
                 console.log(`[BULK UPLOAD] Database insert failed for module: ${module}, ${insertErrors.length} errors, rolling back transaction`);
+                
+                // Clear the timeout since upload failed
+                clearTimeout(uploadTimeout);
                 
                 // Update progress tracking
                 uploadInfo = activeUploads.get(sessionId);
@@ -5537,6 +5574,9 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                   if (commitErr) {
                     console.log(`[BULK UPLOAD] Failed to commit transaction for module: ${module}, error: ${commitErr.message}`);
                     
+                    // Clear the timeout since commit failed
+                    clearTimeout(uploadTimeout);
+                    
                                          // Update progress tracking
                      uploadInfo = activeUploads.get(sessionId);
                      if (uploadInfo) {
@@ -5559,6 +5599,9 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                   }, req);
                   
                   console.log(`[BULK UPLOAD] Bulk upload completed successfully for module: ${module}, file: ${req.file.originalname}`);
+                  
+                  // Clear the timeout since upload completed successfully
+                  clearTimeout(uploadTimeout);
                   
                                      // Update progress tracking - completed
                    uploadInfo = activeUploads.get(sessionId);
