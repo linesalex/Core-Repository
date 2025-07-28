@@ -1,0 +1,33 @@
+2025-07-28T04:56:24.199Z - GET /bulk-upload/database/network_routes
+Database RUN error: SQLITE_CONSTRAINT: NOT NULL constraint failed: change_logs.user_id
+Failed to log change: SQLITE_CONSTRAINT: NOT NULL constraint failed: change_logs.user_id
+logChange parameters: {
+  userId: null,
+  tableName: 'bulk_upload_database',
+  recordId: 'N/A',
+  action: 'EXPORT'
+}
+2025-07-28T04:58:34.412Z - POST /bulk-upload/network_routes
+2025-07-28T04:59:33.366Z - GET /users
+2025-07-28T04:59:33.546Z - GET /users
+2025-07-28T04:59:43.386Z - POST /bulk-upload/network_routes
+/root/Core-Repository/backend/routes.js:5236
+      db.serialize(() => {
+         ^
+
+TypeError: db.serialize is not a function
+    at CsvParser.<anonymous> (/root/Core-Repository/backend/routes.js:5236:10)
+    at CsvParser.emit (events.js:400:28)
+    at endReadableNT (internal/streams/readable.js:1333:12)
+    at processTicksAndRejections (internal/process/task_queues.js:82:21)
+npm ERR! code ELIFECYCLE
+npm ERR! errno 1
+npm ERR! network-inventory-backend@1.0.0 start: `node index.js`
+npm ERR! Exit status 1
+npm ERR! 
+npm ERR! Failed at the network-inventory-backend@1.0.0 start script.
+npm ERR! This is probably not a problem with npm. There is likely additional logging output above.
+
+npm ERR! A complete log of this run can be found in:
+npm ERR!     /root/.npm/_logs/2025-07-28T04_59_43_434Z-debug.log
+[root@sni1-ipclon7 backend]# npm start
