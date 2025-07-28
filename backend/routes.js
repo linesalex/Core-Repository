@@ -1220,6 +1220,164 @@ function validateUnderlyingCarrier(carrierName, callback) {
   });
 }
 
+// Comprehensive validation function for a single row - collects ALL errors
+async function validateRowForeignKeys(row, module) {
+  const errors = [];
+  
+  if (module === 'carrier_contacts') {
+    if (row.carrier_id) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get('SELECT id FROM carriers WHERE id = ?', [row.carrier_id], (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          });
+        });
+        if (!result) {
+          errors.push(`Invalid carrier_id: ${row.carrier_id} does not exist`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating carrier_id: ${err.message}`);
+      }
+    }
+  } else if (module === 'pop_capabilities') {
+    if (row.location_id) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get('SELECT id FROM location_reference WHERE id = ?', [row.location_id], (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          });
+        });
+        if (!result) {
+          errors.push(`Invalid location_id: ${row.location_id} does not exist`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating location_id: ${err.message}`);
+      }
+    }
+  } else if (module === 'exchange_feeds') {
+    if (row.exchange_id) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get('SELECT id FROM exchanges WHERE id = ?', [row.exchange_id], (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          });
+        });
+        if (!result) {
+          errors.push(`Invalid exchange_id: ${row.exchange_id} does not exist`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating exchange_id: ${err.message}`);
+      }
+    }
+  } else if (module === 'exchange_contacts') {
+    if (row.exchange_id) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get('SELECT id FROM exchanges WHERE id = ?', [row.exchange_id], (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          });
+        });
+        if (!result) {
+          errors.push(`Invalid exchange_id: ${row.exchange_id} does not exist`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating exchange_id: ${err.message}`);
+      }
+    }
+  } else if (module === 'network_routes') {
+    // Validate underlying carrier
+    if (row.underlying_carrier && row.underlying_carrier.trim() !== '') {
+      try {
+        const isValid = await new Promise((resolve, reject) => {
+          validateUnderlyingCarrier(row.underlying_carrier, (err, isValid) => {
+            if (err) reject(err);
+            else resolve(isValid);
+          });
+        });
+        if (!isValid) {
+          errors.push(`Invalid underlying_carrier: '${row.underlying_carrier}' does not exist in carriers database`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating underlying_carrier: ${err.message}`);
+      }
+    }
+    
+    // Validate location_a
+    if (row.location_a && row.location_a.trim() !== '') {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get('SELECT location_code FROM location_reference WHERE location_code = ?', [row.location_a], (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          });
+        });
+        if (!result) {
+          errors.push(`Invalid location_a: '${row.location_a}' does not exist in locations database`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating location_a: ${err.message}`);
+      }
+    }
+    
+    // Validate location_b
+    if (row.location_b && row.location_b.trim() !== '') {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get('SELECT location_code FROM location_reference WHERE location_code = ?', [row.location_b], (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          });
+        });
+        if (!result) {
+          errors.push(`Invalid location_b: '${row.location_b}' does not exist in locations database`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating location_b: ${err.message}`);
+      }
+    }
+    
+    // Validate local_loop_carriers_a
+    if (row.local_loop_carriers_a && row.local_loop_carriers_a.trim() !== '') {
+      try {
+        const isValid = await new Promise((resolve, reject) => {
+          validateUnderlyingCarrier(row.local_loop_carriers_a, (err, isValid) => {
+            if (err) reject(err);
+            else resolve(isValid);
+          });
+        });
+        if (!isValid) {
+          errors.push(`Invalid local_loop_carriers_a: '${row.local_loop_carriers_a}' does not exist in carriers database`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating local_loop_carriers_a: ${err.message}`);
+      }
+    }
+    
+    // Validate local_loop_carriers_b
+    if (row.local_loop_carriers_b && row.local_loop_carriers_b.trim() !== '') {
+      try {
+        const isValid = await new Promise((resolve, reject) => {
+          validateUnderlyingCarrier(row.local_loop_carriers_b, (err, isValid) => {
+            if (err) reject(err);
+            else resolve(isValid);
+          });
+        });
+        if (!isValid) {
+          errors.push(`Invalid local_loop_carriers_b: '${row.local_loop_carriers_b}' does not exist in carriers database`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating local_loop_carriers_b: ${err.message}`);
+      }
+    }
+  }
+  
+  return errors;
+}
+
 // Create new route  
 router.post('/network_routes', authenticateToken, authorizePermission('network_routes', 'create'), (req, res) => {
   const data = req.body;
@@ -1244,7 +1402,7 @@ router.post('/network_routes', authenticateToken, authorizePermission('network_r
     }
     
     const fields = [
-      'circuit_id','repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type'
+      'circuit_id','repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type'
     ];
     const placeholders = fields.map(() => '?').join(',');
     const values = fields.map(f => data[f] ?? (f === 'repository_type_id' ? 1 : null));
@@ -1290,7 +1448,7 @@ router.put('/network_routes/:circuit_id', authenticateToken, authorizePermission
         if (!oldRoute) return res.status(404).json({ error: 'Route not found' });
         
         const fields = [
-          'repository_type_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type'
+          'repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type'
         ];
         const setClause = fields.map(f => `${f} = ?`).join(', ');
         const values = fields.map(f => data[f] ?? null);
@@ -1410,9 +1568,16 @@ router.delete('/network_routes/:circuit_id/delete_kmz', authenticateToken, autho
 
 // Export network_routes as CSV
 router.get('/network_routes_export', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
-  db.all('SELECT circuit_id, outage_tickets_last_30d, maintenance_tickets_last_30d, kmz_file_path, live_latency, expected_latency, test_results_link, cable_system, is_special, underlying_carrier, location_a, location_b, bandwidth, more_details, mtu, sla_latency, capacity_usage_percent FROM network_routes', [], (err, rows) => {
+  db.all(`SELECT circuit_id, kmz_file_path, live_latency, expected_latency, test_results_link, cable_system, 
+          CASE 
+            WHEN is_special = 1 THEN 'true'
+            WHEN is_special = 0 THEN 'false'
+            ELSE 'false'
+          END as is_special,
+          underlying_carrier, location_a, location_b, bandwidth, more_details, mtu, sla_latency, capacity_usage_percent 
+          FROM network_routes`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    const fields = ['circuit_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
+    const fields = ['circuit_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
     const parser = new Parser({ fields });
     const csv = parser.parse(rows);
     res.header('Content-Type', 'text/csv');
@@ -1423,7 +1588,7 @@ router.get('/network_routes_export', authenticateToken, authorizePermission('net
 
 // Search/filter network_routes by query params (visible fields only)
 router.get('/network_routes_search', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
-  const allowedFields = ['circuit_id','outage_tickets_last_30d','maintenance_tickets_last_30d','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
+  const allowedFields = ['circuit_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
   const filters = [];
   const values = [];
   
@@ -2208,7 +2373,7 @@ router.post('/network_design/find_path', (req, res) => {
   const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false, use_cisco_only_routes = false } = req.body;
   const startTime = Date.now();
   
-    // Validate inputs
+  // Validate inputs
   if (!source || !destination) {
     return res.status(400).json({ error: 'Source and destination are required' });
   }
@@ -4295,7 +4460,7 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
       dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
       pass_through_currency, pass_through_fees_info, design_file_path, more_info,
       quick_quote_min_cost, order_entry_cost, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       exchangeId, feed_name, feed_delivery, feed_type, isf_enabled === 'true' ? 1 : 0,
       isf_a || null, isf_b || null, isf_site_code_a || null, isf_site_code_b || null,
@@ -4708,38 +4873,36 @@ const bulkUploadModules = {
   network_routes: {
     table: 'network_routes',
     templateFields: [
-      'circuit_id', 'repository_type_id', 'outage_tickets_last_30d', 'maintenance_tickets_last_30d',
+      'circuit_id', 'repository_type_id',
       'kmz_file_path', 'mtu', 'sla_latency', 'live_latency', 'expected_latency', 'test_results_link',
       'cable_system', 'is_special', 'underlying_carrier', 'cost', 'currency',
       'location_a', 'location_b', 'bandwidth', 'more_details', 'test_results_file',
       'local_loop_carriers_a', 'local_loop_carriers_b', 'equipment_type'
     ],
     requiredFields: ['circuit_id', 'location_a', 'location_b', 'underlying_carrier'],
-          sampleData: {
-        circuit_id: 'SAMPLE123456',
-        repository_type_id: '1',
-        outage_tickets_last_30d: '2',
-        maintenance_tickets_last_30d: '1',
-        kmz_file_path: '',
-        mtu: '1500',
-        sla_latency: '10',
-        live_latency: '8.5',
-        expected_latency: '8',
-        test_results_link: 'http://example.com/test-results',
-        cable_system: 'Sample Cable System',
-        is_special: 'false',
-        underlying_carrier: 'Sample Carrier',
-        cost: '1000',
-        currency: 'USD',
-        location_a: 'LONLON',
-        location_b: 'NYCNYC',
-        bandwidth: '10 Gbps',
-        more_details: 'Sample route details',
-        test_results_file: '',
-        local_loop_carriers_a: 'Carrier A',
-        local_loop_carriers_b: 'Carrier B',
-        equipment_type: 'Optical'
-      }
+    sampleData: {
+      circuit_id: 'SAMPLE123456',
+      repository_type_id: '1',
+      kmz_file_path: '',
+      mtu: '1500',
+      sla_latency: '10',
+      live_latency: '8.5',
+      expected_latency: '8',
+      test_results_link: 'http://example.com/test-results',
+      cable_system: 'Sample Cable System',
+      is_special: 'false',
+      underlying_carrier: 'Sample Carrier',
+      cost: '1000',
+      currency: 'USD',
+      location_a: 'LONLON',
+      location_b: 'NYCNYC',
+      bandwidth: '10 Gbps',
+      more_details: 'Sample route details',
+      test_results_file: '',
+      local_loop_carriers_a: 'Carrier A',
+      local_loop_carriers_b: 'Carrier B',
+      equipment_type: 'Optical'
+    }
   },
   exchange_feeds: {
     table: 'exchange_feeds',
@@ -4804,44 +4967,40 @@ const bulkUploadModules = {
   },
   exchange_rates: {
     table: 'exchange_rates',
-    templateFields: ['currency_code', 'currency_name', 'rate_to_usd'],
-    requiredFields: ['currency_code', 'currency_name', 'rate_to_usd'],
+    templateFields: ['currency_code', 'exchange_rate'],
+    requiredFields: ['currency_code', 'exchange_rate'],
     sampleData: {
       currency_code: 'EUR',
-      currency_name: 'Euro',
-      rate_to_usd: '1.08'
+      exchange_rate: '1.08'
     }
   },
-  locations: {
+    locations: {
     table: 'location_reference',
     templateFields: [
       'location_code', 'city', 'country', 'datacenter_name', 'datacenter_address',
-      'latitude', 'longitude', 'time_zone', 'pop_type', 'status', 'provider', 'access_info',
+      'pop_type', 'status', 'provider', 'access_info',
       'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus',
       'region', 'more_info', 'design_file'
     ],
     requiredFields: ['location_code', 'city', 'country', 'datacenter_name', 'pop_type', 'status'],
-          sampleData: {
-        location_code: 'LONLON',
-        city: 'London',
-        country: 'United Kingdom',
-        datacenter_name: 'London Data Center 1',
-        datacenter_address: '123 Tech Street, London, UK',
-        latitude: '51.5074',
-        longitude: '-0.1278',
-        time_zone: 'GMT',
-        pop_type: 'Primary',
-        status: 'Active',
-        provider: 'Sample Provider',
-        access_info: 'Secure access, 24/7 support available',
-        min_price_under_100mb: '100',
-        min_price_100_to_999mb: '200',
-        min_price_1000_to_2999mb: '500',
-        min_price_3000mb_plus: '1000',
-        region: 'Europe',
-        more_info: 'Additional location information',
-        design_file: ''
-      }
+    sampleData: {
+      location_code: 'LONLON',
+      city: 'London',
+      country: 'United Kingdom',
+      datacenter_name: 'London Data Center 1',
+      datacenter_address: '123 Tech Street, London, UK',
+      pop_type: 'Primary',
+      status: 'Active',
+      provider: 'Sample Provider',
+      access_info: 'Secure access, 24/7 support available',
+      min_price_under_100mb: '100',
+      min_price_100_to_999mb: '200',
+      min_price_1000_to_2999mb: '500',
+      min_price_3000mb_plus: '1000',
+      region: 'Europe',
+      more_info: 'Additional location information',
+      design_file: ''
+    }
   },
   carriers: {
     table: 'carriers',
@@ -4851,7 +5010,7 @@ const bulkUploadModules = {
       carrier_name: 'Sample Carrier Inc.',
       previously_known_as: 'Old Carrier Name',
       status: 'active',
-      region: 'North America'
+      region: 'AMERs'
     }
   },
   users: {
@@ -4890,7 +5049,7 @@ const bulkUploadModules = {
     templateFields: [
       'location_id', 'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
       'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
-      'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop'
+      'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation'
     ],
     requiredFields: ['location_id'],
     sampleData: {
@@ -4906,29 +5065,18 @@ const bulkUploadModules = {
       csp_on_ramp: 'true',
       exchange_on_ramp: 'true',
       internet_on_ramp: 'false',
-      transport_only_pop: 'false'
+      transport_only_pop: 'false',
+      cnx_colocation: 'false'
     }
   },
   exchanges: {
     table: 'exchanges',
-    templateFields: ['exchange_name', 'region', 'contact_info', 'website', 'more_info'],
+    templateFields: ['exchange_name', 'region', 'salesperson_assigned'],
     requiredFields: ['exchange_name', 'region'],
     sampleData: {
       exchange_name: 'Sample Exchange',
       region: 'North America',
-      contact_info: 'support@sampleexchange.com',
-      website: 'https://www.sampleexchange.com',
-      more_info: 'Leading financial data exchange'
-    }
-  },
-  exchange_rates: {
-    table: 'exchange_rates',
-    templateFields: ['currency_code', 'rate_to_usd', 'last_updated'],
-    requiredFields: ['currency_code', 'rate_to_usd'],
-    sampleData: {
-      currency_code: 'EUR',
-      rate_to_usd: '1.09',
-      last_updated: '2024-01-15 10:30:00'
+      salesperson_assigned: 'John Smith'
     }
   },
   exchange_contacts: {
@@ -4946,57 +5094,6 @@ const bulkUploadModules = {
       department: 'Technical Support',
       is_primary: 'true',
       notes: 'Primary technical contact for feed setup'
-    }
-  },
-  cnx_colocation_racks: {
-    table: 'cnx_colocation_racks',
-    templateFields: [
-      'location_id', 'rack_name', 'power_allocated', 'power_used', 'ru_allocated', 'ru_used',
-      'rack_type', 'cabinet_number', 'circuit_id', 'cost_per_ru', 'cost_per_amp',
-      'cross_connect_cost', 'smart_hands_cost', 'notes', 'status'
-    ],
-    requiredFields: ['location_id', 'rack_name', 'power_allocated', 'ru_allocated'],
-    sampleData: {
-      location_id: '1',
-      rack_name: 'CNX-LON-R001',
-      power_allocated: '20',
-      power_used: '0',
-      ru_allocated: '30',
-      ru_used: '0',
-      rack_type: 'Full Rack',
-      cabinet_number: 'CAB-001',
-      circuit_id: 'CIR-LON-001',
-      cost_per_ru: '50',
-      cost_per_amp: '100',
-      cross_connect_cost: '25',
-      smart_hands_cost: '150',
-      notes: 'Primary colocation rack in London facility',
-      status: 'Active'
-    }
-  },
-  cnx_colocation_clients: {
-    table: 'cnx_colocation_clients',
-    templateFields: [
-      'rack_id', 'client_name', 'power_allocation', 'ru_allocation', 'monthly_cost',
-      'setup_fee', 'billing_contact', 'technical_contact', 'contract_start',
-      'contract_end', 'auto_renew', 'sla_level', 'notes', 'status'
-    ],
-    requiredFields: ['rack_id', 'client_name', 'power_allocation', 'ru_allocation'],
-    sampleData: {
-      rack_id: '1',
-      client_name: 'Sample Client Corp',
-      power_allocation: '5',
-      ru_allocation: '10',
-      monthly_cost: '1500',
-      setup_fee: '500',
-      billing_contact: 'billing@sampleclient.com',
-      technical_contact: 'tech@sampleclient.com',
-      contract_start: '2024-01-01',
-      contract_end: '2024-12-31',
-      auto_renew: 'true',
-      sla_level: 'Premium',
-      notes: 'High-priority client with 24/7 support',
-      status: 'Active'
     }
   }
 };
@@ -5037,11 +5134,77 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
   const config = bulkUploadModules[module];
   const limit = parseInt(req.query.limit) || 100;
   
-  db.all(`SELECT * FROM ${config.table} LIMIT ?`, [limit], (err, rows) => {
+  let query = `SELECT * FROM ${config.table} LIMIT ?`;
+  let queryParams = [limit];
+  
+  // Special handling for certain modules
+  if (module === 'carrier_contacts') {
+    // Add carrier_name to the export
+    query = `SELECT cc.*, c.carrier_name 
+             FROM carrier_contacts cc 
+             LEFT JOIN carriers c ON cc.carrier_id = c.id 
+             LIMIT ?`;
+  } else if (module === 'pop_capabilities') {
+    // Add location info to the export
+    query = `SELECT pc.*, lr.location_code, lr.datacenter_name 
+             FROM pop_capabilities pc 
+             LEFT JOIN location_reference lr ON pc.location_id = lr.id 
+             LIMIT ?`;
+  } else if (module === 'carriers') {
+    // Map database regions to frontend values for export
+    query = `SELECT carrier_name, previously_known_as, status,
+             CASE 
+               WHEN region = 'North America' THEN 'AMERs'
+               WHEN region = 'Asia Pacific' THEN 'APAC'
+               WHEN region = 'Europe' THEN 'EMEA'
+               ELSE region
+             END as region
+             FROM ${config.table} LIMIT ?`;
+  } else if (module === 'exchange_feeds') {
+    // Add exchange_name to the export
+    query = `SELECT ef.*, e.exchange_name 
+             FROM exchange_feeds ef 
+             LEFT JOIN exchanges e ON ef.exchange_id = e.id 
+             LIMIT ?`;
+  } else if (module === 'exchange_contacts') {
+    // Add exchange_name to the export
+    query = `SELECT ec.*, e.exchange_name 
+             FROM exchange_contacts ec 
+             LEFT JOIN exchanges e ON ec.exchange_id = e.id 
+             LIMIT ?`;
+  } else if (module === 'network_routes') {
+    // Convert is_special from integer (0/1) to boolean string (false/true)
+    query = `SELECT circuit_id, repository_type_id, kmz_file_path, mtu, sla_latency, 
+             live_latency, expected_latency, test_results_link, cable_system,
+             CASE 
+               WHEN is_special = 1 THEN 'true'
+               WHEN is_special = 0 THEN 'false'
+               ELSE 'false'
+             END as is_special,
+             underlying_carrier, cost, currency, location_a, location_b, 
+             bandwidth, more_details, test_results_file, local_loop_carriers_a, 
+             local_loop_carriers_b, equipment_type
+             FROM ${config.table} LIMIT ?`;
+  }
+  
+  db.all(query, queryParams, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     
     try {
-      const parser = new Parser({ fields: config.templateFields });
+      // Determine fields for CSV based on module
+      let csvFields = config.templateFields;
+      
+      if (module === 'carrier_contacts') {
+        csvFields = [...config.templateFields, 'carrier_name'];
+      } else if (module === 'pop_capabilities') {
+        csvFields = [...config.templateFields, 'location_code', 'datacenter_name'];
+      } else if (module === 'exchange_feeds') {
+        csvFields = [...config.templateFields, 'exchange_name'];
+      } else if (module === 'exchange_contacts') {
+        csvFields = [...config.templateFields, 'exchange_name'];
+      }
+      
+      const parser = new Parser({ fields: csvFields });
       const csv = parser.parse(rows);
       
       res.setHeader('Content-Type', 'text/csv');
@@ -5055,6 +5218,7 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
     }
   });
 });
+
 // Bulk upload data for a module
 router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administrator'), csvUpload.single('csv_file'), (req, res) => {
   const { module } = req.params;
@@ -5092,431 +5256,338 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
   console.log(`[BULK UPLOAD] Starting bulk upload for module: ${module}, file: ${req.file.originalname}, user: ${req.user.username}, session: ${sessionId}`);
   
   // Parse CSV file
+  const allRows = []; // Store all parsed rows first
+  const parseErrors = []; // Store only CSV parsing errors
+  
   fs.createReadStream(filePath)
     .pipe(csv())
-          .on('data', (row) => {
-        const currentRow = results.length + errors.length + 1;
-        
-        // Update progress tracking
-        let uploadInfo = activeUploads.get(sessionId);
-        if (uploadInfo) {
-          uploadInfo.processedRows = currentRow;
-          uploadInfo.stage = `Validating row ${currentRow}...`;
-        }
-        
-        // Log progress every 100 rows
-        if (currentRow % 100 === 0) {
-          console.log(`[BULK UPLOAD] Processing row ${currentRow} for module: ${module}`);
-        }
-      // Validate required fields
-              const missingFields = config.requiredFields.filter(field => !row[field] || row[field].trim() === '');
-        if (missingFields.length > 0) {
-          const errorMsg = `Row ${results.length + 1}: Missing required fields: ${missingFields.join(', ')}`;
-          errors.push(errorMsg);
-          
-          // Update progress tracking
-          uploadInfo = activeUploads.get(sessionId);
-          if (uploadInfo) {
-            uploadInfo.errorRows = errors.length;
-          }
-          return;
-        }
+    .on('data', (row) => {
+      const currentRow = allRows.length + parseErrors.length + 1; // CSV row number
       
-      // Clean and validate data
-      const cleanedRow = {};
-      config.templateFields.forEach(field => {
-        if (row[field] !== undefined) {
-          cleanedRow[field] = row[field].trim();
-        }
-      });
-
-      // Perform additional data validation based on module
-      const validationErrors = [];
-      if (module === 'users') {
-        // Validate email format
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (cleanedRow.email && !emailRegex.test(cleanedRow.email)) {
-          validationErrors.push('Invalid email format');
-        }
-        // Validate user role
-        const validRoles = ['administrator', 'provisioner', 'read_only'];
-        if (cleanedRow.user_role && !validRoles.includes(cleanedRow.user_role)) {
-          validationErrors.push('Invalid user role. Must be: administrator, provisioner, or read_only');
-        }
-        // Validate password strength
-        if (cleanedRow.password && cleanedRow.password.length < 8) {
-          validationErrors.push('Password must be at least 8 characters long');
-        }
-      } else if (module === 'exchange_rates') {
-        // Validate currency code format (3 letters)
-        if (cleanedRow.currency_code && !/^[A-Z]{3}$/.test(cleanedRow.currency_code)) {
-          validationErrors.push('Currency code must be 3 uppercase letters (e.g., USD, EUR)');
-        }
-        // Validate exchange rate is numeric and positive
-        if (cleanedRow.rate_to_usd && (isNaN(cleanedRow.rate_to_usd) || parseFloat(cleanedRow.rate_to_usd) <= 0)) {
-          validationErrors.push('Exchange rate must be a positive number');
-        }
-      } else if (module === 'network_routes') {
-        // Validate numeric fields
-        if (cleanedRow.cost && cleanedRow.cost !== '' && isNaN(cleanedRow.cost)) {
-          validationErrors.push('Cost must be a valid number');
-        }
-        if (cleanedRow.capacity_usage_percent && cleanedRow.capacity_usage_percent !== '' && 
-            (isNaN(cleanedRow.capacity_usage_percent) || parseFloat(cleanedRow.capacity_usage_percent) < 0 || parseFloat(cleanedRow.capacity_usage_percent) > 100)) {
-          validationErrors.push('Capacity usage percent must be between 0 and 100');
-        }
-        // Validate boolean fields
-        if (cleanedRow.is_special && !['true', 'false', '1', '0'].includes(cleanedRow.is_special.toLowerCase())) {
-          validationErrors.push('is_special must be true/false or 1/0');
-        }
-      } else if (module === 'cnx_colocation_racks') {
-        // Validate numeric fields for racks
-        ['power_allocated', 'power_used', 'ru_allocated', 'ru_used'].forEach(field => {
-          if (cleanedRow[field] && cleanedRow[field] !== '' && (isNaN(cleanedRow[field]) || parseFloat(cleanedRow[field]) < 0)) {
-            validationErrors.push(`${field} must be a non-negative number`);
+      // Update progress tracking
+      let uploadInfo = activeUploads.get(sessionId);
+      if (uploadInfo) {
+        uploadInfo.processedRows = currentRow;
+        uploadInfo.stage = `Reading row ${currentRow}...`;
+      }
+      
+      // Log progress every 100 rows
+      if (currentRow % 100 === 0) {
+        console.log(`[BULK UPLOAD] Reading row ${currentRow} for module: ${module}`);
+      }
+      
+      // Only store the row with its original row number - no validation yet
+      const rawRow = { ...row };
+      rawRow._originalRowNumber = currentRow;
+      allRows.push(rawRow);
+    })
+    .on('end', async () => {
+      const parseTime = Date.now() - startTime;
+      const totalRows = allRows.length + parseErrors.length;
+      
+      console.log(`[BULK UPLOAD] CSV parsing completed for module: ${module}`);
+      console.log(`[BULK UPLOAD] Parse time: ${parseTime}ms, Total rows: ${totalRows}`);
+      
+      // Clean up uploaded file
+      fs.unlinkSync(filePath);
+      
+      // Update progress tracking
+      uploadInfo = activeUploads.get(sessionId);
+      if (uploadInfo) {
+        uploadInfo.totalRows = totalRows;
+        uploadInfo.stage = 'CSV parsing completed - starting comprehensive validation';
+        uploadInfo.progress = 20; // 20% after parsing
+      }
+      
+      // NOW perform comprehensive validation on ALL rows at once
+      console.log(`[BULK UPLOAD] Starting comprehensive validation for ${allRows.length} rows...`);
+      const allValidationErrors = [...parseErrors]; // Start with parsing errors
+      const validRows = [];
+      
+      // Process ALL rows for validation
+      for (let i = 0; i < allRows.length; i++) {
+        const row = allRows[i];
+        const originalRowNumber = row._originalRowNumber;
+        const allRowErrors = [];
+        
+        try {
+          // Step 1: Required fields validation
+          const missingFields = config.requiredFields.filter(field => !row[field] || row[field].trim() === '');
+          if (missingFields.length > 0) {
+            allRowErrors.push(`Missing required fields: ${missingFields.join(', ')}`);
           }
-        });
-        // Validate that used values don't exceed allocated values
-        if (cleanedRow.power_used && cleanedRow.power_allocated && 
-            parseFloat(cleanedRow.power_used) > parseFloat(cleanedRow.power_allocated)) {
-          validationErrors.push('Power used cannot exceed power allocated');
-        }
-        if (cleanedRow.ru_used && cleanedRow.ru_allocated && 
-            parseFloat(cleanedRow.ru_used) > parseFloat(cleanedRow.ru_allocated)) {
-          validationErrors.push('RU used cannot exceed RU allocated');
-        }
-      } else if (module === 'cnx_colocation_clients') {
-        // Validate numeric fields for clients
-        ['power_allocation', 'ru_allocation', 'monthly_cost', 'setup_fee'].forEach(field => {
-          if (cleanedRow[field] && cleanedRow[field] !== '' && (isNaN(cleanedRow[field]) || parseFloat(cleanedRow[field]) < 0)) {
-            validationErrors.push(`${field} must be a non-negative number`);
-          }
-        });
-        // Validate email formats
-        ['billing_contact', 'technical_contact'].forEach(field => {
-          if (cleanedRow[field] && cleanedRow[field] !== '') {
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(cleanedRow[field])) {
-              validationErrors.push(`${field} must be a valid email address`);
+          
+          // Step 2: Clean and prepare data
+          const cleanedRow = {};
+          config.templateFields.forEach(field => {
+            if (row[field] !== undefined) {
+              cleanedRow[field] = row[field].trim();
             }
-          }
-        });
-        // Validate date formats
-        ['contract_start', 'contract_end'].forEach(field => {
-          if (cleanedRow[field] && cleanedRow[field] !== '') {
-            const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-            if (!dateRegex.test(cleanedRow[field])) {
-              validationErrors.push(`${field} must be in YYYY-MM-DD format`);
-            }
-          }
-        });
-        // Validate boolean fields
-        if (cleanedRow.auto_renew && !['true', 'false', '1', '0'].includes(cleanedRow.auto_renew.toLowerCase())) {
-          validationErrors.push('auto_renew must be true/false or 1/0');
-        }
-      }
-
-      if (validationErrors.length > 0) {
-        errors.push(`Row ${results.length + 1}: ${validationErrors.join(', ')}`);
-        return;
-      }
-
-      // Foreign key validation (will be checked synchronously during processing)
-      cleanedRow._needsForeignKeyValidation = true;
-      
-      // Module-specific validations
-      if (module === 'network_routes') {
-        if (!isValidCircuitId(cleanedRow.circuit_id)) {
-          errors.push(`Row ${results.length + 1}: Invalid circuit_id format. Must be 6 uppercase letters + 6 digits`);
-          return;
-        }
-        if (cleanedRow.is_special) {
-          cleanedRow.is_special = cleanedRow.is_special.toLowerCase() === 'true' ? 1 : 0;
-        }
-      } else if (module === 'users') {
-        if (!['administrator', 'provisioner', 'read_only'].includes(cleanedRow.user_role)) {
-          errors.push(`Row ${results.length + 1}: Invalid user_role. Must be administrator, provisioner, or read_only`);
-          return;
-        }
-      } else if (module === 'exchange_feeds') {
-        if (!['Unicast', 'Multicast'].includes(cleanedRow.feed_delivery)) {
-          errors.push(`Row ${results.length + 1}: Invalid feed_delivery. Must be Unicast or Multicast`);
-          return;
-        }
-        const validFeedTypes = ['Equities', 'Futures', 'Options', 'Fixed Income', 'FX', 'Commodities', 'Indices', 'ETFs', 'Alternative Data', 'Reference Data'];
-        if (!validFeedTypes.includes(cleanedRow.feed_type)) {
-          errors.push(`Row ${results.length + 1}: Invalid feed_type. Must be one of: ${validFeedTypes.join(', ')}`);
-          return;
-        }
-        // Convert boolean strings to integers
-        ['dr_available', 'available_now', 'quick_quote'].forEach(field => {
-          if (cleanedRow[field]) {
-            cleanedRow[field] = cleanedRow[field].toLowerCase() === 'true' ? 1 : 0;
-          }
-        });
-      }
-      
-              results.push(cleanedRow);
-        
-        // Update progress tracking
-        uploadInfo = activeUploads.get(sessionId);
-        if (uploadInfo) {
-          uploadInfo.validRows = results.length;
-        }
-      })
-      .on('end', () => {
-        const parseTime = Date.now() - startTime;
-        const totalRows = results.length + errors.length;
-        
-        // Update progress tracking
-        uploadInfo = activeUploads.get(sessionId);
-        if (uploadInfo) {
-          uploadInfo.totalRows = totalRows;
-          uploadInfo.stage = 'CSV parsing completed';
-          uploadInfo.progress = 50; // 50% after parsing
-        }
-        
-        console.log(`[BULK UPLOAD] CSV parsing completed for module: ${module}`);
-        console.log(`[BULK UPLOAD] Parse time: ${parseTime}ms, Total rows: ${totalRows}, Valid: ${results.length}, Invalid: ${errors.length}`);
-        
-        // Clean up uploaded file
-        fs.unlinkSync(filePath);
-      
-              // If there are validation errors, return them
-        if (errors.length > 0) {
-          console.log(`[BULK UPLOAD] Validation failed for module: ${module}, ${errors.length} errors found`);
-          
-          // Update progress tracking
-          uploadInfo = activeUploads.get(sessionId);
-          if (uploadInfo) {
-            uploadInfo.status = 'error';
-            uploadInfo.stage = 'Validation failed';
-            uploadInfo.errors = errors;
-            // Keep the upload info for a while so frontend can retrieve the errors
-            setTimeout(() => activeUploads.delete(sessionId), 60000); // Clean up after 1 minute
-          }
-          
-          return res.status(400).json({ 
-            error: 'Validation failed', 
-            errors: errors,
-            total_rows: totalRows,
-            valid_rows: results.length,
-            invalid_rows: errors.length,
-            sessionId
           });
-        }
-        
-        if (results.length === 0) {
-          console.log(`[BULK UPLOAD] No valid data found in CSV file for module: ${module}`);
+          cleanedRow._originalRowNumber = originalRowNumber;
           
-          // Update progress tracking
-          uploadInfo = activeUploads.get(sessionId);
-          if (uploadInfo) {
-            uploadInfo.status = 'error';
-            uploadInfo.stage = 'No valid data found';
-            setTimeout(() => activeUploads.delete(sessionId), 60000);
+          // Step 3: Data format validation
+          const validationErrors = [];
+          if (module === 'users') {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (cleanedRow.email && !emailRegex.test(cleanedRow.email)) {
+              validationErrors.push('Invalid email format');
+            }
+            const validRoles = ['administrator', 'provisioner', 'read_only'];
+            if (cleanedRow.user_role && !validRoles.includes(cleanedRow.user_role)) {
+              validationErrors.push('Invalid user role. Must be: administrator, provisioner, or read_only');
+            }
+            if (cleanedRow.password && cleanedRow.password.length < 8) {
+              validationErrors.push('Password must be at least 8 characters long');
+            }
+          } else if (module === 'exchange_rates') {
+            if (cleanedRow.currency_code && !/^[A-Z]{3}$/.test(cleanedRow.currency_code)) {
+              validationErrors.push('Currency code must be 3 uppercase letters (e.g., USD, EUR)');
+            }
+            if (cleanedRow.exchange_rate && (isNaN(cleanedRow.exchange_rate) || parseFloat(cleanedRow.exchange_rate) <= 0)) {
+              validationErrors.push('Exchange rate must be a positive number');
+            }
+          } else if (module === 'network_routes') {
+            if (cleanedRow.cost && cleanedRow.cost !== '' && isNaN(cleanedRow.cost)) {
+              validationErrors.push('Cost must be a valid number');
+            }
+            if (cleanedRow.is_special && !['true', 'false', '1', '0'].includes(cleanedRow.is_special.toLowerCase())) {
+              validationErrors.push('is_special must be true/false or 1/0');
+            }
+          }
+          allRowErrors.push(...validationErrors);
+          
+          // Step 4: Module-specific validations
+          const moduleValidationErrors = [];
+          if (module === 'network_routes') {
+            if (cleanedRow.circuit_id && !isValidCircuitId(cleanedRow.circuit_id)) {
+              moduleValidationErrors.push('Invalid circuit_id format. Must be 6 uppercase letters + 6 digits');
+            }
+            if (cleanedRow.is_special !== undefined && cleanedRow.is_special !== null && cleanedRow.is_special !== '') {
+              const value = cleanedRow.is_special.toString().toLowerCase();
+              cleanedRow.is_special = (value === 'true' || value === '1') ? 1 : 0;
+            }
+          } else if (module === 'users') {
+            if (cleanedRow.user_role && !['administrator', 'provisioner', 'read_only'].includes(cleanedRow.user_role)) {
+              moduleValidationErrors.push('Invalid user_role. Must be administrator, provisioner, or read_only');
+            }
+          } else if (module === 'exchange_feeds') {
+            if (cleanedRow.feed_delivery && !['Unicast', 'Multicast'].includes(cleanedRow.feed_delivery)) {
+              moduleValidationErrors.push('Invalid feed_delivery. Must be Unicast or Multicast');
+            }
+            const validFeedTypes = ['Equities', 'Futures', 'Options', 'Fixed Income', 'FX', 'Commodities', 'Indices', 'ETFs', 'Alternative Data', 'Reference Data'];
+            if (cleanedRow.feed_type && !validFeedTypes.includes(cleanedRow.feed_type)) {
+              moduleValidationErrors.push(`Invalid feed_type. Must be one of: ${validFeedTypes.join(', ')}`);
+            }
+            ['dr_available', 'available_now', 'quick_quote'].forEach(field => {
+              if (cleanedRow[field]) {
+                cleanedRow[field] = cleanedRow[field].toLowerCase() === 'true' ? 1 : 0;
+              }
+            });
+          }
+          allRowErrors.push(...moduleValidationErrors);
+          
+          // Step 5: Foreign key validation
+          const foreignKeyErrors = await validateRowForeignKeys(cleanedRow, module);
+          allRowErrors.push(...foreignKeyErrors);
+          
+          // Add ALL errors for this row at once
+          if (allRowErrors.length > 0) {
+            allValidationErrors.push(`Row ${originalRowNumber}: ${allRowErrors.join(', ')}`);
+          } else {
+            validRows.push(cleanedRow);
           }
           
-          return res.status(400).json({ error: 'No valid data found in CSV file', sessionId });
+        } catch (validationError) {
+          allValidationErrors.push(`Row ${originalRowNumber}: Validation failed - ${validationError.message}`);
         }
+        
+        // Update progress during validation
+        if ((i + 1) % 50 === 0 || i === allRows.length - 1) {
+          uploadInfo = activeUploads.get(sessionId);
+          if (uploadInfo) {
+            const validationProgress = Math.floor((i + 1) / allRows.length * 60); // 60% for validation
+            uploadInfo.progress = 20 + validationProgress;
+            uploadInfo.stage = `Validating row ${originalRowNumber} (${i + 1} of ${allRows.length})...`;
+          }
+        }
+      }
       
-              console.log(`[BULK UPLOAD] Starting database transaction for module: ${module}, ${results.length} rows`);
-        const dbStartTime = Date.now();
+      console.log(`[BULK UPLOAD] Comprehensive validation completed for module: ${module}. Total errors: ${allValidationErrors.length}, Valid rows: ${validRows.length}`);
+      
+      // Update progress tracking
+      uploadInfo = activeUploads.get(sessionId);
+      if (uploadInfo) {
+        uploadInfo.stage = 'Comprehensive validation completed';
+        uploadInfo.progress = 80;
+      }
+      
+      // If there are ANY validation errors, return them ALL at once
+      if (allValidationErrors.length > 0) {
+        console.log(`[BULK UPLOAD] Validation failed for module: ${module}, ${allValidationErrors.length} total errors found`);
         
         // Update progress tracking
         uploadInfo = activeUploads.get(sessionId);
         if (uploadInfo) {
-          uploadInfo.status = 'inserting';
-          uploadInfo.stage = 'Starting database transaction...';
-          uploadInfo.progress = 60; // 60% when starting DB operations
+          uploadInfo.status = 'error';
+          uploadInfo.stage = 'Validation failed';
+          uploadInfo.errors = allValidationErrors;
+          setTimeout(() => activeUploads.delete(sessionId), 60000);
         }
         
-        // Return sessionId immediately so frontend can start polling for progress
-        res.json({
-          message: 'Upload processing started',
-          sessionId,
-          status: 'processing'
+        return res.status(400).json({ 
+          error: 'Validation failed', 
+          errors: allValidationErrors,
+          total_rows: totalRows,
+          valid_rows: validRows.length,
+          invalid_rows: allValidationErrors.length,
+          sessionId
         });
+      }
+      
+      if (validRows.length === 0) {
+        console.log(`[BULK UPLOAD] No valid data found in CSV file for module: ${module}`);
         
-        // Set a timeout to prevent hanging uploads
-        const uploadTimeout = setTimeout(() => {
-          console.log(`[BULK UPLOAD] Upload timeout reached for session: ${sessionId}`);
+        uploadInfo = activeUploads.get(sessionId);
+        if (uploadInfo) {
+          uploadInfo.status = 'error';
+          uploadInfo.stage = 'No valid data found';
+          setTimeout(() => activeUploads.delete(sessionId), 60000);
+        }
+        
+        return res.status(400).json({ error: 'No valid data found in CSV file', sessionId });
+      }
+      
+      // Replace results with validRows for database insertion
+      results.length = 0;
+      results.push(...validRows);
+      
+      console.log(`[BULK UPLOAD] Starting database transaction for module: ${module}, ${results.length} rows`);
+      const dbStartTime = Date.now();
+      
+      // Update progress tracking
+      uploadInfo = activeUploads.get(sessionId);
+      if (uploadInfo) {
+        uploadInfo.status = 'inserting';
+        uploadInfo.stage = 'Starting database transaction...';
+        uploadInfo.progress = 85;
+      }
+      
+      // Return sessionId immediately so frontend can start polling for progress
+      res.json({
+        message: 'Upload processing started',
+        sessionId,
+        status: 'processing'
+      });
+      
+      // Set a timeout to prevent hanging uploads
+      const uploadTimeout = setTimeout(() => {
+        console.log(`[BULK UPLOAD] Upload timeout reached for session: ${sessionId}`);
+        uploadInfo = activeUploads.get(sessionId);
+        if (uploadInfo && uploadInfo.status !== 'completed') {
+          uploadInfo.status = 'error';
+          uploadInfo.stage = 'Upload timed out';
+          uploadInfo.errors = ['Upload process timed out after 5 minutes'];
+          setTimeout(() => activeUploads.delete(sessionId), 60000);
+        }
+      }, 5 * 60 * 1000);
+      
+      // Begin transaction for bulk insert
+      db.run('BEGIN TRANSACTION', (err) => {
+        if (err) {
+          console.log(`[BULK UPLOAD] Failed to begin transaction for module: ${module}, error: ${err.message}`);
+          clearTimeout(uploadTimeout);
           uploadInfo = activeUploads.get(sessionId);
-          if (uploadInfo && uploadInfo.status !== 'completed') {
+          if (uploadInfo) {
             uploadInfo.status = 'error';
-            uploadInfo.stage = 'Upload timed out';
-            uploadInfo.errors = ['Upload process timed out after 5 minutes'];
+            uploadInfo.stage = 'Failed to begin transaction';
+            uploadInfo.errors = [err.message];
             setTimeout(() => activeUploads.delete(sessionId), 60000);
           }
-        }, 5 * 60 * 1000); // 5 minute timeout
+          return;
+        }
         
-               // Begin transaction for bulk insert
-         db.run('BEGIN TRANSACTION', (err) => {
-           if (err) {
-             console.log(`[BULK UPLOAD] Failed to begin transaction for module: ${module}, error: ${err.message}`);
-             
-             // Clear the timeout since transaction failed
-             clearTimeout(uploadTimeout);
-             
-                           // Update progress tracking
-              uploadInfo = activeUploads.get(sessionId);
-              if (uploadInfo) {
-                uploadInfo.status = 'error';
-                uploadInfo.stage = 'Failed to begin transaction';
-                uploadInfo.errors = [err.message];
-                setTimeout(() => activeUploads.delete(sessionId), 60000);
-              }
-             return;
-           }
-           
-           console.log(`[BULK UPLOAD] Transaction started for module: ${module}`);
-           console.log(`[BULK UPLOAD] About to process ${results.length} rows`);
-           console.log(`[BULK UPLOAD] First row sample:`, JSON.stringify(results[0], null, 2));
-           
-           let completed = 0;
-           let failed = false;
-           const insertErrors = [];
-          
-                     results.forEach((row, index) => {
-             // Log progress every 50 inserts and update progress tracking
-             if ((index + 1) % 50 === 0) {
-               console.log(`[BULK UPLOAD] Inserting row ${index + 1}/${results.length} for module: ${module}`);
-               
-               // Update progress tracking
-               uploadInfo = activeUploads.get(sessionId);
-               if (uploadInfo) {
-                 const insertProgress = Math.floor((index + 1) / results.length * 40); // 40% for insertion
-                 uploadInfo.progress = 60 + insertProgress; // Start from 60%
-                 uploadInfo.stage = `Inserting row ${index + 1} of ${results.length}...`;
-               }
-             }
-          // Foreign key validation function
-          const validateForeignKeys = (callback) => {
-            const validationPromises = [];
+        console.log(`[BULK UPLOAD] Transaction started for module: ${module}`);
+        console.log(`[BULK UPLOAD] About to process ${results.length} rows`);
+        
+        let completed = 0;
+        let failed = false;
+        const insertErrors = [];
+        
+        results.forEach((row, index) => {
+          // Log progress every 50 inserts and update progress tracking
+          if ((index + 1) % 50 === 0) {
+            console.log(`[BULK UPLOAD] Inserting row ${index + 1}/${results.length} for module: ${module}`);
             
-            if (module === 'carrier_contacts') {
-              validationPromises.push(new Promise((resolve, reject) => {
-                db.get('SELECT id FROM carriers WHERE id = ?', [row.carrier_id], (err, result) => {
-                  if (err) reject(err);
-                  else if (!result) reject(new Error(`Invalid carrier_id: ${row.carrier_id} does not exist`));
-                  else resolve();
-                });
-              }));
-            } else if (module === 'pop_capabilities') {
-              validationPromises.push(new Promise((resolve, reject) => {
-                db.get('SELECT id FROM location_reference WHERE id = ?', [row.location_id], (err, result) => {
-                  if (err) reject(err);
-                  else if (!result) reject(new Error(`Invalid location_id: ${row.location_id} does not exist`));
-                  else resolve();
-                });
-              }));
-            } else if (module === 'exchange_feeds') {
-              validationPromises.push(new Promise((resolve, reject) => {
-                db.get('SELECT id FROM exchanges WHERE id = ?', [row.exchange_id], (err, result) => {
-                  if (err) reject(err);
-                  else if (!result) reject(new Error(`Invalid exchange_id: ${row.exchange_id} does not exist`));
-                  else resolve();
-                });
-              }));
-            } else if (module === 'exchange_contacts') {
-              validationPromises.push(new Promise((resolve, reject) => {
-                db.get('SELECT id FROM exchanges WHERE id = ?', [row.exchange_id], (err, result) => {
-                  if (err) reject(err);
-                  else if (!result) reject(new Error(`Invalid exchange_id: ${row.exchange_id} does not exist`));
-                  else resolve();
-                });
-              }));
-            } else if (module === 'cnx_colocation_racks') {
-              validationPromises.push(new Promise((resolve, reject) => {
-                db.get('SELECT id FROM location_reference WHERE id = ?', [row.location_id], (err, result) => {
-                  if (err) reject(err);
-                  else if (!result) reject(new Error(`Invalid location_id: ${row.location_id} does not exist`));
-                  else resolve();
-                });
-              }));
-            } else if (module === 'cnx_colocation_clients') {
-              validationPromises.push(new Promise((resolve, reject) => {
-                db.get('SELECT id FROM cnx_colocation_racks WHERE id = ?', [row.rack_id], (err, result) => {
-                  if (err) reject(err);
-                  else if (!result) reject(new Error(`Invalid rack_id: ${row.rack_id} does not exist`));
-                  else resolve();
-                });
-              }));
+            // Update progress tracking
+            uploadInfo = activeUploads.get(sessionId);
+            if (uploadInfo) {
+              const insertProgress = Math.floor((index + 1) / results.length * 15);
+              uploadInfo.progress = 85 + insertProgress;
+              uploadInfo.stage = `Inserting row ${index + 1} of ${results.length}...`;
             }
-            
-            Promise.all(validationPromises)
-              .then(() => callback(null))
-              .catch(err => callback(err));
-          };
-
+          }
+          
           let sql, values;
           
-          // Validate foreign keys first
-          validateForeignKeys((fkErr) => {
-            if (fkErr) {
-              failed = true;
-              insertErrors.push(`Row ${index + 1}: ${fkErr.message}`);
-              completed++;
-              
-              // Check if all operations are complete
-              if (completed === results.length) {
-                db.run('ROLLBACK', (rollbackErr) => {
-                  if (rollbackErr) console.error('Rollback failed:', rollbackErr);
-                  res.status(400).json({
-                    error: 'Bulk upload failed',
-                    errors: insertErrors,
-                    message: 'Transaction rolled back. No data was imported.'
-                  });
-                });
-              }
-              return;
-            }
-            
-            // Generate SQL for each module
+          // Note: All validation (including foreign keys) has been completed upfront
+          // We can proceed directly to insertion since all data is validated
+          
+          // Clean up internal properties before database insertion
+          const cleanRow = { ...row };
+          delete cleanRow._originalRowNumber;
+          delete cleanRow._needsForeignKeyValidation;
+          
+          // Generate SQL for each module
           if (module === 'network_routes') {
-            console.log(`[BULK UPLOAD] Processing row ${index + 1} for network_routes:`, JSON.stringify(row, null, 2));
+            console.log(`[BULK UPLOAD] Processing row ${index + 1} for network_routes:`, JSON.stringify(cleanRow, null, 2));
             console.log(`[BULK UPLOAD] Expected fields:`, config.templateFields);
             sql = `INSERT OR REPLACE INTO network_routes (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => row[field] || null);
+            values = config.templateFields.map(field => cleanRow[field] || null);
             console.log(`[BULK UPLOAD] Generated SQL:`, sql);
             console.log(`[BULK UPLOAD] Values for row ${index + 1}:`, values);
           } else if (module === 'exchange_feeds') {
             sql = `INSERT OR REPLACE INTO exchange_feeds (${config.templateFields.join(', ')}, created_by) VALUES (${config.templateFields.map(() => '?').join(', ')}, ?)`;
-            values = [...config.templateFields.map(field => row[field] || null), req.user.id];
+            values = [...config.templateFields.map(field => cleanRow[field] || null), req.user.id];
           } else if (module === 'exchange_contacts') {
             sql = `INSERT OR REPLACE INTO exchange_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => row[field] || null);
+            values = config.templateFields.map(field => cleanRow[field] || null);
           } else if (module === 'exchange_rates') {
             sql = `INSERT OR REPLACE INTO exchange_rates (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => row[field] || null);
+            values = config.templateFields.map(field => cleanRow[field] || null);
           } else if (module === 'locations') {
             sql = `INSERT OR REPLACE INTO location_reference (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => row[field] || null);
+            values = config.templateFields.map(field => cleanRow[field] || null);
           } else if (module === 'carriers') {
+            // Map frontend region values to database values
+            const regionMapping = {
+              'AMERs': 'North America',
+              'APAC': 'Asia Pacific', 
+              'EMEA': 'Europe'
+            };
+            
+            if (cleanRow.region && regionMapping[cleanRow.region]) {
+              cleanRow.region = regionMapping[cleanRow.region];
+            }
+            
             sql = `INSERT OR REPLACE INTO carriers (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => row[field] || null);
+            values = config.templateFields.map(field => cleanRow[field] || null);
           } else if (module === 'users') {
             // Hash password for users - but if password_hash is already provided, use it
-            if (row.password_hash && !row.password_hash.startsWith('$2b$')) {
-              row.password_hash = hashPassword(row.password_hash);
+            if (cleanRow.password_hash && !cleanRow.password_hash.startsWith('$2b$')) {
+              cleanRow.password_hash = hashPassword(cleanRow.password_hash);
             }
             sql = `INSERT OR REPLACE INTO users (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => row[field] || null);
+            values = config.templateFields.map(field => cleanRow[field] || null);
           } else if (module === 'carrier_contacts') {
             sql = `INSERT OR REPLACE INTO carrier_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => row[field] || null);
+            values = config.templateFields.map(field => cleanRow[field] || null);
           } else if (module === 'pop_capabilities') {
             sql = `INSERT OR REPLACE INTO pop_capabilities (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => row[field] || null);
+            values = config.templateFields.map(field => cleanRow[field] || null);
           } else if (module === 'exchanges') {
             sql = `INSERT OR REPLACE INTO exchanges (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => row[field] || null);
-          } else if (module === 'cnx_colocation_racks') {
-            sql = `INSERT OR REPLACE INTO cnx_colocation_racks (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => row[field] || null);
-          } else if (module === 'cnx_colocation_clients') {
-            sql = `INSERT OR REPLACE INTO cnx_colocation_clients (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => row[field] || null);
+            values = config.templateFields.map(field => cleanRow[field] || null);
           }
           
           db.run(sql, values, function(err) {
@@ -5535,8 +5606,8 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
             // Update progress tracking for each insert
             uploadInfo = activeUploads.get(sessionId);
             if (uploadInfo) {
-              const insertProgress = Math.floor(completed / results.length * 40); // 40% for insertion
-              uploadInfo.progress = 60 + insertProgress; // Start from 60%
+              const insertProgress = Math.floor(completed / results.length * 15); // 15% for insertion
+              uploadInfo.progress = 85 + insertProgress; // Start from 85%
               uploadInfo.stage = `Inserting row ${completed} of ${results.length}...`;
             }
             
@@ -5583,14 +5654,14 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                     // Clear the timeout since commit failed
                     clearTimeout(uploadTimeout);
                     
-                                         // Update progress tracking
-                     uploadInfo = activeUploads.get(sessionId);
-                     if (uploadInfo) {
-                       uploadInfo.status = 'error';
-                       uploadInfo.stage = 'Failed to commit transaction';
-                       uploadInfo.errors = [commitErr.message];
-                       setTimeout(() => activeUploads.delete(sessionId), 60000);
-                     }
+                    // Update progress tracking
+                    uploadInfo = activeUploads.get(sessionId);
+                    if (uploadInfo) {
+                      uploadInfo.status = 'error';
+                      uploadInfo.stage = 'Failed to commit transaction';
+                      uploadInfo.errors = [commitErr.message];
+                      setTimeout(() => activeUploads.delete(sessionId), 60000);
+                    }
                     return;
                   }
                   
@@ -5609,26 +5680,25 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                   // Clear the timeout since upload completed successfully
                   clearTimeout(uploadTimeout);
                   
-                                     // Update progress tracking - completed
-                   uploadInfo = activeUploads.get(sessionId);
-                   if (uploadInfo) {
-                     uploadInfo.status = 'completed';
-                     uploadInfo.stage = 'Upload completed successfully';
-                     uploadInfo.progress = 100;
-                     uploadInfo.result = {
-                       message: 'Bulk upload successful',
-                       module,
-                       rows_imported: results.length,
-                       total_rows: results.length
-                     };
-                     // Clean up after 5 minutes
-                     setTimeout(() => activeUploads.delete(sessionId), 300000);
-                   }
+                  // Update progress tracking - completed
+                  uploadInfo = activeUploads.get(sessionId);
+                  if (uploadInfo) {
+                    uploadInfo.status = 'completed';
+                    uploadInfo.stage = 'Upload completed successfully';
+                    uploadInfo.progress = 100;
+                    uploadInfo.result = {
+                      message: 'Bulk upload successful',
+                      module,
+                      rows_imported: results.length,
+                      total_rows: results.length
+                    };
+                    // Clean up after 5 minutes
+                    setTimeout(() => activeUploads.delete(sessionId), 300000);
+                  }
                 });
               }
             }
           });
-          }); // Close validateForeignKeys callback
         });
       });
     })
@@ -5703,75 +5773,6 @@ router.get('/bulk-upload/history', authenticateToken, authorizeRole('administrat
       );
     }
   );
-});
-// PRICING LOGIC CONFIGURATION APIs (Admin Only)
-
-// Get current pricing logic configuration
-router.get('/pricing_logic/config', authenticateToken, (req, res) => {
-  // Check if user is admin
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
-  // Get all pricing logic configuration
-  db.all('SELECT * FROM pricing_logic_config ORDER BY config_key', [], (err, configs) => {
-    if (err) {
-      console.error('Error fetching pricing logic config:', err);
-      return res.status(500).json({ error: 'Failed to fetch pricing configuration' });
-    }
-
-    // Transform array into structured object
-    const configData = {
-      contractTerms: {
-        12: { minMargin: 40, suggestedMargin: 60, nrcCharge: 1000 },
-        24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
-        36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
-      },
-      protectedServiceMargins: {
-        12: { minMargin: 50, suggestedMargin: 70 },
-        24: { minMargin: 47.5, suggestedMargin: 65 },
-        36: { minMargin: 45, suggestedMargin: 60 }
-      },
-      charges: {
-        protectionPathMultiplier: 0.7
-      },
-      utilizationFactors: {
-        primary: 0.9,
-        protection: 1.0
-      },
-      promoPricing: {
-        minimumMarginPercent: 35
-      }
-    };
-
-    // Override with database values if they exist
-    configs.forEach(config => {
-      const parts = config.config_key.split('.');
-      if (parts.length === 3 && parts[0] === 'contractTerms') {
-        const term = parts[1];
-        const field = parts[2];
-        if (!configData.contractTerms[term]) configData.contractTerms[term] = {};
-        configData.contractTerms[term][field] = parseFloat(config.config_value);
-      } else if (parts.length === 3 && parts[0] === 'protectedServiceMargins') {
-        const term = parts[1];
-        const field = parts[2];
-        if (!configData.protectedServiceMargins[term]) configData.protectedServiceMargins[term] = {};
-        configData.protectedServiceMargins[term][field] = parseFloat(config.config_value);
-      } else if (parts.length === 2 && parts[0] === 'charges') {
-        configData.charges[parts[1]] = parseFloat(config.config_value);
-      } else if (parts.length === 2 && parts[0] === 'utilizationFactors') {
-        configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
-      } else if (parts.length === 2 && parts[0] === 'promoPricing') {
-        configData.promoPricing[parts[1]] = parseFloat(config.config_value);
-      }
-    });
-
-    res.json({
-      success: true,
-      data: configData,
-      lastUpdated: configs.length > 0 ? configs[0].updated_date : null
-    });
-  });
 });
 
 // Update pricing logic configuration
@@ -6045,452 +6046,6 @@ const getPromoRulesWithLocations = () => {
     });
   });
 };
-// Get all promo pricing rules
-router.get('/promo-pricing', authenticateToken, (req, res) => {
-  // Check if user is admin
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
-  const { search } = req.query;
-
-  getPromoRulesWithLocations()
-    .then(rules => {
-      let filteredRules = rules;
-      
-      // Apply search filter if provided
-      if (search) {
-        const searchLower = search.toLowerCase();
-        filteredRules = rules.filter(rule => 
-          rule.rule_name.toLowerCase().includes(searchLower) ||
-          rule.source_locations.some(loc => loc.toLowerCase().includes(searchLower)) ||
-          rule.destination_locations.some(loc => loc.toLowerCase().includes(searchLower))
-        );
-      }
-      
-      res.json({
-        success: true,
-        data: filteredRules
-      });
-    })
-    .catch(err => {
-      console.error('Error fetching promo pricing rules:', err);
-      res.status(500).json({ error: 'Failed to fetch promo pricing rules' });
-    });
-});
-
-// Create new promo pricing rule
-router.post('/promo-pricing', authenticateToken, (req, res) => {
-  // Check if user is admin
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
-  const { 
-    rule_name, 
-    source_locations, 
-    destination_locations,
-    price_under_100mb, 
-    price_100_to_999mb, 
-    price_1000_to_2999mb, 
-    price_3000mb_plus 
-  } = req.body;
-
-  // Validate required fields
-  if (!rule_name || !source_locations || !Array.isArray(source_locations) || source_locations.length === 0) {
-    return res.status(400).json({ error: 'Rule name and at least one source location are required' });
-  }
-  if (!destination_locations || !Array.isArray(destination_locations) || destination_locations.length === 0) {
-    return res.status(400).json({ error: 'At least one destination location is required' });
-  }
-
-  // Validate pricing values
-  if (price_under_100mb < 0 || price_100_to_999mb < 0 || price_1000_to_2999mb < 0 || price_3000mb_plus < 0) {
-    return res.status(400).json({ error: 'Pricing values must be non-negative' });
-  }
-
-  const dbInstance = db.getInstance();
-  if (!dbInstance) {
-    return res.status(500).json({ error: 'Database connection not available' });
-  }
-
-  dbInstance.run('BEGIN TRANSACTION');
-
-  // Insert the promo rule
-  dbInstance.run(
-    `INSERT OR REPLACE INTO promo_pricing_rules 
-     (rule_name, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus, created_by) 
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [rule_name, price_under_100mb || 0, price_100_to_999mb || 0, price_1000_to_2999mb || 0, price_3000mb_plus || 0, req.user.id],
-    function(err) {
-      if (err) {
-        dbInstance.run('ROLLBACK');
-        return res.status(500).json({ error: 'Failed to create promo rule: ' + err.message });
-      }
-
-      const promoRuleId = this.lastID;
-      let completed = 0;
-      let hasError = false;
-      const totalLocations = source_locations.length + destination_locations.length;
-
-      // Insert source locations
-      source_locations.forEach(locationCode => {
-        dbInstance.run(
-          'INSERT OR REPLACE INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
-          [promoRuleId, locationCode, 'source'],
-          function(err) {
-            if (err && !hasError) {
-              hasError = true;
-              dbInstance.run('ROLLBACK');
-              return res.status(500).json({ error: 'Failed to add source locations: ' + err.message });
-            }
-
-            completed++;
-            if (completed === totalLocations && !hasError) {
-              dbInstance.run('COMMIT');
-
-              // Log the change
-              logChange(req.user.id, 'promo_pricing_rules', rule_name, 'CREATE', null, {
-                rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
-              }, req);
-
-              res.status(201).json({
-                success: true,
-                message: 'Promo pricing rule created successfully',
-                id: promoRuleId
-              });
-            }
-          }
-        );
-      });
-
-      // Insert destination locations
-      destination_locations.forEach(locationCode => {
-        dbInstance.run(
-          'INSERT OR REPLACE INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
-          [promoRuleId, locationCode, 'destination'],
-          function(err) {
-            if (err && !hasError) {
-              hasError = true;
-              dbInstance.run('ROLLBACK');
-              return res.status(500).json({ error: 'Failed to add destination locations: ' + err.message });
-            }
-
-            completed++;
-            if (completed === totalLocations && !hasError) {
-              dbInstance.run('COMMIT');
-
-              // Log the change
-              logChange(req.user.id, 'promo_pricing_rules', rule_name, 'CREATE', null, {
-                rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
-              }, req);
-
-              res.status(201).json({
-                success: true,
-                message: 'Promo pricing rule created successfully',
-                id: promoRuleId
-              });
-            }
-          }
-        );
-      });
-    }
-  );
-});
-
-// Update promo pricing rule
-router.put('/promo-pricing/:id', authenticateToken, (req, res) => {
-  // Check if user is admin
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
-  const promoRuleId = req.params.id;
-  const { 
-    rule_name, 
-    source_locations, 
-    destination_locations,
-    price_under_100mb, 
-    price_100_to_999mb, 
-    price_1000_to_2999mb, 
-    price_3000mb_plus 
-  } = req.body;
-
-  // Validate required fields
-  if (!rule_name || !source_locations || !Array.isArray(source_locations) || source_locations.length === 0) {
-    return res.status(400).json({ error: 'Rule name and at least one source location are required' });
-  }
-  if (!destination_locations || !Array.isArray(destination_locations) || destination_locations.length === 0) {
-    return res.status(400).json({ error: 'At least one destination location is required' });
-  }
-
-  // Validate pricing values
-  if (price_under_100mb < 0 || price_100_to_999mb < 0 || price_1000_to_2999mb < 0 || price_3000mb_plus < 0) {
-    return res.status(400).json({ error: 'Pricing values must be non-negative' });
-  }
-
-  const dbInstance = db.getInstance();
-  if (!dbInstance) {
-    return res.status(500).json({ error: 'Database connection not available' });
-  }
-
-  // Get old data for change logging
-  db.get('SELECT * FROM promo_pricing_rules WHERE id = ?', [promoRuleId], (err, oldRule) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!oldRule) return res.status(404).json({ error: 'Promo rule not found' });
-
-    dbInstance.run('BEGIN TRANSACTION');
-
-    // Update the promo rule
-    dbInstance.run(
-      `INSERT OR REPLACE INTO promo_pricing_rules 
-       (id, rule_name, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus, updated_by) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [promoRuleId, rule_name, price_under_100mb || 0, price_100_to_999mb || 0, price_1000_to_2999mb || 0, price_3000mb_plus || 0, req.user.id],
-      function(err) {
-        if (err) {
-          dbInstance.run('ROLLBACK');
-          return res.status(500).json({ error: 'Failed to update promo rule: ' + err.message });
-        }
-
-        // Delete existing locations
-        dbInstance.run(
-          'DELETE FROM promo_pricing_locations WHERE promo_rule_id = ?',
-          [promoRuleId],
-          function(err) {
-            if (err) {
-              dbInstance.run('ROLLBACK');
-              return res.status(500).json({ error: 'Failed to update locations: ' + err.message });
-            }
-
-            let completed = 0;
-            let hasError = false;
-            const totalLocations = source_locations.length + destination_locations.length;
-
-            // Insert new source locations
-            source_locations.forEach(locationCode => {
-              dbInstance.run(
-                'INSERT OR REPLACE INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
-                [promoRuleId, locationCode, 'source'],
-                function(err) {
-                  if (err && !hasError) {
-                    hasError = true;
-                    dbInstance.run('ROLLBACK');
-                    return res.status(500).json({ error: 'Failed to add source locations: ' + err.message });
-                  }
-
-                  completed++;
-                  if (completed === totalLocations && !hasError) {
-                    dbInstance.run('COMMIT');
-
-                    // Log the change
-                    logChange(req.user.id, 'promo_pricing_rules', rule_name, 'UPDATE', oldRule, {
-                      rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
-                    }, req);
-
-                    res.json({
-                      success: true,
-                      message: 'Promo pricing rule updated successfully'
-                    });
-                  }
-                }
-              );
-            });
-
-            // Insert new destination locations
-            destination_locations.forEach(locationCode => {
-              dbInstance.run(
-                'INSERT OR REPLACE INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
-                [promoRuleId, locationCode, 'destination'],
-                function(err) {
-                  if (err && !hasError) {
-                    hasError = true;
-                    dbInstance.run('ROLLBACK');
-                    return res.status(500).json({ error: 'Failed to add destination locations: ' + err.message });
-                  }
-
-                  completed++;
-                  if (completed === totalLocations && !hasError) {
-                    dbInstance.run('COMMIT');
-
-                    // Log the change
-                    logChange(req.user.id, 'promo_pricing_rules', rule_name, 'UPDATE', oldRule, {
-                      rule_name, source_locations, destination_locations, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
-                    }, req);
-
-                    res.json({
-                      success: true,
-                      message: 'Promo pricing rule updated successfully'
-                    });
-                  }
-                }
-              );
-            });
-          }
-        );
-      }
-    );
-  });
-});
-// Delete promo pricing rule
-router.delete('/promo-pricing/:id', authenticateToken, (req, res) => {
-  // Check if user is admin
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
-  const promoRuleId = req.params.id;
-
-  // Get rule data for change logging
-  db.get('SELECT * FROM promo_pricing_rules WHERE id = ?', [promoRuleId], (err, rule) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!rule) return res.status(404).json({ error: 'Promo rule not found' });
-
-    // Soft delete (set is_active to false)
-    db.run(
-      'UPDATE promo_pricing_rules SET is_active = 0, updated_by = ? WHERE id = ?',
-      [req.user.id, promoRuleId],
-      function(err) {
-        if (err) return res.status(500).json({ error: 'Failed to delete promo rule: ' + err.message });
-        if (this.changes === 0) return res.status(404).json({ error: 'Promo rule not found' });
-
-        // Log the change
-        logChange(req.user.id, 'promo_pricing_rules', rule.rule_name, 'DELETE', rule, null, req);
-
-        res.json({
-          success: true,
-          message: 'Promo pricing rule deleted successfully'
-        });
-      }
-    );
-  });
-});
-
-// ===== EXCHANGE PRICING TOOL ROUTES =====
-
-// Get available regions for exchange pricing tool
-router.get('/exchange-pricing/regions', authenticateToken, (req, res) => {
-  db.all(`
-    SELECT DISTINCT e.region 
-    FROM exchanges e 
-    INNER JOIN exchange_feeds ef ON e.id = ef.exchange_id 
-    WHERE ef.quick_quote = 1 AND e.region IS NOT NULL
-    ORDER BY e.region
-  `, [], (err, rows) => {
-    if (err) {
-      console.error('Error getting regions:', err.message);
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(rows.map(row => row.region));
-  });
-});
-
-// Get available exchanges by region for exchange pricing tool
-router.get('/exchange-pricing/exchanges/:region', authenticateToken, (req, res) => {
-  const { region } = req.params;
-  db.all(`
-    SELECT DISTINCT e.id, e.exchange_name, e.region 
-    FROM exchanges e 
-    INNER JOIN exchange_feeds ef ON e.id = ef.exchange_id 
-    WHERE e.region = ? AND ef.quick_quote = 1
-    ORDER BY e.exchange_name
-  `, [region], (err, rows) => {
-    if (err) {
-      console.error('Error getting exchanges for region:', region, err.message);
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(rows);
-  });
-});
-
-// Get available feeds by exchange for exchange pricing tool  
-router.get('/exchange-pricing/feeds/:exchangeId', authenticateToken, (req, res) => {
-  const { exchangeId } = req.params;
-  db.all(`
-    SELECT ef.*, e.exchange_name, e.region
-    FROM exchange_feeds ef
-    INNER JOIN exchanges e ON ef.exchange_id = e.id
-    WHERE ef.exchange_id = ? AND ef.quick_quote = 1
-    ORDER BY ef.feed_name
-  `, [exchangeId], (err, rows) => {
-    if (err) {
-      console.error('Error getting feeds for exchange:', exchangeId, err.message);
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(rows);
-  });
-});
-
-// Get available currencies from exchange rates table
-router.get('/exchange-pricing/currencies', authenticateToken, (req, res) => {
-  // Currency name mapping since exchange_rates table doesn't have currency_name column
-  const currencyNames = {
-    'USD': 'US Dollar',
-    'EUR': 'Euro',
-    'GBP': 'British Pound',
-    'JPY': 'Japanese Yen',
-    'AUD': 'Australian Dollar',
-    'CAD': 'Canadian Dollar',
-    'CHF': 'Swiss Franc',
-    'CNY': 'Chinese Yuan',
-    'SGD': 'Singapore Dollar',
-    'HKD': 'Hong Kong Dollar',
-    'NOK': 'Norwegian Krone',
-    'SEK': 'Swedish Krona',
-    'DKK': 'Danish Krone',
-    'PLN': 'Polish Zloty',
-    'CZK': 'Czech Koruna',
-    'HUF': 'Hungarian Forint',
-    'RUB': 'Russian Ruble',
-    'BRL': 'Brazilian Real',
-    'MXN': 'Mexican Peso',
-    'ZAR': 'South African Rand',
-    'INR': 'Indian Rupee',
-    'KRW': 'South Korean Won',
-    'THB': 'Thai Baht',
-    'MYR': 'Malaysian Ringgit',
-    'IDR': 'Indonesian Rupiah',
-    'PHP': 'Philippine Peso',
-    'NZD': 'New Zealand Dollar'
-  };
-
-  db.all(`
-    SELECT DISTINCT currency_code 
-    FROM exchange_rates 
-    WHERE status = 'Active'
-    ORDER BY currency_code
-  `, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    
-    // Add currency names to the response
-    const currencies = rows.map(row => ({
-      currency_code: row.currency_code,
-      currency_name: currencyNames[row.currency_code] || row.currency_code
-    }));
-    
-    res.json(currencies);
-  });
-});
-
-// Get available delivery datacenters by region (Tier 1 POPs only)
-router.get('/exchange-pricing/datacenters/:region', authenticateToken, (req, res) => {
-  const { region } = req.params;
-  console.log(`Getting datacenters for region: ${region}`);
-  
-  db.all(`
-    SELECT location_code, datacenter_name as location_name, city, country, region, pop_type
-    FROM location_reference 
-    WHERE region = ? AND pop_type = 'Tier 1'
-    ORDER BY location_code
-  `, [region], (err, rows) => {
-    if (err) {
-      console.error('Error getting datacenters for region:', region, err.message);
-      return res.status(500).json({ error: err.message });
-    }
-    console.log(`Found ${rows.length} datacenters for region ${region}:`, rows);
-    res.json(rows);
-  });
-});
 
 // Create new quote request
 router.post('/exchange-pricing/quotes', authenticateToken, (req, res) => {
@@ -6813,7 +6368,5 @@ router.get('/exchange-pricing/audit_logs/export', authenticateToken, (req, res) 
     res.send(csvContent);
   });
 });
-
-
 
 module.exports = router; 

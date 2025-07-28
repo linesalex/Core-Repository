@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box, Card, CardContent, Typography, Grid, Button, 
   Select, MenuItem, FormControl, InputLabel, Alert,
@@ -13,11 +13,15 @@ import {
 import { useAuth } from './AuthContext';
 import { ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 import {
-  getBulkUploadModules, downloadBulkUploadTemplate, downloadBulkUploadDatabase,
-  uploadBulkData, getBulkUploadHistory, getBulkUploadProgress
+  getBulkUploadModules,
+  downloadBulkUploadTemplate,
+  downloadBulkUploadDatabase,
+  uploadBulkData,
+  getBulkUploadProgress,
+  getBulkUploadHistory
 } from './api';
 
-const BulkUpload = () => {
+const BulkUpload = ({ onDataRefresh }) => {
   const { hasRole } = useAuth();
   const [modules, setModules] = useState([]);
   const [selectedModule, setSelectedModule] = useState('');
@@ -29,7 +33,11 @@ const BulkUpload = () => {
   
   // Progress tracking states
   const [uploadProgress, setUploadProgress] = useState(null);
-  const [progressInterval, setProgressInterval] = useState(null);
+  const [uploadCompleted, setUploadCompleted] = useState(false); // Track if upload completed successfully
+  
+  // Use ref to store interval for reliable cleanup
+  const progressIntervalRef = useRef(null);
+  const timeoutRef = useRef(null);
 
   // Validation states
   const [formErrors, setFormErrors] = useState({});
@@ -48,6 +56,81 @@ const BulkUpload = () => {
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  // Enhanced cleanup function to reset ALL upload state
+  const cleanupUploadState = () => {
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    setUploading(false);
+    setUploadProgress(null);
+    setUploadResult(null);
+    setError('');
+    setSuccess('');
+    setUploadCompleted(false); // Reset completion flag
+  };
+
+  // Cleanup function that preserves success messages and results for user viewing
+  const cleanupUploadStateKeepResults = () => {
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    setUploading(false);
+    // Don't clear: setUploadProgress, setUploadResult, setSuccess - let user see results
+    setError(''); // Clear errors but keep success
+  };
+
+  // Complete reset function for after errors
+  const resetAllState = () => {
+    cleanupUploadState();
+    setFormErrors({});
+    setSelectedModule('');
+    setUploadFile(null);
+    
+    // Reset file input
+    const fileInput = document.getElementById('bulk-upload-file');
+    if (fileInput) fileInput.value = '';
+  };
+
+  const handleClearErrors = () => {
+    // Targeted reset instead of full page refresh to preserve authentication
+    setError('');
+    setUploadResult(null);
+    setUploadProgress(null);
+    setFormErrors({});
+    setSuccess('');
+    setSelectedModule('');
+    setUploadFile(null);
+    setUploading(false);
+    setUploadCompleted(false); // Reset completion flag
+    
+    // Clear any active polling and timeouts
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    
+    // Reset file input
+    const fileInput = document.getElementById('bulk-upload-file');
+    if (fileInput) fileInput.value = '';
+    
+    // Reload the modules list to ensure fresh state
+    loadModules();
+  };
+
   useEffect(() => {
     loadModules();
   }, []);
@@ -55,11 +138,16 @@ const BulkUpload = () => {
   // Cleanup progress polling on unmount
   useEffect(() => {
     return () => {
-      if (progressInterval) {
-        clearInterval(progressInterval);
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
       }
     };
-  }, [progressInterval]);
+  }, []); // Empty dependency array since we're using ref
 
   const loadModules = async () => {
     try {
@@ -71,6 +159,12 @@ const BulkUpload = () => {
   };
 
   const pollProgress = async (sessionId) => {
+    // Don't continue polling if upload already completed successfully
+    if (uploadCompleted) {
+      console.log('Skipping pollProgress - upload already completed successfully');
+      return;
+    }
+    
     try {
       const response = await getBulkUploadProgress(sessionId);
       const progressData = response.data;
@@ -79,21 +173,42 @@ const BulkUpload = () => {
       
       // Stop polling if upload is completed or failed
       if (progressData.status === 'completed' || progressData.status === 'error') {
-        if (progressInterval) {
-          clearInterval(progressInterval);
-          setProgressInterval(null);
+        console.log(`Upload status: ${progressData.status}, stopping polling interval`);
+        
+        // Completely stop the polling interval
+        if (progressIntervalRef.current) {
+          clearInterval(progressIntervalRef.current);
+          progressIntervalRef.current = null;
+          console.log('Polling interval cleared');
         }
-        setUploading(false);
         
         if (progressData.status === 'completed') {
+          console.log('Upload completed successfully, setting completion flag');
+          
+          // Mark upload as completed to prevent further polling
+          setUploadCompleted(true);
+          
+          // Explicitly clear any previous errors before showing success
+          setError('');
           setUploadResult(progressData.result);
           setSuccess(`Successfully imported ${progressData.result.rows_imported} rows to ${progressData.result.module}`);
           setUploadFile(null);
+          setUploading(false);
           
           // Reset file input
           const fileInput = document.getElementById('bulk-upload-file');
           if (fileInput) fileInput.value = '';
+          
+          // Delay data refresh to allow user to see results for 60 seconds
+          setTimeout(() => {
+            if (onDataRefresh && typeof onDataRefresh === 'function') {
+              console.log('Refreshing application data after successful bulk upload (delayed 60 seconds)');
+              onDataRefresh();
+            }
+          }, 60000); // 60 seconds delay
         } else if (progressData.status === 'error') {
+          console.log('Upload failed with errors');
+          setUploading(false);
           if (progressData.errors && progressData.errors.length > 0) {
             setUploadResult({
               errors: progressData.errors,
@@ -101,20 +216,54 @@ const BulkUpload = () => {
               valid_rows: progressData.validRows,
               invalid_rows: progressData.errorRows
             });
-            setError(`Upload failed: ${progressData.errors.length} error(s) found`);
+            setError(`Upload failed: ${progressData.errors.length} validation error(s) found. Please review and fix the errors below.`);
           } else {
             setError('Upload failed: ' + progressData.stage);
           }
         }
         
-        // Clear progress after a delay
+        // Clear progress after 60 seconds to allow user to see results
         setTimeout(() => {
           setUploadProgress(null);
-        }, 3000);
+        }, 60000); // Extended from 3 seconds to 60 seconds
       }
     } catch (err) {
       console.error('Failed to poll progress:', err);
-      // Don't clear interval on temporary network issues
+      
+      // Don't show errors if upload already completed successfully
+      if (uploadCompleted) {
+        console.log('Ignoring polling error - upload already completed successfully');
+        return;
+      }
+      
+      // Stop polling on session not found or other critical errors
+      if (err.response?.status === 404 || err.response?.status === 500 || 
+          err.code === 'ERR_NETWORK' || err.message === 'Network Error') {
+        console.log('Stopping progress polling due to error:', err.response?.status || err.code);
+        
+        // Completely stop the polling interval
+        if (progressIntervalRef.current) {
+          clearInterval(progressIntervalRef.current);
+          progressIntervalRef.current = null;
+          console.log('Polling interval cleared due to error');
+        }
+        
+        setUploading(false);
+        
+        // Only set error if upload hasn't completed successfully
+        if (!uploadCompleted) {
+          // Set appropriate error message with recovery guidance
+          if (err.response?.status === 404) {
+            setError('Upload session expired. Please try uploading again.');
+          } else {
+            setError('Network connection issue during upload. Please check your connection and try again.');
+          }
+        }
+        
+        // Clear progress state but keep form intact
+        setUploadProgress(null);
+      }
+      // For other errors (like temporary 503s), continue polling
     }
   };
 
@@ -187,12 +336,10 @@ const BulkUpload = () => {
     setUploadResult(null);
     setUploadProgress(null);
     setFormErrors({});
+    setUploadCompleted(false); // Reset completion flag for new upload
     
     // Clear any existing progress polling
-    if (progressInterval) {
-      clearInterval(progressInterval);
-      setProgressInterval(null);
-    }
+    cleanupUploadState();
 
     try {
       const response = await uploadBulkData(selectedModule, uploadFile);
@@ -205,7 +352,16 @@ const BulkUpload = () => {
           pollProgress(responseData.sessionId);
         }, 1000); // Poll every second
         
-        setProgressInterval(interval);
+        progressIntervalRef.current = interval;
+        
+        // Safety timeout to prevent infinite polling (10 minutes)
+        timeoutRef.current = setTimeout(() => {
+          if (progressIntervalRef.current) {
+            console.log('Upload timeout reached, stopping progress polling');
+            cleanupUploadState();
+            setError('Upload timeout reached. Please try again or contact support if the issue persists.');
+          }
+        }, 10 * 60 * 1000);
         
         // Initial progress state
         setUploadProgress({
@@ -221,6 +377,11 @@ const BulkUpload = () => {
         // Fallback for immediate responses (e.g., validation errors)
         setUploading(false);
         if (responseData.rows_imported) {
+          // Mark upload as completed
+          setUploadCompleted(true);
+          
+          // Explicitly clear any previous errors before showing success
+          setError('');
           setUploadResult(responseData);
           setSuccess(`Successfully imported ${responseData.rows_imported} rows to ${responseData.module}`);
           setUploadFile(null);
@@ -228,30 +389,50 @@ const BulkUpload = () => {
           // Reset file input
           const fileInput = document.getElementById('bulk-upload-file');
           if (fileInput) fileInput.value = '';
+          
+          // Delay data refresh to allow user to see results for 60 seconds
+          setTimeout(() => {
+            if (onDataRefresh && typeof onDataRefresh === 'function') {
+              console.log('Refreshing application data after successful bulk upload (delayed 60 seconds)');
+              onDataRefresh();
+            }
+          }, 60000); // 60 seconds delay
         }
       }
       
     } catch (err) {
+      console.error('Upload failed:', err);
       setUploading(false);
       const errorData = err.response?.data;
       
+      // Clear any progress polling immediately on error
+      cleanupUploadState();
+      
       if (errorData?.errors) {
+        // Validation errors - display them but keep the form intact for fixing
         setUploadResult(errorData);
-        setError(`Upload failed: ${errorData.errors.length} validation error(s) found`);
+        setError(`Upload failed: ${errorData.errors.length} validation error(s) found. Please review and fix the errors below.`);
+        console.log('Validation errors:', errorData.errors);
+      } else if (err.code === 'ERR_NETWORK' || err.message === 'Network Error') {
+        // Network errors - provide clear guidance and allow retry
+        setError('Network connection issue. Please check your connection and try again. If the problem persists, try refreshing the page.');
+        setUploadResult(null);
+      } else if (err.response?.status === 413) {
+        // File too large
+        setError('File is too large. Please reduce the file size and try again.');
+        setUploadResult(null);
+      } else if (err.response?.status === 401) {
+        // Authentication error
+        setError('Session expired. Please refresh the page and log in again.');
+        setUploadResult(null);
       } else {
-        // Check if this is a network error after a previous error (the main issue we're fixing)
-        if (err.code === 'ERR_NETWORK' || err.message === 'Network Error') {
-          setError('Network connection issue. Please check your connection and try again.');
-        } else {
-          setError('Upload failed: ' + (errorData?.error || err.message));
-        }
+        // Other errors
+        setError('Upload failed: ' + (errorData?.error || err.message || 'Unknown error occurred'));
+        setUploadResult(null);
       }
       
-      // Clear any progress polling on error
-      if (progressInterval) {
-        clearInterval(progressInterval);
-        setProgressInterval(null);
-      }
+      // Reset progress state
+      setUploadProgress(null);
     }
   };
 
@@ -282,10 +463,7 @@ const BulkUpload = () => {
       setUploadProgress(null);
       
       // Clear any existing progress polling
-      if (progressInterval) {
-        clearInterval(progressInterval);
-        setProgressInterval(null);
-      }
+      cleanupUploadState();
     }
   };
 
@@ -344,14 +522,57 @@ const BulkUpload = () => {
       </Typography>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
-          {error}
+        <Alert 
+          severity="error" 
+          sx={{ mb: 2 }} 
+          onClose={handleClearErrors}
+          action={
+            <Button 
+              color="inherit" 
+              size="small" 
+              onClick={handleClearErrors}
+              sx={{ ml: 1 }}
+            >
+              Reset & Retry
+            </Button>
+          }
+        >
+          <strong>Upload Failed:</strong> {error}
+          {uploadResult?.errors && uploadResult.errors.length > 0 && (
+            <Box sx={{ mt: 1, fontSize: '0.875rem', opacity: 0.8 }}>
+              💡 <strong>Tip:</strong> All validation errors are now shown below. Fix them in your CSV file and retry the upload.
+            </Box>
+          )}
+          {error.includes('Network connection') && (
+            <Box sx={{ mt: 1, fontSize: '0.875rem', opacity: 0.8 }}>
+              💡 <strong>Tip:</strong> Click "Reset & Retry" to completely reset the upload state and try again.
+            </Box>
+          )}
         </Alert>
       )}
 
       {success && (
-        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess('')}>
-          {success}
+        <Alert 
+          severity="success" 
+          sx={{ mb: 2 }} 
+          onClose={() => setSuccess('')}
+          action={
+            <Button 
+              color="inherit" 
+              size="small" 
+              onClick={handleClearErrors}
+              sx={{ ml: 1 }}
+            >
+              Reset & Upload More
+            </Button>
+          }
+        >
+          <strong>Upload Successful!</strong> {success}
+          {uploadResult && (
+            <Box sx={{ mt: 1, fontSize: '0.875rem', opacity: 0.8 }}>
+              ℹ️ <strong>Note:</strong> Results will remain visible for 60 seconds. The application data will refresh automatically after this time.
+            </Box>
+          )}
         </Alert>
       )}
 
@@ -378,9 +599,9 @@ const BulkUpload = () => {
                     setUploadProgress(null);
                     
                     // Clear any existing progress polling
-                    if (progressInterval) {
-                      clearInterval(progressInterval);
-                      setProgressInterval(null);
+                    if (progressIntervalRef.current) {
+                      clearInterval(progressIntervalRef.current);
+                      progressIntervalRef.current = null;
                     }
                   }}
                   required

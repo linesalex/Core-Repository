@@ -378,7 +378,7 @@ function AuthenticatedApp() {
       
       case 'bulk-upload':
         return hasModuleAccess('user_management') ? (
-          <BulkUpload />
+          <BulkUpload onDataRefresh={refreshData} />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );

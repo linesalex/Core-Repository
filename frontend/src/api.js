@@ -167,8 +167,6 @@ export const getBulkUploadModules = () => {
     { id: 'carrier_contacts', name: 'Carrier Contacts', description: 'Bulk upload carrier contact information and details' },
     { id: 'pop_capabilities', name: 'POP Capabilities', description: 'Bulk upload location capability matrix and service availability' },
     { id: 'exchanges', name: 'Exchange Providers', description: 'Bulk upload exchange provider information and details' },
-    { id: 'cnx_colocation_racks', name: 'CNX Colocation Racks', description: 'Bulk upload colocation rack inventory with power and space allocation' },
-    { id: 'cnx_colocation_clients', name: 'CNX Colocation Clients', description: 'Bulk upload colocation client information and allocations' },
     { id: 'users', name: 'User Management', description: 'Bulk upload user accounts with roles and permissions' }
   ]);
 };
