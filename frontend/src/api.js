@@ -214,6 +214,11 @@ export const uploadBulkData = (module, file) => {
   });
 };
 
+// Get bulk upload progress
+export const getBulkUploadProgress = (sessionId) => {
+  return api.get(`${API_BASE_URL}/bulk-upload/progress/${sessionId}`);
+};
+
 // Get bulk upload history
 export const getBulkUploadHistory = (page = 1, limit = 50) => {
   return api.get(`${API_BASE_URL}/bulk-upload/history?page=${page}&limit=${limit}`);

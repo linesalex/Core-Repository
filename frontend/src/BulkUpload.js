@@ -14,7 +14,7 @@ import { useAuth } from './AuthContext';
 import { ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 import {
   getBulkUploadModules, downloadBulkUploadTemplate, downloadBulkUploadDatabase,
-  uploadBulkData, getBulkUploadHistory
+  uploadBulkData, getBulkUploadHistory, getBulkUploadProgress
 } from './api';
 
 const BulkUpload = () => {
@@ -26,6 +26,10 @@ const BulkUpload = () => {
   const [uploadResult, setUploadResult] = useState(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  
+  // Progress tracking states
+  const [uploadProgress, setUploadProgress] = useState(null);
+  const [progressInterval, setProgressInterval] = useState(null);
 
   // Validation states
   const [formErrors, setFormErrors] = useState({});
@@ -48,12 +52,69 @@ const BulkUpload = () => {
     loadModules();
   }, []);
 
+  // Cleanup progress polling on unmount
+  useEffect(() => {
+    return () => {
+      if (progressInterval) {
+        clearInterval(progressInterval);
+      }
+    };
+  }, [progressInterval]);
+
   const loadModules = async () => {
     try {
       const moduleList = await getBulkUploadModules();
       setModules(moduleList);
     } catch (err) {
       setError('Failed to load available modules');
+    }
+  };
+
+  const pollProgress = async (sessionId) => {
+    try {
+      const response = await getBulkUploadProgress(sessionId);
+      const progressData = response.data;
+      
+      setUploadProgress(progressData);
+      
+      // Stop polling if upload is completed or failed
+      if (progressData.status === 'completed' || progressData.status === 'error') {
+        if (progressInterval) {
+          clearInterval(progressInterval);
+          setProgressInterval(null);
+        }
+        setUploading(false);
+        
+        if (progressData.status === 'completed') {
+          setUploadResult(progressData.result);
+          setSuccess(`Successfully imported ${progressData.result.rows_imported} rows to ${progressData.result.module}`);
+          setUploadFile(null);
+          
+          // Reset file input
+          const fileInput = document.getElementById('bulk-upload-file');
+          if (fileInput) fileInput.value = '';
+        } else if (progressData.status === 'error') {
+          if (progressData.errors && progressData.errors.length > 0) {
+            setUploadResult({
+              errors: progressData.errors,
+              total_rows: progressData.totalRows,
+              valid_rows: progressData.validRows,
+              invalid_rows: progressData.errorRows
+            });
+            setError(`Upload failed: ${progressData.errors.length} error(s) found`);
+          } else {
+            setError('Upload failed: ' + progressData.stage);
+          }
+        }
+        
+        // Clear progress after a delay
+        setTimeout(() => {
+          setUploadProgress(null);
+        }, 3000);
+      }
+    } catch (err) {
+      console.error('Failed to poll progress:', err);
+      // Don't clear interval on temporary network issues
     }
   };
 
@@ -119,32 +180,78 @@ const BulkUpload = () => {
       return;
     }
 
+    // Clear any previous state
     setUploading(true);
     setError('');
     setSuccess('');
     setUploadResult(null);
-    setFormErrors({}); // Clear validation errors
+    setUploadProgress(null);
+    setFormErrors({});
+    
+    // Clear any existing progress polling
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      setProgressInterval(null);
+    }
 
     try {
       const response = await uploadBulkData(selectedModule, uploadFile);
-      setUploadResult(response.data);
-      setSuccess(`Successfully imported ${response.data.rows_imported} rows to ${response.data.module}`);
-      setUploadFile(null);
+      const responseData = response.data;
       
-      // Reset file input
-      const fileInput = document.getElementById('bulk-upload-file');
-      if (fileInput) fileInput.value = '';
+      // Check if we got a sessionId for progress tracking
+      if (responseData.sessionId) {
+        // Start polling for progress
+        const interval = setInterval(() => {
+          pollProgress(responseData.sessionId);
+        }, 1000); // Poll every second
+        
+        setProgressInterval(interval);
+        
+        // Initial progress state
+        setUploadProgress({
+          status: 'processing',
+          stage: 'Upload started...',
+          progress: 10,
+          totalRows: 0,
+          processedRows: 0,
+          validRows: 0,
+          errorRows: 0
+        });
+      } else {
+        // Fallback for immediate responses (e.g., validation errors)
+        setUploading(false);
+        if (responseData.rows_imported) {
+          setUploadResult(responseData);
+          setSuccess(`Successfully imported ${responseData.rows_imported} rows to ${responseData.module}`);
+          setUploadFile(null);
+          
+          // Reset file input
+          const fileInput = document.getElementById('bulk-upload-file');
+          if (fileInput) fileInput.value = '';
+        }
+      }
       
     } catch (err) {
+      setUploading(false);
       const errorData = err.response?.data;
+      
       if (errorData?.errors) {
         setUploadResult(errorData);
         setError(`Upload failed: ${errorData.errors.length} validation error(s) found`);
       } else {
-        setError('Upload failed: ' + (errorData?.error || err.message));
+        // Check if this is a network error after a previous error (the main issue we're fixing)
+        if (err.code === 'ERR_NETWORK' || err.message === 'Network Error') {
+          setError('Network connection issue. Please check your connection and try again.');
+        } else {
+          setError('Upload failed: ' + (errorData?.error || err.message));
+        }
       }
-    } finally {
-      setUploading(false);
+      
+      // Clear any progress polling on error
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        setProgressInterval(null);
+      }
     }
   };
 
@@ -167,9 +274,18 @@ const BulkUpload = () => {
       }
       
       setUploadFile(file);
+      // Clear all previous state when a new file is selected
       setError('');
-      setFormErrors({}); // Clear validation errors
+      setSuccess('');
+      setFormErrors({});
       setUploadResult(null);
+      setUploadProgress(null);
+      
+      // Clear any existing progress polling
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        setProgressInterval(null);
+      }
     }
   };
 
@@ -248,19 +364,30 @@ const BulkUpload = () => {
                 1. Select Module
               </Typography>
               
-              <ValidatedSelect
-                fullWidth
-                label="Choose Module *"
-                value={selectedModule}
-                onChange={(e) => {
-                  setSelectedModule(e.target.value);
-                  setFormErrors({}); // Clear validation errors when module changes
-                }}
-                required
-                field="selectedModule"
-                errors={formErrors}
-                sx={{ mb: 2 }}
-              >
+                              <ValidatedSelect
+                  fullWidth
+                  label="Choose Module *"
+                  value={selectedModule}
+                  onChange={(e) => {
+                    setSelectedModule(e.target.value);
+                    // Clear all state when module changes
+                    setFormErrors({});
+                    setError('');
+                    setSuccess('');
+                    setUploadResult(null);
+                    setUploadProgress(null);
+                    
+                    // Clear any existing progress polling
+                    if (progressInterval) {
+                      clearInterval(progressInterval);
+                      setProgressInterval(null);
+                    }
+                  }}
+                  required
+                  field="selectedModule"
+                  errors={formErrors}
+                  sx={{ mb: 2 }}
+                >
                 {modules.map((module) => (
                   <MenuItem key={module.id} value={module.id}>
                     {module.name}
@@ -354,12 +481,26 @@ const BulkUpload = () => {
                 </Grid>
               </Grid>
 
-              {uploading && (
+              {(uploading || uploadProgress) && (
                 <Box sx={{ mt: 2 }}>
-                  <LinearProgress />
+                  <LinearProgress 
+                    variant={uploadProgress?.progress ? "determinate" : "indeterminate"}
+                    value={uploadProgress?.progress || 0}
+                  />
                   <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                    Processing CSV file and importing data...
+                    {uploadProgress?.stage || 'Processing CSV file and importing data...'}
                   </Typography>
+                  {uploadProgress && (
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                      {uploadProgress.progress}% complete
+                      {uploadProgress.totalRows > 0 && (
+                        <> • {uploadProgress.processedRows}/{uploadProgress.totalRows} rows processed</>
+                      )}
+                      {uploadProgress.validRows > 0 && (
+                        <> • {uploadProgress.validRows} valid, {uploadProgress.errorRows} errors</>
+                      )}
+                    </Typography>
+                  )}
                 </Box>
               )}
             </CardContent>

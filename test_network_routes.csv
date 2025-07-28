@@ -1,0 +1,5 @@
+circuit_id,a_location,z_location,carrier,cost,capacity_usage_percent,path_description,is_special,notes
+ABCDEF123456,New York,London,Carrier A,1500.00,75,Direct transatlantic fiber,false,Primary route
+GHIJKL789012,San Francisco,Tokyo,Carrier B,2200.50,82,Pacific submarine cable,false,Backup route
+MNOPQR345678,Chicago,Frankfurt,Carrier C,1800.75,68,European backbone,true,Special pricing
+STUVWX901234,Miami,Sao Paulo,Carrier D,1200.25,55,South American link,false,Regional connection

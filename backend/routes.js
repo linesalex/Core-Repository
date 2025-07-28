@@ -5067,17 +5067,56 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
   const filePath = req.file.path;
   const results = [];
   const errors = [];
+  const startTime = Date.now();
+  const sessionId = `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  // Initialize progress tracking
+  activeUploads.set(sessionId, {
+    module,
+    filename: req.file.originalname,
+    status: 'parsing',
+    stage: 'Reading CSV file...',
+    progress: 0,
+    totalRows: 0,
+    processedRows: 0,
+    validRows: 0,
+    errorRows: 0,
+    startTime,
+    errors: []
+  });
+  
+  console.log(`[BULK UPLOAD] Starting bulk upload for module: ${module}, file: ${req.file.originalname}, user: ${req.user.username}, session: ${sessionId}`);
   
   // Parse CSV file
   fs.createReadStream(filePath)
     .pipe(csv())
-    .on('data', (row) => {
+          .on('data', (row) => {
+        const currentRow = results.length + errors.length + 1;
+        
+        // Update progress tracking
+        let uploadInfo = activeUploads.get(sessionId);
+        if (uploadInfo) {
+          uploadInfo.processedRows = currentRow;
+          uploadInfo.stage = `Validating row ${currentRow}...`;
+        }
+        
+        // Log progress every 100 rows
+        if (currentRow % 100 === 0) {
+          console.log(`[BULK UPLOAD] Processing row ${currentRow} for module: ${module}`);
+        }
       // Validate required fields
-      const missingFields = config.requiredFields.filter(field => !row[field] || row[field].trim() === '');
-      if (missingFields.length > 0) {
-        errors.push(`Row ${results.length + 1}: Missing required fields: ${missingFields.join(', ')}`);
-        return;
-      }
+              const missingFields = config.requiredFields.filter(field => !row[field] || row[field].trim() === '');
+        if (missingFields.length > 0) {
+          const errorMsg = `Row ${results.length + 1}: Missing required fields: ${missingFields.join(', ')}`;
+          errors.push(errorMsg);
+          
+          // Update progress tracking
+          uploadInfo = activeUploads.get(sessionId);
+          if (uploadInfo) {
+            uploadInfo.errorRows = errors.length;
+          }
+          return;
+        }
       
       // Clean and validate data
       const cleanedRow = {};
@@ -5213,38 +5252,123 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
         });
       }
       
-      results.push(cleanedRow);
-    })
-    .on('end', () => {
-      // Clean up uploaded file
-      fs.unlinkSync(filePath);
-      
-      // If there are validation errors, return them
-      if (errors.length > 0) {
-        return res.status(400).json({ 
-          error: 'Validation failed', 
-          errors: errors,
-          total_rows: results.length + errors.length,
-          valid_rows: results.length,
-          invalid_rows: errors.length
-        });
-      }
-      
-      if (results.length === 0) {
-        return res.status(400).json({ error: 'No valid data found in CSV file' });
-      }
-      
-      // Begin transaction for bulk insert
-      db.run('BEGIN TRANSACTION', (err) => {
-        if (err) {
-          return res.status(500).json({ error: 'Failed to begin transaction: ' + err.message });
+              results.push(cleanedRow);
+        
+        // Update progress tracking
+        uploadInfo = activeUploads.get(sessionId);
+        if (uploadInfo) {
+          uploadInfo.validRows = results.length;
+        }
+      })
+      .on('end', () => {
+        const parseTime = Date.now() - startTime;
+        const totalRows = results.length + errors.length;
+        
+        // Update progress tracking
+        uploadInfo = activeUploads.get(sessionId);
+        if (uploadInfo) {
+          uploadInfo.totalRows = totalRows;
+          uploadInfo.stage = 'CSV parsing completed';
+          uploadInfo.progress = 50; // 50% after parsing
         }
         
-        let completed = 0;
-        let failed = false;
-        const insertErrors = [];
+        console.log(`[BULK UPLOAD] CSV parsing completed for module: ${module}`);
+        console.log(`[BULK UPLOAD] Parse time: ${parseTime}ms, Total rows: ${totalRows}, Valid: ${results.length}, Invalid: ${errors.length}`);
         
-        results.forEach((row, index) => {
+        // Clean up uploaded file
+        fs.unlinkSync(filePath);
+      
+              // If there are validation errors, return them
+        if (errors.length > 0) {
+          console.log(`[BULK UPLOAD] Validation failed for module: ${module}, ${errors.length} errors found`);
+          
+          // Update progress tracking
+          uploadInfo = activeUploads.get(sessionId);
+          if (uploadInfo) {
+            uploadInfo.status = 'error';
+            uploadInfo.stage = 'Validation failed';
+            uploadInfo.errors = errors;
+            // Keep the upload info for a while so frontend can retrieve the errors
+            setTimeout(() => activeUploads.delete(sessionId), 60000); // Clean up after 1 minute
+          }
+          
+          return res.status(400).json({ 
+            error: 'Validation failed', 
+            errors: errors,
+            total_rows: totalRows,
+            valid_rows: results.length,
+            invalid_rows: errors.length,
+            sessionId
+          });
+        }
+        
+        if (results.length === 0) {
+          console.log(`[BULK UPLOAD] No valid data found in CSV file for module: ${module}`);
+          
+          // Update progress tracking
+          uploadInfo = activeUploads.get(sessionId);
+          if (uploadInfo) {
+            uploadInfo.status = 'error';
+            uploadInfo.stage = 'No valid data found';
+            setTimeout(() => activeUploads.delete(sessionId), 60000);
+          }
+          
+          return res.status(400).json({ error: 'No valid data found in CSV file', sessionId });
+        }
+      
+              console.log(`[BULK UPLOAD] Starting database transaction for module: ${module}, ${results.length} rows`);
+        const dbStartTime = Date.now();
+        
+        // Update progress tracking
+        uploadInfo = activeUploads.get(sessionId);
+        if (uploadInfo) {
+          uploadInfo.status = 'inserting';
+          uploadInfo.stage = 'Starting database transaction...';
+          uploadInfo.progress = 60; // 60% when starting DB operations
+        }
+        
+        // Return sessionId immediately so frontend can start polling for progress
+        res.json({
+          message: 'Upload processing started',
+          sessionId,
+          status: 'processing'
+        });
+        
+               // Begin transaction for bulk insert
+         db.run('BEGIN TRANSACTION', (err) => {
+           if (err) {
+             console.log(`[BULK UPLOAD] Failed to begin transaction for module: ${module}, error: ${err.message}`);
+             
+                           // Update progress tracking
+              uploadInfo = activeUploads.get(sessionId);
+              if (uploadInfo) {
+                uploadInfo.status = 'error';
+                uploadInfo.stage = 'Failed to begin transaction';
+                uploadInfo.errors = [err.message];
+                setTimeout(() => activeUploads.delete(sessionId), 60000);
+              }
+             return;
+           }
+           
+           console.log(`[BULK UPLOAD] Transaction started for module: ${module}`);
+           
+           let completed = 0;
+           let failed = false;
+           const insertErrors = [];
+          
+                     results.forEach((row, index) => {
+             // Log progress every 50 inserts and update progress tracking
+             if ((index + 1) % 50 === 0) {
+               console.log(`[BULK UPLOAD] Inserting row ${index + 1}/${results.length} for module: ${module}`);
+               
+               // Update progress tracking
+               uploadInfo = activeUploads.get(sessionId);
+               if (uploadInfo) {
+                 const insertProgress = Math.floor((index + 1) / results.length * 40); // 40% for insertion
+                 uploadInfo.progress = 60 + insertProgress; // Start from 60%
+                 uploadInfo.stage = `Inserting row ${index + 1} of ${results.length}...`;
+               }
+             }
           // Foreign key validation function
           const validateForeignKeys = (callback) => {
             const validationPromises = [];
@@ -5378,22 +5502,54 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
             
             // Check if all operations are complete
             if (completed === results.length) {
+              const dbTime = Date.now() - dbStartTime;
+              const totalTime = Date.now() - startTime;
+              
               if (failed) {
+                console.log(`[BULK UPLOAD] Database insert failed for module: ${module}, ${insertErrors.length} errors, rolling back transaction`);
+                
+                // Update progress tracking
+                uploadInfo = activeUploads.get(sessionId);
+                if (uploadInfo) {
+                  uploadInfo.status = 'error';
+                  uploadInfo.stage = 'Database insert failed - rolling back';
+                  uploadInfo.errors = insertErrors;
+                  setTimeout(() => activeUploads.delete(sessionId), 60000);
+                }
+                
                 // Rollback transaction
                 db.run('ROLLBACK', (rollbackErr) => {
-                  if (rollbackErr) console.error('Rollback failed:', rollbackErr);
-                  res.status(400).json({
-                    error: 'Bulk upload failed',
-                    errors: insertErrors,
-                    message: 'Transaction rolled back. No data was imported.'
-                  });
+                  if (rollbackErr) console.error(`[BULK UPLOAD] Rollback failed for module: ${module}:`, rollbackErr);
+                  console.log(`[BULK UPLOAD] Transaction rolled back for module: ${module}, total time: ${totalTime}ms`);
                 });
               } else {
+                console.log(`[BULK UPLOAD] All rows inserted successfully for module: ${module}, committing transaction`);
+                
+                // Update progress tracking
+                uploadInfo = activeUploads.get(sessionId);
+                if (uploadInfo) {
+                  uploadInfo.progress = 95;
+                  uploadInfo.stage = 'Committing transaction...';
+                }
+                
                 // Commit transaction
                 db.run('COMMIT', (commitErr) => {
                   if (commitErr) {
-                    return res.status(500).json({ error: 'Failed to commit transaction: ' + commitErr.message });
+                    console.log(`[BULK UPLOAD] Failed to commit transaction for module: ${module}, error: ${commitErr.message}`);
+                    
+                                         // Update progress tracking
+                     uploadInfo = activeUploads.get(sessionId);
+                     if (uploadInfo) {
+                       uploadInfo.status = 'error';
+                       uploadInfo.stage = 'Failed to commit transaction';
+                       uploadInfo.errors = [commitErr.message];
+                       setTimeout(() => activeUploads.delete(sessionId), 60000);
+                     }
+                    return;
                   }
+                  
+                  console.log(`[BULK UPLOAD] Transaction committed successfully for module: ${module}`);
+                  console.log(`[BULK UPLOAD] Database time: ${dbTime}ms, Total time: ${totalTime}ms, Rows imported: ${results.length}`);
                   
                   // Log successful bulk upload
                   logChange(null, 'bulk_upload', null, 'BULK_IMPORT', null, {
@@ -5402,12 +5558,23 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                     filename: req.file.originalname
                   }, req);
                   
-                  res.json({
-                    message: 'Bulk upload successful',
-                    module,
-                    rows_imported: results.length,
-                    total_rows: results.length
-                  });
+                  console.log(`[BULK UPLOAD] Bulk upload completed successfully for module: ${module}, file: ${req.file.originalname}`);
+                  
+                                     // Update progress tracking - completed
+                   uploadInfo = activeUploads.get(sessionId);
+                   if (uploadInfo) {
+                     uploadInfo.status = 'completed';
+                     uploadInfo.stage = 'Upload completed successfully';
+                     uploadInfo.progress = 100;
+                     uploadInfo.result = {
+                       message: 'Bulk upload successful',
+                       module,
+                       rows_imported: results.length,
+                       total_rows: results.length
+                     };
+                     // Clean up after 5 minutes
+                     setTimeout(() => activeUploads.delete(sessionId), 300000);
+                   }
                 });
               }
             }
@@ -5417,12 +5584,38 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
       });
     })
     .on('error', (error) => {
+      console.error(`[BULK UPLOAD] CSV processing error for module: ${module}, file: ${req.file.originalname}, error: ${error.message}`);
+      
+      // Update progress tracking
+      uploadInfo = activeUploads.get(sessionId);
+      if (uploadInfo) {
+        uploadInfo.status = 'error';
+        uploadInfo.stage = 'CSV processing failed';
+        uploadInfo.errors = [error.message];
+        setTimeout(() => activeUploads.delete(sessionId), 60000);
+      }
+      
       // Clean up uploaded file
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }
-      res.status(500).json({ error: 'Failed to process CSV file: ' + error.message });
+      res.status(500).json({ error: 'Failed to process CSV file: ' + error.message, sessionId });
     });
+});
+
+// Store active upload sessions for progress tracking
+const activeUploads = new Map();
+
+// Get upload progress
+router.get('/bulk-upload/progress/:sessionId', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const { sessionId } = req.params;
+  const uploadInfo = activeUploads.get(sessionId);
+  
+  if (!uploadInfo) {
+    return res.status(404).json({ error: 'Upload session not found' });
+  }
+  
+  res.json(uploadInfo);
 });
 
 // Get bulk upload history (admin only)
