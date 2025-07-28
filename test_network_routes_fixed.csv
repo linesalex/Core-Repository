@@ -1,0 +1,6 @@
+circuit_id,repository_type_id,outage_tickets_last_30d,maintenance_tickets_last_30d,kmz_file_path,mtu,sla_latency,live_latency,expected_latency,test_results_link,cable_system,is_special,underlying_carrier,cost,currency,location_a,location_b,bandwidth,capacity_usage_percent,more_details,test_results_file
+ABCDEF123456,1,2,1,,1500,10,8.5,8,http://example.com/test1,Atlantic Cable,false,Carrier A,1500,USD,LONLON,NYCNYC,10 Gbps,75,Primary transatlantic route,
+GHIJKL789012,2,1,0,,1500,15,12.2,12,http://example.com/test2,Pacific Cable,false,Carrier B,2200,USD,SFOSFO,TYOTYO,20 Gbps,82,Pacific submarine cable,
+MNOPQR345678,1,0,1,,1500,8,6.8,7,http://example.com/test3,European Backbone,true,Carrier C,1800,EUR,CHICAG,FRAFRA,15 Gbps,68,European backbone with special pricing,
+STUVWX901234,3,3,2,,1500,20,18.5,18,http://example.com/test4,South American Link,false,Carrier D,1200,USD,MIAMIA,SAORAO,5 Gbps,55,Regional South American connection,
+YZABCD567890,1,1,1,,9000,12,10.1,10,http://example.com/test5,Asia-Pacific Cable,false,Carrier E,2800,USD,HKGHKG,SYDNEY,25 Gbps,90,High capacity Asia-Pacific route,
