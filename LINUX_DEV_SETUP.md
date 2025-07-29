@@ -215,6 +215,11 @@ nano package.json  # Copy content from development machine
 ```bash
 cd /root/Core-Repository/backend
 
+# clear binaries
+rm -rf node_modules package-lock.json
+
+npm rebuild sqlite3.
+
 # Remove any existing SQLite3
 npm uninstall sqlite3
 
