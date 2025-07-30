@@ -80,6 +80,15 @@ function AuthenticatedApp() {
   // User menu state
   const [userMenuAnchor, setUserMenuAnchor] = useState(null);
   
+  // Client-side filtering state for Network Routes (like LocationDataManager pattern)
+  const [routeFilters, setRouteFilters] = useState({
+    circuit_id: '',
+    location: '',
+    cable_system: '',
+    bandwidth: '',
+    is_special: false
+  });
+  
   // Load network routes data - moved before early returns to follow Rules of Hooks
   useEffect(() => {
     // Extra safeguard: ensure token exists before making API calls
@@ -116,6 +125,27 @@ function AuthenticatedApp() {
     return <LoginForm />;
   }
 
+  // Client-side filtering logic (like LocationDataManager pattern)
+  const filteredRows = rows.filter(route => {
+    const matchesCircuitId = !routeFilters.circuit_id || 
+      route.circuit_id.toLowerCase().includes(routeFilters.circuit_id.toLowerCase());
+    
+    const matchesLocation = !routeFilters.location || 
+      route.location_a.toLowerCase().includes(routeFilters.location.toLowerCase()) ||
+      route.location_b.toLowerCase().includes(routeFilters.location.toLowerCase());
+    
+    const matchesCableSystem = !routeFilters.cable_system || 
+      (route.cable_system && route.cable_system.toLowerCase().includes(routeFilters.cable_system.toLowerCase()));
+    
+    const matchesBandwidth = !routeFilters.bandwidth || 
+      (route.bandwidth && route.bandwidth.toString().includes(routeFilters.bandwidth));
+    
+    const matchesSpecial = !routeFilters.is_special || 
+      (route.is_special === 1 || route.is_special === true);
+    
+    return matchesCircuitId && matchesLocation && matchesCableSystem && matchesBandwidth && matchesSpecial;
+  });
+
   const handleMoreDetails = (row) => {
     setDetailsRow(row);
     setDetailsOpen(true);
@@ -124,16 +154,14 @@ function AuthenticatedApp() {
   const handleSearch = (filters) => {
     if (!hasPermission('network_routes', 'view')) return;
     
-    setLoading(true);
-    searchRoutes(filters)
-      .then(data => {
-        setRows(data);
-        setLoading(false);
-      })
-      .catch(err => {
-        setError('Failed to search');
-        setLoading(false);
-      });
+    // Client-side filtering - just update filter state like LocationDataManager
+    setRouteFilters({
+      circuit_id: filters.circuit_id || '',
+      location: filters.location_a || filters.location_b || filters.location || '',
+      cable_system: filters.cable_system || '',
+      bandwidth: filters.bandwidth || '',
+      is_special: filters.is_special === '1' || filters.is_special === true
+    });
   };
 
   const handleExport = () => {
@@ -272,7 +300,7 @@ function AuthenticatedApp() {
       case 'network-routes':
         return hasModuleAccess('network_routes') ? (
           <NetworkRoutesTable
-            rows={rows}
+            rows={filteredRows}
             loading={loading}
             error={error}
             onMoreDetails={handleMoreDetails}
@@ -755,6 +783,7 @@ function AuthenticatedApp() {
             <SearchExportBar 
               onSearch={handleSearch}
               onExport={handleExport}
+              onRefresh={refreshData}
               hasPermission={hasPermission}
             />
           </Box>

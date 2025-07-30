@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, Paper, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, IconButton, Chip,
@@ -9,6 +9,7 @@ import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import DownloadIcon from '@mui/icons-material/Download';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import InfoIcon from '@mui/icons-material/Info';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -50,6 +51,9 @@ const LocationDataManager = ({ hasPermission }) => {
     provider: '',
     access_info: ''
   });
+
+  // Local state for address field to prevent lag during typing
+  const [localAddressValue, setLocalAddressValue] = useState('');
 
   // Add POP capabilities form state for creation
   const [formCapabilities, setFormCapabilities] = useState({
@@ -142,10 +146,20 @@ const LocationDataManager = ({ hasPermission }) => {
   const [filterCountry, setFilterCountry] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [searchText, setSearchText] = useState('');
+  const [datacenterSearch, setDatacenterSearch] = useState('');
 
   // Load locations on component mount
   useEffect(() => {
     loadLocations();
+  }, []);
+
+  // Cleanup debounce timeouts on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(debounceRef.current).forEach(timeout => {
+        if (timeout) clearTimeout(timeout);
+      });
+    };
   }, []);
 
   const loadLocations = async () => {
@@ -185,6 +199,7 @@ const LocationDataManager = ({ hasPermission }) => {
       provider: '',
       access_info: ''
     });
+    setLocalAddressValue(''); // Reset local address state
     setFormCapabilities({ // Reset capabilities for new location
       cnx_extranet_wan: false,
       cnx_ethernet: false,
@@ -219,6 +234,7 @@ const LocationDataManager = ({ hasPermission }) => {
       provider: location.provider || '',
       access_info: location.access_info || ''
     });
+    setLocalAddressValue(location.datacenter_address || ''); // Set local address state
     setFormErrors({}); // Clear validation errors
     setDialogOpen(true);
   };
@@ -234,11 +250,37 @@ const LocationDataManager = ({ hasPermission }) => {
     return text.trim().replace(/\s+/g, ' ').toLowerCase();
   };
 
+  // Debounce ref for input changes
+  const debounceRef = useRef({});
+
+  // Create a debounced version of setFormData for performance optimization
+  const debouncedUpdateFormData = useCallback((field, value, delay = 150) => {
+    // Clear existing timeout for this field
+    if (debounceRef.current[field]) {
+      clearTimeout(debounceRef.current[field]);
+    }
+
+    // Set new timeout
+    debounceRef.current[field] = setTimeout(() => {
+      setFormData(prev => ({
+        ...prev,
+        [field]: value
+      }));
+    }, delay);
+  }, []);
+
   const handleInputChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    // For address field, use local state for immediate UI updates and debounced form state updates
+    if (field === 'datacenter_address') {
+      setLocalAddressValue(value); // Immediate UI update
+      debouncedUpdateFormData(field, value, 200); // 200ms delay for form state
+    } else {
+      // For other fields, update immediately to maintain responsive UI
+      setFormData(prev => ({
+        ...prev,
+        [field]: value
+      }));
+    }
 
     // Auto-populate city and country when POP code is entered
     if (field === 'location_code' && dialogMode === 'add' && value && value.length >= 6) {
@@ -298,8 +340,14 @@ const LocationDataManager = ({ hasPermission }) => {
 
   const handleSubmit = async () => {
     try {
+      // Ensure address field is synchronized before validation and submission
+      const finalFormData = {
+        ...formData,
+        datacenter_address: localAddressValue
+      };
+
       // Validate form using validation framework
-      const validationErrors = validate(formData);
+      const validationErrors = validate(finalFormData);
       setFormErrors(validationErrors);
 
       // Check if there are validation errors
@@ -310,18 +358,18 @@ const LocationDataManager = ({ hasPermission }) => {
 
       // Duplicate prevention - check for existing locations with same POP Code (normalized)
       if (dialogMode === 'add') {
-        const normalizedLocationCode = normalizeText(formData.location_code);
+        const normalizedLocationCode = normalizeText(finalFormData.location_code);
         const existingLocation = locations.find(location => 
           normalizeText(location.location_code) === normalizedLocationCode
         );
         
         if (existingLocation) {
-          setError(`A location with POP Code "${formData.location_code}" already exists. Please use a different POP Code.`);
+          setError(`A location with POP Code "${finalFormData.location_code}" already exists. Please use a different POP Code.`);
           return;
         }
 
         // Create location first
-        const createdLocation = await locationDataApi.createLocation(formData);
+        const createdLocation = await locationDataApi.createLocation(finalFormData);
         
         // Save capabilities for new location if any are enabled
         const hasEnabledCapabilities = Object.values(formCapabilities).some(Boolean);
@@ -360,23 +408,24 @@ const LocationDataManager = ({ hasPermission }) => {
         }
       } else {
         // For edit mode, check duplicates excluding current location
-        const normalizedLocationCode = normalizeText(formData.location_code);
+        const normalizedLocationCode = normalizeText(finalFormData.location_code);
         const existingLocation = locations.find(location => 
           location.id !== selectedLocation.id && 
           normalizeText(location.location_code) === normalizedLocationCode
         );
         
         if (existingLocation) {
-          setError(`A location with POP Code "${formData.location_code}" already exists. Please use a different POP Code.`);
+          setError(`A location with POP Code "${finalFormData.location_code}" already exists. Please use a different POP Code.`);
           return;
         }
 
-        await locationDataApi.updateLocation(selectedLocation.id, formData);
+        await locationDataApi.updateLocation(selectedLocation.id, finalFormData);
         setSuccess('Location updated successfully');
       }
 
       setDialogOpen(false);
       setFormErrors({}); // Clear validation errors on success
+      setFormData(finalFormData); // Update form data with the final synchronized data
       await loadLocations();
 
     } catch (err) {
@@ -426,7 +475,101 @@ const LocationDataManager = ({ hasPermission }) => {
     }
   };
 
-
+  const handleExportCSV = async () => {
+    try {
+      setLoading(true);
+      
+      // Get filtered locations (only the visible ones)
+      const dataToExport = filteredLocations;
+      
+      if (dataToExport.length === 0) {
+        setError('No locations to export. Adjust your filters to include some data.');
+        return;
+      }
+      
+      // Fetch POP capabilities for all filtered locations
+      const locationsWithCapabilities = await Promise.all(
+        dataToExport.map(async (location) => {
+          try {
+            const capabilities = await loadCapabilities(location.id);
+            return { ...location, capabilities };
+          } catch (err) {
+            console.error(`Failed to load capabilities for location ${location.location_code}:`, err);
+            // Return location with empty capabilities if fetch fails
+            const emptyCapabilities = {};
+            popCapabilitiesFields.forEach(field => {
+              emptyCapabilities[field.key] = false;
+            });
+            return { ...location, capabilities: emptyCapabilities };
+          }
+        })
+      );
+      
+      // Create CSV headers - location fields + POP capabilities
+      const headers = [
+        'Location Code',
+        'Region', 
+        'City',
+        'Country',
+        'Datacenter Name',
+        'Datacenter Address',
+        'POP Type',
+        'Status',
+        'Provider',
+        ...popCapabilitiesFields.map(field => field.label)
+      ];
+      
+      // Create CSV rows
+      const csvRows = locationsWithCapabilities.map(location => [
+        location.location_code || '',
+        location.region || '',
+        location.city || '',
+        location.country || '',
+        location.datacenter_name || '',
+        location.datacenter_address || '',
+        location.pop_type || '',
+        location.status || '',
+        location.provider || '',
+        ...popCapabilitiesFields.map(field => 
+          location.capabilities[field.key] ? 'Yes' : 'No'
+        )
+      ]);
+      
+      // Convert to CSV format
+      const csvContent = [
+        headers.join(','),
+        ...csvRows.map(row => 
+          row.map(cell => {
+            // Escape CSV fields that contain commas, quotes, or newlines
+            const cellStr = String(cell);
+            if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+              return `"${cellStr.replace(/"/g, '""')}"`;
+            }
+            return cellStr;
+          }).join(',')
+        )
+      ].join('\n');
+      
+      // Create and download the file
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `locations_with_capabilities_${new Date().toISOString().split('T')[0]}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      setSuccess(`Successfully exported ${dataToExport.length} locations with POP capabilities to CSV`);
+      
+    } catch (err) {
+      console.error('Export failed:', err);
+      setError('Failed to export locations: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getStatusChip = (status) => {
     const colors = {
@@ -463,10 +606,10 @@ const LocationDataManager = ({ hasPermission }) => {
     const matchesSearch = !searchText || 
       location.location_code.toLowerCase().includes(searchText.toLowerCase()) ||
       location.city.toLowerCase().includes(searchText.toLowerCase()) ||
-      location.country.toLowerCase().includes(searchText.toLowerCase()) ||
-      (location.provider && location.provider.toLowerCase().includes(searchText.toLowerCase())) ||
-      (location.datacenter_name && location.datacenter_name.toLowerCase().includes(searchText.toLowerCase()));
-    return matchesCountry && matchesStatus && matchesSearch;
+      location.country.toLowerCase().includes(searchText.toLowerCase());
+    const matchesDatacenter = !datacenterSearch || 
+      (location.datacenter_name && location.datacenter_name.toLowerCase().includes(datacenterSearch.toLowerCase()));
+    return matchesCountry && matchesStatus && matchesSearch && matchesDatacenter;
   });
 
   const uniqueCountries = [...new Set(locations.map(loc => loc.country))].sort();
@@ -496,6 +639,13 @@ const LocationDataManager = ({ hasPermission }) => {
           >
             Refresh
           </Button>
+          <Button
+            variant="outlined"
+            startIcon={<DownloadIcon />}
+            onClick={handleExportCSV}
+          >
+            Export CSV
+          </Button>
         </Box>
       </Box>
 
@@ -508,8 +658,16 @@ const LocationDataManager = ({ hasPermission }) => {
           label="Search"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
-          placeholder="Search by POP code, city, country, provider..."
+          placeholder="Search by POP code, city, country..."
           sx={{ minWidth: 300 }}
+        />
+        <TextField
+          size="small"
+          label="Datacenter Name"
+          value={datacenterSearch}
+          onChange={(e) => setDatacenterSearch(e.target.value)}
+          placeholder="Search by datacenter name..."
+          sx={{ minWidth: 250 }}
         />
         <FormControl size="small" sx={{ minWidth: 120 }}>
           <InputLabel>Country</InputLabel>
@@ -549,7 +707,7 @@ const LocationDataManager = ({ hasPermission }) => {
               <TableCell>City</TableCell>
               <TableCell>Country</TableCell>
               <TableCell>Address</TableCell>
-              <TableCell>Provider</TableCell>
+                              <TableCell>Datacenter Name</TableCell>
               <TableCell>POP Type</TableCell>
               <TableCell>Status</TableCell>
               <TableCell align="center">POP Capabilities</TableCell>
@@ -579,7 +737,7 @@ const LocationDataManager = ({ hasPermission }) => {
                 <TableCell>{location.city}</TableCell>
                 <TableCell>{location.country}</TableCell>
                 <TableCell>{location.datacenter_address || 'N/A'}</TableCell>
-                <TableCell>{location.provider || 'N/A'}</TableCell>
+                <TableCell>{location.datacenter_name || 'N/A'}</TableCell>
                 <TableCell>{getPOPTypeChip(location.pop_type)}</TableCell>
                 <TableCell>{getStatusChip(location.status)}</TableCell>
                 <TableCell align="center">
@@ -714,7 +872,7 @@ const LocationDataManager = ({ hasPermission }) => {
               <ValidatedTextField
                 fullWidth
                 label="Address *"
-                value={formData.datacenter_address}
+                value={localAddressValue}
                 onChange={(e) => handleInputChange('datacenter_address', e.target.value)}
                 field="datacenter_address"
                 errors={formErrors}
@@ -735,7 +893,6 @@ const LocationDataManager = ({ hasPermission }) => {
                 <MenuItem value="Tier 1">Tier 1</MenuItem>
                 <MenuItem value="Tier 2">Tier 2</MenuItem>
                 <MenuItem value="Tier 3">Tier 3</MenuItem>
-                <MenuItem value="Exchange">Exchange</MenuItem>
               </ValidatedSelect>
             </Grid>
             <Grid item xs={12} sm={6}>

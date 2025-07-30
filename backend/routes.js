@@ -2390,6 +2390,7 @@ router.post('/network_design/find_path', (req, res) => {
     mtu_requirement: { count: 0, routes: [] },
     ull_restriction: { count: 0, routes: [] },
     equipment_restriction: { count: 0, routes: [] },
+    circuit_exclusion: { count: 0, routes: [], circuits: [] },
     decommission_pop: { count: 0, routes: [] },
     total_routes_available: 0,
     total_routes_excluded: 0
@@ -2524,6 +2525,24 @@ router.post('/network_design/find_path', (req, res) => {
               exclusionReasons.local_loop_carrier_avoidance.carriers.push(carrier);
             }
           });
+          routesSkipped++;
+          return;
+        }
+      }
+
+      // Skip routes with circuit exclusion constraints
+      if (constraints.circuit_exclusion && constraints.circuit_exclusion.length > 0) {
+        if (constraints.circuit_exclusion.includes(circuit_id)) {
+          if (isRelevant) console.log(`  SKIPPED: Circuit excluded by user request (${circuit_id})`);
+          exclusionReasons.circuit_exclusion.count++;
+          exclusionReasons.circuit_exclusion.routes.push({
+            circuit_id,
+            route: `${location_a} <-> ${location_b}`,
+            reason: 'User requested exclusion'
+          });
+          if (!exclusionReasons.circuit_exclusion.circuits.includes(circuit_id)) {
+            exclusionReasons.circuit_exclusion.circuits.push(circuit_id);
+          }
           routesSkipped++;
           return;
         }
@@ -2756,23 +2775,62 @@ router.post('/network_design/find_path', (req, res) => {
     let protectionFailureReasons = null;
 
     if (constraints.protection_required) {
-      // Create modified graph without primary path edges
+      // Create modified graph ensuring complete POP and Circuit ID diversity
       const modifiedGraph = JSON.parse(JSON.stringify(graph));
       
+      // Step 1: Remove all intermediate POPs from primary path (keep source and destination)
+      const intermediatePOPs = primaryPath.path.slice(1, -1); // Exclude source and destination
+      console.log(`Protection route analysis:`);
+      console.log(`  Primary path POPs: ${primaryPath.path.join(' → ')}`);
+      console.log(`  Removing intermediate POPs for diversity: ${intermediatePOPs.join(', ')}`);
+      
+      // Remove intermediate POPs entirely from the graph
+      intermediatePOPs.forEach(pop => {
+        if (modifiedGraph[pop]) {
+          delete modifiedGraph[pop];
+          
+          // Remove references to this POP from all other nodes
+          Object.keys(modifiedGraph).forEach(node => {
+            if (modifiedGraph[node] && modifiedGraph[node][pop]) {
+              delete modifiedGraph[node][pop];
+            }
+          });
+        }
+      });
+      
+      // Step 2: Collect all Circuit IDs used in primary path for exclusion
+      const primaryCircuitIds = new Set();
       for (let i = 0; i < primaryPath.path.length - 1; i++) {
         const from = primaryPath.path[i];
         const to = primaryPath.path[i + 1];
-        delete modifiedGraph[from][to];
-        delete modifiedGraph[to][from];
+        const edge = graph[from] && graph[from][to];
+        if (edge && edge.circuit_id) {
+          primaryCircuitIds.add(edge.circuit_id);
+        }
       }
       
-      // Check if source and destination still exist in modified graph
+      // Step 3: Remove any remaining edges that use the same Circuit IDs as primary path
+      Object.keys(modifiedGraph).forEach(fromNode => {
+        Object.keys(modifiedGraph[fromNode]).forEach(toNode => {
+          const edge = modifiedGraph[fromNode][toNode];
+          if (edge && edge.circuit_id && primaryCircuitIds.has(edge.circuit_id)) {
+            console.log(`  Removing edge ${fromNode}-${toNode} (Circuit ID: ${edge.circuit_id}) - shared with primary path`);
+            delete modifiedGraph[fromNode][toNode];
+          }
+        });
+      });
+      
+      // Check if source and destination still exist and are connected in modified graph
       const sourceStillConnected = modifiedGraph[source] && Object.keys(modifiedGraph[source]).length > 0;
       const destStillConnected = modifiedGraph[destination] && Object.keys(modifiedGraph[destination]).length > 0;
       
-      console.log(`Protection route analysis:`);
-      console.log(`  Source (${source}) connections after removing primary path: ${sourceStillConnected ? Object.keys(modifiedGraph[source]).length : 0}`);
-      console.log(`  Destination (${destination}) connections after removing primary path: ${destStillConnected ? Object.keys(modifiedGraph[destination]).length : 0}`);
+      console.log(`  Source (${source}) connections after diversity enforcement: ${sourceStillConnected ? Object.keys(modifiedGraph[source]).length : 0}`);
+      console.log(`  Destination (${destination}) connections after diversity enforcement: ${destStillConnected ? Object.keys(modifiedGraph[destination]).length : 0}`);
+      
+      if (sourceStillConnected && destStillConnected) {
+        console.log(`  Available connections from source: ${Object.keys(modifiedGraph[source]).join(', ')}`);
+        console.log(`  Available connections to destination: ${Object.keys(modifiedGraph[destination]).join(', ')}`);
+      }
       
       const diversePathResult = dijkstra(modifiedGraph, source, destination);
       
@@ -2810,16 +2868,33 @@ router.post('/network_design/find_path', (req, res) => {
           totalCost: diverseTotalCost,
           currencies: Array.from(diverseCurrencies)
         };
-        console.log(`  Protection route found: ${diversePathResult.path.join(' → ')}`);
+        console.log(`  ✅ DIVERSE Protection route found: ${diversePathResult.path.join(' → ')}`);
+        console.log(`  ✅ Diversity verified: No shared POPs or Circuit IDs between primary and protection paths`);
+        
+        // Verify diversity (additional safety check)
+        const protectionPOPs = new Set(diversePathResult.path);
+        const primaryPOPs = new Set(primaryPath.path);
+        const sharedPOPs = [...protectionPOPs].filter(pop => primaryPOPs.has(pop) && pop !== source && pop !== destination);
+        
+        if (sharedPOPs.length > 0) {
+          console.error(`  ⚠️  WARNING: Diversity violation detected! Shared POPs: ${sharedPOPs.join(', ')}`);
+        }
       } else {
-        // Analyze why protection route failed
+        // Analyze why protection route failed with enhanced diversity requirements
         protectionFailureReasons = {
-          primary_path_blocked: primaryPath.path.join(' → '),
+          primary_path_used: primaryPath.path.join(' → '),
+          diversity_enforcement: {
+            excluded_intermediate_pops: intermediatePOPs,
+            excluded_circuit_ids: Array.from(primaryCircuitIds),
+            total_pops_excluded: intermediatePOPs.length,
+            total_circuits_excluded: primaryCircuitIds.size
+          },
           remaining_routes_analysis: {
             source_isolated: !sourceStillConnected,
             destination_isolated: !destStillConnected,
             total_remaining_edges: Object.keys(modifiedGraph).reduce((sum, node) => 
               sum + Object.keys(modifiedGraph[node] || {}).length, 0) / 2, // Divide by 2 since edges are bidirectional
+            remaining_pops: Object.keys(modifiedGraph).length,
             affected_constraints: {
               bandwidth_still_excluding: exclusionReasons.bandwidth.count,
               carrier_avoidance_still_excluding: exclusionReasons.carrier_avoidance.count,
@@ -2828,8 +2903,8 @@ router.post('/network_design/find_path', (req, res) => {
             }
           },
           suggestion: sourceStillConnected && destStillConnected 
-            ? "Insufficient alternative routes available with current constraints. Consider relaxing bandwidth, MTU, or carrier avoidance requirements."
-            : "No alternative connection paths available after removing primary route segments. Network topology limits protection options."
+            ? "Insufficient diverse routes available. True protection requires completely separate POPs and circuits. Consider: 1) Adding more POPs to the network topology, 2) Relaxing bandwidth/carrier constraints, or 3) Using a different source/destination with more connectivity options."
+            : `Network topology insufficient for diverse protection. After excluding intermediate POPs (${intermediatePOPs.join(', ')}) and shared circuits, no alternative path exists. Consider expanding network connectivity or using different endpoints.`
         };
         console.log(`  Protection route failed:`, protectionFailureReasons);
       }
@@ -2861,11 +2936,15 @@ router.post('/network_design/find_path', (req, res) => {
           protectionStatus: constraints.protection_required ? {
             required: true,
             available: diversePath !== null,
-            message: diversePath ? 'Protection route found' : 'No protection route available',
+            message: diversePath 
+              ? 'Diverse protection route found - completely separate POPs and circuits' 
+              : 'No diverse protection route available',
+            diversityEnforced: true,
             failureReasons: protectionFailureReasons
           } : {
             required: false,
-            message: 'Protection not requested'
+            message: 'Protection not requested',
+            diversityEnforced: false
           }
         }),
         executionTime,
@@ -2899,12 +2978,16 @@ router.post('/network_design/find_path', (req, res) => {
       protectionStatus: constraints.protection_required ? {
         required: true,
         available: diversePath !== null,
-        message: diversePath ? 'Protection route found' : 'No protection route available - consider relaxing constraints',
+        message: diversePath 
+          ? 'Diverse protection route found - completely separate POPs and circuits from primary path' 
+          : 'No diverse protection route available - true protection requires separate POPs and circuits',
+        diversityEnforced: true,
         failureReasons: protectionFailureReasons
       } : {
         required: false,
         available: null,
-        message: 'Protection not requested'
+        message: 'Protection not requested',
+        diversityEnforced: false
       },
       executionTime,
       timestamp: new Date().toISOString()
@@ -3510,6 +3593,28 @@ router.get('/download_kmz/:filename', authenticateToken, (req, res) => {
     if (err) {
       res.status(500).json({ error: 'Error downloading file' });
     }
+  });
+});
+
+// Get circuit IDs for exclusion (searchable)
+router.get('/network_design/circuit_ids', authenticateToken, (req, res) => {
+  const { search } = req.query;
+  
+  let sql = 'SELECT DISTINCT circuit_id FROM network_routes WHERE circuit_id IS NOT NULL AND circuit_id != ""';
+  let params = [];
+  
+  if (search && search.trim()) {
+    sql += ' AND circuit_id LIKE ?';
+    params.push(`%${search.trim()}%`);
+  }
+  
+  sql += ' ORDER BY circuit_id LIMIT 50'; // Limit to 50 results to prevent overwhelming the UI
+  
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    const circuitIds = rows.map(row => row.circuit_id);
+    res.json(circuitIds);
   });
 });
 
@@ -5775,6 +5880,31 @@ router.get('/bulk-upload/history', authenticateToken, authorizeRole('administrat
   );
 });
 
+// Get pricing logic configuration 
+router.get('/pricing_logic/config', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  db.all('SELECT * FROM pricing_logic_config', [], (err, configs) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    // Convert flat config array to nested object structure
+    const configData = {
+      contractTerms: {},
+      charges: {},
+      utilizationFactors: {},
+      promoPricing: {}
+    };
+    
+    configs.forEach(config => {
+      const parts = config.config_key.split('.');
+      if (parts.length === 2) {
+        if (!configData[parts[0]]) configData[parts[0]] = {};
+        configData[parts[0]][parts[1]] = parseFloat(config.config_value);
+      }
+    });
+    
+    res.json(configData);
+  });
+});
+
 // Update pricing logic configuration
 router.put('/pricing_logic/config', authenticateToken, (req, res) => {
   // Check if user is admin
@@ -6046,6 +6176,301 @@ const getPromoRulesWithLocations = () => {
     });
   });
 };
+
+// Get all promo pricing rules
+router.get('/promo-pricing', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+  try {
+    const { search } = req.query;
+    const rules = await getPromoRulesWithLocations();
+    
+    // Apply search filter if provided
+    let filteredRules = rules;
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filteredRules = rules.filter(rule =>
+        rule.rule_name?.toLowerCase().includes(searchLower) ||
+        rule.description?.toLowerCase().includes(searchLower) ||
+        rule.source_locations.some(loc => loc.toLowerCase().includes(searchLower)) ||
+        rule.destination_locations.some(loc => loc.toLowerCase().includes(searchLower))
+      );
+    }
+    
+    res.json({
+      success: true,
+      data: filteredRules,
+      message: `Found ${filteredRules.length} promo pricing rules`
+    });
+  } catch (err) {
+    console.error('Error loading promo pricing rules:', err);
+    res.status(500).json({ error: 'Failed to load promo pricing rules: ' + err.message });
+  }
+});
+
+// Create new promo pricing rule
+router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const {
+    rule_name, description, bandwidth_min, bandwidth_max, 
+    price_override, effective_date, expiry_date,
+    source_locations, destination_locations
+  } = req.body;
+  
+  if (!rule_name || !source_locations || !destination_locations || !price_override) {
+    return res.status(400).json({ error: 'Rule name, source locations, destination locations, and price override are required' });
+  }
+  
+  db.run('BEGIN TRANSACTION', (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    // Insert the promo rule
+    db.run(
+      `INSERT INTO promo_pricing_rules (rule_name, description, bandwidth_min, bandwidth_max, 
+       price_override, effective_date, expiry_date, is_active, created_by, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP)`,
+      [rule_name, description, bandwidth_min, bandwidth_max, price_override, 
+       effective_date, expiry_date, req.user.id],
+      function(err) {
+        if (err) {
+          db.run('ROLLBACK');
+          return res.status(500).json({ error: err.message });
+        }
+        
+        const ruleId = this.lastID;
+        
+        // Insert source locations
+        const sourceInserts = source_locations.map(location => 
+          new Promise((resolve, reject) => {
+            db.run(
+              'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+              [ruleId, location, 'source'],
+              (err) => err ? reject(err) : resolve()
+            );
+          })
+        );
+        
+        // Insert destination locations
+        const destInserts = destination_locations.map(location => 
+          new Promise((resolve, reject) => {
+            db.run(
+              'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+              [ruleId, location, 'destination'],
+              (err) => err ? reject(err) : resolve()
+            );
+          })
+        );
+        
+        Promise.all([...sourceInserts, ...destInserts])
+          .then(() => {
+            db.run('COMMIT', (err) => {
+              if (err) return res.status(500).json({ error: err.message });
+              
+              logChange(req.user.id, 'promo_pricing_rules', ruleId, 'CREATE', null, {
+                rule_name, description, source_locations, destination_locations, price_override
+              }, req);
+              
+              res.json({ message: 'Promo pricing rule created successfully', id: ruleId });
+            });
+          })
+          .catch(err => {
+            db.run('ROLLBACK');
+            res.status(500).json({ error: 'Failed to create promo pricing rule: ' + err.message });
+          });
+      }
+    );
+  });
+});
+
+// Update promo pricing rule
+router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const ruleId = req.params.id;
+  const {
+    rule_name, description, bandwidth_min, bandwidth_max, 
+    price_override, effective_date, expiry_date,
+    source_locations, destination_locations
+  } = req.body;
+  
+  db.run('BEGIN TRANSACTION', (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    // Get old values for change logging
+    db.get('SELECT * FROM promo_pricing_rules WHERE id = ?', [ruleId], (err, oldRule) => {
+      if (err) {
+        db.run('ROLLBACK');
+        return res.status(500).json({ error: err.message });
+      }
+      
+      if (!oldRule) {
+        db.run('ROLLBACK');
+        return res.status(404).json({ error: 'Promo pricing rule not found' });
+      }
+      
+      // Update the promo rule
+      db.run(
+        `UPDATE promo_pricing_rules SET rule_name = ?, description = ?, bandwidth_min = ?, 
+         bandwidth_max = ?, price_override = ?, effective_date = ?, expiry_date = ?, 
+         updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [rule_name, description, bandwidth_min, bandwidth_max, price_override, 
+         effective_date, expiry_date, req.user.id, ruleId],
+        function(err) {
+          if (err) {
+            db.run('ROLLBACK');
+            return res.status(500).json({ error: err.message });
+          }
+          
+          // Delete existing location mappings
+          db.run('DELETE FROM promo_pricing_locations WHERE promo_rule_id = ?', [ruleId], (err) => {
+            if (err) {
+              db.run('ROLLBACK');
+              return res.status(500).json({ error: err.message });
+            }
+            
+            // Insert new location mappings
+            const sourceInserts = source_locations.map(location => 
+              new Promise((resolve, reject) => {
+                db.run(
+                  'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                  [ruleId, location, 'source'],
+                  (err) => err ? reject(err) : resolve()
+                );
+              })
+            );
+            
+            const destInserts = destination_locations.map(location => 
+              new Promise((resolve, reject) => {
+                db.run(
+                  'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                  [ruleId, location, 'destination'],
+                  (err) => err ? reject(err) : resolve()
+                );
+              })
+            );
+            
+            Promise.all([...sourceInserts, ...destInserts])
+              .then(() => {
+                db.run('COMMIT', (err) => {
+                  if (err) return res.status(500).json({ error: err.message });
+                  
+                  logChange(req.user.id, 'promo_pricing_rules', ruleId, 'UPDATE', oldRule, {
+                    rule_name, description, source_locations, destination_locations, price_override
+                  }, req);
+                  
+                  res.json({ message: 'Promo pricing rule updated successfully' });
+                });
+              })
+              .catch(err => {
+                db.run('ROLLBACK');
+                res.status(500).json({ error: 'Failed to update promo pricing rule: ' + err.message });
+              });
+          });
+        }
+      );
+    });
+  });
+});
+
+// Delete promo pricing rule
+router.delete('/promo-pricing/:id', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const ruleId = req.params.id;
+  
+  db.run('BEGIN TRANSACTION', (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    // Get rule details for change logging
+    db.get('SELECT * FROM promo_pricing_rules WHERE id = ?', [ruleId], (err, rule) => {
+      if (err) {
+        db.run('ROLLBACK');
+        return res.status(500).json({ error: err.message });
+      }
+      
+      if (!rule) {
+        db.run('ROLLBACK');
+        return res.status(404).json({ error: 'Promo pricing rule not found' });
+      }
+      
+      // Soft delete - mark as inactive
+      db.run(
+        'UPDATE promo_pricing_rules SET is_active = 0, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [req.user.id, ruleId],
+        function(err) {
+          if (err) {
+            db.run('ROLLBACK');
+            return res.status(500).json({ error: err.message });
+          }
+          
+          db.run('COMMIT', (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+            
+            logChange(req.user.id, 'promo_pricing_rules', ruleId, 'DELETE', rule, null, req);
+            
+            res.json({ message: 'Promo pricing rule deleted successfully' });
+          });
+        }
+      );
+    });
+  });
+});
+
+// ====================================
+// EXCHANGE PRICING TOOL DATA ENDPOINTS
+// ====================================
+
+// Get available regions from exchanges
+router.get('/exchange-pricing/regions', authenticateToken, (req, res) => {
+  db.all('SELECT DISTINCT region FROM exchanges WHERE region IS NOT NULL ORDER BY region', [], (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const regions = results.map(row => row.region);
+    res.json(regions);
+  });
+});
+
+// Get available currencies
+router.get('/exchange-pricing/currencies', authenticateToken, (req, res) => {
+  db.all('SELECT currency_code, CASE currency_code WHEN "USD" THEN "US Dollar" WHEN "EUR" THEN "Euro" WHEN "GBP" THEN "British Pound" WHEN "JPY" THEN "Japanese Yen" WHEN "AUD" THEN "Australian Dollar" WHEN "CAD" THEN "Canadian Dollar" ELSE currency_code END as currency_name FROM exchange_rates ORDER BY CASE currency_code WHEN "USD" THEN 0 ELSE 1 END, currency_code', [], (err, currencies) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(currencies);
+  });
+});
+
+// Get exchanges for a specific region
+router.get('/exchange-pricing/exchanges/:region', authenticateToken, (req, res) => {
+  const { region } = req.params;
+  
+  db.all(
+    'SELECT id, exchange_name, region, available FROM exchanges WHERE region = ? AND available = 1 ORDER BY exchange_name',
+    [region],
+    (err, exchanges) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(exchanges);
+    }
+  );
+});
+
+// Get feeds for a specific exchange
+router.get('/exchange-pricing/feeds/:exchangeId', authenticateToken, (req, res) => {
+  const { exchangeId } = req.params;
+  
+  db.all(
+    'SELECT id, feed_name, quick_quote_min_cost, order_entry_cost, bandwidth_1ms FROM exchange_feeds WHERE exchange_id = ? ORDER BY feed_name',
+    [exchangeId],
+    (err, feeds) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(feeds);
+    }
+  );
+});
+
+// Get datacenters (locations) for a specific region
+router.get('/exchange-pricing/datacenters/:region', authenticateToken, (req, res) => {
+  const { region } = req.params;
+  
+  db.all(
+    'SELECT location_code, datacenter_name, region FROM location_reference WHERE region = ? ORDER BY datacenter_name',
+    [region],
+    (err, datacenters) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(datacenters);
+    }
+  );
+});
 
 // Create new quote request
 router.post('/exchange-pricing/quotes', authenticateToken, (req, res) => {

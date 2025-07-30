@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, Paper, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, IconButton, Chip,
@@ -64,6 +64,11 @@ const CarriersManager = ({ hasPermission }) => {
   // Validation states
   const [contactErrors, setContactErrors] = useState({});
 
+  // Search and filter states
+  const [searchText, setSearchText] = useState('');
+  const [regionFilter, setRegionFilter] = useState('');
+  const debounceRef = useRef();
+
   // Validation rules for Carrier contact form
   const carrierContactValidationRules = {
     contact_type: { type: 'required', message: 'Contact Type is required' },
@@ -99,6 +104,31 @@ const CarriersManager = ({ hasPermission }) => {
       loadOverdueContacts();
     }
   }, [currentTab]);
+
+  // Debounced search function
+  const debouncedSearch = useCallback((searchValue) => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    
+    debounceRef.current = setTimeout(() => {
+      setSearchText(searchValue);
+    }, 300); // 300ms debounce
+  }, []);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, []);
+
+  // Handle search input change
+  const handleSearchChange = (event) => {
+    debouncedSearch(event.target.value);
+  };
 
   const loadCarriers = async () => {
     try {
@@ -449,6 +479,29 @@ const CarriersManager = ({ hasPermission }) => {
       {/* All Carriers Tab */}
       {currentTab === 0 && (
         <Box role="tabpanel" id="carriers-tabpanel-0" aria-labelledby="carriers-tab-0">
+          {/* Search and Filter */}
+          <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
+            <TextField
+              size="small"
+              label="Search Carriers"
+              onChange={handleSearchChange}
+              placeholder="Search by carrier name or previously known as..."
+              sx={{ minWidth: 350 }}
+            />
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel>Region</InputLabel>
+              <Select
+                value={regionFilter}
+                onChange={(e) => setRegionFilter(e.target.value)}
+                label="Region"
+              >
+                <MenuItem value="">All Regions</MenuItem>
+                <MenuItem value="AMERs">AMERs</MenuItem>
+                <MenuItem value="EMEA">EMEA</MenuItem>
+                <MenuItem value="APAC">APAC</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
           <TableContainer component={Paper}>
             <Table>
           <TableHead>
@@ -460,7 +513,13 @@ const CarriersManager = ({ hasPermission }) => {
             </TableRow>
           </TableHead>
           <TableBody>
-            {carriers.map((carrier) => (
+            {carriers.filter(carrier => {
+              const matchesSearch = !searchText || 
+                carrier.carrier_name.toLowerCase().includes(searchText.toLowerCase()) ||
+                (carrier.previously_known_as && carrier.previously_known_as.toLowerCase().includes(searchText.toLowerCase()));
+              const matchesRegion = !regionFilter || carrier.region === regionFilter;
+              return matchesSearch && matchesRegion;
+            }).map((carrier) => (
               <React.Fragment key={carrier.id}>
                 <TableRow 
                   hover

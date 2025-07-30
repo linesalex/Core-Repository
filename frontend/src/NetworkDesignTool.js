@@ -62,6 +62,7 @@ const NetworkDesignTool = () => {
     protectionRequired: false,
     mtuRequired: '', // Changed from maxLatency to mtuRequired
     carrierAvoidance: [],
+    circuitExclusion: [],
     outputCurrency: 'USD',
     contractTerm: 12,
     quoteRequestId: '',
@@ -72,6 +73,7 @@ const NetworkDesignTool = () => {
   const [locations, setLocations] = useState([]);
   const [exchangeRates, setExchangeRates] = useState({});
   const [carriers, setCarriers] = useState([]);
+  const [circuitIds, setCircuitIds] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [searchResults, setSearchResults] = useState(null);
   const [pricingResults, setPricingResults] = useState(null);
@@ -140,6 +142,16 @@ const NetworkDesignTool = () => {
     }
   };
 
+  const loadCircuitIds = async (search) => {
+    try {
+      const circuitIdsData = await networkDesignApi.getCircuitIds(search);
+      setCircuitIds(circuitIdsData);
+    } catch (err) {
+      console.error('Failed to load circuit IDs:', err);
+      setCircuitIds([]);
+    }
+  };
+
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
       ...prev,
@@ -182,7 +194,8 @@ const NetworkDesignTool = () => {
         constraints: {
           protection_required: formData.protectionRequired,
           mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500, // Default to 1500 if not specified
-          carrier_avoidance: formData.carrierAvoidance.length > 0 ? formData.carrierAvoidance : undefined
+          carrier_avoidance: formData.carrierAvoidance.length > 0 ? formData.carrierAvoidance : undefined,
+          circuit_exclusion: formData.circuitExclusion.length > 0 ? formData.circuitExclusion : undefined
         }
       };
 
@@ -469,6 +482,35 @@ const NetworkDesignTool = () => {
                 />
               </Grid>
 
+              {/* Circuit ID Exclusion - Only shows results when user types */}
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  multiple
+                  options={circuitIds}
+                  getOptionLabel={(option) => option}
+                  value={formData.circuitExclusion}
+                  onChange={(event, newValue) => {
+                    handleInputChange('circuitExclusion', newValue);
+                  }}
+                  onInputChange={(event, inputValue) => {
+                    // Only fetch circuit IDs when user starts typing
+                    if (inputValue && inputValue.length >= 2) {
+                      loadCircuitIds(inputValue);
+                    }
+                  }}
+                  noOptionsText="Type to search circuit IDs..."
+                  loadingText="Loading circuit IDs..."
+                  renderInput={(params) => (
+                    <TextField 
+                      {...params} 
+                      label="Circuit ID Exclusion" 
+                      placeholder="Type to search circuits to exclude..."
+                      helperText="Search and select circuit IDs to exclude from routing"
+                    />
+                  )}
+                />
+              </Grid>
+
               {/* Output Currency - Now searchable */}
               <Grid item xs={12} md={6}>
                 <Autocomplete
@@ -484,7 +526,7 @@ const NetworkDesignTool = () => {
                 />
               </Grid>
 
-              {/* Protection Required */}
+              {/* Protection Required - moved to right side */}
               <Grid item xs={12} md={6}>
                 <FormControlLabel
                   control={
@@ -497,33 +539,7 @@ const NetworkDesignTool = () => {
                 />
               </Grid>
 
-              {/* Include ULL */}
-              <Grid item xs={12} md={6}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={formData.includeULL}
-                      onChange={(e) => handleInputChange('includeULL', e.target.checked)}
-                    />
-                  }
-                  label="Include ULL"
-                />
-              </Grid>
-
-              {/* Include Cisco Only Routes */}
-              <Grid item xs={12} md={6}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={formData.useCiscoOnlyRoutes}
-                      onChange={(e) => handleInputChange('useCiscoOnlyRoutes', e.target.checked)}
-                    />
-                  }
-                  label="Include Cisco Only Routes"
-                />
-              </Grid>
-
-              {/* Contract Term */}
+              {/* Contract Term - left side under Output Currency */}
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
                   <InputLabel>Contract Term</InputLabel>
@@ -539,6 +555,36 @@ const NetworkDesignTool = () => {
                     ))}
                   </Select>
                 </FormControl>
+              </Grid>
+
+              {/* Include Cisco Only Routes - right side with other checkboxes */}
+              <Grid item xs={12} md={6}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.useCiscoOnlyRoutes}
+                      onChange={(e) => handleInputChange('useCiscoOnlyRoutes', e.target.checked)}
+                    />
+                  }
+                  label="Include Cisco Only Routes"
+                />
+              </Grid>
+
+              {/* Empty space for proper alignment */}
+              <Grid item xs={12} md={6}>
+              </Grid>
+
+              {/* Include ULL - right side with other checkboxes */}
+              <Grid item xs={12} md={6}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.includeULL}
+                      onChange={(e) => handleInputChange('includeULL', e.target.checked)}
+                    />
+                  }
+                  label="Include ULL"
+                />
               </Grid>
 
               {/* Action Buttons */}
@@ -767,6 +813,7 @@ const NetworkDesignTool = () => {
                             searchResults.exclusionReasons.local_loop_carrier_avoidance?.count > 0 ||
                             searchResults.exclusionReasons.mtu_requirement.count > 0 ||
                             searchResults.exclusionReasons.ull_restriction.count > 0 ||
+                            searchResults.exclusionReasons.circuit_exclusion?.count > 0 ||
                             searchResults.exclusionReasons.equipment_restriction?.count > 0) && (
                             <Box sx={{ mt: 1 }}>
                               <Typography variant="body2" color="text.secondary">
@@ -788,6 +835,12 @@ const NetworkDesignTool = () => {
                                   <Typography component="li" variant="body2" color="text.secondary">
                                     {searchResults.exclusionReasons.local_loop_carrier_avoidance.count} routes excluded due to local loop carrier avoidance 
                                     ({searchResults.exclusionReasons.local_loop_carrier_avoidance.carriers.join(', ')})
+                                  </Typography>
+                                )}
+                                {searchResults.exclusionReasons.circuit_exclusion?.count > 0 && (
+                                  <Typography component="li" variant="body2" color="text.secondary">
+                                    {searchResults.exclusionReasons.circuit_exclusion.count} routes excluded due to user requested circuit exclusion 
+                                    ({searchResults.exclusionReasons.circuit_exclusion.circuits.join(', ')})
                                   </Typography>
                                 )}
                                 {searchResults.exclusionReasons.mtu_requirement.count > 0 && (

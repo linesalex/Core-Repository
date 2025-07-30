@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Box, TextField, Button, Grid, MenuItem, Checkbox, FormControlLabel } from '@mui/material';
-import SearchIcon from '@mui/icons-material/Search';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import DownloadIcon from '@mui/icons-material/Download';
 import { styled } from '@mui/material/styles';
 
@@ -21,30 +21,52 @@ const SmallTextField = styled(TextField)(({ theme }) => ({
   },
 }));
 
-function SearchExportBar({ onSearch, onExport, hasPermission }) {
+function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission }) {
   const [filters, setFilters] = useState(initialFilters);
+  const debounceRef = useRef();
+
+  // Debounced search function
+  const debouncedSearch = useCallback((filtersToSearch) => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    
+    debounceRef.current = setTimeout(() => {
+      // Always call onSearch for client-side filtering (like LocationDataManager)
+      // Map 'location' to both location_a and location_b for filtering
+      const params = { ...filtersToSearch };
+      if (filtersToSearch.location) {
+        params.location_a = filtersToSearch.location;
+        params.location_b = filtersToSearch.location;
+      }
+      delete params.location;
+      
+      // Convert checkbox value to expected format
+      if (typeof params.is_special === 'boolean') {
+        params.is_special = params.is_special ? '1' : '0';
+      }
+      
+      onSearch(params);
+    }, 300); // 300ms debounce
+  }, [onSearch]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setFilters({ ...filters, [name]: type === 'checkbox' ? checked : value });
+    const newFilters = { ...filters, [name]: type === 'checkbox' ? checked : value };
+    setFilters(newFilters);
+    
+    // Trigger instant search with debounce
+    debouncedSearch(newFilters);
   };
 
-  const handleSearch = () => {
-    // Map 'location' to both location_a and location_b for backend
-    const params = { ...filters };
-    if (filters.location) {
-      params.location_a = filters.location;
-      params.location_b = filters.location;
-    }
-    delete params.location;
-    
-    // Convert checkbox value to backend format
-    if (typeof params.is_special === 'boolean') {
-      params.is_special = params.is_special ? '1' : '0';
-    }
-    
-    onSearch(params);
-  };
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, []);
 
   return (
     <Box sx={{ mb: 2 }}>
@@ -108,8 +130,8 @@ function SearchExportBar({ onSearch, onExport, hasPermission }) {
           />
         </Grid>
         <Grid item>
-          <Button variant="contained" color="primary" startIcon={<SearchIcon />} onClick={handleSearch}>
-            Search
+          <Button variant="outlined" color="primary" startIcon={<RefreshIcon />} onClick={onRefresh}>
+            Refresh
           </Button>
         </Grid>
         <Grid item>

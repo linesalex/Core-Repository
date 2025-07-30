@@ -146,6 +146,9 @@ export const networkDesignApi = {
     window.open(`${API_BASE_URL}/network_design/audit_logs/export`, '_blank');
   },
   
+  // Circuit IDs for exclusion
+  getCircuitIds: (search = '') => api.get(`${API_BASE_URL}/network_design/circuit_ids`, { params: { search } }).then(res => res.data),
+  
   // Convenience methods for accessing location and exchange rate data
   getLocations: () => locationDataApi.getLocations(),
   getExchangeRates: () => exchangeRatesApi.getExchangeRates()
