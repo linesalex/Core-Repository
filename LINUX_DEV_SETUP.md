@@ -155,6 +155,18 @@ sudo yum install -y nodejs
 Choose the deployment method that works best for your environment:
 
 ### **Option A: Direct Git Download and Unzip (Recommended)**
+
+# Stop pm2
+pm2 stop all
+
+# Delete pm2 processes
+
+pm2 delete all 
+
+# rename existing directory
+
+mv Core-Directory Core-DirectoryVX.X
+
 ```bash
 # Create project directory
 cd /root
@@ -171,6 +183,12 @@ mv YOUR_REPO_NAME-Version-V2.3 Core-Repository
 
 # Navigate to project directory
 cd Core-Repository
+
+# Delete downloaded database
+rm network_routes.db
+
+# Copy existing Database to new directory
+cp network_routes.db /root/Core-Repository/network_routes.db
 
 # Verify files are present
 ls -la  # Should show backend/, frontend/, README.md, etc.
