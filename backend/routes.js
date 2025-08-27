@@ -6209,83 +6209,125 @@ router.get('/promo-pricing', authenticateToken, authorizeRole('administrator'), 
 // Create new promo pricing rule
 router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'), (req, res) => {
   const {
-    rule_name, description, bandwidth_min, bandwidth_max, 
-    price_override, effective_date, expiry_date,
-    source_locations, destination_locations
+    rule_name, source_locations, destination_locations,
+    price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
   } = req.body;
   
-  if (!rule_name || !source_locations || !destination_locations || !price_override) {
-    return res.status(400).json({ error: 'Rule name, source locations, destination locations, and price override are required' });
+  // Validate required fields
+  if (!rule_name || !source_locations || !destination_locations) {
+    return res.status(400).json({ error: 'Rule name, source locations, and destination locations are required' });
   }
   
-  db.run('BEGIN TRANSACTION', (err) => {
-    if (err) return res.status(500).json({ error: err.message });
-    
-    // Insert the promo rule
-    db.run(
-      `INSERT INTO promo_pricing_rules (rule_name, description, bandwidth_min, bandwidth_max, 
-       price_override, effective_date, expiry_date, is_active, created_by, created_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP)`,
-      [rule_name, description, bandwidth_min, bandwidth_max, price_override, 
-       effective_date, expiry_date, req.user.id],
-      function(err) {
-        if (err) {
-          db.run('ROLLBACK');
-          return res.status(500).json({ error: err.message });
+  if (!Array.isArray(source_locations) || source_locations.length === 0) {
+    return res.status(400).json({ error: 'Source locations must be a non-empty array' });
+  }
+  
+  if (!Array.isArray(destination_locations) || destination_locations.length === 0) {
+    return res.status(400).json({ error: 'Destination locations must be a non-empty array' });
+  }
+
+  // Helper function to insert locations
+  const insertLocations = (ruleId, callback) => {
+    db.run('BEGIN TRANSACTION', (transErr) => {
+      if (transErr) return callback(transErr);
+      
+      const allLocationInserts = [];
+      
+      // Add all locations to insert array
+      source_locations.forEach(location => {
+        allLocationInserts.push({ ruleId, locationCode: location, locationType: 'source' });
+      });
+      destination_locations.forEach(location => {
+        allLocationInserts.push({ ruleId, locationCode: location, locationType: 'destination' });
+      });
+      
+      // Insert locations sequentially
+      let insertCount = 0;
+      const insertNext = () => {
+        if (insertCount >= allLocationInserts.length) {
+          // All inserts complete, commit
+          db.run('COMMIT', callback);
+          return;
         }
         
-        const ruleId = this.lastID;
-        
-        // Insert source locations
-        const sourceInserts = source_locations.map(location => 
-          new Promise((resolve, reject) => {
-            db.run(
-              'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
-              [ruleId, location, 'source'],
-              (err) => err ? reject(err) : resolve()
-            );
-          })
+        const loc = allLocationInserts[insertCount];
+        console.log(`Inserting location ${insertCount + 1}/${allLocationInserts.length}:`, loc);
+        db.run(
+          'INSERT OR IGNORE INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+          [loc.ruleId, loc.locationCode, loc.locationType],
+          function(err) {
+            if (err) {
+              console.error('Location insert error:', err);
+              db.run('ROLLBACK');
+              return callback(err);
+            }
+            console.log('Location inserted successfully, changes:', this.changes);
+            insertCount++;
+            insertNext();
+          }
         );
-        
-        // Insert destination locations
-        const destInserts = destination_locations.map(location => 
-          new Promise((resolve, reject) => {
-            db.run(
-              'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
-              [ruleId, location, 'destination'],
-              (err) => err ? reject(err) : resolve()
-            );
-          })
-        );
-        
-        Promise.all([...sourceInserts, ...destInserts])
-          .then(() => {
-            db.run('COMMIT', (err) => {
-              if (err) return res.status(500).json({ error: err.message });
-              
-              logChange(req.user.id, 'promo_pricing_rules', ruleId, 'CREATE', null, {
-                rule_name, description, source_locations, destination_locations, price_override
-              }, req);
-              
-              res.json({ message: 'Promo pricing rule created successfully', id: ruleId });
-            });
-          })
-          .catch(err => {
-            db.run('ROLLBACK');
-            res.status(500).json({ error: 'Failed to create promo pricing rule: ' + err.message });
-          });
+      };
+      
+      insertNext();
+    });
+  };
+
+  // Insert the main rule
+  db.run(
+    `INSERT INTO promo_pricing_rules (rule_name, price_under_100mb, price_100_to_999mb, 
+     price_1000_to_2999mb, price_3000mb_plus, is_active, created_by) 
+     VALUES (?, ?, ?, ?, ?, 1, ?)`,
+    [rule_name, parseFloat(price_under_100mb) || 0, parseFloat(price_100_to_999mb) || 0, 
+     parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, req.user.id],
+    function(err) {
+      if (err) {
+        return res.status(500).json({ error: 'Promo pricing insert error: ' + err.message });
       }
-    );
-  });
+      
+      console.log('INSERT result - this.lastID:', this.lastID, 'this.changes:', this.changes);
+      
+      // Query back to get the actual inserted ID using rule_name and created_by
+      db.get(
+        'SELECT id FROM promo_pricing_rules WHERE rule_name = ? AND created_by = ? ORDER BY id DESC LIMIT 1',
+        [rule_name, req.user.id],
+        (selectErr, result) => {
+          if (selectErr) {
+            return res.status(500).json({ error: 'Error retrieving inserted rule ID: ' + selectErr.message });
+          }
+          
+          if (!result || !result.id) {
+            return res.status(500).json({ error: 'Could not find inserted rule ID' });
+          }
+          
+          const ruleId = result.id;
+          console.log('Retrieved rule ID from database:', ruleId);
+          
+          // Insert all locations
+          insertLocations(ruleId, (locErr) => {
+            if (locErr) {
+              return res.status(500).json({ error: 'Failed to insert locations: ' + locErr.message });
+            }
+            
+            // Log the change
+            logChange(req.user.id, 'promo_pricing_rules', ruleId, 'CREATE', null, {
+              rule_name, source_locations, destination_locations, 
+              price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+            }, req);
+            
+            res.json({ message: 'Promo pricing rule created successfully', id: ruleId });
+          });
+        }
+      );
+    }
+  );
 });
 
 // Update promo pricing rule
 router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator'), (req, res) => {
   const ruleId = req.params.id;
   const {
-    rule_name, description, bandwidth_min, bandwidth_max, 
-    price_override, effective_date, expiry_date,
-    source_locations, destination_locations
+    rule_name, source_locations, destination_locations,
+    price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
   } = req.body;
   
   db.run('BEGIN TRANSACTION', (err) => {
@@ -6305,11 +6347,10 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
       
       // Update the promo rule
       db.run(
-        `UPDATE promo_pricing_rules SET rule_name = ?, description = ?, bandwidth_min = ?, 
-         bandwidth_max = ?, price_override = ?, effective_date = ?, expiry_date = ?, 
-         updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [rule_name, description, bandwidth_min, bandwidth_max, price_override, 
-         effective_date, expiry_date, req.user.id, ruleId],
+        `UPDATE promo_pricing_rules SET rule_name = ?, price_under_100mb = ?, price_100_to_999mb = ?, 
+         price_1000_to_2999mb = ?, price_3000mb_plus = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [rule_name, parseFloat(price_under_100mb) || 0, parseFloat(price_100_to_999mb) || 0, 
+         parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, req.user.id, ruleId],
         function(err) {
           if (err) {
             db.run('ROLLBACK');
@@ -6350,7 +6391,8 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
                   if (err) return res.status(500).json({ error: err.message });
                   
                   logChange(req.user.id, 'promo_pricing_rules', ruleId, 'UPDATE', oldRule, {
-                    rule_name, description, source_locations, destination_locations, price_override
+                    rule_name, source_locations, destination_locations,
+                    price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
                   }, req);
                   
                   res.json({ message: 'Promo pricing rule updated successfully' });
@@ -6386,25 +6428,34 @@ router.delete('/promo-pricing/:id', authenticateToken, authorizeRole('administra
         return res.status(404).json({ error: 'Promo pricing rule not found' });
       }
       
-      // Soft delete - mark as inactive
-      db.run(
-        'UPDATE promo_pricing_rules SET is_active = 0, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [req.user.id, ruleId],
-        function(err) {
-          if (err) {
+      // First delete associated location records
+      db.run('DELETE FROM promo_pricing_locations WHERE promo_rule_id = ?', [ruleId], (locErr) => {
+        if (locErr) {
+          db.run('ROLLBACK');
+          return res.status(500).json({ error: 'Error deleting location associations: ' + locErr.message });
+        }
+        
+        // Then hard delete the promo pricing rule
+        db.run('DELETE FROM promo_pricing_rules WHERE id = ?', [ruleId], function(deleteErr) {
+          if (deleteErr) {
             db.run('ROLLBACK');
-            return res.status(500).json({ error: err.message });
+            return res.status(500).json({ error: 'Error deleting promo rule: ' + deleteErr.message });
           }
           
-          db.run('COMMIT', (err) => {
-            if (err) return res.status(500).json({ error: err.message });
+          if (this.changes === 0) {
+            db.run('ROLLBACK');
+            return res.status(404).json({ error: 'Promo pricing rule not found' });
+          }
+          
+          db.run('COMMIT', (commitErr) => {
+            if (commitErr) return res.status(500).json({ error: commitErr.message });
             
             logChange(req.user.id, 'promo_pricing_rules', ruleId, 'DELETE', rule, null, req);
             
-            res.json({ message: 'Promo pricing rule deleted successfully' });
+            res.json({ message: 'Promo pricing rule permanently deleted' });
           });
-        }
-      );
+        });
+      });
     });
   });
 });
