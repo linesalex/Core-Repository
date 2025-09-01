@@ -143,3 +143,5 @@ complete_project_updated.tar.gz
 **/node_modules/sqlite3/build/
 **/node_modules/sqlite3/lib/binding/
 *.node
+*.pack
+*.pack
