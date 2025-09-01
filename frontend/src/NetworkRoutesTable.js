@@ -122,14 +122,21 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
     }
   };
   return (
-    <TableContainer component={Paper}>
-      <Table size="small">
+    <TableContainer component={Paper} sx={{ maxHeight: 600, overflow: 'auto' }}>
+      <Table size="small" stickyHeader>
         <TableHead>
           <TableRow>
             {columns.map(col => {
               const HeaderCell = col.vertical ? VerticalHeaderCell : SmallTableHeaderCell;
               return (
-                <HeaderCell key={col.id} align={col.align || 'left'}>
+                <HeaderCell 
+                  key={col.id} 
+                  align={col.align || 'left'}
+                  sx={{ 
+                    backgroundColor: 'background.paper',
+                    zIndex: 1
+                  }}
+                >
                   {col.label}
                 </HeaderCell>
               );

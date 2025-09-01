@@ -29,6 +29,7 @@ import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import CalculateIcon from '@mui/icons-material/Calculate';
 import { AuthProvider, useAuth } from './AuthContext';
 import LoginForm from './LoginForm';
+import UserRegistration from './UserRegistration';
 import NetworkRoutesTable from './NetworkRoutesTable';
 import NetworkDesignTool from './NetworkDesignTool';
 import ExchangeRatesManager from './ExchangeRatesManager';
@@ -44,6 +45,7 @@ import CoreOutagesTable from './CoreOutagesTable';
 import CarriersManager from './CarriersManager';
 import ExchangeDataManager from './ExchangeDataManager';
 import BulkUpload from './BulkUpload';
+
 import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults } from './api';
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
@@ -55,6 +57,9 @@ const drawerWidth = 280;
 // Main authenticated application component
 function AuthenticatedApp() {
   const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, isModuleVisible, hasPermission, hasRole, permissions, connectionError, passwordResetRequired } = useAuth();
+  
+  // View state for non-authenticated views
+  const [currentView, setCurrentView] = useState('login'); // 'login' or 'register'
   
   const [openDetails, setOpenDetails] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
@@ -120,9 +125,12 @@ function AuthenticatedApp() {
     );
   }
   
-  // Show login form if not authenticated
+  // Show appropriate view if not authenticated
   if (!isAuthenticated) {
-    return <LoginForm />;
+    if (currentView === 'register') {
+      return <UserRegistration onShowLogin={() => setCurrentView('login')} />;
+    }
+    return <LoginForm onShowRegister={() => setCurrentView('register')} />;
   }
 
   // Client-side filtering logic (like LocationDataManager pattern)
@@ -319,6 +327,8 @@ function AuthenticatedApp() {
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
+      
+
       
       case 'minimum-pricing':
         return hasModuleAccess('locations') ? (
@@ -551,6 +561,8 @@ function AuthenticatedApp() {
                         <ListItemText primary="Delete Route" />
                       </ListItem>
                     )}
+
+
                     
                     {(isModuleVisible('core_outages') && hasModuleAccess('network_routes')) && (
                       <ListItem 

@@ -12,7 +12,8 @@ import {
   CardContent,
   CardHeader,
   InputAdornment,
-  IconButton
+  IconButton,
+  Link as MuiLink
 } from '@mui/material';
 import {
   Visibility,
@@ -23,7 +24,7 @@ import {
 import { useAuth } from './AuthContext';
 import ForcedPasswordChange from './ForcedPasswordChange';
 
-const LoginForm = () => {
+const LoginForm = ({ onShowRegister }) => {
   const [credentials, setCredentials] = useState({
     username: '',
     password: ''
@@ -91,6 +92,12 @@ const LoginForm = () => {
 
   const togglePasswordVisibility = () => {
     setShowPassword(!showPassword);
+  };
+
+  const handleRegisterClick = () => {
+    if (onShowRegister) {
+      onShowRegister();
+    }
   };
 
   return (
@@ -193,29 +200,27 @@ const LoginForm = () => {
                   'Sign In'
                 )}
               </Button>
+
+              <Box textAlign="center">
+                <Typography variant="body2" color="text.secondary">
+                  Don't have an account?{' '}
+                  <MuiLink
+                    component="button"
+                    type="button"
+                    variant="body2"
+                    onClick={handleRegisterClick}
+                    disabled={loading}
+                    sx={{ cursor: 'pointer' }}
+                  >
+                    Create a user account
+                  </MuiLink>
+                </Typography>
+              </Box>
             </Box>
           </CardContent>
         </Card>
       </Box>
       
-      {/* Development Note */}
-      <Paper 
-        elevation={2} 
-        sx={{ 
-          mt: 2, 
-          p: 2, 
-          backgroundColor: '#f5f5f5',
-          textAlign: 'center'
-        }}
-      >
-        <Typography variant="body2" color="text.secondary">
-          <strong>Default Admin Credentials:</strong><br />
-          Username: admin<br />
-          Password: admin123<br />
-          <em>Please change the password after first login</em>
-        </Typography>
-      </Paper>
-
       {showForcedPasswordChange && (
         <ForcedPasswordChange
           open={showForcedPasswordChange}

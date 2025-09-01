@@ -249,5 +249,16 @@ export const exchangePricingApi = {
   }
 };
 
+// User Registration
+export const registerUser = (userData) => api.post(`${API_BASE_URL}/register`, userData);
+
+// User Approval (Admin only)
+export const getPendingUsers = () => api.get(`${API_BASE_URL}/users/pending`).then(res => res.data);
+export const approveUser = (userId, approvalData) => api.post(`${API_BASE_URL}/users/${userId}/approve`, approvalData);
+export const rejectUser = (userId) => api.delete(`${API_BASE_URL}/users/${userId}/reject`);
+
+// Locations
+export const getLocations = () => api.get(`${API_BASE_URL}/locations`).then(res => res.data);
+
 // Export the base api object for direct use
 export { api }; 

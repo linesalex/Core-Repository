@@ -398,9 +398,9 @@ const CarriersManager = ({ hasPermission }) => {
 
   const getRegionChip = (region) => {
     const colors = {
-      'AMERs': 'primary',
-      'APAC': 'secondary',
-      'EMEA': 'info'
+      'AMERs': 'primary', // Blue
+      'APAC': 'success',  // Green
+      'EMEA': 'secondary' // Purple
     };
     return <Chip label={region} color={colors[region] || 'default'} size="small" />;
   };

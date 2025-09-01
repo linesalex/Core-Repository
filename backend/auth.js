@@ -186,27 +186,32 @@ const getUserPermissionsWithVisibility = (userId, callback) => {
               };
             });
             
-            // Build visibility map - default all modules to visible
+            // Build visibility map with new requirements:
+            // - Admin users: all modules visible by default
+            // - Provisioner/Read-Only users: respect visibility settings (default off for new users)
             const allModules = [
               'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
               'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
               'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
             ];
             
-            // Set all modules to visible by default
-            allModules.forEach(module => {
-              visibilityMap[module] = true;
-            });
-            
-            // Also include any modules from permissions table
-            permissions.forEach(perm => {
-              visibilityMap[perm.module_name] = true;
-            });
-            
-            // Override with user-specific visibility settings
-            visibilitySettings.forEach(vis => {
-              visibilityMap[vis.module_name] = !!vis.is_visible;
-            });
+            // Default visibility based on user role
+            if (user.user_role === 'administrator') {
+              // Admin users: all modules visible by default
+              allModules.forEach(module => {
+                visibilityMap[module] = true;
+              });
+            } else {
+              // Provisioner/Read-Only users: default to hidden, respect visibility settings
+              allModules.forEach(module => {
+                visibilityMap[module] = false; // Default to hidden
+              });
+              
+              // Override with user-specific visibility settings
+              visibilitySettings.forEach(vis => {
+                visibilityMap[vis.module_name] = !!vis.is_visible;
+              });
+            }
             
             callback(null, { permissions: permissionMap, visibility: visibilityMap });
           }

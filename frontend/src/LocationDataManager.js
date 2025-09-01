@@ -3,7 +3,7 @@ import {
   Box, Paper, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, IconButton, Chip,
   Alert, Snackbar, Tooltip, Grid, Card, CardContent, Select, MenuItem, FormControl, InputLabel,
-  List, ListItem, ListItemText, ListItemIcon, Checkbox, FormControlLabel
+  List, ListItem, ListItemText, ListItemIcon, Checkbox, FormControlLabel, CircularProgress
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -17,8 +17,8 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import { locationDataApi } from './api';
 import { API_BASE_URL } from './config';
-import axios from 'axios';
-import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
+import * as FormValidation from './components/FormValidation';
+const { ValidatedTextField, ValidatedSelect } = FormValidation;
 
 const LocationDataManager = ({ hasPermission }) => {
   const [locations, setLocations] = useState([]);
@@ -37,6 +37,8 @@ const LocationDataManager = ({ hasPermission }) => {
   const [popCapabilitiesDialogOpen, setPopCapabilitiesDialogOpen] = useState(false);
   const [currentAccessInfo, setCurrentAccessInfo] = useState('');
   const [currentCapabilities, setCurrentCapabilities] = useState({});
+  
+
   
   // Form data
   const [formData, setFormData] = useState({
@@ -123,7 +125,7 @@ const LocationDataManager = ({ hasPermission }) => {
   };
 
   // Validation function
-  const validate = createValidator(locationValidationRules);
+  const validate = FormValidation.createValidator(locationValidationRules);
 
   // POP Capabilities structure
   const popCapabilitiesFields = [
@@ -352,7 +354,7 @@ const LocationDataManager = ({ hasPermission }) => {
 
       // Check if there are validation errors
       if (Object.keys(validationErrors).length > 0) {
-        scrollToFirstError(validationErrors);
+        FormValidation.scrollToFirstError(validationErrors);
         return;
       }
 
@@ -600,6 +602,8 @@ const LocationDataManager = ({ hasPermission }) => {
     }
   };
 
+
+
   const filteredLocations = locations.filter(location => {
     const matchesCountry = !filterCountry || location.country.toLowerCase().includes(filterCountry.toLowerCase());
     const matchesStatus = !filterStatus || location.status === filterStatus;
@@ -727,9 +731,9 @@ const LocationDataManager = ({ hasPermission }) => {
                   <Chip 
                     label={location.region || 'N/A'} 
                     color={
-                      location.region === 'AMERs' ? 'primary' : 
-                      location.region === 'EMEA' ? 'secondary' : 
-                      location.region === 'APAC' ? 'success' : 'default'
+                      location.region === 'AMERs' ? 'primary' :   // Blue
+                      location.region === 'EMEA' ? 'secondary' :  // Purple
+                      location.region === 'APAC' ? 'success' : 'default' // Green
                     }
                     size="small"
                   />
@@ -922,6 +926,8 @@ const LocationDataManager = ({ hasPermission }) => {
                 errors={formErrors}
               />
             </Grid>
+
+
 
             {/* POP Capabilities Section - Only show in Add mode */}
             {dialogMode === 'add' && (

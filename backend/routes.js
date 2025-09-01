@@ -417,6 +417,162 @@ router.put('/forced-password-change', authenticateToken, async (req, res) => {
 });
 
 // ====================================
+// USER REGISTRATION & APPROVAL
+// ====================================
+
+// User registration endpoint (public - no authentication required)
+router.post('/register', async (req, res) => {
+  const { username, full_name, email } = req.body;
+  
+  // Validate required fields
+  if (!username || !full_name || !email) {
+    return res.status(400).json({ error: 'Username, full name, and email are required' });
+  }
+  
+  // Normalize username
+  const normalizedUsername = username.toLowerCase().trim();
+  const trimmedUsername = username.trim();
+  
+  // Check if username or email already exists
+  db.get('SELECT id FROM users WHERE LOWER(username) = ? OR LOWER(email) = ?', 
+    [normalizedUsername, email.toLowerCase().trim()], async (err, existingUser) => {
+    if (err) {
+      return res.status(500).json({ error: 'Database error' });
+    }
+    
+    if (existingUser) {
+      return res.status(400).json({ error: 'Username or email already exists' });
+    }
+    
+    try {
+      // Create user with pending approval status and default password
+      const hashedPassword = await hashPassword('abc123');
+      
+      db.run(
+        'INSERT INTO users (username, password_hash, email, full_name, user_role, status, password_reset_required, approval_status, requested_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [trimmedUsername, hashedPassword, email.trim(), full_name.trim(), 'read_only', 'inactive', 1, 'pending', new Date().toISOString()],
+        function (err) {
+          if (err) {
+            console.error('Error creating user registration:', err);
+            return res.status(500).json({ error: 'Registration failed' });
+          }
+          
+          // Log the registration request
+          logChange(null, 'users', this.lastID, 'REGISTER_REQUEST', null, { 
+            username: trimmedUsername, email: email.trim(), full_name: full_name.trim(),
+            approval_status: 'pending'
+          }, req);
+          
+          res.status(201).json({ 
+            message: 'Registration request submitted successfully. An administrator will review your request.'
+          });
+        }
+      );
+    } catch (error) {
+      console.error('Error hashing password for registration:', error);
+      res.status(500).json({ error: 'Registration failed' });
+    }
+  });
+});
+
+// Get pending user registrations (admin only)
+router.get('/users/pending', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  db.all(
+    'SELECT id, username, email, full_name, requested_at FROM users WHERE approval_status = ? ORDER BY requested_at ASC',
+    ['pending'],
+    (err, users) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(users);
+    }
+  );
+});
+
+// Approve user registration (admin only)
+router.post('/users/:id/approve', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const userId = req.params.id;
+  const { user_role, module_visibility } = req.body;
+  
+  if (!user_role) {
+    return res.status(400).json({ error: 'User role is required' });
+  }
+  
+  // Get user details first
+  db.get('SELECT * FROM users WHERE id = ? AND approval_status = ?', [userId, 'pending'], (err, user) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!user) return res.status(404).json({ error: 'Pending user not found' });
+    
+    // Update user with approved status
+    db.run(
+      'UPDATE users SET approval_status = ?, status = ?, user_role = ?, approved_by = ?, approved_at = ? WHERE id = ?',
+      ['approved', 'active', user_role, req.user.id, new Date().toISOString(), userId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        // Set module visibility if provided
+        if (module_visibility && typeof module_visibility === 'object') {
+          const visibilityPromises = Object.entries(module_visibility).map(([moduleName, isVisible]) => {
+            return new Promise((resolve, reject) => {
+              db.run(
+                'INSERT OR REPLACE INTO user_module_visibility (user_id, module_name, is_visible) VALUES (?, ?, ?)',
+                [userId, moduleName, isVisible ? 1 : 0],
+                function(err) {
+                  if (err) reject(err);
+                  else resolve();
+                }
+              );
+            });
+          });
+          
+          Promise.all(visibilityPromises)
+            .then(() => {
+              // Log the approval
+              logChange(req.user.id, 'users', userId, 'APPROVE_REGISTRATION', 
+                { approval_status: 'pending', status: 'inactive', user_role: 'read_only' },
+                { approval_status: 'approved', status: 'active', user_role, approved_by: req.user.id, module_visibility }, req);
+              
+              res.json({ message: 'User approved successfully with module visibility settings' });
+            })
+            .catch((visErr) => {
+              console.error('Failed to set module visibility:', visErr);
+              res.json({ message: 'User approved successfully, but failed to set some module visibility settings' });
+            });
+        } else {
+          // Log the approval without module visibility
+          logChange(req.user.id, 'users', userId, 'APPROVE_REGISTRATION', 
+            { approval_status: 'pending', status: 'inactive', user_role: 'read_only' },
+            { approval_status: 'approved', status: 'active', user_role, approved_by: req.user.id }, req);
+          
+          res.json({ message: 'User approved successfully' });
+        }
+      }
+    );
+  });
+});
+
+// Reject user registration (admin only)
+router.delete('/users/:id/reject', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const userId = req.params.id;
+  
+  // Get user details first for logging
+  db.get('SELECT * FROM users WHERE id = ? AND approval_status = ?', [userId, 'pending'], (err, user) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!user) return res.status(404).json({ error: 'Pending user not found' });
+    
+    // Delete the user registration
+    db.run('DELETE FROM users WHERE id = ?', [userId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      // Log the rejection
+      logChange(req.user.id, 'users', userId, 'REJECT_REGISTRATION', user, null, req);
+      
+      res.json({ message: 'User registration rejected and removed' });
+    });
+  });
+});
+
+
+
+// ====================================
 // USER MANAGEMENT ENDPOINTS
 // ====================================
 

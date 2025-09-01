@@ -84,6 +84,7 @@ const NetworkDesignTool = () => {
   const [success, setSuccess] = useState(null);
   const [expandedAccordion, setExpandedAccordion] = useState('search');
   const [currentTab, setCurrentTab] = useState(0); // Tab state
+  const [expandedLogs, setExpandedLogs] = useState(new Set()); // Track expanded log details
 
   // Currency options
   const currencies = [
@@ -157,6 +158,59 @@ const NetworkDesignTool = () => {
       ...prev,
       [field]: value
     }));
+  };
+
+  const handleContractTermChange = async (newTerm) => {
+    // Update form data with new contract term
+    const updatedFormData = {
+      ...formData,
+      contractTerm: newTerm
+    };
+    setFormData(updatedFormData);
+
+    // Recalculate pricing with new contract term
+    if (searchResults && searchResults.primaryPath) {
+      try {
+        setLoading(true);
+        const paths = [searchResults.primaryPath];
+        if (searchResults.diversePath) paths.push(searchResults.diversePath);
+
+        const pricingParams = {
+          paths,
+          contract_term: newTerm,
+          output_currency: updatedFormData.outputCurrency,
+          include_ull: updatedFormData.includeULL,
+          use_cisco_only_routes: updatedFormData.useCiscoOnlyRoutes,
+          bandwidth: parseFloat(updatedFormData.bandwidth),
+          source: updatedFormData.source,
+          destination: updatedFormData.destination,
+          protection_required: updatedFormData.protectionRequired
+        };
+
+        const newPricingResults = await networkDesignApi.calculatePricing(pricingParams);
+        
+        // Preserve the path metadata (hops, latency) from original search results
+        if (newPricingResults.results && searchResults) {
+          newPricingResults.results = newPricingResults.results.map((result, index) => {
+            const originalPath = index === 0 ? searchResults.primaryPath : searchResults.diversePath;
+            if (originalPath) {
+              return {
+                ...result,
+                hops: originalPath.hops || result.hops,
+                totalLatency: originalPath.totalLatency || result.totalLatency
+              };
+            }
+            return result;
+          });
+        }
+        
+        setPricingResults(newPricingResults);
+      } catch (err) {
+        setError('Failed to recalculate pricing: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
   };
 
   const handleTabChange = (event, newValue) => {
@@ -308,6 +362,106 @@ const NetworkDesignTool = () => {
 
   const formatLatency = (latency) => {
     return Math.round(latency * 10) / 10; // Round to 1 decimal place
+  };
+
+  const toggleLogExpansion = (logId) => {
+    const newExpanded = new Set(expandedLogs);
+    if (newExpanded.has(logId)) {
+      newExpanded.delete(logId);
+    } else {
+      newExpanded.add(logId);
+    }
+    setExpandedLogs(newExpanded);
+  };
+
+  const formatReadableLogSummary = (log) => {
+    try {
+      const params = log.parameters || log.pricing_data?.inputParameters;
+      
+      if (!params) return "No parameter data available";
+
+      let summary = "";
+      
+      // Customer and Request Info
+      if (params.customer_name) summary += `Customer: ${params.customer_name} • `;
+      if (params.quote_request_id) summary += `Quote ID: ${params.quote_request_id} • `;
+      
+      // Route Info
+      if (params.source && params.destination) {
+        summary += `Route: ${params.source} → ${params.destination} • `;
+      }
+      
+      // Bandwidth
+      if (params.bandwidth) summary += `Bandwidth: ${params.bandwidth}Mb • `;
+      
+      // Currency and Contract
+      if (params.output_currency) summary += `Currency: ${params.output_currency} • `;
+      if (params.contract_term) summary += `Contract: ${params.contract_term} months`;
+      
+      // Remove trailing separator
+      summary = summary.replace(/ • $/, '');
+      
+      return summary || "Network design request";
+    } catch (err) {
+      return "Unable to parse log data";
+    }
+  };
+
+  const formatReadableResultsSummary = (log) => {
+    try {
+      const results = log.results || log.pricing_data?.calculationResults;
+      
+      if (!results) return "No results available";
+
+      let summary = "";
+      
+      // Primary and Protection paths
+      if (results.results && results.results.length > 0) {
+        const primaryPath = results.results.find(r => r.pathType === 'primary');
+        const protectionPath = results.results.find(r => r.pathType === 'protection');
+        
+        if (primaryPath) {
+          const currency = primaryPath.pricing?.currency || 'USD';
+          const minPrice = primaryPath.pricing?.minimumPrice;
+          const sugPrice = primaryPath.pricing?.suggestedPrice;
+          if (minPrice && sugPrice) {
+            summary += `Primary: ${formatCurrency(minPrice, currency)}-${formatCurrency(sugPrice, currency)} • `;
+          }
+        }
+        
+        if (protectionPath) {
+          const currency = protectionPath.pricing?.currency || 'USD';
+          const minPrice = protectionPath.pricing?.minimumPrice;
+          const sugPrice = protectionPath.pricing?.suggestedPrice;
+          if (minPrice && sugPrice) {
+            summary += `Protection: ${formatCurrency(minPrice, currency)}-${formatCurrency(sugPrice, currency)} • `;
+          }
+        }
+      }
+      
+      // Protected service pricing
+      if (results.protectionPricing) {
+        const currency = results.protectionPricing.currency || 'USD';
+        const minPrice = results.protectionPricing.minimumPrice;
+        const sugPrice = results.protectionPricing.suggestedPrice;
+        if (minPrice && sugPrice) {
+          summary += `Protected Service: ${formatCurrency(minPrice, currency)}-${formatCurrency(sugPrice, currency)} • `;
+        }
+        
+        // Setup cost
+        const nrc = results.protectionPricing.nrcCharge;
+        if (nrc !== undefined) {
+          summary += `Setup: ${nrc > 0 ? formatCurrency(nrc, currency) : 'FREE'}`;
+        }
+      }
+      
+      // Remove trailing separator
+      summary = summary.replace(/ • $/, '');
+      
+      return summary || "Pricing calculated successfully";
+    } catch (err) {
+      return "Unable to parse results data";
+    }
   };
 
   const handleClearLogs = async () => {
@@ -892,27 +1046,25 @@ const NetworkDesignTool = () => {
                       <Typography variant="h6" gutterBottom>
                         Contract Term Pricing Model
                       </Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Applied Rule: {pricingResults.contractTermDetails.appliedRule}
-                      </Typography>
                       <Grid container spacing={2}>
                         {Object.entries(pricingResults.contractTermDetails.rules).map(([term, rules]) => (
                           <Grid item xs={12} md={4} key={term}>
-                            <Box sx={{ 
-                              p: 2, 
-                              border: term == pricingResults.contractTermDetails.term ? '2px solid' : '1px solid',
-                              borderColor: term == pricingResults.contractTermDetails.term ? 'primary.main' : 'grey.300',
-                              borderRadius: 1,
-                              bgcolor: term == pricingResults.contractTermDetails.term ? 'primary.50' : 'white'
-                            }}>
+                            <Box 
+                              sx={{ 
+                                p: 2, 
+                                border: term == pricingResults.contractTermDetails.term ? '2px solid' : '1px solid',
+                                borderColor: term == pricingResults.contractTermDetails.term ? 'primary.main' : 'grey.300',
+                                borderRadius: 1,
+                                bgcolor: term == pricingResults.contractTermDetails.term ? 'primary.50' : 'white',
+                                cursor: 'pointer',
+                                '&:hover': {
+                                  bgcolor: term == pricingResults.contractTermDetails.term ? 'primary.50' : 'grey.50'
+                                }
+                              }}
+                              onClick={() => handleContractTermChange(parseInt(term))}
+                            >
                               <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>
                                 {term} Months {term == pricingResults.contractTermDetails.term ? '(Selected)' : ''}
-                              </Typography>
-                              <Typography variant="body2" sx={{ mb: 0.5 }}>
-                                Min Margin: {rules.minMargin}
-                              </Typography>
-                              <Typography variant="body2" sx={{ mb: 0.5 }}>
-                                Suggested Margin: {rules.suggestedMargin}
                               </Typography>
                               <Typography variant="body2" color={rules.nrc > 0 ? 'info.main' : 'success.main'} fontWeight="bold">
                                 Setup Fee: {rules.nrc > 0 ? formatCurrency(rules.nrc, pricingResults.contractTermDetails.currency) : 'FREE'}
@@ -933,7 +1085,7 @@ const NetworkDesignTool = () => {
                     <Card sx={{ height: '100%' }}>
                       <CardHeader 
                         title={`${result.pathType === 'primary' ? 'Primary' : 'Protection'} Path`}
-                        subheader={`${result.hops} hops, ${formatLatency(result.totalLatency)}ms latency`}
+                        subheader={`${result.hops} hops, ${formatLatency(result.totalLatency)}ms latency, ${result.pricing.bandwidth}Mb Bandwidth`}
                       />
                       <CardContent>
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
@@ -944,7 +1096,7 @@ const NetworkDesignTool = () => {
                             </Typography>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                               <Typography variant="body2" color="success.main">
-                                Minimum ({result.pricing.targetMinMargin}% margin):
+                                Minimum:
                               </Typography>
                               <Typography variant="body2" fontWeight="bold" color="success.main">
                                 {formatCurrency(result.pricing.minimumPrice, result.pricing.currency)}
@@ -952,7 +1104,7 @@ const NetworkDesignTool = () => {
                             </Box>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                               <Typography variant="body2" color="warning.main">
-                                Suggested ({result.pricing.targetSuggestedMargin}% margin):
+                                Suggested:
                               </Typography>
                               <Typography variant="body2" fontWeight="bold" color="warning.main">
                                 {formatCurrency(result.pricing.suggestedPrice, result.pricing.currency)}
@@ -1003,38 +1155,7 @@ const NetworkDesignTool = () => {
                             </Box>
                           )}
 
-                          {/* Cost Breakdown */}
-                          <Box>
-                            <Typography variant="subtitle2" gutterBottom>Cost Analysis</Typography>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                              <Typography variant="body2">Allocated Cost:</Typography>
-                              <Typography variant="body2">
-                                {formatCurrency(result.pricing.allocatedCost, result.pricing.currency)}
-                              </Typography>
-                            </Box>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                              <Typography variant="body2">Location Minimum:</Typography>
-                              <Typography variant="body2">
-                                {formatCurrency(result.pricing.locationMinimum, result.pricing.currency)}
-                              </Typography>
-                            </Box>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                              <Typography variant="body2">Bandwidth:</Typography>
-                              <Typography variant="body2">{result.pricing.bandwidth} Mbps</Typography>
-                            </Box>
-                          </Box>
 
-                          {/* Margin Information */}
-                          <Box sx={{ bgcolor: 'info.50', p: 1.5, borderRadius: 1 }}>
-                            <Typography variant="caption" display="block">
-                              Actual Margins: {result.pricing.minimumMargin}% - {result.pricing.suggestedMargin}%
-                            </Typography>
-                            {result.pricing.marginEnforced && (
-                              <Typography variant="caption" color="warning.main" display="block">
-                                ⚠ Minimum price enforced by location requirements
-                              </Typography>
-                            )}
-                          </Box>
                         </Box>
                       </CardContent>
                     </Card>
@@ -1047,67 +1168,42 @@ const NetworkDesignTool = () => {
                     <Card sx={{ bgcolor: 'primary.50' }}>
                       <CardHeader 
                         title="Protected Service Pricing"
-                        subheader="100% Primary + 70% Protection Path"
                       />
                       <CardContent>
-                        <Grid container spacing={3}>
-                          <Grid item xs={12} md={6}>
-                            <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1 }}>
-                              <Typography variant="subtitle2" gutterBottom>
-                                Protected Monthly Price Range ({pricingResults.protectionPricing.contractTerm}-month term)
-                              </Typography>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                <Typography variant="body1" color="success.main">
-                                  Minimum (Protected Service):
-                                </Typography>
-                                <Typography variant="h6" fontWeight="bold" color="success.main">
-                                  {formatCurrency(pricingResults.protectionPricing.minimumPrice, pricingResults.protectionPricing.currency)}
-                                </Typography>
-                              </Box>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                                <Typography variant="body1" color="warning.main">
-                                  Suggested (Protected Service):
-                                </Typography>
-                                <Typography variant="h6" fontWeight="bold" color="warning.main">
-                                  {formatCurrency(pricingResults.protectionPricing.suggestedPrice, pricingResults.protectionPricing.currency)}
-                                </Typography>
-                              </Box>
-                              
-                              {/* NRC for Protection */}
-                              <Box sx={{ bgcolor: pricingResults.protectionPricing.nrcCharge > 0 ? 'info.50' : 'success.50', p: 1.5, borderRadius: 1 }}>
-                                <Typography variant="body2" sx={{ mb: 0.5 }}>
-                                  <strong>Setup Fee (One-time):</strong>
-                                </Typography>
-                                <Typography variant="body1" fontWeight="bold" color={pricingResults.protectionPricing.nrcCharge > 0 ? 'info.main' : 'success.main'}>
-                                  {pricingResults.protectionPricing.nrcCharge > 0 
-                                    ? formatCurrency(pricingResults.protectionPricing.nrcCharge, pricingResults.protectionPricing.currency)
-                                    : 'FREE'
-                                  }
-                                </Typography>
-                              </Box>
-                            </Box>
-                          </Grid>
-                          <Grid item xs={12} md={6}>
-                            <Box>
-                              <Typography variant="subtitle2" gutterBottom>Protection Analysis</Typography>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                                <Typography variant="body2">Combined Allocated Cost:</Typography>
-                                <Typography variant="body2">
-                                  {formatCurrency(pricingResults.protectionPricing.allocatedCost, pricingResults.protectionPricing.currency)}
-                                </Typography>
-                              </Box>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                                <Typography variant="body2">Actual Margins:</Typography>
-                                <Typography variant="body2">
-                                  {pricingResults.protectionPricing.minimumMargin}% - {pricingResults.protectionPricing.suggestedMargin}%
-                                </Typography>
-                              </Box>
-                              <Typography variant="caption" color="text.secondary">
-                                Provides full redundancy with backup path
-                              </Typography>
-                            </Box>
-                          </Grid>
-                        </Grid>
+                        <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1 }}>
+                          <Typography variant="subtitle2" gutterBottom>
+                            Protected Monthly Price Range ({pricingResults.protectionPricing.contractTerm}-month term)
+                          </Typography>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                            <Typography variant="body1" color="success.main">
+                              Minimum:
+                            </Typography>
+                            <Typography variant="h6" fontWeight="bold" color="success.main">
+                              {formatCurrency(pricingResults.protectionPricing.minimumPrice, pricingResults.protectionPricing.currency)}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                            <Typography variant="body1" color="warning.main">
+                              Suggested:
+                            </Typography>
+                            <Typography variant="h6" fontWeight="bold" color="warning.main">
+                              {formatCurrency(pricingResults.protectionPricing.suggestedPrice, pricingResults.protectionPricing.currency)}
+                            </Typography>
+                          </Box>
+                          
+                          {/* NRC for Protection */}
+                          <Box sx={{ bgcolor: pricingResults.protectionPricing.nrcCharge > 0 ? 'info.50' : 'success.50', p: 1.5, borderRadius: 1 }}>
+                            <Typography variant="body2" sx={{ mb: 0.5 }}>
+                              <strong>Setup Fee (One-time):</strong>
+                            </Typography>
+                            <Typography variant="body1" fontWeight="bold" color={pricingResults.protectionPricing.nrcCharge > 0 ? 'info.main' : 'success.main'}>
+                              {pricingResults.protectionPricing.nrcCharge > 0 
+                                ? formatCurrency(pricingResults.protectionPricing.nrcCharge, pricingResults.protectionPricing.currency)
+                                : 'FREE'
+                              }
+                            </Typography>
+                          </Box>
+                        </Box>
                       </CardContent>
                     </Card>
                   </Grid>
@@ -1160,77 +1256,117 @@ const NetworkDesignTool = () => {
                   <TableCell><strong>Timestamp</strong></TableCell>
                   <TableCell><strong>User</strong></TableCell>
                   <TableCell><strong>Action</strong></TableCell>
-                  <TableCell><strong>Complete Input Data</strong></TableCell>
-                  <TableCell><strong>Complete Results Data</strong></TableCell>
+                  <TableCell><strong>Request Summary</strong></TableCell>
+                  <TableCell><strong>Pricing Results</strong></TableCell>
                   <TableCell><strong>Execution Time</strong></TableCell>
+                  <TableCell align="center"><strong>Details</strong></TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {auditLogs.map((log) => (
-                  <TableRow key={log.id}>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {new Date(log.timestamp).toLocaleString()}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {log.user_name || 'Unknown User'}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip 
-                        label={log.action_type} 
-                        color={log.action_type === 'PATH_SEARCH' ? 'primary' : 'secondary'} 
-                        size="small" 
-                      />
-                    </TableCell>
-                    <TableCell sx={{ maxWidth: 400 }}>
-                      <Box 
-                        component="pre" 
-                        sx={{ 
-                          fontSize: '0.75rem', 
-                          fontFamily: 'monospace',
-                          whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-word',
-                          maxHeight: '200px',
-                          overflow: 'auto',
-                          backgroundColor: '#f5f5f5',
-                          padding: 1,
-                          borderRadius: 1
-                        }}
-                      >
-                        {log.parameters ? JSON.stringify(log.parameters, null, 2) : 
-                         log.pricing_data?.inputParameters ? JSON.stringify(log.pricing_data.inputParameters, null, 2) : 
-                         'No input data available'}
-                      </Box>
-                    </TableCell>
-                    <TableCell sx={{ maxWidth: 400 }}>
-                      <Box 
-                        component="pre" 
-                        sx={{ 
-                          fontSize: '0.75rem', 
-                          fontFamily: 'monospace',
-                          whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-word',
-                          maxHeight: '200px',
-                          overflow: 'auto',
-                          backgroundColor: '#f5f5f5',
-                          padding: 1,
-                          borderRadius: 1
-                        }}
-                      >
-                        {log.results ? JSON.stringify(log.results, null, 2) : 
-                         log.pricing_data?.calculationResults ? JSON.stringify(log.pricing_data.calculationResults, null, 2) : 
-                         'No results data available'}
-                      </Box>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {log.execution_time ? `${log.execution_time}ms` : 'N/A'}
-                      </Typography>
-                    </TableCell>
-                  </TableRow>
+                  <React.Fragment key={log.id}>
+                    <TableRow>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {new Date(log.timestamp).toLocaleString()}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {log.user_name || 'Unknown User'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={log.action_type} 
+                          color={log.action_type === 'PATH_SEARCH' ? 'primary' : 'secondary'} 
+                          size="small" 
+                        />
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 400 }}>
+                        <Typography variant="body2">
+                          {formatReadableLogSummary(log)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 400 }}>
+                        <Typography variant="body2">
+                          {formatReadableResultsSummary(log)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {log.execution_time ? `${log.execution_time}ms` : 'N/A'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="center">
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => toggleLogExpansion(log.id)}
+                        >
+                          {expandedLogs.has(log.id) ? 'Hide Details' : 'View Details'}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                    {expandedLogs.has(log.id) && (
+                      <TableRow>
+                        <TableCell colSpan={7} sx={{ backgroundColor: '#f8f9fa', border: 'none' }}>
+                          <Box sx={{ p: 2 }}>
+                            <Grid container spacing={2}>
+                              <Grid item xs={12} md={6}>
+                                <Typography variant="subtitle2" gutterBottom>
+                                  <strong>Complete Input Data:</strong>
+                                </Typography>
+                                <Box 
+                                  component="pre" 
+                                  sx={{ 
+                                    fontSize: '0.75rem', 
+                                    fontFamily: 'monospace',
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-word',
+                                    maxHeight: '300px',
+                                    overflow: 'auto',
+                                    backgroundColor: '#f5f5f5',
+                                    padding: 1,
+                                    borderRadius: 1,
+                                    border: '1px solid #ddd'
+                                  }}
+                                >
+                                  {log.parameters ? JSON.stringify(log.parameters, null, 2) : 
+                                   log.pricing_data?.inputParameters ? JSON.stringify(log.pricing_data.inputParameters, null, 2) : 
+                                   'No input data available'}
+                                </Box>
+                              </Grid>
+                              <Grid item xs={12} md={6}>
+                                <Typography variant="subtitle2" gutterBottom>
+                                  <strong>Complete Results Data:</strong>
+                                </Typography>
+                                <Box 
+                                  component="pre" 
+                                  sx={{ 
+                                    fontSize: '0.75rem', 
+                                    fontFamily: 'monospace',
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-word',
+                                    maxHeight: '300px',
+                                    overflow: 'auto',
+                                    backgroundColor: '#f5f5f5',
+                                    padding: 1,
+                                    borderRadius: 1,
+                                    border: '1px solid #ddd'
+                                  }}
+                                >
+                                  {log.results ? JSON.stringify(log.results, null, 2) : 
+                                   log.pricing_data?.calculationResults ? JSON.stringify(log.pricing_data.calculationResults, null, 2) : 
+                                   'No results data available'}
+                                </Box>
+                              </Grid>
+                            </Grid>
+                          </Box>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
                 ))}
               </TableBody>
             </Table>
