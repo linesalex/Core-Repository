@@ -1,29 +1,85 @@
-import React from 'react';
-import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Button } from '@mui/material';
+import React, { useState, useEffect } from 'react';
+import { 
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Button,
+  IconButton, Menu, MenuItem, FormControlLabel, Checkbox, Divider, Typography,
+  Chip, Box
+} from '@mui/material';
 import { styled } from '@mui/material/styles';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
+import ViewColumnIcon from '@mui/icons-material/ViewColumn';
+import SettingsIcon from '@mui/icons-material/Settings';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import SaveIcon from '@mui/icons-material/Save';
 import { downloadTestResults } from './api';
 import { API_BASE_URL } from './config';
 
-const columns = [
-  { id: 'location_a', label: 'Location\nA', vertical: true },
-  { id: 'location_b', label: 'Location\nB', vertical: true },
-  { id: 'circuit_id', label: 'UCN' },
-  { id: 'expected_latency', label: 'Expected\nLatency\n(ms)', vertical: true },
-  { id: 'live_latency', label: 'Live\nLatency\n(ms)', vertical: true },
-  { id: 'bandwidth', label: 'Bandwidth' },
-  { id: 'underlying_carrier', label: 'Underlying\nCarrier', vertical: true },
-  { id: 'cable_system', label: 'Cable\nSystem', vertical: true },
-  { id: 'is_special', label: 'Special/\nULL', vertical: true },
-  { id: 'capacity_usage_percent', label: 'Capacity\nUsage %', vertical: true },
-  { id: 'kmz_file_path', label: 'KMZ\nFile', align: 'center', vertical: true },
-  { id: 'test_results_file', label: 'Test\nResults', align: 'center', vertical: true },
-  { id: 'mtu', label: 'MTU\n(bytes)', vertical: true },
-  { id: 'sla_latency', label: 'SLA\nLatency\n(ms)', vertical: true },
-  { id: 'more_details', label: 'More\nDetails', vertical: true, align: 'center' },
+// All available columns with their configurations
+const ALL_COLUMNS = [
+  { id: 'location_a', label: 'Location\nA', vertical: true, category: 'routing', defaultVisible: true },
+  { id: 'location_b', label: 'Location\nB', vertical: true, category: 'routing', defaultVisible: true },
+  { id: 'circuit_id', label: 'UCN', category: 'identity', defaultVisible: true },
+  { id: 'expected_latency', label: 'Expected\nLatency\n(ms)', vertical: true, category: 'performance', defaultVisible: true },
+  { id: 'live_latency', label: 'Live\nLatency\n(ms)', vertical: true, category: 'performance', defaultVisible: true },
+  { id: 'bandwidth', label: 'Bandwidth', category: 'capacity', defaultVisible: true },
+  { id: 'underlying_carrier', label: 'Underlying\nCarrier', vertical: true, category: 'carrier', defaultVisible: true },
+  { id: 'cable_system', label: 'Cable\nSystem', vertical: true, category: 'infrastructure', defaultVisible: true },
+  { id: 'carrier_protected', label: 'Protected', vertical: true, category: 'protection', defaultVisible: true },
+  { id: 'carrier_protection_route', label: 'Protection\nRoute', vertical: true, category: 'protection', defaultVisible: true },
+  { id: 'is_special', label: 'Special/\nULL', vertical: true, category: 'flags', defaultVisible: true },
+  { id: 'kmz_file_path', label: 'KMZ\nFile', align: 'center', vertical: true, category: 'files', defaultVisible: true },
+  { id: 'test_results_file', label: 'Test\nResults', align: 'center', vertical: true, category: 'files', defaultVisible: true },
+  { id: 'mtu', label: 'MTU\n(bytes)', vertical: true, category: 'technical', defaultVisible: false },
+  { id: 'sla_latency', label: 'SLA\nLatency\n(ms)', vertical: true, category: 'performance', defaultVisible: false },
+  { id: 'cost', label: 'Cost', category: 'financial', defaultVisible: false },
+  { id: 'currency', label: 'Currency', category: 'financial', defaultVisible: false },
+  { id: 'repository_type_id', label: 'Repo\nType', vertical: true, category: 'classification', defaultVisible: false },
+  { id: 'equipment_type', label: 'Equipment\nType', vertical: true, category: 'technical', defaultVisible: false },
+  { id: 'local_loop_carriers_a', label: 'Local Loop\nCarrier A', vertical: true, category: 'carrier', defaultVisible: false },
+  { id: 'local_loop_carriers_b', label: 'Local Loop\nCarrier B', vertical: true, category: 'carrier', defaultVisible: false },
+  { id: 'test_results_link', label: 'Test Results\nLink', vertical: true, category: 'files', defaultVisible: false },
+  { id: 'more_details', label: 'More\nDetails', vertical: true, align: 'center', category: 'actions', defaultVisible: true },
 ];
+
+// Column categories for organization
+const COLUMN_CATEGORIES = {
+  identity: 'Identity',
+  routing: 'Routing', 
+  capacity: 'Capacity',
+  performance: 'Performance',
+  carrier: 'Carrier Info',
+  infrastructure: 'Infrastructure',
+  protection: 'Protection',
+  technical: 'Technical',
+  financial: 'Financial',
+  classification: 'Classification',
+  files: 'Files & Links',
+  flags: 'Flags',
+  actions: 'Actions'
+};
+
+// Get available columns based on user role
+const getAvailableColumns = (userRole) => {
+  return ALL_COLUMNS.filter(col => {
+    // Hide Repository Type for all users (not required)
+    if (col.id === 'repository_type_id') {
+      return false;
+    }
+    
+    // Restrict financial columns to admin users only
+    if (col.category === 'financial') {
+      return userRole === 'administrator';
+    }
+    
+    // All other columns are available to everyone
+    return true;
+  });
+};
+
+// Default visible columns (maintains current view)
+const getDefaultColumns = (userRole) => getAvailableColumns(userRole).filter(col => col.defaultVisible);
 
 const textCellStyle = {
   maxWidth: 220,
@@ -80,7 +136,151 @@ const darkFiberLinkStyle = {
   color: '#9c27b0', // MUI secondary.main
 };
 
-function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onOpenDarkFiber }) {
+function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onOpenDarkFiber, userRole, userId }) {
+  const [visibleColumns, setVisibleColumns] = useState(getDefaultColumns(userRole));
+  const [columnMenuAnchor, setColumnMenuAnchor] = useState(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
+  // Generate user-specific localStorage key
+  const getStorageKey = () => {
+    return `networkRoutes_columnPreferences_${userId || 'default'}`;
+  };
+
+  // Clean up old generic localStorage key on first load (migration)
+  useEffect(() => {
+    const oldKey = 'networkRoutes_columnPreferences';
+    if (localStorage.getItem(oldKey) && userId) {
+      console.log('Migrating column preferences to user-specific storage');
+      localStorage.removeItem(oldKey); // Clean up old generic key
+    }
+  }, [userId]);
+
+  // Load column preferences from localStorage on component mount
+  useEffect(() => {
+    if (!userId) {
+      console.log('NetworkRoutesTable: No userId available yet, using default columns');
+      return; // Don't load preferences if no user ID
+    }
+    
+    const storageKey = getStorageKey();
+    const savedColumns = localStorage.getItem(storageKey);
+    console.log(`NetworkRoutesTable: Loading preferences for user ${userId}, key: ${storageKey}`);
+    console.log('NetworkRoutesTable: Saved columns from localStorage:', savedColumns);
+    
+    if (savedColumns) {
+      try {
+        const columnIds = JSON.parse(savedColumns);
+        const availableColumns = getAvailableColumns(userRole);
+        const customColumns = availableColumns.filter(col => columnIds.includes(col.id));
+        console.log('NetworkRoutesTable: Parsed column IDs:', columnIds);
+        console.log('NetworkRoutesTable: Available columns for role:', availableColumns.map(c => c.id));
+        console.log('NetworkRoutesTable: Filtered custom columns:', customColumns.map(c => c.id));
+        
+        if (customColumns.length > 0) {
+          console.log('NetworkRoutesTable: Setting custom columns');
+          setVisibleColumns(customColumns);
+        } else {
+          console.log('NetworkRoutesTable: No valid custom columns, using defaults');
+          setVisibleColumns(getDefaultColumns(userRole));
+        }
+      } catch (error) {
+        console.error('Failed to load column preferences:', error);
+        setVisibleColumns(getDefaultColumns(userRole));
+      }
+    } else {
+      console.log('NetworkRoutesTable: No saved preferences found, using defaults');
+      setVisibleColumns(getDefaultColumns(userRole));
+    }
+  }, [userRole, userId]);
+
+  // Track changes to mark as unsaved (but don't auto-save anymore)
+  useEffect(() => {
+    if (!userId) return;
+    
+    // Check if current columns differ from saved columns
+    const storageKey = getStorageKey();
+    const savedColumns = localStorage.getItem(storageKey);
+    if (savedColumns) {
+      try {
+        const savedColumnIds = JSON.parse(savedColumns);
+        const currentColumnIds = visibleColumns.map(col => col.id);
+        const hasChanges = JSON.stringify(savedColumnIds) !== JSON.stringify(currentColumnIds);
+        setHasUnsavedChanges(hasChanges);
+      } catch (error) {
+        setHasUnsavedChanges(true);
+      }
+    } else {
+      // No saved preferences, so current state is different from default if it's not default
+      const defaultColumns = getDefaultColumns(userRole);
+      const isDefault = JSON.stringify(visibleColumns.map(c => c.id)) === JSON.stringify(defaultColumns.map(c => c.id));
+      setHasUnsavedChanges(!isDefault);
+    }
+  }, [visibleColumns, userId, userRole]);
+
+  // Manual save function
+  const saveColumnPreferences = () => {
+    if (!userId) {
+      console.log('NetworkRoutesTable: Cannot save - no userId');
+      return;
+    }
+    
+    const columnIds = visibleColumns.map(col => col.id);
+    const storageKey = getStorageKey();
+    console.log(`NetworkRoutesTable: Manually saving preferences for user ${userId}`);
+    console.log('NetworkRoutesTable: Storage key:', storageKey);
+    console.log('NetworkRoutesTable: Saving column IDs:', columnIds);
+    localStorage.setItem(storageKey, JSON.stringify(columnIds));
+    console.log('NetworkRoutesTable: Preferences saved to localStorage');
+    setHasUnsavedChanges(false);
+  };
+
+  // Column customization handlers
+  const handleColumnMenuOpen = (event) => {
+    setColumnMenuAnchor(event.currentTarget);
+  };
+
+  const handleColumnMenuClose = () => {
+    setColumnMenuAnchor(null);
+  };
+
+  const handleColumnToggle = (column) => {
+    setVisibleColumns(prev => {
+      const isVisible = prev.some(col => col.id === column.id);
+      if (isVisible) {
+        return prev.filter(col => col.id !== column.id);
+      } else {
+        // Add column in original order, but only from available columns
+        const availableColumns = getAvailableColumns(userRole);
+        const newColumns = availableColumns.filter(col => 
+          prev.some(p => p.id === col.id) || col.id === column.id
+        );
+        return newColumns;
+      }
+    });
+  };
+
+  const resetToDefault = () => {
+    setVisibleColumns(getDefaultColumns(userRole));
+    handleColumnMenuClose();
+  };
+
+  const isColumnVisible = (columnId) => {
+    return visibleColumns.some(col => col.id === columnId);
+  };
+
+  const moveColumn = (columnId, direction) => {
+    setVisibleColumns(prev => {
+      const currentIndex = prev.findIndex(col => col.id === columnId);
+      if (currentIndex === -1) return prev;
+      
+      const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+      if (newIndex < 0 || newIndex >= prev.length) return prev;
+      
+      const newColumns = [...prev];
+      [newColumns[currentIndex], newColumns[newIndex]] = [newColumns[newIndex], newColumns[currentIndex]];
+      return newColumns;
+    });
+  };
   const handleDownloadKMZ = async (filename) => {
     try {
       // Use fetch with authorization header
@@ -122,37 +322,186 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
     }
   };
   return (
-    <TableContainer component={Paper} sx={{ maxHeight: 600, overflow: 'auto' }}>
-      <Table size="small" stickyHeader>
-        <TableHead>
-          <TableRow>
-            {columns.map(col => {
-              const HeaderCell = col.vertical ? VerticalHeaderCell : SmallTableHeaderCell;
-              return (
-                <HeaderCell 
-                  key={col.id} 
-                  align={col.align || 'left'}
-                  sx={{ 
-                    backgroundColor: 'background.paper',
-                    zIndex: 1
-                  }}
-                >
-                  {col.label}
-                </HeaderCell>
-              );
-            })}
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {rows.map((row) => (
-            <TableRow
-              key={row.circuit_id}
-              hover
-              selected={selectedRow && selectedRow.circuit_id === row.circuit_id}
-              onClick={() => onSelectRow && onSelectRow(row)}
-              style={{ cursor: onSelectRow ? 'pointer' : 'default' }}
+    <Box>
+      {/* Column Customization Toolbar */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, px: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            Showing {visibleColumns.length} of {getAvailableColumns(userRole).length} columns
+          </Typography>
+          <Chip 
+            size="small" 
+            label={`${rows.length} routes`} 
+            color="primary" 
+            variant="outlined" 
+          />
+          {hasUnsavedChanges && (
+            <Chip 
+              size="small" 
+              label="Unsaved Changes" 
+              color="warning" 
+              variant="outlined" 
+            />
+          )}
+        </Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {hasUnsavedChanges && (
+            <Button
+              onClick={saveColumnPreferences}
+              size="small"
+              variant="contained"
+              color="primary"
+              startIcon={<SaveIcon />}
+              sx={{ minWidth: 'auto' }}
             >
-              {columns.map(col => {
+              Save Layout
+            </Button>
+          )}
+          <IconButton 
+            onClick={handleColumnMenuOpen}
+            size="small"
+            sx={{ color: 'primary.main' }}
+            title="Customize Columns"
+          >
+            <ViewColumnIcon />
+          </IconButton>
+        </Box>
+      </Box>
+
+      {/* Column Configuration Menu */}
+      <Menu
+        anchorEl={columnMenuAnchor}
+        open={Boolean(columnMenuAnchor)}
+        onClose={handleColumnMenuClose}
+        PaperProps={{
+          sx: { maxHeight: 500, width: 350 }
+        }}
+      >
+        <MenuItem sx={{ backgroundColor: 'action.hover', fontWeight: 'bold' }}>
+          <ViewColumnIcon sx={{ mr: 1 }} />
+          Customize Table Columns
+        </MenuItem>
+        <Divider />
+        
+        {Object.entries(COLUMN_CATEGORIES).map(([categoryKey, categoryLabel]) => {
+          const availableColumns = getAvailableColumns(userRole);
+          const categoryColumns = availableColumns.filter(col => col.category === categoryKey);
+          if (categoryColumns.length === 0) return null;
+          
+          return (
+            <Box key={categoryKey}>
+              <MenuItem disabled sx={{ fontWeight: 'bold', fontSize: '0.8rem', py: 0.5 }}>
+                {categoryLabel}
+              </MenuItem>
+              {categoryColumns.map(col => (
+                <MenuItem 
+                  key={col.id} 
+                  onClick={() => handleColumnToggle(col)}
+                  sx={{ pl: 3 }}
+                >
+                  <FormControlLabel
+                    control={
+                      <Checkbox 
+                        checked={isColumnVisible(col.id)}
+                        size="small"
+                      />
+                    }
+                    label={col.label.replace(/\n/g, ' ')}
+                    sx={{ 
+                      margin: 0,
+                      fontSize: '0.85rem',
+                      '& .MuiFormControlLabel-label': { fontSize: '0.85rem' }
+                    }}
+                  />
+                </MenuItem>
+              ))}
+            </Box>
+          );
+        })}
+        
+        <Divider sx={{ my: 1 }} />
+        
+        {/* Column Reordering Section */}
+        {visibleColumns.length > 1 && (
+          <>
+            <MenuItem disabled sx={{ fontWeight: 'bold', fontSize: '0.8rem', py: 0.5 }}>
+              Reorder Visible Columns
+            </MenuItem>
+            {visibleColumns.map((col, index) => (
+              <MenuItem key={`reorder-${col.id}`} sx={{ pl: 3, py: 0.5 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                  <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                    {col.label.replace(/\n/g, ' ')}
+                  </Typography>
+                  <Box>
+                    <IconButton 
+                      size="small" 
+                      onClick={(e) => { e.stopPropagation(); moveColumn(col.id, 'up'); }}
+                      disabled={index === 0}
+                      sx={{ p: 0.25 }}
+                    >
+                      <KeyboardArrowUpIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton 
+                      size="small" 
+                      onClick={(e) => { e.stopPropagation(); moveColumn(col.id, 'down'); }}
+                      disabled={index === visibleColumns.length - 1}
+                      sx={{ p: 0.25 }}
+                    >
+                      <KeyboardArrowDownIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+                </Box>
+              </MenuItem>
+            ))}
+            <Divider sx={{ my: 1 }} />
+          </>
+        )}
+        
+        {hasUnsavedChanges && (
+          <MenuItem onClick={saveColumnPreferences} sx={{ justifyContent: 'center', color: 'success.main' }}>
+            <SaveIcon sx={{ mr: 1, fontSize: 'small' }} />
+            Save Current Layout
+          </MenuItem>
+        )}
+        <MenuItem onClick={resetToDefault} sx={{ justifyContent: 'center', color: 'primary.main' }}>
+          <SettingsIcon sx={{ mr: 1, fontSize: 'small' }} />
+          Reset to Default
+        </MenuItem>
+      </Menu>
+
+      {/* Table */}
+      <TableContainer component={Paper} sx={{ maxHeight: 600, overflow: 'auto' }}>
+        <Table size="small" stickyHeader>
+          <TableHead>
+            <TableRow>
+              {visibleColumns.map(col => {
+                const HeaderCell = col.vertical ? VerticalHeaderCell : SmallTableHeaderCell;
+                return (
+                  <HeaderCell 
+                    key={col.id} 
+                    align={col.align || 'left'}
+                    sx={{ 
+                      backgroundColor: 'background.paper',
+                      zIndex: 1
+                    }}
+                  >
+                    {col.label}
+                  </HeaderCell>
+                );
+              })}
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow
+                key={row.circuit_id}
+                hover
+                selected={selectedRow && selectedRow.circuit_id === row.circuit_id}
+                onClick={() => onSelectRow && onSelectRow(row)}
+                style={{ cursor: onSelectRow ? 'pointer' : 'default' }}
+              >
+                {visibleColumns.map(col => {
                 if (col.id === 'more_details') {
                   return (
                     <SmallTableCell key={col.id} style={{ ...textCellStyle, verticalAlign: 'middle', whiteSpace: 'nowrap' }} align="center">
@@ -221,7 +570,9 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
                 return (
                   <SmallTableCell key={col.id} style={textHeavy.includes(col.id) ? textCellStyle : {}} align={col.align || 'left'}>
                     {col.id === 'is_special' ? (row[col.id] ? 'Yes' : 'No') :
-                     col.id === 'capacity_usage_percent' && row[col.id] ? `${row[col.id]}%` :
+                     col.id === 'carrier_protected' ? (row[col.id] ? 'Yes' : 'No') :
+                     col.id === 'carrier_protection_route' && row[col.id] ? 
+                       (row[col.id].length > 16 ? `${row[col.id].substring(0, 16)}...` : row[col.id]) :
                      row[col.id]}
                   </SmallTableCell>
                 );
@@ -231,6 +582,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
         </TableBody>
       </Table>
     </TableContainer>
+    </Box>
   );
 }
 

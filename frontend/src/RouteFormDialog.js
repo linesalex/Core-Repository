@@ -29,7 +29,9 @@ const defaultValues = {
   more_details: '',
   local_loop_carriers_a: '',
   local_loop_carriers_b: '',
-  equipment_type: ''
+  equipment_type: '',
+  carrier_protected: 0,
+  carrier_protection_route: ''
 };
 
 function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit = false, onFileDeleted }) {
@@ -55,7 +57,17 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
     cost: { type: 'required', message: 'Cost is required' },
     underlying_carrier: { type: 'required', message: 'Underlying Carrier is required' },
     equipment_type: { type: 'required', message: 'Equipment Type is required' },
-    bandwidth: { type: 'required', message: 'Bandwidth is required' }
+    bandwidth: { type: 'required', message: 'Bandwidth is required' },
+    carrier_protected: { type: 'required', message: 'Protected field is required' },
+    carrier_protection_route: {
+      type: 'custom',
+      validate: (value, formData) => {
+        if (formData.carrier_protected === 1 && (!value || value.trim() === '')) {
+          return 'Protection Route is required when Protected is Yes';
+        }
+        return null;
+      }
+    }
   };
   
   // Validation function
@@ -646,6 +658,41 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
               fullWidth
               field="cable_system"
               errors={formErrors}
+            />
+          </Grid>
+          <Grid item xs={6}>
+            <ValidatedSelect
+              label="Protected"
+              name="carrier_protected"
+              value={values.carrier_protected}
+              onChange={(e) => {
+                const newValue = e.target.value;
+                handleChange(e);
+                // Clear protection route when Protected is set to No
+                if (newValue === 0) {
+                  setValues(prev => ({ ...prev, carrier_protection_route: '' }));
+                }
+              }}
+              fullWidth
+              required
+              field="carrier_protected"
+              errors={formErrors}
+            >
+              <MenuItem value={0}>No</MenuItem>
+              <MenuItem value={1}>Yes</MenuItem>
+            </ValidatedSelect>
+          </Grid>
+          <Grid item xs={6}>
+            <ValidatedTextField
+              label="Protection Route"
+              name="carrier_protection_route"
+              value={values.carrier_protection_route}
+              onChange={handleChange}
+              fullWidth
+              disabled={values.carrier_protected === 0}
+              field="carrier_protection_route"
+              errors={formErrors}
+              placeholder={values.carrier_protected === 0 ? "Protected must be Yes to enter route" : "Enter protection route details"}
             />
           </Grid>
           <Grid item xs={12}>

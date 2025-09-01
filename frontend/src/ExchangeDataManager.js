@@ -57,6 +57,10 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
   const [feedDialogMode, setFeedDialogMode] = useState('add');
   const [contactDialogMode, setContactDialogMode] = useState('add');
   
+  // File handling state for exchange feeds
+  const [existingDesignFile, setExistingDesignFile] = useState(null);
+  const [fileDeleteLoading, setFileDeleteLoading] = useState(false);
+  
   // Selected items
   const [selectedExchange, setSelectedExchange] = useState(null);
   const [selectedFeed, setSelectedFeed] = useState(null);
@@ -383,6 +387,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     setFeedDialogMode('add');
     setSelectedExchange(exchange);
     setSelectedFeed(null);
+    setExistingDesignFile(null); // Clear existing file for new feed
     setFeedFormData({
       feed_name: '',
       feed_delivery: 'Unicast',
@@ -420,6 +425,10 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     setFeedDialogMode('edit');
     setSelectedExchange(exchange);
     setSelectedFeed(feed);
+    
+    // Set existing design file if present
+    setExistingDesignFile(feed.design_file_path || null);
+    
     setFeedFormData({
       feed_name: feed.feed_name || '',
       feed_delivery: feed.feed_delivery || 'Unicast',
@@ -693,6 +702,35 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
         ...prev,
         design_file: file
       }));
+    }
+  };
+
+  const handleDeleteDesignFile = async () => {
+    if (!selectedFeed || !selectedExchange) return;
+    
+    setFileDeleteLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/exchanges/${selectedExchange.id}/feeds/${selectedFeed.id}/design-file`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete design file');
+      }
+      
+      setExistingDesignFile(null);
+      setSuccess('Design file deleted successfully');
+      
+      // Refresh feeds to update the main table
+      await loadFeeds(selectedExchange.id);
+    } catch (error) {
+      console.error('Error deleting design file:', error);
+      setError('Failed to delete design file: ' + error.message);
+    } finally {
+      setFileDeleteLoading(false);
     }
   };
 
@@ -1650,20 +1688,45 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
             )}
             
             <Grid item xs={12} sm={6}>
-              <Button
-                variant="outlined"
-                component="label"
-                startIcon={<AttachFileIcon />}
-                sx={{ height: '56px' }}
-              >
-                {feedFormData.design_file ? feedFormData.design_file.name : 'Upload PDF Design'}
-                <input
-                  type="file"
-                  hidden
-                  accept=".pdf"
-                  onChange={handleFileChange}
-                />
-              </Button>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Design File
+                </Typography>
+                
+                {existingDesignFile && !feedFormData.design_file ? (
+                  // Show existing file with delete option
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, border: '1px solid #ddd', borderRadius: 1 }}>
+                    <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                      Current file: {existingDesignFile}
+                    </Typography>
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      size="small"
+                      onClick={handleDeleteDesignFile}
+                      disabled={fileDeleteLoading}
+                    >
+                      {fileDeleteLoading ? 'Deleting...' : 'Delete'}
+                    </Button>
+                  </Box>
+                ) : null}
+                
+                <Button
+                  variant="outlined"
+                  component="label"
+                  startIcon={<AttachFileIcon />}
+                  sx={{ height: '56px' }}
+                >
+                  {feedFormData.design_file ? feedFormData.design_file.name : 
+                   (existingDesignFile ? 'Replace PDF Design' : 'Upload PDF Design')}
+                  <input
+                    type="file"
+                    hidden
+                    accept=".pdf"
+                    onChange={handleFileChange}
+                  />
+                </Button>
+              </Box>
             </Grid>
             <Grid item xs={12}>
               <TextField

@@ -4,7 +4,7 @@ import {
   Card, CardContent, CardHeader, Divider, Alert, CircularProgress, Autocomplete,
   FormControlLabel, Switch, Dialog, DialogTitle, DialogContent, DialogActions,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, IconButton,
-  Pagination, InputAdornment
+  Pagination, InputAdornment, Snackbar
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import CalculateIcon from '@mui/icons-material/Calculate';
@@ -51,6 +51,7 @@ const ExchangePricingTool = () => {
   const [formValid, setFormValid] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   
   // History states
@@ -739,7 +740,26 @@ ${pricingDisclaimer}`;
         </DialogActions>
       </Dialog>
 
+      {/* Success/Error Messages */}
+      <Snackbar
+        open={!!success}
+        autoHideDuration={6000}
+        onClose={() => setSuccess('')}
+      >
+        <Alert onClose={() => setSuccess('')} severity="success" sx={{ width: '100%' }}>
+          {success}
+        </Alert>
+      </Snackbar>
 
+      <Snackbar
+        open={!!error}
+        autoHideDuration={6000}
+        onClose={() => setError('')}
+      >
+        <Alert onClose={() => setError('')} severity="error" sx={{ width: '100%' }}>
+          {error}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

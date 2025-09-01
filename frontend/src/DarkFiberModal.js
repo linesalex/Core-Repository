@@ -336,9 +336,11 @@ function DarkFiberModal({ open, onClose, circuitId }) {
                   <TableRow key={row.id}>
                     <TableCell>{row.dwdm_wavelength}</TableCell>
                     <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        {row.dwdm_ucn}
-                        {row.is_reserved && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexDirection: 'row', flexWrap: 'nowrap' }}>
+                        <span style={{ fontFamily: 'monospace', whiteSpace: 'nowrap', wordBreak: 'keep-all', display: 'inline' }}>
+                          {row.dwdm_ucn ? String(row.dwdm_ucn).trim() : ''}
+                        </span>
+                        {Boolean(row.is_reserved) && (
                           <Chip
                             label={isExpired(row.reservation_expires_at) ? 'EXPIRED' : 'RESERVED'}
                             color={isExpired(row.reservation_expires_at) ? 'error' : 'warning'}

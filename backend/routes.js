@@ -1039,28 +1039,69 @@ router.put('/carriers/:id', authenticateToken, authorizePermission('carriers', '
 router.delete('/carriers/:id', authenticateToken, authorizePermission('carriers', 'delete'), (req, res) => {
   const carrierId = req.params.id;
   
-  // Check if carrier has contacts
-  db.get('SELECT COUNT(*) as count FROM carrier_contacts WHERE carrier_id = ?', [carrierId], (err, result) => {
+  // First get the carrier name for usage checks
+  db.get('SELECT * FROM carriers WHERE id = ?', [carrierId], (err, carrier) => {
     if (err) return res.status(500).json({ error: err.message });
+    if (!carrier) return res.status(404).json({ error: 'Carrier not found' });
     
-    if (result.count > 0) {
-      return res.status(400).json({ 
-        error: 'Cannot delete carrier with existing contacts. Please delete all contacts first.' 
-      });
-    }
-    
-    // Get carrier data for change logging
-    db.get('SELECT * FROM carriers WHERE id = ?', [carrierId], (err, carrier) => {
+    // Check if carrier has contacts
+    db.get('SELECT COUNT(*) as count FROM carrier_contacts WHERE carrier_id = ?', [carrierId], (err, result) => {
       if (err) return res.status(500).json({ error: err.message });
-      if (!carrier) return res.status(404).json({ error: 'Carrier not found' });
       
-      db.run('DELETE FROM carriers WHERE id = ?', [carrierId], function(err) {
+      if (result.count > 0) {
+        return res.status(400).json({ 
+          error: 'Cannot delete carrier with existing contacts. Please delete all contacts first.' 
+        });
+      }
+      
+      // Check if carrier is used in network routes (case-insensitive)
+      const carrierName = carrier.carrier_name;
+      const query = `
+        SELECT circuit_id, underlying_carrier, local_loop_carriers_a, local_loop_carriers_b 
+        FROM network_routes 
+        WHERE LOWER(underlying_carrier) = LOWER(?) 
+           OR LOWER(local_loop_carriers_a) = LOWER(?) 
+           OR LOWER(local_loop_carriers_b) = LOWER(?)
+      `;
+      
+      db.all(query, [carrierName, carrierName, carrierName], (err, routes) => {
         if (err) return res.status(500).json({ error: err.message });
-        if (this.changes === 0) return res.status(404).json({ error: 'Carrier not found' });
         
-        logChange(req.user.id, 'carriers', carrier.carrier_name, 'DELETE', carrier, null, req);
+        if (routes && routes.length > 0) {
+          // Limit examples to first 5 routes for readability
+          const exampleRoutes = routes.slice(0, 5).map(route => route.circuit_id);
+          const moreCount = routes.length > 5 ? routes.length - 5 : 0;
+          
+          let errorMessage = `Cannot delete carrier '${carrierName}'. It is currently used in ${routes.length} network route${routes.length > 1 ? 's' : ''}.`;
+          errorMessage += `\n\nExample routes: ${exampleRoutes.join(', ')}`;
+          if (moreCount > 0) {
+            errorMessage += `\nand ${moreCount} more...`;
+          }
+          errorMessage += `\n\nPlease update or remove these network routes first.`;
+          
+          return res.status(400).json({ 
+            error: errorMessage,
+            usedInRoutes: routes.map(route => ({
+              circuit_id: route.circuit_id,
+              fields: [
+                route.underlying_carrier && route.underlying_carrier.toLowerCase() === carrierName.toLowerCase() ? 'underlying_carrier' : null,
+                route.local_loop_carriers_a && route.local_loop_carriers_a.toLowerCase() === carrierName.toLowerCase() ? 'local_loop_carriers_a' : null,
+                route.local_loop_carriers_b && route.local_loop_carriers_b.toLowerCase() === carrierName.toLowerCase() ? 'local_loop_carriers_b' : null
+              ].filter(Boolean)
+            })),
+            carrierName: carrierName
+          });
+        }
         
-        res.json({ message: 'Carrier deleted successfully' });
+        // No usage found, proceed with deletion
+        db.run('DELETE FROM carriers WHERE id = ?', [carrierId], function(err) {
+          if (err) return res.status(500).json({ error: err.message });
+          if (this.changes === 0) return res.status(404).json({ error: 'Carrier not found' });
+          
+          logChange(req.user.id, 'carriers', carrier.carrier_name, 'DELETE', carrier, null, req);
+          
+          res.json({ message: 'Carrier deleted successfully' });
+        });
       });
     });
   });
@@ -1558,7 +1599,7 @@ router.post('/network_routes', authenticateToken, authorizePermission('network_r
     }
     
     const fields = [
-      'circuit_id','repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type'
+      'circuit_id','repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route'
     ];
     const placeholders = fields.map(() => '?').join(',');
     const values = fields.map(f => data[f] ?? (f === 'repository_type_id' ? 1 : null));
@@ -1604,7 +1645,7 @@ router.put('/network_routes/:circuit_id', authenticateToken, authorizePermission
         if (!oldRoute) return res.status(404).json({ error: 'Route not found' });
         
         const fields = [
-          'repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type'
+          'repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route'
         ];
         const setClause = fields.map(f => `${f} = ?`).join(', ');
         const values = fields.map(f => data[f] ?? null);
@@ -1630,19 +1671,33 @@ router.put('/network_routes/:circuit_id', authenticateToken, authorizePermission
 router.delete('/network_routes/:circuit_id', authenticateToken, authorizePermission('network_routes', 'delete'), (req, res) => {
   const { circuit_id } = req.params;
   
-  // Get old values for change logging before deletion
-  db.get('SELECT * FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, oldRoute) => {
+  // First check if there are any dark fiber details associated with this circuit
+  db.all('SELECT id, dwdm_wavelength, dwdm_ucn FROM dark_fiber_details WHERE circuit_id = ?', [circuit_id], (err, darkFiberDetails) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (!oldRoute) return res.status(404).json({ error: 'Route not found' });
     
-    db.run('DELETE FROM network_routes WHERE circuit_id = ?', [circuit_id], function(err) {
+    // If there are dark fiber details, prevent deletion and return details
+    if (darkFiberDetails && darkFiberDetails.length > 0) {
+      return res.status(400).json({ 
+        error: 'Cannot delete network route with existing dark fiber details',
+        darkFiberDetails: darkFiberDetails,
+        message: 'Please delete all dark fiber details first before deleting the network route.'
+      });
+    }
+    
+    // Get old values for change logging before deletion
+    db.get('SELECT * FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, oldRoute) => {
       if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
+      if (!oldRoute) return res.status(404).json({ error: 'Route not found' });
       
-      // Log the deletion
-      logChange(req.user.id, 'network_routes', circuit_id, 'DELETE', oldRoute, null, req);
-      
-      res.json({ message: 'Deleted' });
+      db.run('DELETE FROM network_routes WHERE circuit_id = ?', [circuit_id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
+        
+        // Log the deletion
+        logChange(req.user.id, 'network_routes', circuit_id, 'DELETE', oldRoute, null, req);
+        
+        res.json({ message: 'Deleted' });
+      });
     });
   });
 });
@@ -1730,10 +1785,15 @@ router.get('/network_routes_export', authenticateToken, authorizePermission('net
             WHEN is_special = 0 THEN 'false'
             ELSE 'false'
           END as is_special,
-          underlying_carrier, location_a, location_b, bandwidth, more_details, mtu, sla_latency, capacity_usage_percent 
+          CASE 
+            WHEN carrier_protected = 1 THEN 'Yes'
+            WHEN carrier_protected = 0 THEN 'No'
+            ELSE 'No'
+          END as carrier_protected,
+          underlying_carrier, location_a, location_b, bandwidth, more_details, mtu, sla_latency, capacity_usage_percent, carrier_protection_route 
           FROM network_routes`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    const fields = ['circuit_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
+    const fields = ['circuit_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','carrier_protected','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','carrier_protection_route'];
     const parser = new Parser({ fields });
     const csv = parser.parse(rows);
     res.header('Content-Type', 'text/csv');
@@ -1744,11 +1804,12 @@ router.get('/network_routes_export', authenticateToken, authorizePermission('net
 
 // Search/filter network_routes by query params (visible fields only)
 router.get('/network_routes_search', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
-  const allowedFields = ['circuit_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
+  const allowedFields = ['circuit_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','carrier_protected','carrier_protection_route','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
   const filters = [];
   const values = [];
   
   // Check if we need to search DWDM UCNs in dark fiber details
+  // Search dark fiber for any circuit_id search term
   const searchTerm = req.query.circuit_id;
   const shouldSearchDarkFiber = searchTerm && searchTerm.trim() !== '';
   
@@ -1782,13 +1843,21 @@ router.get('/network_routes_search', authenticateToken, authorizePermission('net
     if (filters.length > 0) {
       mainQuery += ' WHERE ' + filters.join(' AND ');
       
-      // Combine both queries with UNION
-      const combinedQuery = `${mainQuery} UNION ${darkFiberQuery}`;
-      const allValues = [...values, `%${searchTerm}%`];
-      
-      db.all(combinedQuery, allValues, (err, rows) => {
+      // First search main network routes
+      db.all(mainQuery, values, (err, mainRows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
+        
+        // Then search dark fiber and get associated network routes
+        db.all(darkFiberQuery, [`%${searchTerm}%`], (err2, darkRows) => {
+          if (err2) return res.status(500).json({ error: err2.message });
+          
+          // Combine and deduplicate by circuit_id
+          const allRows = [...mainRows, ...darkRows];
+          const uniqueRows = allRows.filter((row, index, self) => 
+            index === self.findIndex(r => r.circuit_id === row.circuit_id)
+          );
+          res.json(uniqueRows);
+        });
       });
     } else {
       // No main filters, just search dark fiber
@@ -2525,8 +2594,8 @@ router.get('/exchange-currencies', (req, res) => {
   });
 });
 // Network Design Path Finding with Dijkstra Algorithm
-router.post('/network_design/find_path', (req, res) => {
-  const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false, use_cisco_only_routes = false } = req.body;
+router.post('/network_design/find_path', authenticateToken, (req, res) => {
+  const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false, use_cisco_only_routes = false, customerName, quoteRequestId } = req.body;
   const startTime = Date.now();
   
   // Validate inputs
@@ -3074,7 +3143,7 @@ router.post('/network_design/find_path', (req, res) => {
       [
         'PATH_SEARCH',
         req.user?.id || null,
-        req.user?.full_name || 'Unknown User',
+        req.user?.username || 'Unknown User',
         JSON.stringify({ 
           source, 
           destination, 
@@ -3082,6 +3151,9 @@ router.post('/network_design/find_path', (req, res) => {
           bandwidth_unit, 
           constraints, 
           include_ull,
+          use_cisco_only_routes,
+          customerName: customerName || '',
+          quoteRequestId: quoteRequestId || '',
           timestamp: new Date().toISOString()
         }),
         JSON.stringify({ 
@@ -3155,8 +3227,8 @@ router.post('/network_design/find_path', (req, res) => {
   });
 });
 // Network Design with Enhanced Pricing
-router.post('/network_design/calculate_pricing', async (req, res) => {
-  const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, bandwidth, source, destination, protection_required = false } = req.body;
+router.post('/network_design/calculate_pricing', authenticateToken, async (req, res) => {
+  const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, bandwidth, source, destination, protection_required = false, customerName, quoteRequestId } = req.body;
   
   if (!paths || !Array.isArray(paths)) {
     return res.status(400).json({ error: 'Paths array is required' });
@@ -3413,7 +3485,7 @@ router.post('/network_design/calculate_pricing', async (req, res) => {
       [
         'CONTRACT_TERM_PRICING_CALCULATION',
         req.user?.id || null,
-        req.user?.full_name || 'Unknown User',
+        req.user?.username || 'Unknown User',
         JSON.stringify({ 
           contract_term, 
           output_currency, 
@@ -3422,6 +3494,8 @@ router.post('/network_design/calculate_pricing', async (req, res) => {
           source, 
           destination, 
           protection_required,
+          customerName: customerName || '',
+          quoteRequestId: quoteRequestId || '',
           timestamp: new Date().toISOString()
         }),
         JSON.stringify({ 
@@ -3432,7 +3506,9 @@ router.post('/network_design/calculate_pricing', async (req, res) => {
             bandwidth,
             source,
             destination,
-            protection_required
+            protection_required,
+            customerName: customerName || '',
+            quoteRequestId: quoteRequestId || ''
           },
           calculationResults: {
             individual: pricingResults,
@@ -4721,7 +4797,7 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
       dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
       pass_through_currency, pass_through_fees_info, design_file_path, more_info,
       quick_quote_min_cost, order_entry_cost, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       exchangeId, feed_name, feed_delivery, feed_type, isf_enabled === 'true' ? 1 : 0,
       isf_a || null, isf_b || null, isf_site_code_a || null, isf_site_code_b || null,
@@ -4926,6 +5002,35 @@ router.get('/exchanges/:exchangeId/feeds/:feedId/download', authenticateToken, a
     }
     
     res.download(filePath, `exchange_design_${feedId}.pdf`);
+  });
+});
+
+// Delete exchange feed design file only
+router.delete('/exchanges/:exchangeId/feeds/:feedId/design-file', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+  const { exchangeId, feedId } = req.params;
+  
+  db.get('SELECT design_file_path FROM exchange_feeds WHERE id = ? AND exchange_id = ?', [feedId, exchangeId], (err, feed) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!feed) return res.status(404).json({ error: 'Exchange feed not found' });
+    if (!feed.design_file_path) return res.status(404).json({ error: 'No design file to delete' });
+    
+    // Delete the file from filesystem
+    const filePath = path.join(__dirname, 'exchange_files', feed.design_file_path);
+    fs.unlink(filePath, (unlinkErr) => {
+      if (unlinkErr) console.error('Failed to delete exchange design file:', unlinkErr);
+    });
+    
+    // Remove file reference from database
+    db.run('UPDATE exchange_feeds SET design_file_path = NULL WHERE id = ? AND exchange_id = ?', [feedId, exchangeId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      // Also remove from exchange_files table
+      db.run('DELETE FROM exchange_files WHERE exchange_feed_id = ?', [feedId], function(err) {
+        if (err) console.error('Failed to remove exchange file record:', err);
+      });
+      
+      res.json({ message: 'Design file deleted successfully' });
+    });
   });
 });
 
@@ -5138,9 +5243,9 @@ const bulkUploadModules = {
       'kmz_file_path', 'mtu', 'sla_latency', 'live_latency', 'expected_latency', 'test_results_link',
       'cable_system', 'is_special', 'underlying_carrier', 'cost', 'currency',
       'location_a', 'location_b', 'bandwidth', 'more_details', 'test_results_file',
-      'local_loop_carriers_a', 'local_loop_carriers_b', 'equipment_type'
+      'local_loop_carriers_a', 'local_loop_carriers_b', 'equipment_type', 'carrier_protected', 'carrier_protection_route'
     ],
-    requiredFields: ['circuit_id', 'location_a', 'location_b', 'underlying_carrier'],
+    requiredFields: ['circuit_id', 'location_a', 'location_b', 'underlying_carrier', 'carrier_protected'],
     sampleData: {
       circuit_id: 'SAMPLE123456',
       repository_type_id: '1',
@@ -5162,7 +5267,9 @@ const bulkUploadModules = {
       test_results_file: '',
       local_loop_carriers_a: 'Carrier A',
       local_loop_carriers_b: 'Carrier B',
-      equipment_type: 'Optical'
+      equipment_type: 'Optical',
+      carrier_protected: '0',
+      carrier_protection_route: ''
     }
   },
   exchange_feeds: {
@@ -6775,7 +6882,7 @@ router.post('/exchange-pricing/quotes', authenticateToken, (req, res) => {
             [
               'EXCHANGE_PRICING_QUOTE',
               req.user?.id || null,
-              req.user?.full_name || 'Unknown User',
+              req.user?.username || 'Unknown User',
               JSON.stringify({
                 customer_name,
                 region,

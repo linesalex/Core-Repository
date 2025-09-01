@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, CssBaseline, Drawer, List, ListItem, ListItemIcon, ListItemText, AppBar, Toolbar, Typography, Button, Container, Paper, 
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse, Menu, MenuItem, IconButton, Chip, CircularProgress,
-  Alert, Divider, Avatar, Grid
+  Alert, Divider, Avatar, Grid, Snackbar
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -93,6 +93,7 @@ function AuthenticatedApp() {
     bandwidth: '',
     is_special: false
   });
+  const [isServerSideFiltered, setIsServerSideFiltered] = useState(false);
   
   // Load network routes data - moved before early returns to follow Rules of Hooks
   useEffect(() => {
@@ -134,7 +135,8 @@ function AuthenticatedApp() {
   }
 
   // Client-side filtering logic (like LocationDataManager pattern)
-  const filteredRows = rows.filter(route => {
+  // Skip client-side filtering if we already did server-side filtering
+  const filteredRows = isServerSideFiltered ? rows : rows.filter(route => {
     const matchesCircuitId = !routeFilters.circuit_id || 
       route.circuit_id.toLowerCase().includes(routeFilters.circuit_id.toLowerCase());
     
@@ -159,17 +161,40 @@ function AuthenticatedApp() {
     setDetailsOpen(true);
   };
 
-  const handleSearch = (filters) => {
+  const handleSearch = async (filters) => {
     if (!hasPermission('network_routes', 'view')) return;
     
-    // Client-side filtering - just update filter state like LocationDataManager
-    setRouteFilters({
-      circuit_id: filters.circuit_id || '',
-      location: filters.location_a || filters.location_b || filters.location || '',
-      cable_system: filters.cable_system || '',
-      bandwidth: filters.bandwidth || '',
-      is_special: filters.is_special === '1' || filters.is_special === true
-    });
+    try {
+      // Use API search when there are filters, especially for circuit_id (UCN search)
+      const hasFilters = Object.values(filters).some(value => value && value !== '');
+      
+      if (hasFilters) {
+        const data = await searchRoutes(filters);
+        setRows(data);
+        setIsServerSideFiltered(true); // Skip client-side filtering
+        setRouteFilters({
+          circuit_id: filters.circuit_id || '',
+          location: filters.location_a || filters.location_b || filters.location || '',
+          cable_system: filters.cable_system || '',
+          bandwidth: filters.bandwidth || '',
+          is_special: filters.is_special === '1' || filters.is_special === true
+        });
+      } else {
+        // No filters - load all routes
+        const data = await fetchRoutes();
+        setRows(data);
+        setIsServerSideFiltered(false); // Use client-side filtering
+        setRouteFilters({
+          circuit_id: '',
+          location: '',
+          cable_system: '',
+          bandwidth: '',
+          is_special: false
+        });
+      }
+    } catch (error) {
+      setError('Failed to search routes: ' + error.message);
+    }
   };
 
   const handleExport = () => {
@@ -256,6 +281,7 @@ function AuthenticatedApp() {
     try {
       const data = await fetchRoutes();
       setRows(data);
+      setIsServerSideFiltered(false); // Reset to client-side filtering
     } catch (err) {
       console.error('Failed to refresh data:', err);
     }
@@ -271,7 +297,17 @@ function AuthenticatedApp() {
       await refreshData();
       setDeleteConfirmOpen(false);
     } catch (err) {
-      setError('Failed to delete route');
+      // Check if this is a dark fiber details error
+      if (err.response?.status === 400 && err.response?.data?.darkFiberDetails) {
+        const darkFiberDetails = err.response.data.darkFiberDetails;
+        const detailsList = darkFiberDetails.map(detail => 
+          `• ${detail.dwdm_wavelength} (UCN: ${detail.dwdm_ucn || 'None'})`
+        ).join('\n');
+        
+        setError(`Cannot delete network route with existing dark fiber details:\n\n${detailsList}\n\nPlease delete all dark fiber details first.`);
+      } else {
+        setError('Failed to delete route: ' + (err.response?.data?.error || err.message));
+      }
     }
   };
 
@@ -316,6 +352,8 @@ function AuthenticatedApp() {
             selectedRow={selectedRow}
             onOpenDarkFiber={handleOpenDarkFiber}
             hasPermission={hasPermission}
+            userRole={user?.role}
+            userId={user?.id}
           />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
@@ -920,6 +958,15 @@ function AuthenticatedApp() {
                 size="small"
               />
             </Grid>
+            <Grid item xs={6}>
+              <TextField
+                label="Capacity Usage %"
+                value={detailsRow && detailsRow.capacity_usage_percent ? `${detailsRow.capacity_usage_percent}%` : ''}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
             <Grid item xs={12}>
               <TextField
                 label="Notes"
@@ -968,6 +1015,18 @@ function AuthenticatedApp() {
         open={passwordResetRequired || false}
         onClose={() => {}} // Will close automatically when passwordResetRequired becomes false
       />
+
+      {/* Error Display */}
+      <Snackbar
+        open={!!error}
+        autoHideDuration={6000}
+        onClose={() => setError(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert severity="error" onClose={() => setError(null)} sx={{ whiteSpace: 'pre-line' }}>
+          {error}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

@@ -243,8 +243,8 @@ const NetworkDesignTool = () => {
         bandwidth_unit: 'Mbps',
         include_ull: formData.includeULL,
         use_cisco_only_routes: formData.useCiscoOnlyRoutes,
-        quote_request_id: formData.quoteRequestId,
-        customer_name: formData.customerName,
+        quoteRequestId: formData.quoteRequestId,
+        customerName: formData.customerName,
         constraints: {
           protection_required: formData.protectionRequired,
           mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500, // Default to 1500 if not specified
@@ -272,7 +272,9 @@ const NetworkDesignTool = () => {
         bandwidth: parseFloat(formData.bandwidth),
         source: formData.source,
         destination: formData.destination,
-        protection_required: formData.protectionRequired
+        protection_required: formData.protectionRequired,
+        quoteRequestId: formData.quoteRequestId,
+        customerName: formData.customerName
       };
 
       const pricing = await networkDesignApi.calculatePricing(pricingParams);
