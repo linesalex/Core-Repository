@@ -49,8 +49,8 @@ const NetworkDesignTool = () => {
   // Check if user can view pricing logs (not read-only)
   const canViewPricingLogs = user && user.role !== 'read_only';
   
-  // Check if user can manage logs (admin or provisioner)
-  const canManageLogs = user && ['administrator', 'provisioner'].includes(user.role);
+  // Check if user can manage logs (admin only)
+  const canManageLogs = user && user.role === 'administrator';
   
   // Form state
   const [formData, setFormData] = useState({
@@ -476,7 +476,12 @@ const NetworkDesignTool = () => {
       setAuditLogs([]);
       setSuccess('Pricing logs cleared successfully');
     } catch (err) {
-      setError('Failed to clear pricing logs: ' + err.message);
+      // Check for 403 Forbidden error
+      if (err.response?.status === 403) {
+        setError('User account forbidden to complete this action');
+      } else {
+        setError('Failed to clear pricing logs: ' + err.message);
+      }
     }
   };
 
@@ -494,7 +499,12 @@ const NetworkDesignTool = () => {
       });
 
       if (!response.ok) {
-        throw new Error(`Export failed: ${response.statusText}`);
+        // Check for 403 Forbidden error
+        if (response.status === 403) {
+          throw new Error('User account forbidden to complete this action');
+        } else {
+          throw new Error(`Export failed: ${response.statusText}`);
+        }
       }
 
       // Get the filename from the response header or use a default

@@ -811,7 +811,7 @@ router.put('/users/:id/module-visibility', authenticateToken, authorizePermissio
 // CHANGE LOGS ENDPOINTS
 // ====================================
 
-// Get change logs (admin and provisioner can view)
+// Get change logs (admin, provisioner, and read-only can view with role-based filtering)
 router.get('/change-logs', authenticateToken, authorizePermission('change_logs', 'view'), (req, res) => {
   const { table_name, table_names, user_id, search, limit = 100, offset = 0 } = req.query;
   
@@ -822,6 +822,16 @@ router.get('/change-logs', authenticateToken, authorizePermission('change_logs',
   `;
   let params = [];
   let conditions = [];
+  
+  // Role-based filtering: non-admin users can only see their own logs
+  if (req.user.role !== 'administrator') {
+    conditions.push('cl.user_id = ?');
+    params.push(req.user.id);
+  } else if (user_id) {
+    // Admin users can filter by specific user_id if provided
+    conditions.push('cl.user_id = ?');
+    params.push(user_id);
+  }
   
   // Handle single table_name (legacy support)
   if (table_name) {
@@ -835,11 +845,6 @@ router.get('/change-logs', authenticateToken, authorizePermission('change_logs',
     const placeholders = tableNamesArray.map(() => '?').join(',');
     conditions.push(`cl.table_name IN (${placeholders})`);
     params.push(...tableNamesArray);
-  }
-  
-  if (user_id) {
-    conditions.push('cl.user_id = ?');
-    params.push(user_id);
   }
   
   if (search) {
@@ -1294,55 +1299,237 @@ router.post('/repository_types', (req, res) => {
   });
 });
 
-// Live Latency API endpoint (placeholder for external data source)
-router.get('/live_latency/:circuit_id', (req, res) => {
-  const { circuit_id } = req.params;
-  
-  // Simulate external API call - in production this would call an actual monitoring API
-  // For now, return simulated data with some random variation
-  const baseLatency = 45; // Base latency in ms
-  const variation = (Math.random() - 0.5) * 10; // Random variation ±5ms
-  const liveLatency = Math.round((baseLatency + variation) * 10) / 10; // Round to 1 decimal
-  
-  // Simulate API response time
-  setTimeout(() => {
-    res.json({
-      circuit_id,
-      live_latency: liveLatency,
-      timestamp: new Date().toISOString(),
-      source: 'Network Monitoring API (Simulated)'
-    });
-  }, 200); // Simulate 200ms API response time
-});
+// Old simulation endpoints removed - these were generating fake data
+// The live latency system now uses:
+// - /api/external/update-live-latency (for external data source)
+// - /api/live-latency/refresh-all (manual refresh - currently returns no data source configured)
+// - /api/live-latency/history/:circuit_id (historical data)
+// - /api/live-latency/status (data freshness check)
 
-// Batch live latency for multiple circuits
-router.post('/live_latency/batch', (req, res) => {
-  const { circuit_ids } = req.body;
+// Enhanced Live Latency Management Endpoints
+
+// External API endpoint for updating live latency data (for external monitoring systems)
+router.post('/api/external/update-live-latency', (req, res) => {
+  const updates = req.body;
   
-  if (!circuit_ids || !Array.isArray(circuit_ids)) {
-    return res.status(400).json({ error: 'circuit_ids array is required' });
+  // Validate input format
+  if (!Array.isArray(updates)) {
+    return res.status(400).json({ error: 'Expected array of latency updates' });
   }
   
-  // Simulate batch API call
-  const results = circuit_ids.map(circuit_id => {
-    const baseLatency = 45;
-    const variation = (Math.random() - 0.5) * 10;
-    const liveLatency = Math.round((baseLatency + variation) * 10) / 10;
-    
-    return {
-      circuit_id,
-      live_latency: liveLatency,
-      timestamp: new Date().toISOString()
-    };
-  });
+  let processed = 0;
+  let errors = [];
   
-  setTimeout(() => {
-    res.json({
-      results,
-      source: 'Network Monitoring API (Simulated)',
-      total: results.length
+  const processUpdate = (update, callback) => {
+    const { circuit_id, latency_ms, timestamp } = update;
+    
+    if (!circuit_id || latency_ms === undefined) {
+      errors.push(`Invalid update: circuit_id and latency_ms required for ${JSON.stringify(update)}`);
+      return callback();
+    }
+    
+    // Check if circuit exists
+    db.get('SELECT circuit_id FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, route) => {
+      if (err) {
+        errors.push(`Database error for ${circuit_id}: ${err.message}`);
+        return callback();
+      }
+      
+      if (!route) {
+        errors.push(`Circuit not found: ${circuit_id}`);
+        return callback();
+      }
+      
+      // Update live latency with timestamp and source
+      db.run(
+        'UPDATE network_routes SET live_latency = ?, live_latency_last_updated = ?, live_latency_source = ? WHERE circuit_id = ?',
+        [latency_ms, timestamp || new Date().toISOString(), 'external_api', circuit_id],
+        (updateErr) => {
+          if (updateErr) {
+            errors.push(`Update failed for ${circuit_id}: ${updateErr.message}`);
+          } else {
+            processed++;
+          }
+          callback();
+        }
+      );
     });
-  }, 300); // Simulate 300ms batch API response time
+  };
+  
+  // Process all updates
+  let pending = updates.length;
+  updates.forEach(update => {
+    processUpdate(update, () => {
+      pending--;
+      if (pending === 0) {
+        res.json({
+          success: true,
+          processed,
+          total: updates.length,
+          errors: errors.length > 0 ? errors : undefined,
+          timestamp: new Date().toISOString()
+        });
+      }
+    });
+  });
+});
+
+// Manual refresh endpoint - triggers fetch from external source
+router.post('/api/live-latency/refresh-all', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+  // TODO: When external API details are available, implement actual API calls here
+  // For now, return a clear message that no external source is configured
+  
+  res.json({
+    success: false,
+    message: 'No external live latency data source configured. Please configure your external monitoring API first.',
+    updated: 0,
+    total: 0,
+    timestamp: new Date().toISOString(),
+    note: 'Use the /api/external/update-live-latency endpoint to push data from your monitoring system'
+  });
+});
+
+// Get live latency history for a specific circuit
+router.get('/api/live-latency/history/:circuit_id', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+  const { circuit_id } = req.params;
+  const { days = 30 } = req.query; // Default to 30 days
+  
+  // Validate days parameter
+  const validDays = [7, 30, 90];
+  const daysParsed = parseInt(days);
+  if (!validDays.includes(daysParsed)) {
+    return res.status(400).json({ error: 'Days must be 7, 30, or 90' });
+  }
+  
+  // Get history data
+  db.all(
+    `SELECT snapshot_date, latency_ms, sla_latency, created_at 
+     FROM live_latency_history 
+     WHERE circuit_id = ? AND snapshot_date >= date('now', '-${daysParsed} days')
+     ORDER BY snapshot_date ASC`,
+    [circuit_id],
+    (err, history) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      
+      // Get current route info
+      db.get(
+        'SELECT circuit_id, live_latency, sla_latency, live_latency_last_updated, live_latency_source FROM network_routes WHERE circuit_id = ?',
+        [circuit_id],
+        (routeErr, route) => {
+          if (routeErr) {
+            return res.status(500).json({ error: routeErr.message });
+          }
+          
+          if (!route) {
+            return res.status(404).json({ error: 'Circuit not found' });
+          }
+          
+          res.json({
+            circuit_id,
+            current: {
+              latency_ms: route.live_latency,
+              sla_latency: route.sla_latency,
+              last_updated: route.live_latency_last_updated,
+              source: route.live_latency_source
+            },
+            history,
+            days: daysParsed,
+            count: history.length
+          });
+        }
+      );
+    }
+  );
+});
+
+// Daily snapshot job endpoint (to be called by scheduler)
+router.post('/api/live-latency/create-daily-snapshot', (req, res) => {
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+  
+  // Get all routes with live latency data
+  db.all(
+    'SELECT circuit_id, live_latency, sla_latency FROM network_routes WHERE live_latency IS NOT NULL',
+    [],
+    (err, routes) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      
+      let processed = 0;
+      let errors = [];
+      
+      if (routes.length === 0) {
+        return res.json({ success: true, message: 'No routes with latency data to snapshot', processed: 0 });
+      }
+      
+      routes.forEach(route => {
+        db.run(
+          `INSERT OR REPLACE INTO live_latency_history 
+           (circuit_id, latency_ms, sla_latency, snapshot_date) 
+           VALUES (?, ?, ?, ?)`,
+          [route.circuit_id, route.live_latency, route.sla_latency, today],
+          (snapshotErr) => {
+            if (snapshotErr) {
+              errors.push(`Failed to snapshot ${route.circuit_id}: ${snapshotErr.message}`);
+            } else {
+              processed++;
+            }
+            
+            // When all done, clean up old data (>90 days) and respond
+            if (processed + errors.length === routes.length) {
+              db.run(
+                'DELETE FROM live_latency_history WHERE snapshot_date < date("now", "-90 days")',
+                [],
+                (cleanupErr) => {
+                  res.json({
+                    success: true,
+                    message: `Daily snapshot created for ${processed} circuits`,
+                    processed,
+                    total: routes.length,
+                    errors: errors.length > 0 ? errors : undefined,
+                    cleanup: cleanupErr ? `Cleanup warning: ${cleanupErr.message}` : 'Old data cleaned up'
+                  });
+                }
+              );
+            }
+          }
+        );
+      });
+    }
+  );
+});
+
+// Check live latency data freshness (for frontend error banner)
+router.get('/api/live-latency/status', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+  // Check if any data is older than 24 hours
+  db.get(
+    `SELECT COUNT(*) as stale_count,
+            (SELECT COUNT(*) FROM network_routes WHERE live_latency IS NOT NULL) as total_with_latency,
+            (SELECT MAX(live_latency_last_updated) FROM network_routes) as latest_update
+     FROM network_routes 
+     WHERE live_latency_last_updated IS NULL 
+        OR live_latency_last_updated < datetime('now', '-24 hours')`,
+    [],
+    (err, result) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      
+      const isStale = result.stale_count > 0 || !result.latest_update;
+      
+      res.json({
+        status: isStale ? 'stale' : 'fresh',
+        stale_count: result.stale_count,
+        total_with_latency: result.total_with_latency,
+        latest_update: result.latest_update,
+        message: isStale 
+          ? `Live latency data is unavailable or stale for ${result.stale_count} circuits`
+          : 'Live latency data is up to date'
+      });
+    }
+  );
 });
 
 // Get all routes
@@ -1599,7 +1786,7 @@ router.post('/network_routes', authenticateToken, authorizePermission('network_r
     }
     
     const fields = [
-      'circuit_id','repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route'
+      'circuit_id','repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source'
     ];
     const placeholders = fields.map(() => '?').join(',');
     const values = fields.map(f => data[f] ?? (f === 'repository_type_id' ? 1 : null));
@@ -1645,7 +1832,7 @@ router.put('/network_routes/:circuit_id', authenticateToken, authorizePermission
         if (!oldRoute) return res.status(404).json({ error: 'Route not found' });
         
         const fields = [
-          'repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route'
+          'repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source'
         ];
         const setClause = fields.map(f => `${f} = ?`).join(', ');
         const values = fields.map(f => data[f] ?? null);
@@ -3736,11 +3923,11 @@ router.get('/network_design/audit_logs', authenticateToken, (req, res) => {
 
 
 
-// Clear audit logs (Admin and Provisioner only)
+// Clear audit logs (Admin only)
 router.delete('/network_design/audit_logs', authenticateToken, (req, res) => {
   // Check permissions
-  if (!['administrator', 'provisioner'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Access denied. Only administrators and provisioners can clear audit logs.' });
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Access denied. Only administrators can clear audit logs.' });
   }
 
   db.run('DELETE FROM audit_logs', [], function(err) {
@@ -3762,11 +3949,11 @@ router.delete('/network_design/audit_logs', authenticateToken, (req, res) => {
   });
 });
 
-// Export audit logs to CSV (Admin and Provisioner only)
+// Export audit logs to CSV (Admin only)
 router.get('/network_design/audit_logs/export', authenticateToken, (req, res) => {
   // Check permissions
-  if (!['administrator', 'provisioner'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Access denied. Only administrators and provisioners can export audit logs.' });
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Access denied. Only administrators can export audit logs.' });
   }
 
   db.all('SELECT * FROM audit_logs ORDER BY timestamp DESC', [], (err, rows) => {
@@ -5242,7 +5429,7 @@ const bulkUploadModules = {
       'circuit_id', 'repository_type_id',
       'kmz_file_path', 'mtu', 'sla_latency', 'live_latency', 'expected_latency', 'test_results_link',
       'cable_system', 'is_special', 'underlying_carrier', 'cost', 'currency',
-      'location_a', 'location_b', 'bandwidth', 'more_details', 'test_results_file',
+      'location_a', 'location_b', 'bandwidth', 'more_details', 'capacity_usage_percent',
       'local_loop_carriers_a', 'local_loop_carriers_b', 'equipment_type', 'carrier_protected', 'carrier_protection_route'
     ],
     requiredFields: ['circuit_id', 'location_a', 'location_b', 'underlying_carrier', 'carrier_protected'],
@@ -5264,11 +5451,11 @@ const bulkUploadModules = {
       location_b: 'NYCNYC',
       bandwidth: '10 Gbps',
       more_details: 'Sample route details',
-      test_results_file: '',
+      capacity_usage_percent: '75.5',
       local_loop_carriers_a: 'Carrier A',
       local_loop_carriers_b: 'Carrier B',
       equipment_type: 'Optical',
-      carrier_protected: '0',
+      carrier_protected: 'No',
       carrier_protection_route: ''
     }
   },
@@ -5542,6 +5729,7 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
              LIMIT ?`;
   } else if (module === 'network_routes') {
     // Convert is_special from integer (0/1) to boolean string (false/true)
+    // Convert carrier_protected from integer (0/1) to text (No/Yes)
     query = `SELECT circuit_id, repository_type_id, kmz_file_path, mtu, sla_latency, 
              live_latency, expected_latency, test_results_link, cable_system,
              CASE 
@@ -5550,8 +5738,14 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
                ELSE 'false'
              END as is_special,
              underlying_carrier, cost, currency, location_a, location_b, 
-             bandwidth, more_details, test_results_file, local_loop_carriers_a, 
-             local_loop_carriers_b, equipment_type
+             bandwidth, more_details, capacity_usage_percent, local_loop_carriers_a, 
+             local_loop_carriers_b, equipment_type,
+             CASE 
+               WHEN carrier_protected = 1 THEN 'Yes'
+               WHEN carrier_protected = 0 THEN 'No'
+               ELSE 'No'
+             END as carrier_protected,
+             carrier_protection_route
              FROM ${config.table} LIMIT ?`;
   }
   
@@ -5734,6 +5928,10 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
             if (cleanedRow.is_special !== undefined && cleanedRow.is_special !== null && cleanedRow.is_special !== '') {
               const value = cleanedRow.is_special.toString().toLowerCase();
               cleanedRow.is_special = (value === 'true' || value === '1') ? 1 : 0;
+            }
+            if (cleanedRow.carrier_protected !== undefined && cleanedRow.carrier_protected !== null && cleanedRow.carrier_protected !== '') {
+              const value = cleanedRow.carrier_protected.toString().toLowerCase();
+              cleanedRow.carrier_protected = (value === 'yes' || value === 'true' || value === '1') ? 1 : 0;
             }
           } else if (module === 'users') {
             if (cleanedRow.user_role && !['administrator', 'provisioner', 'read_only'].includes(cleanedRow.user_role)) {
@@ -7001,11 +7199,11 @@ router.get('/exchange-pricing/audit_logs', authenticateToken, (req, res) => {
   );
 });
 
-// Clear exchange pricing audit logs (Admin and Provisioner only)
+// Clear exchange pricing audit logs (Admin only)
 router.delete('/exchange-pricing/audit_logs', authenticateToken, (req, res) => {
   // Check permissions
-  if (!['administrator', 'provisioner'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Access denied. Only administrators and provisioners can clear audit logs.' });
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Access denied. Only administrators can clear audit logs.' });
   }
 
   db.run('DELETE FROM audit_logs WHERE action_type = ?', ['EXCHANGE_PRICING_QUOTE'], function(err) {
@@ -7027,11 +7225,11 @@ router.delete('/exchange-pricing/audit_logs', authenticateToken, (req, res) => {
   });
 });
 
-// Clear exchange pricing quote history (Admin and Provisioner only)
+// Clear exchange pricing quote history (Admin only)
 router.delete('/exchange-pricing/quotes/clear', authenticateToken, (req, res) => {
   // Check permissions
-  if (!['administrator', 'provisioner'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Access denied. Only administrators and provisioners can clear quote history.' });
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Access denied. Only administrators can clear quote history.' });
   }
 
   db.run('DELETE FROM quote_requests', [], function(err) {
@@ -7053,11 +7251,11 @@ router.delete('/exchange-pricing/quotes/clear', authenticateToken, (req, res) =>
   });
 });
 
-// Export exchange pricing audit logs to CSV (Admin and Provisioner only)
+// Export exchange pricing audit logs to CSV (Admin only)
 router.get('/exchange-pricing/audit_logs/export', authenticateToken, (req, res) => {
   // Check permissions
-  if (!['administrator', 'provisioner'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Access denied. Only administrators and provisioners can export audit logs.' });
+  if (req.user.role !== 'administrator') {
+    return res.status(403).json({ error: 'Access denied. Only administrators can export audit logs.' });
   }
 
   db.all('SELECT * FROM audit_logs WHERE action_type = ? ORDER BY timestamp DESC', ['EXCHANGE_PRICING_QUOTE'], (err, rows) => {

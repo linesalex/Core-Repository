@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Button,
   IconButton, Menu, MenuItem, FormControlLabel, Checkbox, Divider, Typography,
-  Chip, Box
+  Chip, Box, Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress,
+  Alert, Snackbar, Select, FormControl, InputLabel
 } from '@mui/material';
 import { styled } from '@mui/material/styles';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -13,7 +14,9 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import SaveIcon from '@mui/icons-material/Save';
-import { downloadTestResults } from './api';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import HistoryIcon from '@mui/icons-material/History';
+import { downloadTestResults, refreshAllLiveLatency, getLiveLatencyHistory } from './api';
 import { API_BASE_URL } from './config';
 
 // All available columns with their configurations
@@ -136,10 +139,17 @@ const darkFiberLinkStyle = {
   color: '#9c27b0', // MUI secondary.main
 };
 
-function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onOpenDarkFiber, userRole, userId }) {
+function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onOpenDarkFiber, userRole, userId, onRefreshSuccess }) {
   const [visibleColumns, setVisibleColumns] = useState(getDefaultColumns(userRole));
   const [columnMenuAnchor, setColumnMenuAnchor] = useState(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  
+  // Live latency state
+  const [refreshing, setRefreshing] = useState(false);
+  const [timestampDialog, setTimestampDialog] = useState({ open: false, row: null });
+  const [historyDialog, setHistoryDialog] = useState({ open: false, circuit_id: null, data: null, loading: false });
+  const [historyDays, setHistoryDays] = useState(30);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
 
   // Generate user-specific localStorage key
   const getStorageKey = () => {
@@ -280,7 +290,70 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
       [newColumns[currentIndex], newColumns[newIndex]] = [newColumns[newIndex], newColumns[currentIndex]];
       return newColumns;
     });
+    setHasUnsavedChanges(true);
   };
+
+  // Live latency functions
+  const handleRefreshLiveLatency = async () => {
+    setRefreshing(true);
+    try {
+      const result = await refreshAllLiveLatency();
+      setSnackbar({
+        open: true,
+        message: `Live latency refreshed successfully! Updated ${result.updated} circuits.`,
+        severity: 'success'
+      });
+      if (onRefreshSuccess) onRefreshSuccess();
+    } catch (error) {
+      setSnackbar({
+        open: true,
+        message: `Failed to refresh live latency: ${error.response?.data?.error || error.message}`,
+        severity: 'error'
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleLiveLatencyClick = (row) => {
+    if (isDataStale(row)) return; // Don't show popup for stale data
+    setTimestampDialog({ open: true, row });
+  };
+
+  const handleHistoryClick = async (circuit_id) => {
+    setHistoryDialog({ open: true, circuit_id, data: null, loading: true });
+    try {
+      const historyData = await getLiveLatencyHistory(circuit_id, historyDays);
+      setHistoryDialog(prev => ({ ...prev, data: historyData, loading: false }));
+    } catch (error) {
+      setSnackbar({
+        open: true,
+        message: `Failed to load history: ${error.response?.data?.error || error.message}`,
+        severity: 'error'
+      });
+      setHistoryDialog({ open: false, circuit_id: null, data: null, loading: false });
+    }
+  };
+
+  const isDataStale = (row) => {
+    if (!row.live_latency_last_updated) return true;
+    const lastUpdate = new Date(row.live_latency_last_updated);
+    const now = new Date();
+    const hoursDiff = (now - lastUpdate) / (1000 * 60 * 60);
+    return hoursDiff > 24;
+  };
+
+  const getLiveLatencyColor = (row) => {
+    if (isDataStale(row)) return '#000000'; // Black for stale/N/A
+    if (!row.sla_latency) return '#4caf50'; // Green if no SLA
+    return row.live_latency <= row.sla_latency ? '#4caf50' : '#f44336'; // Green if <= SLA, Red if > SLA
+  };
+
+  const formatLastUpdated = (timestamp) => {
+    if (!timestamp) return 'Never';
+    return new Date(timestamp).toLocaleString();
+  };
+  
   const handleDownloadKMZ = async (filename) => {
     try {
       // Use fetch with authorization header
@@ -357,6 +430,17 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
               Save Layout
             </Button>
           )}
+          <Button
+            onClick={handleRefreshLiveLatency}
+            size="small"
+            variant="outlined"
+            disabled={refreshing}
+            startIcon={refreshing ? <CircularProgress size={16} /> : <RefreshIcon />}
+            sx={{ minWidth: 'auto' }}
+            title="Refresh Live Latency Data"
+          >
+            {refreshing ? 'Refreshing...' : 'Refresh Live Latency'}
+          </Button>
           <IconButton 
             onClick={handleColumnMenuOpen}
             size="small"
@@ -558,6 +642,35 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
                     </SmallTableCell>
                   );
                 }
+                if (col.id === 'live_latency') {
+                  const value = isDataStale(row) ? 'N/A' : row.live_latency;
+                  const color = getLiveLatencyColor(row);
+                  return (
+                    <SmallTableCell key={col.id} style={{ ...textCellStyle, verticalAlign: 'middle' }} align={col.align || 'left'}>
+                      <span
+                        style={{
+                          color: color,
+                          cursor: isDataStale(row) ? 'default' : 'pointer',
+                          textDecoration: isDataStale(row) ? 'none' : 'underline'
+                        }}
+                        onClick={e => { 
+                          e.stopPropagation(); 
+                          if (!isDataStale(row)) handleLiveLatencyClick(row); 
+                        }}
+                        tabIndex={0}
+                        role="button"
+                        onKeyPress={e => { 
+                          if (e.key === 'Enter' && !isDataStale(row)) { 
+                            e.stopPropagation(); 
+                            handleLiveLatencyClick(row); 
+                          } 
+                        }}
+                      >
+                        {value}
+                      </span>
+                    </SmallTableCell>
+                  );
+                }
                 const textHeavy = [
                   'test_results_link',
                   'cable_system',
@@ -582,6 +695,147 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
         </TableBody>
       </Table>
     </TableContainer>
+
+    {/* Timestamp Popup Dialog */}
+    <Dialog 
+      open={timestampDialog.open} 
+      onClose={() => setTimestampDialog({ open: false, row: null })}
+      maxWidth="sm"
+      fullWidth
+    >
+      <DialogTitle>Live Latency Information</DialogTitle>
+      <DialogContent>
+        {timestampDialog.row && (
+          <Box>
+            <Typography variant="body1" sx={{ mb: 2 }}>
+              <strong>Circuit:</strong> {timestampDialog.row.circuit_id}
+            </Typography>
+            <Typography variant="body1" sx={{ mb: 2 }}>
+              <strong>Current Latency:</strong> {timestampDialog.row.live_latency} ms
+            </Typography>
+            <Typography variant="body1" sx={{ mb: 2 }}>
+              <strong>SLA Latency:</strong> {timestampDialog.row.sla_latency ? `${timestampDialog.row.sla_latency} ms` : 'Not set'}
+            </Typography>
+            <Typography variant="body1" sx={{ mb: 2 }}>
+              <strong>Last Updated:</strong> {formatLastUpdated(timestampDialog.row.live_latency_last_updated)}
+            </Typography>
+            <Typography variant="body1">
+              <strong>Source:</strong> {timestampDialog.row.live_latency_source || 'Unknown'}
+            </Typography>
+          </Box>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setTimestampDialog({ open: false, row: null })}>
+          Close
+        </Button>
+        {timestampDialog.row && (
+          <Button 
+            onClick={() => {
+              handleHistoryClick(timestampDialog.row.circuit_id);
+              setTimestampDialog({ open: false, row: null });
+            }}
+            startIcon={<HistoryIcon />}
+          >
+            View History
+          </Button>
+        )}
+      </DialogActions>
+    </Dialog>
+
+    {/* History Graph Dialog */}
+    <Dialog 
+      open={historyDialog.open} 
+      onClose={() => setHistoryDialog({ open: false, circuit_id: null, data: null, loading: false })}
+      maxWidth="md"
+      fullWidth
+    >
+      <DialogTitle>
+        Live Latency History - {historyDialog.circuit_id}
+      </DialogTitle>
+      <DialogContent>
+        <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+          <FormControl size="small" sx={{ minWidth: 120 }}>
+            <InputLabel>Time Period</InputLabel>
+            <Select
+              value={historyDays}
+              label="Time Period"
+              onChange={(e) => setHistoryDays(e.target.value)}
+            >
+              <MenuItem value={7}>Last 7 days</MenuItem>
+              <MenuItem value={30}>Last 30 days</MenuItem>
+              <MenuItem value={90}>Last 90 days</MenuItem>
+            </Select>
+          </FormControl>
+          <Button 
+            size="small" 
+            onClick={() => handleHistoryClick(historyDialog.circuit_id)}
+            disabled={historyDialog.loading}
+          >
+            Refresh
+          </Button>
+        </Box>
+        
+        {historyDialog.loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+            <CircularProgress />
+          </Box>
+        ) : historyDialog.data ? (
+          <Box>
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              Showing {historyDialog.data.count} daily snapshots for the last {historyDays} days
+            </Typography>
+            {historyDialog.data.history.length > 0 ? (
+              <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 2 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  Historical Data Preview (Full graph implementation pending):
+                </Typography>
+                {historyDialog.data.history.slice(-5).map((point, index) => (
+                  <Typography key={index} variant="body2" sx={{ fontFamily: 'monospace' }}>
+                    {point.snapshot_date}: {point.latency_ms}ms 
+                    {point.sla_latency && ` (SLA: ${point.sla_latency}ms)`}
+                  </Typography>
+                ))}
+                {historyDialog.data.history.length > 5 && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    ... and {historyDialog.data.history.length - 5} more entries
+                  </Typography>
+                )}
+              </Box>
+            ) : (
+              <Alert severity="info">
+                No historical data available for this circuit.
+              </Alert>
+            )}
+          </Box>
+        ) : (
+          <Alert severity="error">
+            Failed to load historical data.
+          </Alert>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setHistoryDialog({ open: false, circuit_id: null, data: null, loading: false })}>
+          Close
+        </Button>
+      </DialogActions>
+    </Dialog>
+
+    {/* Snackbar for notifications */}
+    <Snackbar
+      open={snackbar.open}
+      autoHideDuration={6000}
+      onClose={() => setSnackbar({ ...snackbar, open: false })}
+    >
+      <Alert 
+        onClose={() => setSnackbar({ ...snackbar, open: false })} 
+        severity={snackbar.severity}
+        sx={{ width: '100%' }}
+      >
+        {snackbar.message}
+      </Alert>
+    </Snackbar>
+
     </Box>
   );
 }

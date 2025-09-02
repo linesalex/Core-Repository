@@ -91,9 +91,11 @@ export const getCarriers = () => api.get(`${API_BASE_URL}/carriers`).then(res =>
 // Core Outages
 export const getCoreOutages = () => api.get(`${API_BASE_URL}/core_outages`).then(res => res.data);
 
-// Live Latency API
-export const getLiveLatency = (circuitId) => api.get(`${API_BASE_URL}/live_latency/${circuitId}`).then(res => res.data);
-export const getBatchLiveLatency = (circuitIds) => api.post(`${API_BASE_URL}/live_latency/batch`, { circuit_ids: circuitIds }).then(res => res.data);
+// Live Latency API - Enhanced System Only
+// Note: Old simulation endpoints removed - no longer generating fake data
+export const refreshAllLiveLatency = () => api.post(`${API_BASE_URL}/api/live-latency/refresh-all`).then(res => res.data);
+export const getLiveLatencyStatus = () => api.get(`${API_BASE_URL}/api/live-latency/status`).then(res => res.data);
+export const getLiveLatencyHistory = (circuitId, days = 30) => api.get(`${API_BASE_URL}/api/live-latency/history/${circuitId}?days=${days}`).then(res => res.data);
 
 // ====================================
 // NETWORK DESIGN & PRICING TOOL APIs

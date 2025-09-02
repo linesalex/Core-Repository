@@ -46,7 +46,7 @@ import CarriersManager from './CarriersManager';
 import ExchangeDataManager from './ExchangeDataManager';
 import BulkUpload from './BulkUpload';
 
-import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults } from './api';
+import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus } from './api';
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
 import DarkFiberModal from './DarkFiberModal';
@@ -85,6 +85,10 @@ function AuthenticatedApp() {
   // User menu state
   const [userMenuAnchor, setUserMenuAnchor] = useState(null);
   
+  // Live latency status
+  const [liveLatencyStatus, setLiveLatencyStatus] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(false);
+  
   // Client-side filtering state for Network Routes (like LocationDataManager pattern)
   const [routeFilters, setRouteFilters] = useState({
     circuit_id: '',
@@ -113,6 +117,18 @@ function AuthenticatedApp() {
         });
     }
   }, [isAuthenticated, hasModuleAccess]);
+
+  // Check live latency status periodically when on network routes tab
+  useEffect(() => {
+    if (currentTab === 'network-routes' && hasModuleAccess('network_routes')) {
+      checkLiveLatencyStatus(); // Initial check
+      
+      // Set up periodic checking every 5 minutes
+      const interval = setInterval(checkLiveLatencyStatus, 5 * 60 * 1000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [currentTab, hasModuleAccess]);
 
   // Keep users on welcome page - let them choose where to go
   // Removed auto-selection logic to prevent permission errors
@@ -277,11 +293,32 @@ function AuthenticatedApp() {
     setLoading(false);
   };
 
+  // Check live latency status for error banner
+  const checkLiveLatencyStatus = async () => {
+    if (currentTab !== 'network-routes') return; // Only check when on network routes tab
+    
+    setStatusLoading(true);
+    try {
+      const status = await getLiveLatencyStatus();
+      setLiveLatencyStatus(status);
+    } catch (error) {
+      console.error('Failed to check live latency status:', error);
+      setLiveLatencyStatus(null);
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
   const refreshData = async () => {
     try {
       const data = await fetchRoutes();
       setRows(data);
       setIsServerSideFiltered(false); // Reset to client-side filtering
+      
+      // Also refresh live latency status if on network routes tab
+      if (currentTab === 'network-routes') {
+        checkLiveLatencyStatus();
+      }
     } catch (err) {
       console.error('Failed to refresh data:', err);
     }
@@ -343,18 +380,42 @@ function AuthenticatedApp() {
     switch (currentTab) {
       case 'network-routes':
         return hasModuleAccess('network_routes') ? (
-          <NetworkRoutesTable
-            rows={filteredRows}
-            loading={loading}
-            error={error}
-            onMoreDetails={handleMoreDetails}
-            onSelectRow={setSelectedRow}
-            selectedRow={selectedRow}
-            onOpenDarkFiber={handleOpenDarkFiber}
-            hasPermission={hasPermission}
-            userRole={user?.role}
-            userId={user?.id}
-          />
+          <Box>
+            {/* Live Latency Error Banner */}
+            {liveLatencyStatus && liveLatencyStatus.status === 'stale' && (
+              <Alert 
+                severity="error" 
+                sx={{ mb: 2 }}
+                action={
+                  <Button 
+                    color="inherit" 
+                    size="small" 
+                    onClick={checkLiveLatencyStatus}
+                    disabled={statusLoading}
+                    startIcon={statusLoading ? <CircularProgress size={16} color="inherit" /> : null}
+                  >
+                    {statusLoading ? 'Checking...' : 'Refresh Status'}
+                  </Button>
+                }
+              >
+                <strong>Live Latency Data Unavailable:</strong> {liveLatencyStatus.message}
+              </Alert>
+            )}
+            
+            <NetworkRoutesTable
+              rows={filteredRows}
+              loading={loading}
+              error={error}
+              onMoreDetails={handleMoreDetails}
+              onSelectRow={setSelectedRow}
+              selectedRow={selectedRow}
+              onOpenDarkFiber={handleOpenDarkFiber}
+              hasPermission={hasPermission}
+              userRole={user?.role}
+              userId={user?.id}
+              onRefreshSuccess={refreshData}
+            />
+          </Box>
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );

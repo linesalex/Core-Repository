@@ -21,8 +21,8 @@ import { API_BASE_URL } from './config';
 const ExchangePricingTool = () => {
   const { user } = useAuth();
   
-  // Check if user can manage logs (admin or provisioner)
-  const canManageLogs = user && ['administrator', 'provisioner'].includes(user.role);
+  // Check if user can manage logs (admin only)
+  const canManageLogs = user && user.role === 'administrator';
 
   // Form state
   const [formData, setFormData] = useState({
@@ -172,7 +172,12 @@ const ExchangePricingTool = () => {
       });
 
       if (!response.ok) {
-        throw new Error(`Clear failed: ${response.statusText}`);
+        // Check for 403 Forbidden error
+        if (response.status === 403) {
+          throw new Error('User account forbidden to complete this action');
+        } else {
+          throw new Error(`Clear failed: ${response.statusText}`);
+        }
       }
 
       // Refresh the quote history

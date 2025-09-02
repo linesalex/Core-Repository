@@ -10,19 +10,22 @@ import HistoryIcon from '@mui/icons-material/History';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import { API_BASE_URL } from './config';
+import { useAuth } from './AuthContext';
 import axios from 'axios';
 
 const ChangeLogsViewer = () => {
+  const { user } = useAuth();
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selectedLog, setSelectedLog] = useState(null);
+  const [users, setUsers] = useState([]);
   
   // Filters
   const [filters, setFilters] = useState({
     module: '',
-    user_id: '',
+    user_id: user?.role === 'administrator' ? '' : user?.id?.toString() || '',
     search: '',
     limit: 50,
     offset: 0
@@ -34,6 +37,33 @@ const ChangeLogsViewer = () => {
   useEffect(() => {
     loadLogs();
   }, [filters]);
+
+  useEffect(() => {
+    // Load users list for admin user dropdown
+    if (user?.role === 'administrator') {
+      loadUsers();
+    }
+  }, [user]);
+
+  useEffect(() => {
+    // Update user_id filter when user changes (for non-admin users)
+    if (user && user.role !== 'administrator') {
+      setFilters(prev => ({
+        ...prev,
+        user_id: user.id?.toString() || ''
+      }));
+    }
+  }, [user]);
+
+  const loadUsers = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/users`);
+      setUsers(response.data);
+    } catch (err) {
+      console.error('Failed to load users:', err);
+      setUsers([]);
+    }
+  };
 
   const loadLogs = async () => {
     try {
@@ -194,7 +224,7 @@ const ChangeLogsViewer = () => {
             Filters
           </Typography>
           <Grid container spacing={2}>
-            <Grid item xs={12} md={4}>
+            <Grid item xs={12} md={3}>
               <FormControl fullWidth>
                 <InputLabel>Module</InputLabel>
                 <Select
@@ -211,7 +241,33 @@ const ChangeLogsViewer = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid item xs={12} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>User</InputLabel>
+                <Select
+                  value={filters.user_id}
+                  onChange={(e) => handleFilterChange('user_id', e.target.value)}
+                  label="User"
+                  disabled={user?.role !== 'administrator'}
+                >
+                  {user?.role === 'administrator' && (
+                    <MenuItem value="">All Users</MenuItem>
+                  )}
+                  {user?.role === 'administrator' ? (
+                    users.map((usr) => (
+                      <MenuItem key={usr.id} value={usr.id.toString()}>
+                        {usr.full_name || usr.username} ({usr.username})
+                      </MenuItem>
+                    ))
+                  ) : (
+                    <MenuItem value={user?.id?.toString() || ''}>
+                      {user?.full_name || user?.username} (You)
+                    </MenuItem>
+                  )}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={3}>
               <TextField
                 fullWidth
                 label="Search"
@@ -221,7 +277,7 @@ const ChangeLogsViewer = () => {
                 variant="outlined"
               />
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid item xs={12} md={3}>
               <FormControl fullWidth>
                 <InputLabel>Records per page</InputLabel>
                 <Select
