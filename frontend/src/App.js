@@ -46,7 +46,7 @@ import CarriersManager from './CarriersManager';
 import ExchangeDataManager from './ExchangeDataManager';
 import BulkUpload from './BulkUpload';
 
-import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus } from './api';
+import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking } from './api';
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
 import DarkFiberModal from './DarkFiberModal';
@@ -71,6 +71,7 @@ function AuthenticatedApp() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsRow, setDetailsRow] = useState(null);
+  const [routeTracking, setRouteTracking] = useState(null);
   const [darkFiberOpen, setDarkFiberOpen] = useState(false);
   const [darkFiberCircuitId, setDarkFiberCircuitId] = useState(null);
   const [networkRoutesOpen, setNetworkRoutesOpen] = useState(true);
@@ -172,9 +173,39 @@ function AuthenticatedApp() {
     return matchesCircuitId && matchesLocation && matchesCableSystem && matchesBandwidth && matchesSpecial;
   });
 
-  const handleMoreDetails = (row) => {
+  const handleMoreDetails = async (row) => {
     setDetailsRow(row);
     setDetailsOpen(true);
+    
+    // Fetch tracking information
+    try {
+      const tracking = await getRouteTracking(row.circuit_id);
+      setRouteTracking(tracking);
+    } catch (err) {
+      console.error('Failed to fetch route tracking:', err);
+      setRouteTracking(null);
+    }
+  };
+
+  // Helper function to format date as "Jan 15 2025 2:30PM GMT"
+  const formatTrackingDate = (dateString) => {
+    if (!dateString) return 'Unknown';
+    
+    try {
+      const date = new Date(dateString);
+      const options = {
+        month: 'short',
+        day: 'numeric', 
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'UTC'
+      };
+      return date.toLocaleString('en-US', options).replace(',', '') + ' GMT';
+    } catch (err) {
+      return 'Invalid date';
+    }
   };
 
   const handleSearch = async (filters) => {
@@ -1039,10 +1070,26 @@ function AuthenticatedApp() {
                 size="small"
               />
             </Grid>
+            
+            {/* Tracking Information */}
+            <Grid item xs={12}>
+              <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e0e0e0' }}>
+                <Typography variant="body2" color="text.secondary">
+                  {routeTracking && routeTracking.updated_date ? (
+                    <>Last Updated: {routeTracking.username || 'Unknown User'} {formatTrackingDate(routeTracking.updated_date)}</>
+                  ) : (
+                    'Last Updated: Not available'
+                  )}
+                </Typography>
+              </Box>
+            </Grid>
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDetailsOpen(false)}>Close</Button>
+          <Button onClick={() => {
+            setDetailsOpen(false);
+            setRouteTracking(null);
+          }}>Close</Button>
         </DialogActions>
       </Dialog>
 

@@ -59,6 +59,7 @@ const NetworkDesignTool = () => {
     bandwidth: '',
     includeULL: false,
     useCiscoOnlyRoutes: false,
+    use100GbAndDFOnly: false,
     protectionRequired: false,
     mtuRequired: '', // Changed from maxLatency to mtuRequired
     carrierAvoidance: [],
@@ -243,6 +244,7 @@ const NetworkDesignTool = () => {
         bandwidth_unit: 'Mbps',
         include_ull: formData.includeULL,
         use_cisco_only_routes: formData.useCiscoOnlyRoutes,
+        use_100gb_and_df_only: formData.use100GbAndDFOnly,
         quoteRequestId: formData.quoteRequestId,
         customerName: formData.customerName,
         constraints: {
@@ -269,6 +271,7 @@ const NetworkDesignTool = () => {
         output_currency: formData.outputCurrency,
         include_ull: formData.includeULL,
         use_cisco_only_routes: formData.useCiscoOnlyRoutes,
+        use_100gb_and_df_only: formData.use100GbAndDFOnly,
         bandwidth: parseFloat(formData.bandwidth),
         source: formData.source,
         destination: formData.destination,
@@ -330,6 +333,10 @@ const NetworkDesignTool = () => {
         
         if (exclusionData.equipment_restriction && exclusionData.equipment_restriction.count > 0) {
           reasons.push(`Equipment restriction: ${exclusionData.equipment_restriction.count} Cisco routes excluded (Include Cisco Only Routes disabled)`);
+        }
+        
+        if (exclusionData.bandwidth_100gb_df_restriction && exclusionData.bandwidth_100gb_df_restriction.count > 0) {
+          reasons.push(`100Gb/DF restriction: ${exclusionData.bandwidth_100gb_df_restriction.count} routes excluded (Use 100Gb and DF routes only enabled)`);
         }
         
         if (exclusionData.decommission_pop && exclusionData.decommission_pop.count > 0) {
@@ -753,6 +760,23 @@ const NetworkDesignTool = () => {
                 />
               </Grid>
 
+              {/* Empty space for proper alignment */}
+              <Grid item xs={12} md={6}>
+              </Grid>
+
+              {/* Use 100Gb and DF routes only - below Include ULL */}
+              <Grid item xs={12} md={6}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.use100GbAndDFOnly}
+                      onChange={(e) => handleInputChange('use100GbAndDFOnly', e.target.checked)}
+                    />
+                  }
+                  label="Use 100Gb and DF routes only"
+                />
+              </Grid>
+
               {/* Action Buttons */}
               <Grid item xs={12}>
                 <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
@@ -1023,6 +1047,12 @@ const NetworkDesignTool = () => {
                                   <Typography component="li" variant="body2" color="text.secondary">
                                     {searchResults.exclusionReasons.equipment_restriction.count} routes excluded due to equipment restrictions 
                                     (Cisco equipment excluded - Include Cisco Only Routes disabled)
+                                  </Typography>
+                                )}
+                                {searchResults.exclusionReasons.bandwidth_100gb_df_restriction?.count > 0 && (
+                                  <Typography component="li" variant="body2" color="text.secondary">
+                                    {searchResults.exclusionReasons.bandwidth_100gb_df_restriction.count} routes excluded 
+                                    (Use 100Gb and DF routes only enabled)
                                   </Typography>
                                 )}
                               </Box>

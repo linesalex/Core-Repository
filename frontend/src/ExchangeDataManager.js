@@ -68,6 +68,8 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
   const [selectedISFData, setSelectedISFData] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [moreInfoContent, setMoreInfoContent] = useState('');
+  const [feedTracking, setFeedTracking] = useState(null);
+  const [currentFeedForInfo, setCurrentFeedForInfo] = useState(null);
   
   // Search and filter states
   const [searchText, setSearchText] = useState('');
@@ -756,9 +758,52 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
     }
   };
 
+  // Helper function to format date as "Jan 15 2025 2:30PM GMT"
+  const formatTrackingDate = (dateString) => {
+    if (!dateString) return 'Unknown';
+    
+    try {
+      const date = new Date(dateString);
+      const options = {
+        month: 'short',
+        day: 'numeric', 
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'UTC'
+      };
+      return date.toLocaleString('en-US', options).replace(',', '') + ' GMT';
+    } catch (err) {
+      return 'Invalid date';
+    }
+  };
+
   const handleMoreInfo = (content) => {
     setMoreInfoContent(content || 'No additional information available.');
+    setCurrentFeedForInfo(null);
+    setFeedTracking(null);
     setMoreInfoDialogOpen(true);
+  };
+
+  // New function specifically for feed more info with tracking
+  const handleFeedMoreInfo = async (feed, exchangeId) => {
+    setMoreInfoContent(feed.more_info || 'No additional information available.');
+    setCurrentFeedForInfo(feed);
+    setMoreInfoDialogOpen(true);
+    
+    // Fetch tracking information for this feed
+    try {
+      const response = await axios.get(`${API_BASE_URL}/exchanges/${exchangeId}/feeds/${feed.id}/tracking`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      setFeedTracking(response.data);
+    } catch (err) {
+      console.error('Failed to fetch feed tracking:', err);
+      setFeedTracking(null);
+    }
   };
 
   const handleISFInfoOpen = (feed) => {
@@ -1067,11 +1112,9 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                       </TableCell>
                                       <TableCell>{renderDesignFileCell(feed, exchange.id)}</TableCell>
                                       <TableCell>
-                                        {feed.more_info ? (
-                                          <IconButton size="small" onClick={() => handleMoreInfo(feed.more_info)}>
-                                            <InfoIcon />
-                                          </IconButton>
-                                        ) : '-'}
+                                        <IconButton size="small" onClick={() => handleFeedMoreInfo(feed, exchange.id)}>
+                                          <InfoIcon />
+                                        </IconButton>
                                       </TableCell>
                                       <TableCell align="center">
                                         <Box sx={{ display: 'flex', gap: 1 }}>
@@ -1202,10 +1245,17 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                           <TableCell>{contact.contact_type || '-'}</TableCell>
                                           <TableCell>{getStatusChip(contact.daily_contact)}</TableCell>
                                           <TableCell>
-                                            {contact.last_updated ? 
-                                              new Date(contact.last_updated).toLocaleDateString() : 
-                                              (contact.created_at ? new Date(contact.created_at).toLocaleDateString() : '-')
-                                            }
+                                            <Box>
+                                              <Typography variant="body2">
+                                                {contact.updated_date || contact.last_updated ? 
+                                                  formatTrackingDate(contact.updated_date || contact.last_updated) : 
+                                                  (contact.created_at ? formatTrackingDate(contact.created_at) : 'Unknown')
+                                                }
+                                              </Typography>
+                                              <Typography variant="caption" color="text.secondary">
+                                                {contact.username || 'Unknown User'}
+                                              </Typography>
+                                            </Box>
                                           </TableCell>
                                           <TableCell>
                                             {contact.more_info ? (
@@ -1859,15 +1909,36 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
       </Dialog>
 
       {/* More Info Dialog */}
-      <Dialog open={moreInfoDialogOpen} onClose={() => setMoreInfoDialogOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={moreInfoDialogOpen} onClose={() => {
+        setMoreInfoDialogOpen(false);
+        setFeedTracking(null);
+        setCurrentFeedForInfo(null);
+      }} maxWidth="sm" fullWidth>
         <DialogTitle>More Information</DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}>
             {moreInfoContent}
           </DialogContentText>
+          
+          {/* Tracking Information - only show for feeds */}
+          {currentFeedForInfo && (
+            <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e0e0e0' }}>
+              <Typography variant="body2" color="text.secondary">
+                {feedTracking && feedTracking.updated_date ? (
+                  <>Last Updated: {feedTracking.username || 'Unknown User'} {formatTrackingDate(feedTracking.updated_date)}</>
+                ) : (
+                  'Last Updated: Not available'
+                )}
+              </Typography>
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setMoreInfoDialogOpen(false)}>Close</Button>
+          <Button onClick={() => {
+            setMoreInfoDialogOpen(false);
+            setFeedTracking(null);
+            setCurrentFeedForInfo(null);
+          }}>Close</Button>
         </DialogActions>
       </Dialog>
 

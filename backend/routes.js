@@ -1119,10 +1119,18 @@ router.delete('/carriers/:id', authenticateToken, authorizePermission('carriers'
 // Get all contacts for a carrier
 router.get('/carriers/:id/contacts', authenticateToken, authorizePermission('carriers', 'view'), (req, res) => {
   const carrierId = req.params.id;
-  db.all('SELECT * FROM carrier_contacts WHERE carrier_id = ? ORDER BY contact_name', [carrierId], (err, contacts) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(contacts);
-  });
+  db.all(
+    `SELECT cc.*, u.username, u.full_name 
+     FROM carrier_contacts cc 
+     LEFT JOIN users u ON cc.updated_by = u.id 
+     WHERE cc.carrier_id = ? 
+     ORDER BY cc.contact_name`, 
+    [carrierId], 
+    (err, contacts) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(contacts);
+    }
+  );
 });
 
 // Create carrier contact
@@ -1625,19 +1633,19 @@ async function validateRowForeignKeys(row, module) {
       }
     }
   } else if (module === 'pop_capabilities') {
-    if (row.location_id) {
+    if (row.location_code) {
       try {
         const result = await new Promise((resolve, reject) => {
-          db.get('SELECT id FROM location_reference WHERE id = ?', [row.location_id], (err, result) => {
+          db.get('SELECT id FROM location_reference WHERE LOWER(TRIM(location_code)) = LOWER(TRIM(?))', [row.location_code], (err, result) => {
             if (err) reject(err);
             else resolve(result);
           });
         });
         if (!result) {
-          errors.push(`Invalid location_id: ${row.location_id} does not exist`);
+          errors.push(`Invalid location_code: ${row.location_code} does not exist`);
         }
       } catch (err) {
-        errors.push(`Database error validating location_id: ${err.message}`);
+        errors.push(`Database error validating location_code: ${err.message}`);
       }
     }
   } else if (module === 'exchange_feeds') {
@@ -1786,10 +1794,15 @@ router.post('/network_routes', authenticateToken, authorizePermission('network_r
     }
     
     const fields = [
-      'circuit_id','repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source'
+      'circuit_id','repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source','updated_by','updated_date'
     ];
     const placeholders = fields.map(() => '?').join(',');
-    const values = fields.map(f => data[f] ?? (f === 'repository_type_id' ? 1 : null));
+    const values = fields.map(f => {
+      if (f === 'repository_type_id') return data[f] ?? 1;
+      if (f === 'updated_by') return req.user.id;
+      if (f === 'updated_date') return new Date().toISOString();
+      return data[f] ?? null;
+    });
     db.run(
       `INSERT OR REPLACE INTO network_routes (${fields.join(',')}) VALUES (${placeholders})`,
       values,
@@ -1832,10 +1845,14 @@ router.put('/network_routes/:circuit_id', authenticateToken, authorizePermission
         if (!oldRoute) return res.status(404).json({ error: 'Route not found' });
         
         const fields = [
-          'repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source'
+          'repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source','updated_by','updated_date'
         ];
         const setClause = fields.map(f => `${f} = ?`).join(', ');
-        const values = fields.map(f => data[f] ?? null);
+        const values = fields.map(f => {
+          if (f === 'updated_by') return req.user.id;
+          if (f === 'updated_date') return new Date().toISOString();
+          return data[f] ?? null;
+        });
         values.push(circuit_id);
         db.run(
           `UPDATE network_routes SET ${setClause} WHERE circuit_id = ?`,
@@ -1852,6 +1869,30 @@ router.put('/network_routes/:circuit_id', authenticateToken, authorizePermission
         );
       });
     });
+});
+
+// Get route tracking details
+router.get('/network_routes/:circuit_id/tracking', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+  const { circuit_id } = req.params;
+  
+  db.get(
+    `SELECT nr.updated_by, nr.updated_date, u.username, u.full_name 
+     FROM network_routes nr 
+     LEFT JOIN users u ON nr.updated_by = u.id 
+     WHERE nr.circuit_id = ?`,
+    [circuit_id],
+    (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!result) return res.status(404).json({ error: 'Route not found' });
+      
+      res.json({
+        updated_by: result.updated_by,
+        updated_date: result.updated_date,
+        username: result.username,
+        full_name: result.full_name
+      });
+    }
+  );
 });
 
 // Delete route
@@ -2409,10 +2450,17 @@ router.delete('/test_results_files/:id', authenticateToken, authorizePermission(
 
 // Get all locations
 router.get('/locations', authenticateToken, authorizePermission('locations', 'view'), (req, res) => {
-  db.all('SELECT * FROM location_reference ORDER BY location_code', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+  db.all(
+    `SELECT lr.*, u.username, u.full_name 
+     FROM location_reference lr 
+     LEFT JOIN users u ON lr.updated_by = u.id 
+     ORDER BY lr.location_code`, 
+    [], 
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
 });
 
 // Create location
@@ -2782,7 +2830,7 @@ router.get('/exchange-currencies', (req, res) => {
 });
 // Network Design Path Finding with Dijkstra Algorithm
 router.post('/network_design/find_path', authenticateToken, (req, res) => {
-  const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false, use_cisco_only_routes = false, customerName, quoteRequestId } = req.body;
+  const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false, use_cisco_only_routes = false, use_100gb_and_df_only = false, customerName, quoteRequestId } = req.body;
   const startTime = Date.now();
   
   // Validate inputs
@@ -2802,6 +2850,7 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
     mtu_requirement: { count: 0, routes: [] },
     ull_restriction: { count: 0, routes: [] },
     equipment_restriction: { count: 0, routes: [] },
+    bandwidth_100gb_df_restriction: { count: 0, routes: [] },
     circuit_exclusion: { count: 0, routes: [], circuits: [] },
     decommission_pop: { count: 0, routes: [] },
     total_routes_available: 0,
@@ -3007,6 +3056,25 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
         });
         routesSkipped++;
         return;
+      }
+      
+      // Skip routes that are not 100Gb or Dark Fiber when filter is enabled
+      if (use_100gb_and_df_only) {
+        const bandwidth = route.bandwidth || '';
+        const is100Gb = bandwidth === '100000';
+        const isDarkFiber = bandwidth.includes('Dark Fiber');
+        
+        if (!is100Gb && !isDarkFiber) {
+          if (isRelevant) console.log(`  SKIPPED: Not 100Gb or Dark Fiber (Use 100Gb and DF only: ${use_100gb_and_df_only}, bandwidth: ${bandwidth})`);
+          exclusionReasons.bandwidth_100gb_df_restriction.count++;
+          exclusionReasons.bandwidth_100gb_df_restriction.routes.push({
+            circuit_id,
+            route: `${location_a} <-> ${location_b}`,
+            bandwidth: bandwidth
+          });
+          routesSkipped++;
+          return;
+        }
       }
       
       routesProcessed++;
@@ -3415,7 +3483,7 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
 });
 // Network Design with Enhanced Pricing
 router.post('/network_design/calculate_pricing', authenticateToken, async (req, res) => {
-  const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, bandwidth, source, destination, protection_required = false, customerName, quoteRequestId } = req.body;
+  const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, use_100gb_and_df_only = false, bandwidth, source, destination, protection_required = false, customerName, quoteRequestId } = req.body;
   
   if (!paths || !Array.isArray(paths)) {
     return res.status(400).json({ error: 'Paths array is required' });
@@ -4237,9 +4305,11 @@ router.get('/cnx-colocation/locations/:locationId/racks', authenticateToken, aut
     SELECT r.*, 
            COUNT(c.id) as client_count,
            COALESCE(SUM(c.power_purchased), 0) as allocated_power,
-           COALESCE(SUM(c.ru_purchased), 0) as ru_allocated
+           COALESCE(SUM(c.ru_purchased), 0) as ru_allocated,
+           u.username, u.full_name
     FROM cnx_colocation_racks r
     LEFT JOIN cnx_colocation_clients c ON r.id = c.rack_id
+    LEFT JOIN users u ON r.updated_by = u.id
     WHERE r.location_id = ?
     GROUP BY r.id
     ORDER BY r.rack_id
@@ -4268,8 +4338,8 @@ router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, au
     const pricingInfoFile = req.file ? req.file.filename : null;
     
     db.run(
-      'INSERT OR REPLACE INTO cnx_colocation_racks (location_id, rack_id, total_power_kva, network_infrastructure, pricing_info_file, more_info, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [locationId, rack_id, parseFloat(total_power_kva), network_infrastructure, pricingInfoFile, more_info || null, req.user.id],
+      'INSERT OR REPLACE INTO cnx_colocation_racks (location_id, rack_id, total_power_kva, network_infrastructure, pricing_info_file, more_info, created_by, updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [locationId, rack_id, parseFloat(total_power_kva), network_infrastructure, pricingInfoFile, more_info || null, req.user.id, req.user.id, new Date().toISOString()],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         
@@ -4336,8 +4406,8 @@ router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizePermissi
       const setClause = updateFields.map(field => `${field} = ?`).join(', ');
       
       db.run(
-        `UPDATE cnx_colocation_racks SET ${setClause}, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [...updateValues, req.user.id, rackId],
+        `UPDATE cnx_colocation_racks SET ${setClause}, updated_by = ?, updated_date = ? WHERE id = ?`,
+        [...updateValues, req.user.id, new Date().toISOString(), rackId],
         function(updateErr) {
           if (updateErr) return res.status(500).json({ error: updateErr.message });
           if (this.changes === 0) return res.status(404).json({ error: 'Rack not found' });
@@ -4396,10 +4466,18 @@ router.delete('/cnx-colocation/racks/:rackId', authenticateToken, authorizePermi
 router.get('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
   const rackId = req.params.rackId;
   
-  db.all('SELECT * FROM cnx_colocation_clients WHERE rack_id = ? ORDER BY client_name', [rackId], (err, clients) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(clients);
-  });
+  db.all(
+    `SELECT cc.*, u.username, u.full_name 
+     FROM cnx_colocation_clients cc 
+     LEFT JOIN users u ON cc.updated_by = u.id 
+     WHERE cc.rack_id = ? 
+     ORDER BY cc.client_name`, 
+    [rackId], 
+    (err, clients) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(clients);
+    }
+  );
 });
 
 // Create client
@@ -4433,8 +4511,8 @@ router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authoriz
     const clientDesignFile = req.file ? req.file.filename : null;
   
     db.run(
-      'INSERT OR REPLACE INTO cnx_colocation_clients (rack_id, client_name, power_purchased, ru_purchased, more_info, design_file, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [rackId, client_name, parseFloat(power_purchased), parseInt(ru_purchased), more_info || null, clientDesignFile, req.user.id],
+      'INSERT OR REPLACE INTO cnx_colocation_clients (rack_id, client_name, power_purchased, ru_purchased, more_info, design_file, created_by, updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [rackId, client_name, parseFloat(power_purchased), parseInt(ru_purchased), more_info || null, clientDesignFile, req.user.id, req.user.id, new Date().toISOString()],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         
@@ -4517,8 +4595,8 @@ router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizePerm
     const setClause = updateFields.map(field => `${field} = ?`).join(', ');
     
       db.run(
-        `UPDATE cnx_colocation_clients SET ${setClause}, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [...updateValues, req.user.id, clientId],
+        `UPDATE cnx_colocation_clients SET ${setClause}, updated_by = ?, updated_date = ? WHERE id = ?`,
+        [...updateValues, req.user.id, new Date().toISOString(), clientId],
         function(updateErr) {
           if (updateErr) return res.status(500).json({ error: updateErr.message });
           if (this.changes === 0) return res.status(404).json({ error: 'Client not found' });
@@ -4983,8 +5061,8 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
       dr_type, order_entry_isf, dr_order_entry_isf, unicast_isf,
       dr_available, bandwidth_1ms, available_now, quick_quote, pass_through_fees, 
       pass_through_currency, pass_through_fees_info, design_file_path, more_info,
-      quick_quote_min_cost, order_entry_cost, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      quick_quote_min_cost, order_entry_cost, created_by, updated_by, updated_date
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       exchangeId, feed_name, feed_delivery, feed_type, isf_enabled === 'true' ? 1 : 0,
       isf_a || null, isf_b || null, isf_site_code_a || null, isf_site_code_b || null,
@@ -4995,7 +5073,7 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
       parseInt(pass_through_fees) || 0, pass_through_currency || 'USD', 
       pass_through_fees_info || '', designFilePath, more_info,
       quick_quote_min_cost ? parseFloat(quick_quote_min_cost) : null,
-      order_entry_cost ? parseFloat(order_entry_cost) : null, req.user.id
+      order_entry_cost ? parseFloat(order_entry_cost) : null, req.user.id, req.user.id, new Date().toISOString()
     ],
     function(err) {
       if (err) {
@@ -5114,8 +5192,8 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
         dr_type, order_entry_isf, dr_order_entry_isf, unicast_isf,
         dr_available, bandwidth_1ms, available_now, quick_quote, 
         pass_through_fees, pass_through_currency, pass_through_fees_info, 
-        design_file_path, more_info, quick_quote_min_cost, order_entry_cost, updated_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        design_file_path, more_info, quick_quote_min_cost, order_entry_cost, updated_by, updated_date
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         feedId, exchangeId, feed_name, feed_delivery, feed_type, isf_enabled === 'true' ? 1 : 0, 
         isf_a || null, isf_b || null, isf_site_code_a || null, isf_site_code_b || null,
@@ -5126,7 +5204,7 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
         parseInt(pass_through_fees) || 0, pass_through_currency || 'USD', 
         pass_through_fees_info || '', designFilePath, more_info,
         quick_quote_min_cost ? parseFloat(quick_quote_min_cost) : null,
-        order_entry_cost ? parseFloat(order_entry_cost) : null, req.user.id
+        order_entry_cost ? parseFloat(order_entry_cost) : null, req.user.id, new Date().toISOString()
       ],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
@@ -5143,6 +5221,30 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
       }
     );
   });
+});
+
+// Get exchange feed tracking details
+router.get('/exchanges/:exchangeId/feeds/:feedId/tracking', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+  const { exchangeId, feedId } = req.params;
+  
+  db.get(
+    `SELECT ef.updated_by, ef.updated_date, u.username, u.full_name 
+     FROM exchange_feeds ef 
+     LEFT JOIN users u ON ef.updated_by = u.id 
+     WHERE ef.id = ? AND ef.exchange_id = ?`,
+    [feedId, exchangeId],
+    (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!result) return res.status(404).json({ error: 'Exchange feed not found' });
+      
+      res.json({
+        updated_by: result.updated_by,
+        updated_date: result.updated_date,
+        username: result.username,
+        full_name: result.full_name
+      });
+    }
+  );
 });
 
 // Delete exchange feed
@@ -5225,10 +5327,18 @@ router.delete('/exchanges/:exchangeId/feeds/:feedId/design-file', authenticateTo
 router.get('/exchanges/:id/contacts', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
   const exchangeId = req.params.id;
   
-  db.all('SELECT * FROM exchange_contacts WHERE exchange_id = ? ORDER BY contact_name', [exchangeId], (err, contacts) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(contacts);
-  });
+  db.all(
+    `SELECT ec.*, u.username, u.full_name 
+     FROM exchange_contacts ec 
+     LEFT JOIN users u ON ec.updated_by = u.id 
+     WHERE ec.exchange_id = ? 
+     ORDER BY ec.contact_name`, 
+    [exchangeId], 
+    (err, contacts) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(contacts);
+    }
+  );
 });
 
 // Create exchange contact
@@ -5246,11 +5356,11 @@ router.post('/exchanges/:id/contacts', authenticateToken, authorizePermission('e
   db.run(
     `INSERT OR REPLACE INTO exchange_contacts (
       exchange_id, contact_name, job_title, country, phone_number, email,
-      contact_type, daily_contact, more_info, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      contact_type, daily_contact, more_info, created_by, updated_by, updated_date
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       exchangeId, contact_name, job_title, country, phone_number, email,
-      contact_type, (daily_contact === 'true' || daily_contact === true) ? 1 : 0, more_info, req.user.id
+      contact_type, (daily_contact === 'true' || daily_contact === true) ? 1 : 0, more_info, req.user.id, req.user.id, new Date().toISOString()
     ],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
@@ -5292,11 +5402,11 @@ router.put('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, auth
     db.run(
       `INSERT OR REPLACE INTO exchange_contacts (
         id, exchange_id, contact_name, job_title, country, phone_number, email,
-        contact_type, daily_contact, more_info, last_updated, updated_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
+        contact_type, daily_contact, more_info, updated_date, updated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         contactId, exchangeId, contact_name, job_title, country, phone_number, email,
-        contact_type, (daily_contact === 'true' || daily_contact === true) ? 1 : 0, more_info, req.user.id
+        contact_type, (daily_contact === 'true' || daily_contact === true) ? 1 : 0, more_info, new Date().toISOString(), req.user.id
       ],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
@@ -5455,7 +5565,7 @@ const bulkUploadModules = {
       local_loop_carriers_a: 'Carrier A',
       local_loop_carriers_b: 'Carrier B',
       equipment_type: 'Optical',
-      carrier_protected: 'No',
+      carrier_protected: '0',
       carrier_protection_route: ''
     }
   },
@@ -5532,18 +5642,21 @@ const bulkUploadModules = {
     locations: {
     table: 'location_reference',
     templateFields: [
-      'location_code', 'city', 'country', 'datacenter_name', 'datacenter_address',
-      'pop_type', 'status', 'provider', 'access_info',
-      'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus',
-      'region', 'more_info', 'design_file'
+      'location_code', 'region', 'city', 'country', 'datacenter_name', 'datacenter_address',
+      'latitude', 'longitude', 'time_zone', 'pop_type', 'status', 'provider', 'access_info',
+      'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus'
     ],
     requiredFields: ['location_code', 'city', 'country', 'datacenter_name', 'pop_type', 'status'],
     sampleData: {
       location_code: 'LONLON',
+      region: 'Europe',
       city: 'London',
       country: 'United Kingdom',
       datacenter_name: 'London Data Center 1',
       datacenter_address: '123 Tech Street, London, UK',
+      latitude: '51.5074',
+      longitude: '-0.1278',
+      time_zone: 'GMT',
       pop_type: 'Primary',
       status: 'Active',
       provider: 'Sample Provider',
@@ -5551,10 +5664,7 @@ const bulkUploadModules = {
       min_price_under_100mb: '100',
       min_price_100_to_999mb: '200',
       min_price_1000_to_2999mb: '500',
-      min_price_3000mb_plus: '1000',
-      region: 'Europe',
-      more_info: 'Additional location information',
-      design_file: ''
+      min_price_3000mb_plus: '1000'
     }
   },
   carriers: {
@@ -5586,28 +5696,49 @@ const bulkUploadModules = {
   carrier_contacts: {
     table: 'carrier_contacts',
     templateFields: [
-      'carrier_id', 'contact_name', 'contact_title', 'email', 'phone', 'is_primary', 'notes'
+      'carrier_id', 'contact_type', 'contact_level', 'contact_name', 'contact_function', 'contact_email', 'contact_phone', 'notes'
     ],
-    requiredFields: ['carrier_id', 'contact_name', 'email'],
+    requiredFields: ['carrier_id', 'contact_name', 'contact_email'],
     sampleData: {
       carrier_id: '1',
+      contact_type: 'Business',
+      contact_level: 'Manager',
       contact_name: 'John Smith',
-      contact_title: 'Account Manager',
-      email: 'john.smith@carrier.com',
-      phone: '+1-555-0789',
-      is_primary: 'true',
+      contact_function: 'Account Management',
+      contact_email: 'john.smith@carrier.com',
+      contact_phone: '+1-555-0789',
       notes: 'Primary contact for technical issues'
     }
   },
   pop_capabilities: {
     table: 'pop_capabilities',
     templateFields: [
+      'location_code', 'region', 'city', 'country', 'datacenter_name', 'datacenter_address',
+      'latitude', 'longitude', 'time_zone', 'pop_type', 'status', 'provider', 'access_info',
+      'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus',
       'location_id', 'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
       'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
       'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation'
     ],
-    requiredFields: ['location_id'],
+    requiredFields: ['location_code'],
     sampleData: {
+      location_code: 'LONLON',
+      region: 'Europe',
+      city: 'London',
+      country: 'United Kingdom',
+      datacenter_name: 'London Data Center 1',
+      datacenter_address: '123 Tech Street, London, UK',
+      latitude: '51.5074',
+      longitude: '-0.1278',
+      time_zone: 'GMT',
+      pop_type: 'Primary',
+      status: 'Active',
+      provider: 'Sample Provider',
+      access_info: 'Secure access, 24/7 support available',
+      min_price_under_100mb: '100',
+      min_price_100_to_999mb: '200',
+      min_price_1000_to_2999mb: '500',
+      min_price_3000mb_plus: '1000',
       location_id: '1',
       cnx_extranet_wan: 'true',
       cnx_ethernet: 'true',
@@ -5626,31 +5757,15 @@ const bulkUploadModules = {
   },
   exchanges: {
     table: 'exchanges',
-    templateFields: ['exchange_name', 'region', 'salesperson_assigned'],
+    templateFields: ['exchange_name', 'region', 'salesperson_assigned', 'available'],
     requiredFields: ['exchange_name', 'region'],
     sampleData: {
       exchange_name: 'Sample Exchange',
       region: 'North America',
-      salesperson_assigned: 'John Smith'
+      salesperson_assigned: 'John Smith',
+      available: 'true'
     }
   },
-  exchange_contacts: {
-    table: 'exchange_contacts',
-    templateFields: [
-      'exchange_id', 'contact_name', 'contact_title', 'email', 'phone', 'department', 'is_primary', 'notes'
-    ],
-    requiredFields: ['exchange_id', 'contact_name', 'email'],
-    sampleData: {
-      exchange_id: '1',
-      contact_name: 'Jane Doe',
-      contact_title: 'Technical Support Manager',
-      email: 'jane.doe@exchange.com',
-      phone: '+1-555-0123',
-      department: 'Technical Support',
-      is_primary: 'true',
-      notes: 'Primary technical contact for feed setup'
-    }
-  }
 };
 
 // Download CSV template for a module
@@ -5700,10 +5815,27 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
              LEFT JOIN carriers c ON cc.carrier_id = c.id 
              LIMIT ?`;
   } else if (module === 'pop_capabilities') {
-    // Add location info to the export
-    query = `SELECT pc.*, lr.location_code, lr.datacenter_name 
-             FROM pop_capabilities pc 
-             LEFT JOIN location_reference lr ON pc.location_id = lr.id 
+    // Add comprehensive location info to the export for bulk updating
+    // Use lr.id as location_id to ensure all locations have a location_id value
+    query = `SELECT lr.location_code, lr.region, lr.city, lr.country, lr.datacenter_name, lr.datacenter_address,
+             lr.latitude, lr.longitude, lr.time_zone, lr.pop_type, lr.status, lr.provider, lr.access_info,
+             lr.min_price_under_100mb, lr.min_price_100_to_999mb, lr.min_price_1000_to_2999mb, lr.min_price_3000mb_plus,
+             lr.id as location_id, 
+             COALESCE(pc.cnx_extranet_wan, 0) as cnx_extranet_wan, 
+             COALESCE(pc.cnx_ethernet, 0) as cnx_ethernet, 
+             COALESCE(pc.cnx_voice, 0) as cnx_voice, 
+             COALESCE(pc.tdm_gateway, 0) as tdm_gateway,
+             COALESCE(pc.cnx_unigy, 0) as cnx_unigy, 
+             COALESCE(pc.cnx_alpha, 0) as cnx_alpha, 
+             COALESCE(pc.cnx_chrono, 0) as cnx_chrono, 
+             COALESCE(pc.cnx_sdwan, 0) as cnx_sdwan, 
+             COALESCE(pc.csp_on_ramp, 0) as csp_on_ramp,
+             COALESCE(pc.exchange_on_ramp, 0) as exchange_on_ramp, 
+             COALESCE(pc.internet_on_ramp, 0) as internet_on_ramp, 
+             COALESCE(pc.transport_only_pop, 0) as transport_only_pop, 
+             COALESCE(pc.cnx_colocation, 0) as cnx_colocation
+             FROM location_reference lr 
+             LEFT JOIN pop_capabilities pc ON lr.id = pc.location_id 
              LIMIT ?`;
   } else if (module === 'carriers') {
     // Map database regions to frontend values for export
@@ -5759,7 +5891,12 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
       if (module === 'carrier_contacts') {
         csvFields = [...config.templateFields, 'carrier_name'];
       } else if (module === 'pop_capabilities') {
-        csvFields = [...config.templateFields, 'location_code', 'datacenter_name'];
+        csvFields = [
+          'location_code', 'region', 'city', 'country', 'datacenter_name', 'datacenter_address',
+          'latitude', 'longitude', 'time_zone', 'pop_type', 'status', 'provider', 'access_info',
+          'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus',
+          ...config.templateFields
+        ];
       } else if (module === 'exchange_feeds') {
         csvFields = [...config.templateFields, 'exchange_name'];
       } else if (module === 'exchange_contacts') {
@@ -5782,7 +5919,7 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
 });
 
 // Bulk upload data for a module
-router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administrator'), csvUpload.single('csv_file'), (req, res) => {
+router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administrator'), csvUpload.single('csv_file'), async (req, res) => {
   const { module } = req.params;
   
   if (!bulkUploadModules[module]) {
@@ -5925,29 +6062,118 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
             if (cleanedRow.circuit_id && !isValidCircuitId(cleanedRow.circuit_id)) {
               moduleValidationErrors.push('Invalid circuit_id format. Must be 6 uppercase letters + 6 digits');
             }
+            
+            // Set default values for required fields
+            if (!cleanedRow.repository_type_id || cleanedRow.repository_type_id === '') {
+              cleanedRow.repository_type_id = 1; // Default repository type
+            }
+            if (!cleanedRow.currency || cleanedRow.currency === '') {
+              cleanedRow.currency = 'USD'; // Default currency
+            }
+            if (!cleanedRow.carrier_protection_route || cleanedRow.carrier_protection_route === '') {
+              cleanedRow.carrier_protection_route = ''; // Default empty protection route
+            }
+            if (!cleanedRow.live_latency_source || cleanedRow.live_latency_source === '') {
+              cleanedRow.live_latency_source = 'manual'; // Default source
+            }
+            
+            // is_special is INTEGER field: 1 for special, 0 for normal (DEFAULT 0)
             if (cleanedRow.is_special !== undefined && cleanedRow.is_special !== null && cleanedRow.is_special !== '') {
               const value = cleanedRow.is_special.toString().toLowerCase();
               cleanedRow.is_special = (value === 'true' || value === '1') ? 1 : 0;
+            } else {
+              cleanedRow.is_special = 0; // Default to normal when null/empty
             }
+            // carrier_protected is INTEGER field: 1 for protected, 0 for not protected (DEFAULT 0)
             if (cleanedRow.carrier_protected !== undefined && cleanedRow.carrier_protected !== null && cleanedRow.carrier_protected !== '') {
               const value = cleanedRow.carrier_protected.toString().toLowerCase();
               cleanedRow.carrier_protected = (value === 'yes' || value === 'true' || value === '1') ? 1 : 0;
+            } else {
+              cleanedRow.carrier_protected = 0; // Default to not protected when null/empty
             }
           } else if (module === 'users') {
             if (cleanedRow.user_role && !['administrator', 'provisioner', 'read_only'].includes(cleanedRow.user_role)) {
               moduleValidationErrors.push('Invalid user_role. Must be administrator, provisioner, or read_only');
             }
+            
+            // Set default values for required fields
+            if (!cleanedRow.status || cleanedRow.status === '') {
+              cleanedRow.status = 'active'; // Default user status
+            }
+            
+            // Convert boolean fields
+            ['password_reset_required'].forEach(field => {
+              if (cleanedRow[field] !== undefined && cleanedRow[field] !== null && cleanedRow[field] !== '') {
+                const val = cleanedRow[field].toString().toLowerCase();
+                cleanedRow[field] = (val === 'true' || val === '1') ? 1 : 0;
+              } else {
+                cleanedRow[field] = 0;
+              }
+            });
+          } else if (module === 'carriers') {
+            // Set default values for required fields
+            if (!cleanedRow.status || cleanedRow.status === '') {
+              cleanedRow.status = 'active'; // Default carrier status
+            }
+          } else if (module === 'carrier_contacts') {
+            // Convert boolean fields
+            ['is_primary'].forEach(field => {
+              if (cleanedRow[field] !== undefined && cleanedRow[field] !== null && cleanedRow[field] !== '') {
+                const val = cleanedRow[field].toString().toLowerCase();
+                cleanedRow[field] = (val === 'true' || val === '1') ? 1 : 0;
+              } else {
+                cleanedRow[field] = 0;
+              }
+            });
+          } else if (module === 'pop_capabilities') {
+            // Convert all capability boolean fields
+            const booleanFields = [
+              'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
+              'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
+              'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation'
+            ];
+            booleanFields.forEach(field => {
+              if (cleanedRow[field] !== undefined && cleanedRow[field] !== null && cleanedRow[field] !== '') {
+                const val = cleanedRow[field].toString().toLowerCase();
+                cleanedRow[field] = (val === 'true' || val === '1') ? 1 : 0;
+              } else {
+                cleanedRow[field] = 0;
+              }
+            });
+          } else if (module === 'exchange_contacts') {
+            // Convert boolean fields
+            ['is_primary'].forEach(field => {
+              if (cleanedRow[field] !== undefined && cleanedRow[field] !== null && cleanedRow[field] !== '') {
+                const val = cleanedRow[field].toString().toLowerCase();
+                cleanedRow[field] = (val === 'true' || val === '1') ? 1 : 0;
+              } else {
+                cleanedRow[field] = 0;
+              }
+            });
           } else if (module === 'exchange_feeds') {
             if (cleanedRow.feed_delivery && !['Unicast', 'Multicast'].includes(cleanedRow.feed_delivery)) {
               moduleValidationErrors.push('Invalid feed_delivery. Must be Unicast or Multicast');
             }
-            const validFeedTypes = ['Equities', 'Futures', 'Options', 'Fixed Income', 'FX', 'Commodities', 'Indices', 'ETFs', 'Alternative Data', 'Reference Data'];
+            const validFeedTypes = ['Equities', 'Futures', 'Options', 'Fixed Income', 'FX', 'Commodities', 'Indices', 'ETFs', 'Alternative Data', 'Reference Data', 'Mixed'];
             if (cleanedRow.feed_type && !validFeedTypes.includes(cleanedRow.feed_type)) {
               moduleValidationErrors.push(`Invalid feed_type. Must be one of: ${validFeedTypes.join(', ')}`);
             }
-            ['dr_available', 'available_now', 'quick_quote'].forEach(field => {
-              if (cleanedRow[field]) {
-                cleanedRow[field] = cleanedRow[field].toLowerCase() === 'true' ? 1 : 0;
+            
+            // Set default values for fields that might be required
+            if (!cleanedRow.pass_through_currency || cleanedRow.pass_through_currency === '') {
+              cleanedRow.pass_through_currency = 'USD'; // Default currency
+            }
+            if (cleanedRow.pass_through_fees === undefined || cleanedRow.pass_through_fees === null || cleanedRow.pass_through_fees === '') {
+              cleanedRow.pass_through_fees = 0; // Default fees
+            }
+            
+            // Convert boolean fields - handle '1', 'true', true, 1 as true values
+            ['dr_available', 'available_now', 'quick_quote', 'isf_enabled'].forEach(field => {
+              if (cleanedRow[field] !== undefined && cleanedRow[field] !== null && cleanedRow[field] !== '') {
+                const val = cleanedRow[field].toString().toLowerCase();
+                cleanedRow[field] = (val === 'true' || val === '1') ? 1 : 0;
+              } else {
+                cleanedRow[field] = 0; // Default to false for boolean fields
               }
             });
           }
@@ -6059,7 +6285,7 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
       }, 5 * 60 * 1000);
       
       // Begin transaction for bulk insert
-      db.run('BEGIN TRANSACTION', (err) => {
+      db.run('BEGIN TRANSACTION', async (err) => {
         if (err) {
           console.log(`[BULK UPLOAD] Failed to begin transaction for module: ${module}, error: ${err.message}`);
           clearTimeout(uploadTimeout);
@@ -6080,7 +6306,10 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
         let failed = false;
         const insertErrors = [];
         
-        results.forEach((row, index) => {
+        // Process rows sequentially to handle async operations for exchange_feeds
+        for (let index = 0; index < results.length; index++) {
+          const row = results[index];
+          
           // Log progress every 50 inserts and update progress tracking
           if ((index + 1) % 50 === 0) {
             console.log(`[BULK UPLOAD] Inserting row ${index + 1}/${results.length} for module: ${module}`);
@@ -6106,166 +6335,482 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
           
           // Generate SQL for each module
           if (module === 'network_routes') {
-            console.log(`[BULK UPLOAD] Processing row ${index + 1} for network_routes:`, JSON.stringify(cleanRow, null, 2));
-            console.log(`[BULK UPLOAD] Expected fields:`, config.templateFields);
-            sql = `INSERT OR REPLACE INTO network_routes (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => cleanRow[field] || null);
-            console.log(`[BULK UPLOAD] Generated SQL:`, sql);
-            console.log(`[BULK UPLOAD] Values for row ${index + 1}:`, values);
+            try {
+              // Apply default values for network_routes before database operations
+              if (cleanRow.carrier_protected === null || cleanRow.carrier_protected === undefined) {
+                cleanRow.carrier_protected = 0;
+              }
+              if (cleanRow.is_special === null || cleanRow.is_special === undefined) {
+                cleanRow.is_special = 0;
+              }
+              if (!cleanRow.repository_type_id) {
+                cleanRow.repository_type_id = 1;
+              }
+              if (!cleanRow.currency) {
+                cleanRow.currency = 'USD';
+              }
+              if (!cleanRow.carrier_protection_route) {
+                cleanRow.carrier_protection_route = '';
+              }
+              if (!cleanRow.live_latency_source) {
+                cleanRow.live_latency_source = 'manual';
+              }
+              
+              // Check for existing route with same circuit_id
+              const existingRoute = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT circuit_id FROM network_routes WHERE LOWER(TRIM(circuit_id)) = LOWER(TRIM(?))',
+                  [cleanRow.circuit_id],
+                  (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                  }
+                );
+              });
+              
+              if (existingRoute) {
+                // Update existing route - skip circuit_id as it identifies the record
+                const updateFields = config.templateFields.slice(1); // Skip circuit_id
+                sql = `UPDATE network_routes SET ${updateFields.map(field => `${field} = ?`).join(', ')}, updated_by = ?, updated_date = ? WHERE circuit_id = ?`;
+                values = [
+                  ...updateFields.map(field => cleanRow[field]),
+                  req.user.id, new Date().toISOString(), cleanRow.circuit_id
+                ];
+              } else {
+                // Insert new route
+                sql = `INSERT INTO network_routes (${config.templateFields.join(', ')}, updated_by, updated_date) VALUES (${config.templateFields.map(() => '?').join(', ')}, ?, ?)`;
+                values = [...config.templateFields.map(field => cleanRow[field]), req.user.id, new Date().toISOString()];
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error checking for duplicates - ${dbError.message}`);
+              continue; // Skip this row and continue with next
+            }
+          } else if (module === 'users') {
+            try {
+              // Apply default values for users before database operations
+              if (!cleanRow.status) {
+                cleanRow.status = 'active';
+              }
+              if (cleanRow.password_reset_required === null || cleanRow.password_reset_required === undefined) {
+                cleanRow.password_reset_required = 0;
+              }
+              
+              // Check for existing user with same username or email
+              const existingUser = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT id FROM users WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) OR LOWER(TRIM(email)) = LOWER(TRIM(?))',
+                  [cleanRow.username, cleanRow.email],
+                  (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                  }
+                );
+              });
+              
+              if (existingUser) {
+                // Update existing user - skip username as it identifies the record
+                const updateFields = config.templateFields.filter(field => field !== 'username');
+                sql = `UPDATE users SET ${updateFields.map(field => `${field} = ?`).join(', ')} WHERE username = ?`;
+                values = [
+                  ...updateFields.map(field => {
+                    if (field === 'password_hash' && cleanRow[field] && !cleanRow[field].startsWith('$2b$')) {
+                      return hashPassword(cleanRow[field]);
+                    }
+                    return cleanRow[field];
+                  }),
+                  cleanRow.username
+                ];
+              } else {
+                // Insert new user
+                sql = `INSERT INTO users (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+                values = config.templateFields.map(field => {
+                  if (field === 'password_hash' && cleanRow[field] && !cleanRow[field].startsWith('$2b$')) {
+                    return hashPassword(cleanRow[field]);
+                  }
+                  return cleanRow[field];
+                });
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error checking for duplicates - ${dbError.message}`);
+              continue; // Skip this row and continue with next
+            }
+          } else if (module === 'carriers') {
+            try {
+              // Apply default values for carriers before database operations
+              if (!cleanRow.status) {
+                cleanRow.status = 'active';
+              }
+              
+              // Check for existing carrier with same name
+              const existingCarrier = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT id FROM carriers WHERE LOWER(TRIM(carrier_name)) = LOWER(TRIM(?))',
+                  [cleanRow.carrier_name],
+                  (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                  }
+                );
+              });
+              
+              if (existingCarrier) {
+                // Update existing carrier
+                const updateFields = config.templateFields.slice(1); // Skip carrier_name (or use all fields)
+                sql = `UPDATE carriers SET ${updateFields.map(field => `${field} = ?`).join(', ')} WHERE LOWER(TRIM(carrier_name)) = LOWER(TRIM(?))`;
+                values = [
+                  ...updateFields.map(field => cleanRow[field]),
+                  cleanRow.carrier_name
+                ];
+              } else {
+                // Insert new carrier
+                sql = `INSERT INTO carriers (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
+                values = config.templateFields.map(field => cleanRow[field]);
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error checking for duplicates - ${dbError.message}`);
+              continue; // Skip this row and continue with next
+            }
+          } else if (module === 'pop_capabilities') {
+            try {
+              // First, lookup or update the location using location_code
+              let locationId = cleanRow.location_id;
+              
+              if (cleanRow.location_code) {
+                // Look up location by location_code
+                const location = await new Promise((resolve, reject) => {
+                  db.get(
+                    'SELECT id FROM location_reference WHERE LOWER(TRIM(location_code)) = LOWER(TRIM(?))',
+                    [cleanRow.location_code],
+                    (err, row) => {
+                      if (err) reject(err);
+                      else resolve(row);
+                    }
+                  );
+                });
+                
+                if (location) {
+                  locationId = location.id;
+                  // Update location data if provided
+                  const locationFields = [
+                    'region', 'city', 'country', 'datacenter_name', 'datacenter_address',
+                    'latitude', 'longitude', 'time_zone', 'pop_type', 'status', 'provider', 'access_info',
+                    'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus'
+                  ];
+                  const locationValues = locationFields.filter(field => cleanRow[field] !== undefined && cleanRow[field] !== null);
+                  if (locationValues.length > 0) {
+                    const updateLocationSql = `UPDATE location_reference SET ${locationValues.map(field => `${field} = ?`).join(', ')} WHERE id = ?`;
+                    const updateLocationValues = [...locationValues.map(field => cleanRow[field]), locationId];
+                    await new Promise((resolve, reject) => {
+                      db.run(updateLocationSql, updateLocationValues, (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                      });
+                    });
+                  }
+                }
+              }
+              
+              if (!locationId) {
+                insertErrors.push(`Row ${index + 1}: Could not find location for location_code: ${cleanRow.location_code}`);
+                continue;
+              }
+              
+              // Apply default values for pop_capabilities boolean fields
+              const booleanFields = [
+                'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
+                'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
+                'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation'
+              ];
+              booleanFields.forEach(field => {
+                if (cleanRow[field] === null || cleanRow[field] === undefined) {
+                  cleanRow[field] = 0;
+                }
+              });
+              
+              // Check for existing capabilities for same location
+              const existingCapabilities = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT location_id FROM pop_capabilities WHERE location_id = ?',
+                  [locationId],
+                  (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                  }
+                );
+              });
+              
+              // Only update/insert the POP capability fields
+              const capabilityFields = [
+                'location_id', 'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
+                'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
+                'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation'
+              ];
+              
+              if (existingCapabilities) {
+                // Update existing capabilities
+                const updateFields = capabilityFields.slice(1); // Skip location_id
+                sql = `UPDATE pop_capabilities SET ${updateFields.map(field => `${field} = ?`).join(', ')} WHERE location_id = ?`;
+                values = [
+                  ...updateFields.map(field => cleanRow[field]),
+                  locationId
+                ];
+              } else {
+                // Insert new capabilities
+                sql = `INSERT INTO pop_capabilities (${capabilityFields.join(', ')}) VALUES (${capabilityFields.map(() => '?').join(', ')})`;
+                values = capabilityFields.map(field => field === 'location_id' ? locationId : cleanRow[field]);
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error checking for duplicates - ${dbError.message}`);
+              continue; // Skip this row and continue with next
+            }
           } else if (module === 'exchange_feeds') {
-            sql = `INSERT OR REPLACE INTO exchange_feeds (${config.templateFields.join(', ')}, created_by) VALUES (${config.templateFields.map(() => '?').join(', ')}, ?)`;
-            values = [...config.templateFields.map(field => cleanRow[field] || null), req.user.id];
+            try {
+              // Apply default values for exchange_feeds before database operations
+              if (!cleanRow.pass_through_currency) {
+                cleanRow.pass_through_currency = 'USD';
+              }
+              if (cleanRow.pass_through_fees === null || cleanRow.pass_through_fees === undefined || cleanRow.pass_through_fees === '') {
+                cleanRow.pass_through_fees = 0;
+              }
+              
+              // Handle constrained fields - dr_type is optional, set to NULL if empty
+              if (!cleanRow.dr_type || cleanRow.dr_type === '' || cleanRow.dr_type === undefined) {
+                cleanRow.dr_type = null; // dr_type is optional, allow NULL
+              }
+              
+              // Required fields with defaults
+              if (!cleanRow.feed_delivery || cleanRow.feed_delivery === '') {
+                cleanRow.feed_delivery = 'Multicast'; // Default feed delivery type
+              }
+              if (!cleanRow.feed_type || cleanRow.feed_type === '') {
+                cleanRow.feed_type = 'Equities'; // Default feed type
+              }
+              
+              // Boolean fields defaults
+              const booleanFields = ['dr_available', 'available_now', 'quick_quote', 'isf_enabled'];
+              booleanFields.forEach(field => {
+                if (cleanRow[field] === null || cleanRow[field] === undefined) {
+                  cleanRow[field] = 0;
+                }
+              });
+              
+              // Check for existing feed with same exchange_id and feed_name
+              const existingFeed = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT id FROM exchange_feeds WHERE exchange_id = ? AND LOWER(TRIM(feed_name)) = LOWER(TRIM(?))',
+                  [cleanRow.exchange_id, cleanRow.feed_name],
+                  (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                  }
+                );
+              });
+              
+              if (existingFeed) {
+                // Update existing feed - skip exchange_id and feed_name as they identify the record
+                const updateFields = config.templateFields.slice(2); // Skip exchange_id and feed_name
+                sql = `UPDATE exchange_feeds SET ${updateFields.map(field => `${field} = ?`).join(', ')}, updated_by = ?, updated_date = ? WHERE id = ?`;
+                values = [
+                  ...updateFields.map(field => cleanRow[field]),
+                  req.user.id, new Date().toISOString(), existingFeed.id
+                ];
+              } else {
+                // Insert new feed
+                sql = `INSERT INTO exchange_feeds (${config.templateFields.join(', ')}, created_by, updated_by, updated_date) VALUES (${config.templateFields.map(() => '?').join(', ')}, ?, ?, ?)`;
+                values = [...config.templateFields.map(field => cleanRow[field]), req.user.id, req.user.id, new Date().toISOString()];
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error checking for duplicates - ${dbError.message}`);
+              continue; // Skip this row and continue with next
+            }
           } else if (module === 'exchange_contacts') {
-            sql = `INSERT OR REPLACE INTO exchange_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => cleanRow[field] || null);
+            try {
+              // Check for existing contact with same exchange_id and contact_name
+              const existingContact = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT id FROM exchange_contacts WHERE exchange_id = ? AND LOWER(TRIM(contact_name)) = LOWER(TRIM(?))',
+                  [cleanRow.exchange_id, cleanRow.contact_name],
+                  (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                  }
+                );
+              });
+              
+              if (existingContact) {
+                // Update existing contact - skip exchange_id and contact_name as they identify the record
+                const updateFields = config.templateFields.filter(field => field !== 'exchange_id' && field !== 'contact_name');
+                sql = `UPDATE exchange_contacts SET ${updateFields.map(field => `${field} = ?`).join(', ')}, updated_by = ?, updated_date = ? WHERE id = ?`;
+                values = [
+                  ...updateFields.map(field => cleanRow[field]),
+                  req.user.id, new Date().toISOString(), existingContact.id
+                ];
+              } else {
+                // Insert new contact
+                sql = `INSERT INTO exchange_contacts (${config.templateFields.join(', ')}, created_by, updated_by, updated_date) VALUES (${config.templateFields.map(() => '?').join(', ')}, ?, ?, ?)`;
+                values = [...config.templateFields.map(field => cleanRow[field] || null), req.user.id, req.user.id, new Date().toISOString()];
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error checking for duplicates - ${dbError.message}`);
+              continue; // Skip this row and continue with next
+            }
           } else if (module === 'exchange_rates') {
             sql = `INSERT OR REPLACE INTO exchange_rates (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => cleanRow[field] || null);
           } else if (module === 'locations') {
             sql = `INSERT OR REPLACE INTO location_reference (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => cleanRow[field] || null);
-          } else if (module === 'carriers') {
-            // Map frontend region values to database values
-            const regionMapping = {
-              'AMERs': 'North America',
-              'APAC': 'Asia Pacific', 
-              'EMEA': 'Europe'
-            };
-            
-            if (cleanRow.region && regionMapping[cleanRow.region]) {
-              cleanRow.region = regionMapping[cleanRow.region];
-            }
-            
-            sql = `INSERT OR REPLACE INTO carriers (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => cleanRow[field] || null);
-          } else if (module === 'users') {
-            // Hash password for users - but if password_hash is already provided, use it
-            if (cleanRow.password_hash && !cleanRow.password_hash.startsWith('$2b$')) {
-              cleanRow.password_hash = hashPassword(cleanRow.password_hash);
-            }
-            sql = `INSERT OR REPLACE INTO users (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => cleanRow[field] || null);
           } else if (module === 'carrier_contacts') {
-            sql = `INSERT OR REPLACE INTO carrier_contacts (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => cleanRow[field] || null);
-          } else if (module === 'pop_capabilities') {
-            sql = `INSERT OR REPLACE INTO pop_capabilities (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => cleanRow[field] || null);
+            try {
+              // Check for existing contact with same carrier_id and contact_name
+              const existingContact = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT id FROM carrier_contacts WHERE carrier_id = ? AND LOWER(TRIM(contact_name)) = LOWER(TRIM(?))',
+                  [cleanRow.carrier_id, cleanRow.contact_name],
+                  (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                  }
+                );
+              });
+              
+              if (existingContact) {
+                // Update existing contact - skip carrier_id and contact_name as they identify the record
+                const updateFields = config.templateFields.filter(field => field !== 'carrier_id' && field !== 'contact_name');
+                sql = `UPDATE carrier_contacts SET ${updateFields.map(field => `${field} = ?`).join(', ')}, updated_by = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`;
+                values = [
+                  ...updateFields.map(field => cleanRow[field]),
+                  req.user.id, existingContact.id
+                ];
+              } else {
+                // Insert new contact
+                sql = `INSERT INTO carrier_contacts (${config.templateFields.join(', ')}, created_by, last_updated) VALUES (${config.templateFields.map(() => '?').join(', ')}, ?, CURRENT_TIMESTAMP)`;
+                values = [...config.templateFields.map(field => cleanRow[field] || null), req.user.id];
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error checking for duplicates - ${dbError.message}`);
+              continue; // Skip this row and continue with next
+            }
           } else if (module === 'exchanges') {
             sql = `INSERT OR REPLACE INTO exchanges (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => cleanRow[field] || null);
           }
           
-          db.run(sql, values, function(err) {
-            if (err) {
-              failed = true;
-              insertErrors.push(`Row ${index + 1}: ${err.message}`);
-              console.error(`[BULK UPLOAD] Insert error for row ${index + 1} in module ${module}:`, err.message);
-              console.error(`[BULK UPLOAD] SQL:`, sql);
-              console.error(`[BULK UPLOAD] Values:`, values);
-            } else {
-              console.log(`[BULK UPLOAD] Successfully inserted row ${index + 1}/${results.length} for module: ${module}`);
+          try {
+            await new Promise((resolve, reject) => {
+              db.run(sql, values, function(err) {
+                if (err) {
+                  insertErrors.push(`Row ${index + 1}: ${err.message}`);
+                  console.error(`[BULK UPLOAD] Insert error for row ${index + 1} in module ${module}:`, err.message);
+                  console.error(`[BULK UPLOAD] SQL:`, sql);
+                  console.error(`[BULK UPLOAD] Values:`, values);
+                  reject(err);
+                } else {
+                  console.log(`[BULK UPLOAD] Successfully inserted row ${index + 1}/${results.length} for module: ${module}`);
+                  resolve();
+                }
+              });
+            });
+          } catch (insertError) {
+            // Error already logged above, continue with next row
+          }
+          
+          completed++;
+          
+          // Update progress tracking for each insert
+          uploadInfo = activeUploads.get(sessionId);
+          if (uploadInfo) {
+            const insertProgress = Math.floor(completed / results.length * 15); // 15% for insertion
+            uploadInfo.progress = 85 + insertProgress; // Start from 85%
+            uploadInfo.stage = `Inserting row ${completed} of ${results.length}...`;
+          }
+        }
+        
+        // All operations complete
+        const dbTime = Date.now() - dbStartTime;
+        const totalTime = Date.now() - startTime;
+        
+        if (insertErrors.length > 0) {
+          console.log(`[BULK UPLOAD] Database insert completed with errors for module: ${module}, ${insertErrors.length} errors, rolling back transaction`);
+          
+          // Clear the timeout since upload failed
+          clearTimeout(uploadTimeout);
+          
+          // Update progress tracking
+          uploadInfo = activeUploads.get(sessionId);
+          if (uploadInfo) {
+            uploadInfo.status = 'error';
+            uploadInfo.stage = 'Database insert failed - rolling back';
+            uploadInfo.errors = insertErrors;
+            setTimeout(() => activeUploads.delete(sessionId), 60000);
+          }
+          
+          // Rollback transaction
+          db.run('ROLLBACK', (rollbackErr) => {
+            if (rollbackErr) console.error(`[BULK UPLOAD] Rollback failed for module: ${module}:`, rollbackErr);
+            console.log(`[BULK UPLOAD] Transaction rolled back for module: ${module}, total time: ${totalTime}ms`);
+          });
+        } else {
+          console.log(`[BULK UPLOAD] All rows inserted successfully for module: ${module}, committing transaction`);
+          
+          // Update progress tracking
+          uploadInfo = activeUploads.get(sessionId);
+          if (uploadInfo) {
+            uploadInfo.progress = 95;
+            uploadInfo.stage = 'Committing transaction...';
+          }
+          
+          // Commit transaction
+          db.run('COMMIT', (commitErr) => {
+            if (commitErr) {
+              console.log(`[BULK UPLOAD] Failed to commit transaction for module: ${module}, error: ${commitErr.message}`);
+              
+              // Clear the timeout since commit failed
+              clearTimeout(uploadTimeout);
+              
+              // Update progress tracking
+              uploadInfo = activeUploads.get(sessionId);
+              if (uploadInfo) {
+                uploadInfo.status = 'error';
+                uploadInfo.stage = 'Failed to commit transaction';
+                uploadInfo.errors = [commitErr.message];
+                setTimeout(() => activeUploads.delete(sessionId), 60000);
+              }
+              return;
             }
             
-            completed++;
+            console.log(`[BULK UPLOAD] Transaction committed successfully for module: ${module}`);
+            console.log(`[BULK UPLOAD] Database time: ${dbTime}ms, Total time: ${totalTime}ms, Rows imported: ${results.length}`);
             
-            // Update progress tracking for each insert
+            // Log successful bulk upload
+            logChange(null, 'bulk_upload', null, 'BULK_IMPORT', null, {
+              module,
+              rows_imported: results.length,
+              filename: req.file.originalname
+            }, req);
+            
+            console.log(`[BULK UPLOAD] Bulk upload completed successfully for module: ${module}, file: ${req.file.originalname}`);
+            
+            // Clear the timeout since upload completed successfully
+            clearTimeout(uploadTimeout);
+            
+            // Update progress tracking - completed
             uploadInfo = activeUploads.get(sessionId);
             if (uploadInfo) {
-              const insertProgress = Math.floor(completed / results.length * 15); // 15% for insertion
-              uploadInfo.progress = 85 + insertProgress; // Start from 85%
-              uploadInfo.stage = `Inserting row ${completed} of ${results.length}...`;
-            }
-            
-            // Check if all operations are complete
-            if (completed === results.length) {
-              const dbTime = Date.now() - dbStartTime;
-              const totalTime = Date.now() - startTime;
-              
-              if (failed) {
-                console.log(`[BULK UPLOAD] Database insert failed for module: ${module}, ${insertErrors.length} errors, rolling back transaction`);
-                
-                // Clear the timeout since upload failed
-                clearTimeout(uploadTimeout);
-                
-                // Update progress tracking
-                uploadInfo = activeUploads.get(sessionId);
-                if (uploadInfo) {
-                  uploadInfo.status = 'error';
-                  uploadInfo.stage = 'Database insert failed - rolling back';
-                  uploadInfo.errors = insertErrors;
-                  setTimeout(() => activeUploads.delete(sessionId), 60000);
-                }
-                
-                // Rollback transaction
-                db.run('ROLLBACK', (rollbackErr) => {
-                  if (rollbackErr) console.error(`[BULK UPLOAD] Rollback failed for module: ${module}:`, rollbackErr);
-                  console.log(`[BULK UPLOAD] Transaction rolled back for module: ${module}, total time: ${totalTime}ms`);
-                });
-              } else {
-                console.log(`[BULK UPLOAD] All rows inserted successfully for module: ${module}, committing transaction`);
-                
-                // Update progress tracking
-                uploadInfo = activeUploads.get(sessionId);
-                if (uploadInfo) {
-                  uploadInfo.progress = 95;
-                  uploadInfo.stage = 'Committing transaction...';
-                }
-                
-                // Commit transaction
-                db.run('COMMIT', (commitErr) => {
-                  if (commitErr) {
-                    console.log(`[BULK UPLOAD] Failed to commit transaction for module: ${module}, error: ${commitErr.message}`);
-                    
-                    // Clear the timeout since commit failed
-                    clearTimeout(uploadTimeout);
-                    
-                    // Update progress tracking
-                    uploadInfo = activeUploads.get(sessionId);
-                    if (uploadInfo) {
-                      uploadInfo.status = 'error';
-                      uploadInfo.stage = 'Failed to commit transaction';
-                      uploadInfo.errors = [commitErr.message];
-                      setTimeout(() => activeUploads.delete(sessionId), 60000);
-                    }
-                    return;
-                  }
-                  
-                  console.log(`[BULK UPLOAD] Transaction committed successfully for module: ${module}`);
-                  console.log(`[BULK UPLOAD] Database time: ${dbTime}ms, Total time: ${totalTime}ms, Rows imported: ${results.length}`);
-                  
-                  // Log successful bulk upload
-                  logChange(null, 'bulk_upload', null, 'BULK_IMPORT', null, {
-                    module,
-                    rows_imported: results.length,
-                    filename: req.file.originalname
-                  }, req);
-                  
-                  console.log(`[BULK UPLOAD] Bulk upload completed successfully for module: ${module}, file: ${req.file.originalname}`);
-                  
-                  // Clear the timeout since upload completed successfully
-                  clearTimeout(uploadTimeout);
-                  
-                  // Update progress tracking - completed
-                  uploadInfo = activeUploads.get(sessionId);
-                  if (uploadInfo) {
-                    uploadInfo.status = 'completed';
-                    uploadInfo.stage = 'Upload completed successfully';
-                    uploadInfo.progress = 100;
-                    uploadInfo.result = {
-                      message: 'Bulk upload successful',
-                      module,
-                      rows_imported: results.length,
-                      total_rows: results.length
-                    };
-                    // Clean up after 5 minutes
-                    setTimeout(() => activeUploads.delete(sessionId), 300000);
-                  }
-                });
-              }
+              uploadInfo.status = 'completed';
+              uploadInfo.stage = 'Upload completed successfully';
+              uploadInfo.progress = 100;
+              uploadInfo.result = {
+                message: 'Bulk upload successful',
+                module,
+                rows_imported: results.length,
+                total_rows: results.length
+              };
+              // Clean up after 5 minutes
+              setTimeout(() => activeUploads.delete(sessionId), 300000);
             }
           });
-        });
+        }
       });
     })
     .on('error', (error) => {

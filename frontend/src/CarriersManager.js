@@ -409,6 +409,27 @@ const CarriersManager = ({ hasPermission }) => {
     return user?.role === 'administrator' || user?.role === 'provisioner';
   };
 
+  // Helper function to format date as "Jan 15 2025 2:30PM GMT"
+  const formatTrackingDate = (dateString) => {
+    if (!dateString) return 'Unknown';
+    
+    try {
+      const date = new Date(dateString);
+      const options = {
+        month: 'short',
+        day: 'numeric', 
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'UTC'
+      };
+      return date.toLocaleString('en-US', options).replace(',', '') + ' GMT';
+    } catch (err) {
+      return 'Invalid date';
+    }
+  };
+
   const formatLastUpdated = (lastUpdated) => {
     if (!lastUpdated) return 'Never';
     const date = new Date(lastUpdated);
@@ -625,14 +646,14 @@ const CarriersManager = ({ hasPermission }) => {
                                     <TableCell>{contact.contact_email}</TableCell>
                                     <TableCell>{contact.contact_phone}</TableCell>
                                     <TableCell>
-                                      <Typography variant="body2">
-                                        {formatLastUpdated(contact.last_updated)}
-                                      </Typography>
-                                      {contact.last_updated && (
-                                        <Typography variant="caption" color="text.secondary">
-                                          {Math.floor((new Date() - new Date(contact.last_updated)) / (1000 * 60 * 60 * 24))} days ago
+                                      <Box>
+                                        <Typography variant="body2">
+                                          {contact.last_updated ? formatTrackingDate(contact.last_updated) : 'Unknown'}
                                         </Typography>
-                                      )}
+                                        <Typography variant="caption" color="text.secondary">
+                                          {contact.username || 'Unknown User'}
+                                        </Typography>
+                                      </Box>
                                     </TableCell>
                                     <TableCell>{contact.notes}</TableCell>
                                     <TableCell align="center">

@@ -37,6 +37,7 @@ const LocationDataManager = ({ hasPermission }) => {
   const [popCapabilitiesDialogOpen, setPopCapabilitiesDialogOpen] = useState(false);
   const [currentAccessInfo, setCurrentAccessInfo] = useState('');
   const [currentCapabilities, setCurrentCapabilities] = useState({});
+  const [currentLocationTracking, setCurrentLocationTracking] = useState(null);
   
 
   
@@ -446,9 +447,36 @@ const LocationDataManager = ({ hasPermission }) => {
     }
   };
 
+  // Helper function to format date as "Jan 15 2025 2:30PM GMT"
+  const formatTrackingDate = (dateString) => {
+    if (!dateString) return 'Unknown';
+    
+    try {
+      const date = new Date(dateString);
+      const options = {
+        month: 'short',
+        day: 'numeric', 
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'UTC'
+      };
+      return date.toLocaleString('en-US', options).replace(',', '') + ' GMT';
+    } catch (err) {
+      return 'Invalid date';
+    }
+  };
+
   const handleAccessInfoClick = (location) => {
     setSelectedLocation(location);
     setCurrentAccessInfo(location.access_info || '');
+    setCurrentLocationTracking({
+      updated_by: location.updated_by,
+      updated_date: location.updated_date,
+      username: location.username,
+      full_name: location.full_name
+    });
     setAccessInfoDialogOpen(true);
   };
 
@@ -967,7 +995,10 @@ const LocationDataManager = ({ hasPermission }) => {
       </Dialog>
 
       {/* Access Info Dialog */}
-      <Dialog open={accessInfoDialogOpen} onClose={() => setAccessInfoDialogOpen(false)} maxWidth="md" fullWidth>
+      <Dialog open={accessInfoDialogOpen} onClose={() => {
+        setAccessInfoDialogOpen(false);
+        setCurrentLocationTracking(null);
+      }} maxWidth="md" fullWidth>
         <DialogTitle>
           Access Info - {selectedLocation?.location_code}
         </DialogTitle>
@@ -982,9 +1013,23 @@ const LocationDataManager = ({ hasPermission }) => {
             sx={{ mt: 2 }}
             disabled={!hasPermission || !hasPermission('locations', 'edit')}
           />
+          
+          {/* Tracking Information */}
+          <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e0e0e0' }}>
+            <Typography variant="body2" color="text.secondary">
+              {currentLocationTracking && currentLocationTracking.updated_date ? (
+                <>Last Updated: {currentLocationTracking.username || 'Unknown User'} {formatTrackingDate(currentLocationTracking.updated_date)}</>
+              ) : (
+                'Last Updated: Not available'
+              )}
+            </Typography>
+          </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setAccessInfoDialogOpen(false)}>
+          <Button onClick={() => {
+            setAccessInfoDialogOpen(false);
+            setCurrentLocationTracking(null);
+          }}>
             {hasPermission && hasPermission('locations', 'edit') ? 'Cancel' : 'Close'}
           </Button>
           {hasPermission && hasPermission('locations', 'edit') && (

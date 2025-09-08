@@ -13,6 +13,7 @@ export const addRoute = (data) => api.post(`${API_BASE_URL}/network_routes`, dat
 export const editRoute = (id, data) => api.put(`${API_BASE_URL}/network_routes/${id}`, data);
 export const deleteRoute = (id) => api.delete(`${API_BASE_URL}/network_routes/${id}`);
 export const fetchRoute = (id) => api.get(`${API_BASE_URL}/network_routes/${id}`).then(res => res.data);
+export const getRouteTracking = (circuitId) => api.get(`${API_BASE_URL}/network_routes/${circuitId}/tracking`).then(res => res.data);
 
 // File uploads
 export const uploadKMZ = (circuitId, file) => {

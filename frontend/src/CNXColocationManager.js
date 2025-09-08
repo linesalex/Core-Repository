@@ -41,6 +41,8 @@ const CNXColocationManager = ({ hasPermission }) => {
   const [designFile, setDesignFile] = useState(null);
   const [moreInfoText, setMoreInfoText] = useState('');
   const [currentMoreInfo, setCurrentMoreInfo] = useState('');
+  const [trackingInfo, setTrackingInfo] = useState(null);
+  const [currentItem, setCurrentItem] = useState(null);
   
   // Rack dialog states
   const [rackDialogOpen, setRackDialogOpen] = useState(false);
@@ -202,9 +204,37 @@ const CNXColocationManager = ({ hasPermission }) => {
     setEditDialogOpen(true);
   };
 
+  // Helper function to format date as "Jan 15 2025 2:30PM GMT"
+  const formatTrackingDate = (dateString) => {
+    if (!dateString) return 'Unknown';
+    
+    try {
+      const date = new Date(dateString);
+      const options = {
+        month: 'short',
+        day: 'numeric', 
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'UTC'
+      };
+      return date.toLocaleString('en-US', options).replace(',', '') + ' GMT';
+    } catch (err) {
+      return 'Invalid date';
+    }
+  };
+
   const handleMoreInfoView = (item) => {
     setSelectedLocation(item);
     setCurrentMoreInfo(item.more_info || 'No additional information available.');
+    setCurrentItem(item);
+    setTrackingInfo({
+      updated_by: item.updated_by,
+      updated_date: item.updated_date,
+      username: item.username,
+      full_name: item.full_name
+    });
     setMoreInfoDialogOpen(true);
   };
 
@@ -945,10 +975,16 @@ const CNXColocationManager = ({ hasPermission }) => {
                                       <TableCell align="center">
                                         <IconButton 
                                           size="small"
-                                          onClick={() => handleMoreInfoView({ more_info: rack.more_info, location_code: `Rack ${rack.rack_id}` })}
-                                          disabled={!rack.more_info}
+                                          onClick={() => handleMoreInfoView({ 
+                                            more_info: rack.more_info, 
+                                            location_code: `Rack ${rack.rack_id}`,
+                                            updated_by: rack.updated_by,
+                                            updated_date: rack.updated_date,
+                                            username: rack.username,
+                                            full_name: rack.full_name
+                                          })}
                                         >
-                                          <InfoIcon color={rack.more_info ? "primary" : "disabled"} />
+                                          <InfoIcon color="primary" />
                                         </IconButton>
                                       </TableCell>
                                       <TableCell align="center">
@@ -1032,10 +1068,16 @@ const CNXColocationManager = ({ hasPermission }) => {
                                                       <TableCell align="center">
                                                         <IconButton 
                                                           size="small"
-                                                          onClick={() => handleMoreInfoView({ more_info: client.more_info, location_code: `Client ${client.client_name}` })}
-                                                          disabled={!client.more_info}
+                                                          onClick={() => handleMoreInfoView({ 
+                                                            more_info: client.more_info, 
+                                                            location_code: `Client ${client.client_name}`,
+                                                            updated_by: client.updated_by,
+                                                            updated_date: client.updated_date,
+                                                            username: client.username,
+                                                            full_name: client.full_name
+                                                          })}
                                                         >
-                                                          <InfoIcon color={client.more_info ? "primary" : "disabled"} />
+                                                          <InfoIcon color="primary" />
                                                         </IconButton>
                                                       </TableCell>
                                                       <TableCell align="center">
@@ -1172,7 +1214,11 @@ const CNXColocationManager = ({ hasPermission }) => {
       </Dialog>
 
       {/* More Info View Dialog */}
-      <Dialog open={moreInfoDialogOpen} onClose={() => setMoreInfoDialogOpen(false)} maxWidth="md" fullWidth>
+      <Dialog open={moreInfoDialogOpen} onClose={() => {
+        setMoreInfoDialogOpen(false);
+        setTrackingInfo(null);
+        setCurrentItem(null);
+      }} maxWidth="md" fullWidth>
         <DialogTitle>
           More Info - {selectedLocation?.location_code}
         </DialogTitle>
@@ -1197,9 +1243,24 @@ const CNXColocationManager = ({ hasPermission }) => {
               {currentMoreInfo}
             </Typography>
           </Box>
+          
+          {/* Tracking Information */}
+          <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e0e0e0' }}>
+            <Typography variant="body2" color="text.secondary">
+              {trackingInfo && trackingInfo.updated_date ? (
+                <>Last Updated: {trackingInfo.username || 'Unknown User'} {formatTrackingDate(trackingInfo.updated_date)}</>
+              ) : (
+                'Last Updated: Not available'
+              )}
+            </Typography>
+          </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setMoreInfoDialogOpen(false)}>Close</Button>
+          <Button onClick={() => {
+            setMoreInfoDialogOpen(false);
+            setTrackingInfo(null);
+            setCurrentItem(null);
+          }}>Close</Button>
         </DialogActions>
       </Dialog>
 
