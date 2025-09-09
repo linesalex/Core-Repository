@@ -3568,8 +3568,17 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           // Convert segment cost to output currency
           segmentCost = convertCurrency(segmentCost, segmentCurrency, output_currency);
           
-          // Calculate allocated cost based on bandwidth utilization
-          const utilizationFactor = isProtection ? pricingConfig.utilizationFactors.protection : pricingConfig.utilizationFactors.primary;
+          // Calculate allocated cost based on bandwidth utilization with bandwidth-based factors
+          let utilizationFactor;
+          if (isProtection) {
+            utilizationFactor = segmentBandwidth <= 10000 ? 
+              pricingConfig.utilizationFactors.protectionUnder10000 : 
+              pricingConfig.utilizationFactors.protectionOver10000;
+          } else {
+            utilizationFactor = segmentBandwidth <= 10000 ? 
+              pricingConfig.utilizationFactors.primaryUnder10000 : 
+              pricingConfig.utilizationFactors.primaryOver10000;
+          }
           const allocationRatio = bandwidth / (segmentBandwidth * utilizationFactor);
           const allocatedCost = segmentCost * allocationRatio;
           
@@ -3586,13 +3595,21 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
             // Convert promo price from USD to output currency
             const promoPriceConverted = convertCurrency(promoPrice.price, 'USD', output_currency);
             
+            // Apply contract term discount to promo price
+            let discountedPromoPrice = promoPriceConverted;
+            if (contract_term === 24) {
+              discountedPromoPrice = promoPriceConverted * (1 - pricingConfig.promoPricing.discount24Month / 100);
+            } else if (contract_term === 36) {
+              discountedPromoPrice = promoPriceConverted * (1 - pricingConfig.promoPricing.discount36Month / 100);
+            }
+            
             // Check if promo pricing meets minimum margin requirement
             const promoMinMargin = pricingConfig.promoPricing.minimumMarginPercent;
-            const requiredAllocatedCost = promoPriceConverted * (1 - promoMinMargin / 100);
+            const requiredAllocatedCost = discountedPromoPrice * (1 - promoMinMargin / 100);
             
             if (totalAllocatedCost <= requiredAllocatedCost) {
               // Promo pricing meets margin requirements, use it
-              const actualMargin = ((promoPriceConverted - totalAllocatedCost) / promoPriceConverted) * 100;
+              const actualMargin = ((discountedPromoPrice - totalAllocatedCost) / discountedPromoPrice) * 100;
               
               // Calculate NRC charge based on contract term (same logic as regular pricing)
               const termConfig = pricingConfig.contractTerms[contract_term] || pricingConfig.contractTerms[12];
@@ -3600,8 +3617,8 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
               
               return {
                 allocatedCost: Math.round(totalAllocatedCost * 100) / 100,
-                minimumPrice: Math.round(promoPriceConverted * 100) / 100,
-                suggestedPrice: Math.round(promoPriceConverted * 100) / 100,
+                minimumPrice: Math.round(discountedPromoPrice * 100) / 100,
+                suggestedPrice: Math.round(discountedPromoPrice * 100) / 100,
                 minimumMargin: Math.round(actualMargin * 10) / 10,
                 suggestedMargin: Math.round(actualMargin * 10) / 10,
                 locationMinimum: 0,
@@ -6893,21 +6910,59 @@ router.get('/pricing_logic/config', authenticateToken, authorizeRole('administra
     
     // Convert flat config array to nested object structure
     const configData = {
-      contractTerms: {},
-      charges: {},
-      utilizationFactors: {},
-      promoPricing: {}
+      contractTerms: {
+        12: { minMargin: 40, suggestedMargin: 60, nrcCharge: 1000 },
+        24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
+        36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
+      },
+      protectedServiceMargins: {
+        12: { minMargin: 50, suggestedMargin: 70 },
+        24: { minMargin: 47.5, suggestedMargin: 65 },
+        36: { minMargin: 45, suggestedMargin: 60 }
+      },
+      charges: {
+        protectionPathMultiplier: 0.7
+      },
+      utilizationFactors: {
+        primaryUnder10000: 0.9,
+        primaryOver10000: 0.9,
+        protectionUnder10000: 1.0,
+        protectionOver10000: 1.0
+      },
+      promoPricing: {
+        minimumMarginPercent: 35,
+        discount24Month: 5,
+        discount36Month: 10
+      }
     };
     
+    // Override with database values
     configs.forEach(config => {
       const parts = config.config_key.split('.');
-      if (parts.length === 2) {
-        if (!configData[parts[0]]) configData[parts[0]] = {};
-        configData[parts[0]][parts[1]] = parseFloat(config.config_value);
+      if (parts.length === 3 && parts[0] === 'contractTerms') {
+        const term = parts[1];
+        const field = parts[2];
+        if (!configData.contractTerms[term]) configData.contractTerms[term] = {};
+        configData.contractTerms[term][field] = parseFloat(config.config_value);
+      } else if (parts.length === 3 && parts[0] === 'protectedServiceMargins') {
+        const term = parts[1];
+        const field = parts[2];
+        if (!configData.protectedServiceMargins[term]) configData.protectedServiceMargins[term] = {};
+        configData.protectedServiceMargins[term][field] = parseFloat(config.config_value);
+      } else if (parts.length === 2 && parts[0] === 'charges') {
+        configData.charges[parts[1]] = parseFloat(config.config_value);
+      } else if (parts.length === 2 && parts[0] === 'utilizationFactors') {
+        configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
+      } else if (parts.length === 2 && parts[0] === 'promoPricing') {
+        configData.promoPricing[parts[1]] = parseFloat(config.config_value);
       }
     });
     
-    res.json(configData);
+    res.json({
+      success: true,
+      data: configData,
+      lastUpdated: new Date().toISOString()
+    });
   });
 });
 
@@ -7107,11 +7162,15 @@ const getPricingLogicConfig = () => {
         protectionPathMultiplier: 0.7
       },
       utilizationFactors: {
-        primary: 0.9,
-        protection: 1.0
+        primaryUnder10000: 0.9,
+        primaryOver10000: 0.9,
+        protectionUnder10000: 1.0,
+        protectionOver10000: 1.0
       },
       promoPricing: {
-        minimumMarginPercent: 35
+        minimumMarginPercent: 35,
+        discount24Month: 5,
+        discount36Month: 10
       }
     };
 

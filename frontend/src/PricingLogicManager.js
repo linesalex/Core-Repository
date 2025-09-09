@@ -52,11 +52,15 @@ const PricingLogicManager = ({ hasPermission }) => {
       protectionPathMultiplier: 0.7
     },
     utilizationFactors: {
-      primary: 0.9,
-      protection: 1.0
+      primaryUnder10000: 0.9,
+      primaryOver10000: 0.9,
+      protectionUnder10000: 1.0,
+      protectionOver10000: 1.0
     },
     promoPricing: {
-      minimumMarginPercent: 35
+      minimumMarginPercent: 35,
+      discount24Month: 5,
+      discount36Month: 10
     }
   });
   
@@ -177,11 +181,15 @@ const PricingLogicManager = ({ hasPermission }) => {
         protectionPathMultiplier: 0.7
       },
       utilizationFactors: {
-        primary: 0.9,
-        protection: 1.0
+        primaryUnder10000: 0.9,
+        primaryOver10000: 0.9,
+        protectionUnder10000: 1.0,
+        protectionOver10000: 1.0
       },
       promoPricing: {
-        minimumMarginPercent: 35
+        minimumMarginPercent: 35,
+        discount24Month: 5,
+        discount36Month: 10
       }
     });
   };
@@ -416,26 +424,48 @@ const PricingLogicManager = ({ hasPermission }) => {
                   <Typography variant="h6">Utilization Factors</Typography>
                 </Box>
                 <Grid container spacing={2}>
-                  <Grid item xs={12}>
+                  <Grid item xs={12} sm={6}>
                     <TextField
                       fullWidth
-                      label="Primary Path Utilization"
+                      label="Primary Path (10000Mbit and below)"
                       type="number"
                       inputProps={{ step: 0.1, min: 0, max: 1 }}
-                      value={config.utilizationFactors.primary}
-                      onChange={(e) => updateUtilizationFactor('primary', e.target.value)}
-                      helperText="Expected utilization factor for primary paths (0.0 - 1.0)"
+                      value={config.utilizationFactors.primaryUnder10000}
+                      onChange={(e) => updateUtilizationFactor('primaryUnder10000', e.target.value)}
+                      helperText="Primary paths for circuits 10000Mbit and below (0.0 - 1.0)"
                     />
                   </Grid>
-                  <Grid item xs={12}>
+                  <Grid item xs={12} sm={6}>
                     <TextField
                       fullWidth
-                      label="Protection Path Utilization"
+                      label="Primary Path (over 10000Mbit)"
                       type="number"
                       inputProps={{ step: 0.1, min: 0, max: 1 }}
-                      value={config.utilizationFactors.protection}
-                      onChange={(e) => updateUtilizationFactor('protection', e.target.value)}
-                      helperText="Expected utilization factor for protection paths (0.0 - 1.0)"
+                      value={config.utilizationFactors.primaryOver10000}
+                      onChange={(e) => updateUtilizationFactor('primaryOver10000', e.target.value)}
+                      helperText="Primary paths for circuits over 10000Mbit (0.0 - 1.0)"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Protection Path (10000Mbit and below)"
+                      type="number"
+                      inputProps={{ step: 0.1, min: 0, max: 1 }}
+                      value={config.utilizationFactors.protectionUnder10000}
+                      onChange={(e) => updateUtilizationFactor('protectionUnder10000', e.target.value)}
+                      helperText="Protection paths for circuits 10000Mbit and below (0.0 - 1.0)"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Protection Path (over 10000Mbit)"
+                      type="number"
+                      inputProps={{ step: 0.1, min: 0, max: 1 }}
+                      value={config.utilizationFactors.protectionOver10000}
+                      onChange={(e) => updateUtilizationFactor('protectionOver10000', e.target.value)}
+                      helperText="Protection paths for circuits over 10000Mbit (0.0 - 1.0)"
                     />
                   </Grid>
                 </Grid>
@@ -464,6 +494,34 @@ const PricingLogicManager = ({ hasPermission }) => {
                         endAdornment: <InputAdornment position="end">%</InputAdornment>
                       }}
                       helperText="Minimum margin required for promo pricing to be used (fallback to regular pricing if not met)"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="24-Month Contract Discount"
+                      type="number"
+                      inputProps={{ step: 0.1, min: 0, max: 100 }}
+                      value={config.promoPricing.discount24Month}
+                      onChange={(e) => updatePromoPricing('discount24Month', e.target.value)}
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>
+                      }}
+                      helperText="Additional discount from base promo price for 24-month contracts"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="36-Month Contract Discount"
+                      type="number"
+                      inputProps={{ step: 0.1, min: 0, max: 100 }}
+                      value={config.promoPricing.discount36Month}
+                      onChange={(e) => updatePromoPricing('discount36Month', e.target.value)}
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>
+                      }}
+                      helperText="Additional discount from base promo price for 36-month contracts"
                     />
                   </Grid>
                 </Grid>

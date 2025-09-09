@@ -96,7 +96,7 @@ export const createValidator = (rules) => {
           
           switch (type) {
             case 'required':
-              if (!value || (typeof value === 'string' && value.trim() === '')) {
+              if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
                 if (!errors[field]) errors[field] = [];
                 errors[field].push(message || `${field} is required`);
               }

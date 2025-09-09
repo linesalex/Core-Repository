@@ -370,7 +370,7 @@ const NetworkDesignTool = () => {
   };
 
   const formatLatency = (latency) => {
-    return Math.round(latency * 10) / 10; // Round to 1 decimal place
+    return Math.round(latency * 1000) / 1000; // Round to 3 decimal places
   };
 
   const toggleLogExpansion = (logId) => {
@@ -1157,18 +1157,12 @@ const NetworkDesignTool = () => {
                           {/* Promo Pricing Indicator */}
                           {result.pricing.promoPricing?.used && (
                             <Box sx={{ p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
-                              <Box display="flex" alignItems="center" gap={1} mb={1}>
+                              <Box display="flex" alignItems="center" gap={1}>
                                 <LocalOfferIcon color="success" fontSize="small" />
                                 <Typography variant="subtitle2" color="success.dark" fontWeight="bold">
                                   PROMO PRICING APPLIED
                                 </Typography>
                               </Box>
-                              <Typography variant="body2" color="text.secondary">
-                                Rule: <strong>{result.pricing.promoPricing.ruleName}</strong>
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                Original USD Price: ${result.pricing.promoPricing.originalPriceUSD} • Tier: {result.pricing.promoPricing.priceField.replace('price_', '').replace('_', ' ').replace('mb', 'Mb')}
-                              </Typography>
                             </Box>
                           )}
 
