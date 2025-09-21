@@ -263,5 +263,9 @@ export const rejectUser = (userId) => api.delete(`${API_BASE_URL}/users/${userId
 // Locations
 export const getLocations = () => api.get(`${API_BASE_URL}/locations`).then(res => res.data);
 
+// Cross Connect
+export const getCrossConnectInfo = (locationId) => api.get(`${API_BASE_URL}/locations/${locationId}/cross-connect`).then(res => res.data);
+export const updateCrossConnectInfo = (locationId, data) => api.put(`${API_BASE_URL}/locations/${locationId}/cross-connect`, data);
+
 // Export the base api object for direct use
 export { api }; 

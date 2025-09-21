@@ -16,8 +16,9 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import SaveIcon from '@mui/icons-material/Save';
 import HistoryIcon from '@mui/icons-material/History';
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
+import CableIcon from '@mui/icons-material/Cable';
 import LoadingButton from '@mui/lab/LoadingButton';
-import { networkDesignApi } from './api';
+import { networkDesignApi, getCrossConnectInfo } from './api';
 import { getCarriers } from './api';
 import { useAuth } from './AuthContext';
 import { API_BASE_URL } from './config';
@@ -78,6 +79,10 @@ const NetworkDesignTool = () => {
   const [auditLogs, setAuditLogs] = useState([]);
   const [searchResults, setSearchResults] = useState(null);
   const [pricingResults, setPricingResults] = useState(null);
+  const [crossConnectResults, setCrossConnectResults] = useState({
+    source: null,
+    destination: null
+  });
   
   // UI state
   const [loading, setLoading] = useState(false);
@@ -540,6 +545,113 @@ const NetworkDesignTool = () => {
     } catch (err) {
       console.error('Export error:', err);
       setError('Failed to export pricing logs: ' + err.message);
+    }
+  };
+
+  // Cross Connect Functions
+  const handleToggleCrossConnect = async (locationType) => {
+    try {
+      setLoading(true);
+      setError('');
+      
+      // Check if this location type already has results (remove case)
+      if (crossConnectResults[locationType]) {
+        // Remove the cross connect results
+        setCrossConnectResults(prev => ({
+          ...prev,
+          [locationType]: null
+        }));
+        setLoading(false);
+        return;
+      }
+      
+      // Add case - get the location code based on type
+      const locationCode = locationType === 'source' ? formData.source : formData.destination;
+      
+      if (!locationCode) {
+        setError(`No ${locationType} location selected`);
+        return;
+      }
+      
+      // Find the location object
+      const location = locations.find(loc => loc.location_code === locationCode);
+      if (!location) {
+        setError(`Location ${locationCode} not found`);
+        return;
+      }
+      
+      // Get cross connect data
+      const crossConnectData = await getCrossConnectInfo(location.id);
+      
+      // Get pricing logic config to get margins
+      const pricingConfig = await networkDesignApi.getPricingLogicConfig();
+      const margins = pricingConfig.data.crossConnect || { nrcMargin: 10, mrcMargin: 10 };
+      
+      // Helper function to round up to nearest $10 (same as backend logic)
+      const roundUpToNearest10 = (amount) => {
+        return Math.ceil(amount / 10) * 10;
+      };
+
+      // Helper function to convert currency (same as backend logic)
+      const convertCurrency = (amount, fromCurrency, toCurrency) => {
+        if (fromCurrency === toCurrency) return amount;
+        
+        let usdAmount = amount;
+        if (fromCurrency !== 'USD' && exchangeRates[fromCurrency]) {
+          usdAmount = amount / exchangeRates[fromCurrency];
+        }
+        
+        if (toCurrency !== 'USD' && exchangeRates[toCurrency]) {
+          return usdAmount * exchangeRates[toCurrency];
+        }
+        
+        return usdAmount;
+      };
+
+      // Calculate pricing with margin, currency conversion, and rounding
+      const calculatePrice = (basePrice, margin, fromCurrency, toCurrency) => {
+        if (!basePrice || basePrice === null) return 'POA';
+        
+        // Apply margin (not markup) - same formula as backend pricing logic
+        const priceWithMargin = basePrice / (1 - margin / 100);
+        
+        // Convert currency using backend-compatible logic
+        const convertedPrice = convertCurrency(priceWithMargin, fromCurrency, toCurrency);
+        
+        // Round up to nearest $10 as per pricing rules
+        return roundUpToNearest10(convertedPrice);
+      };
+      
+      const nrcPrice = calculatePrice(
+        crossConnectData.cross_connect_nrc,
+        margins.nrcMargin,
+        crossConnectData.cross_connect_nrc_currency,
+        formData.outputCurrency
+      );
+      
+      const mrcPrice = calculatePrice(
+        crossConnectData.cross_connect_mrc,
+        margins.mrcMargin,
+        crossConnectData.cross_connect_mrc_currency,
+        formData.outputCurrency
+      );
+      
+      setCrossConnectResults(prev => ({
+        ...prev,
+        [locationType]: {
+          locationCode: crossConnectData.location_code,
+          datacenterName: crossConnectData.datacenter_name,
+          nrc: nrcPrice,
+          mrc: mrcPrice,
+          notes: crossConnectData.cross_connect_notes,
+          currency: formData.outputCurrency
+        }
+      }));
+      
+    } catch (err) {
+      setError('Failed to get cross connect pricing: ' + err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1200,45 +1312,180 @@ const NetworkDesignTool = () => {
 
                 {/* Protection Pricing (if applicable) */}
                 {pricingResults.protectionPricing && (
-                  <Grid item xs={12}>
-                    <Card sx={{ bgcolor: 'primary.50' }}>
+                  <Grid item xs={12} md={6}>
+                    <Card sx={{ height: '100%', bgcolor: 'primary.50' }}>
                       <CardHeader 
                         title="Protected Service Pricing"
+                        subheader={`${pricingResults.protectionPricing.contractTerm}-month term`}
                       />
                       <CardContent>
-                        <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1 }}>
-                          <Typography variant="subtitle2" gutterBottom>
-                            Protected Monthly Price Range ({pricingResults.protectionPricing.contractTerm}-month term)
-                          </Typography>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                            <Typography variant="body1" color="success.main">
-                              Minimum:
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                          {/* Price Range */}
+                          <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1 }}>
+                            <Typography variant="subtitle2" gutterBottom>
+                              Monthly Price Range
                             </Typography>
-                            <Typography variant="h6" fontWeight="bold" color="success.main">
-                              {formatCurrency(pricingResults.protectionPricing.minimumPrice, pricingResults.protectionPricing.currency)}
-                            </Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                            <Typography variant="body1" color="warning.main">
-                              Suggested:
-                            </Typography>
-                            <Typography variant="h6" fontWeight="bold" color="warning.main">
-                              {formatCurrency(pricingResults.protectionPricing.suggestedPrice, pricingResults.protectionPricing.currency)}
-                            </Typography>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                              <Typography variant="body2" color="success.main">
+                                Minimum:
+                              </Typography>
+                              <Typography variant="body2" fontWeight="bold" color="success.main">
+                                {formatCurrency(pricingResults.protectionPricing.minimumPrice, pricingResults.protectionPricing.currency)}
+                              </Typography>
+                            </Box>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <Typography variant="body2" color="warning.main">
+                                Suggested:
+                              </Typography>
+                              <Typography variant="body2" fontWeight="bold" color="warning.main">
+                                {formatCurrency(pricingResults.protectionPricing.suggestedPrice, pricingResults.protectionPricing.currency)}
+                              </Typography>
+                            </Box>
                           </Box>
                           
                           {/* NRC for Protection */}
                           <Box sx={{ bgcolor: pricingResults.protectionPricing.nrcCharge > 0 ? 'info.50' : 'success.50', p: 1.5, borderRadius: 1 }}>
                             <Typography variant="body2" sx={{ mb: 0.5 }}>
-                              <strong>Setup Fee (One-time):</strong>
+                              <strong>Setup Fee:</strong>
                             </Typography>
-                            <Typography variant="body1" fontWeight="bold" color={pricingResults.protectionPricing.nrcCharge > 0 ? 'info.main' : 'success.main'}>
+                            <Typography variant="body2" fontWeight="bold" color={pricingResults.protectionPricing.nrcCharge > 0 ? 'info.main' : 'success.main'}>
                               {pricingResults.protectionPricing.nrcCharge > 0 
                                 ? formatCurrency(pricingResults.protectionPricing.nrcCharge, pricingResults.protectionPricing.currency)
                                 : 'FREE'
                               }
                             </Typography>
                           </Box>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                )}
+
+                {/* Cross Connect Options */}
+                <Grid item xs={12} md={6}>
+                  <Card sx={{ height: '100%', bgcolor: 'info.50', border: 1, borderColor: 'info.200' }}>
+                    <CardHeader 
+                      avatar={<CableIcon color="info" />}
+                      title="Cross Connect Options"
+                      subheader="Add Cross Connect if required - Default delivery is customer to provide"
+                    />
+                    <CardContent>
+                      <Grid container spacing={2}>
+                        <Grid item xs={12}>
+                          <Button
+                            variant="outlined"
+                            fullWidth
+                            size="small"
+                            startIcon={<CableIcon />}
+                            onClick={() => handleToggleCrossConnect('source')}
+                            disabled={!formData.source || loading}
+                            color={crossConnectResults.source ? "error" : "primary"}
+                          >
+                            {crossConnectResults.source 
+                              ? `Remove Source (${formData.source})` 
+                              : `Add Source (${formData.source || 'Not Selected'})`
+                            }
+                          </Button>
+                        </Grid>
+                        <Grid item xs={12}>
+                          <Button
+                            variant="outlined"
+                            fullWidth
+                            size="small"
+                            startIcon={<CableIcon />}
+                            onClick={() => handleToggleCrossConnect('destination')}
+                            disabled={!formData.destination || loading}
+                            color={crossConnectResults.destination ? "error" : "primary"}
+                          >
+                            {crossConnectResults.destination 
+                              ? `Remove Destination (${formData.destination})` 
+                              : `Add Destination (${formData.destination || 'Not Selected'})`
+                            }
+                          </Button>
+                        </Grid>
+                      </Grid>
+                    </CardContent>
+                  </Card>
+                </Grid>
+
+                {/* Cross Connect Results - Source */}
+                {crossConnectResults.source && (
+                  <Grid item xs={12} md={6}>
+                    <Card sx={{ height: '100%', bgcolor: 'success.50', border: 1, borderColor: 'success.200' }}>
+                      <CardHeader 
+                        avatar={<CableIcon color="success" />}
+                        title="Source Cross Connect"
+                        subheader={`${crossConnectResults.source.locationCode} - ${crossConnectResults.source.datacenterName}`}
+                      />
+                      <CardContent>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                          <Box sx={{ bgcolor: 'white', p: 1.5, borderRadius: 1 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                              <Typography variant="body2" color="text.secondary">
+                                NRC (One-time):
+                              </Typography>
+                              <Typography variant="body2" fontWeight="bold" color="primary.main">
+                                {crossConnectResults.source.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.nrc, crossConnectResults.source.currency)}
+                              </Typography>
+                            </Box>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <Typography variant="body2" color="text.secondary">
+                                MRC (Monthly):
+                              </Typography>
+                              <Typography variant="body2" fontWeight="bold" color="secondary.main">
+                                {crossConnectResults.source.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.mrc, crossConnectResults.source.currency)}
+                              </Typography>
+                            </Box>
+                          </Box>
+                          {crossConnectResults.source.notes && (
+                            <Box sx={{ bgcolor: 'grey.50', p: 1.5, borderRadius: 1 }}>
+                              <Typography variant="caption" color="text.secondary">
+                                Notes: {crossConnectResults.source.notes}
+                              </Typography>
+                            </Box>
+                          )}
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                )}
+
+                {/* Cross Connect Results - Destination */}
+                {crossConnectResults.destination && (
+                  <Grid item xs={12} md={6}>
+                    <Card sx={{ height: '100%', bgcolor: 'warning.50', border: 1, borderColor: 'warning.200' }}>
+                      <CardHeader 
+                        avatar={<CableIcon color="warning" />}
+                        title="Destination Cross Connect"
+                        subheader={`${crossConnectResults.destination.locationCode} - ${crossConnectResults.destination.datacenterName}`}
+                      />
+                      <CardContent>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                          <Box sx={{ bgcolor: 'white', p: 1.5, borderRadius: 1 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                              <Typography variant="body2" color="text.secondary">
+                                NRC (One-time):
+                              </Typography>
+                              <Typography variant="body2" fontWeight="bold" color="primary.main">
+                                {crossConnectResults.destination.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.nrc, crossConnectResults.destination.currency)}
+                              </Typography>
+                            </Box>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <Typography variant="body2" color="text.secondary">
+                                MRC (Monthly):
+                              </Typography>
+                              <Typography variant="body2" fontWeight="bold" color="secondary.main">
+                                {crossConnectResults.destination.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.mrc, crossConnectResults.destination.currency)}
+                              </Typography>
+                            </Box>
+                          </Box>
+                          {crossConnectResults.destination.notes && (
+                            <Box sx={{ bgcolor: 'grey.50', p: 1.5, borderRadius: 1 }}>
+                              <Typography variant="caption" color="text.secondary">
+                                Notes: {crossConnectResults.destination.notes}
+                              </Typography>
+                            </Box>
+                          )}
                         </Box>
                       </CardContent>
                     </Card>

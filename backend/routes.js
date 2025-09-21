@@ -226,50 +226,53 @@ router.post('/login', async (req, res) => {
           return res.status(500).json({ error: 'Failed to get permissions' });
         }
         
-        // Try to get visibility settings, but don't fail if table doesn't exist
-        db.all(
-          'SELECT module_name, is_visible FROM user_module_visibility WHERE user_id = ?',
-          [user.id],
-          (visErr, visibilitySettings) => {
-            let moduleVisibility = {};
+        // Use the proper visibility logic that respects role-based defaults
+        getUserPermissionsWithVisibility(user.id, (visErr, visibilityData) => {
+          let moduleVisibility = {};
+          
+          if (!visErr && visibilityData && visibilityData.visibility) {
+            moduleVisibility = visibilityData.visibility;
+          } else {
+            // Fallback logic - use role-based defaults
+            const allModules = [
+              'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
+              'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
+              'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
+            ];
             
-            if (!visErr && visibilitySettings) {
-              // Build visibility map
-              Object.keys(permissions).forEach(module => {
-                moduleVisibility[module] = true; // Default to visible
-              });
-              
-              visibilitySettings.forEach(vis => {
-                moduleVisibility[vis.module_name] = !!vis.is_visible;
-              });
-            } else {
-              // If visibility table doesn't exist or error, default all to visible
-              Object.keys(permissions).forEach(module => {
+            if (user.user_role === 'administrator') {
+              // Admin users: all modules visible by default
+              allModules.forEach(module => {
                 moduleVisibility[module] = true;
               });
+            } else {
+              // Non-admin users: modules hidden by default
+              allModules.forEach(module => {
+                moduleVisibility[module] = false;
+              });
             }
-            
-            // Log login activity
-            logUserActivity(user.id, 'LOGIN', {
-              ipAddress: req.ip || req.connection.remoteAddress,
-              userAgent: req.get('User-Agent')
-            });
-            
-            res.json({
-              token,
-              user: {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                full_name: user.full_name,
-                role: user.user_role
-              },
-              permissions,
-              moduleVisibility,
-              passwordResetRequired
-            });
           }
-        );
+          
+          // Log login activity
+          logUserActivity(user.id, 'LOGIN', {
+            ipAddress: req.ip || req.connection.remoteAddress,
+            userAgent: req.get('User-Agent')
+          });
+          
+          res.json({
+            token,
+            user: {
+              id: user.id,
+              username: user.username,
+              email: user.email,
+              full_name: user.full_name,
+              role: user.user_role
+            },
+            permissions,
+            moduleVisibility,
+            passwordResetRequired
+          });
+        });
       });
     });
   } catch (error) {
@@ -286,43 +289,46 @@ router.get('/me', authenticateToken, (req, res) => {
     getUserPermissions(user.id, (err, permissions) => {
       if (err) return res.status(500).json({ error: 'Failed to get permissions' });
       
-      // Try to get visibility settings, but don't fail if table doesn't exist
-      db.all(
-        'SELECT module_name, is_visible FROM user_module_visibility WHERE user_id = ?',
-        [user.id],
-        (visErr, visibilitySettings) => {
-          let moduleVisibility = {};
+      // Use the proper visibility logic that respects role-based defaults
+      getUserPermissionsWithVisibility(user.id, (visErr, visibilityData) => {
+        let moduleVisibility = {};
+        
+        if (!visErr && visibilityData && visibilityData.visibility) {
+          moduleVisibility = visibilityData.visibility;
+        } else {
+          // Fallback logic - use role-based defaults
+          const allModules = [
+            'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
+            'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
+            'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
+          ];
           
-          if (!visErr && visibilitySettings) {
-            // Build visibility map
-            Object.keys(permissions).forEach(module => {
-              moduleVisibility[module] = true; // Default to visible
-            });
-            
-            visibilitySettings.forEach(vis => {
-              moduleVisibility[vis.module_name] = !!vis.is_visible;
-            });
-          } else {
-            // If visibility table doesn't exist or error, default all to visible
-            Object.keys(permissions).forEach(module => {
+          if (user.user_role === 'administrator') {
+            // Admin users: all modules visible by default
+            allModules.forEach(module => {
               moduleVisibility[module] = true;
             });
+          } else {
+            // Non-admin users: modules hidden by default
+            allModules.forEach(module => {
+              moduleVisibility[module] = false;
+            });
           }
-          
-          res.json({
-            user: {
-              id: user.id,
-              username: user.username,
-              email: user.email,
-              full_name: user.full_name,
-              role: user.user_role
-            },
-            permissions,
-            moduleVisibility,
-            passwordResetRequired: user.password_reset_required === 1
-          });
         }
-      );
+        
+        res.json({
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            full_name: user.full_name,
+            role: user.user_role
+          },
+          permissions,
+          moduleVisibility,
+          passwordResetRequired: user.password_reset_required === 1
+        });
+      });
     });
   });
 });
@@ -2458,7 +2464,18 @@ router.get('/locations', authenticateToken, authorizePermission('locations', 'vi
     [], 
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json(rows);
+      
+      // Process cross connect data - handle POA defaults and currency formatting
+      const processedRows = rows.map(row => ({
+        ...row,
+        cross_connect_nrc_display: row.cross_connect_nrc ? row.cross_connect_nrc : 'POA',
+        cross_connect_mrc_display: row.cross_connect_mrc ? row.cross_connect_mrc : 'POA',
+        cross_connect_nrc_currency: row.cross_connect_nrc_currency || 'USD',
+        cross_connect_mrc_currency: row.cross_connect_mrc_currency || 'USD',
+        cross_connect_notes: row.cross_connect_notes || ''
+      }));
+      
+      res.json(processedRows);
     }
   );
 });
@@ -2466,16 +2483,28 @@ router.get('/locations', authenticateToken, authorizePermission('locations', 'vi
 // Create location
 router.post('/locations', authenticateToken, authorizePermission('locations', 'create'), (req, res) => {
   const { location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, 
-          min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus } = req.body;
+          min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus,
+          cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes } = req.body;
   
   if (!location_code || !city || !country) {
     return res.status(400).json({ error: 'Location code, city, and country are required' });
   }
   
+  // Process cross connect values - convert 'POA' string to NULL for database storage
+  const processedCrossConnectNrc = (cross_connect_nrc === 'POA' || cross_connect_nrc === '' || cross_connect_nrc === undefined) ? null : parseFloat(cross_connect_nrc);
+  const processedCrossConnectMrc = (cross_connect_mrc === 'POA' || cross_connect_mrc === '' || cross_connect_mrc === undefined) ? null : parseFloat(cross_connect_mrc);
+  
   db.run(
-    'INSERT OR REPLACE INTO location_reference (location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    `INSERT OR REPLACE INTO location_reference (
+      location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, 
+      min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus,
+      cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes,
+      created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [location_code, region || 'AMERs', city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type || 'Tier 1', status || 'Active', provider, access_info, 
-     min_price_under_100mb || 0, min_price_100_to_999mb || 0, min_price_1000_to_2999mb || 0, min_price_3000mb_plus || 0, req.user.id],
+     min_price_under_100mb || 0, min_price_100_to_999mb || 0, min_price_1000_to_2999mb || 0, min_price_3000mb_plus || 0,
+     processedCrossConnectNrc, cross_connect_nrc_currency || 'USD', processedCrossConnectMrc, cross_connect_mrc_currency || 'USD', cross_connect_notes || '',
+     req.user.id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
@@ -2500,7 +2529,8 @@ router.post('/locations', authenticateToken, authorizePermission('locations', 'c
             logChange(req.user.id, 'location_reference', logRecordId, 'CREATE', null, { 
               location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, 
               time_zone, pop_type, status, provider, access_info, min_price_under_100mb, 
-              min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus 
+              min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus,
+              cross_connect_nrc: processedCrossConnectNrc, cross_connect_nrc_currency, cross_connect_mrc: processedCrossConnectMrc, cross_connect_mrc_currency, cross_connect_notes 
             }, req);
           } catch (logError) {
             console.error('Failed to log location creation:', logError);
@@ -2517,7 +2547,8 @@ router.post('/locations', authenticateToken, authorizePermission('locations', 'c
           logChange(req.user.id, 'location_reference', logRecordId, 'CREATE', null, { 
             location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, 
             time_zone, pop_type, status, provider, access_info, min_price_under_100mb, 
-            min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus 
+            min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus,
+            cross_connect_nrc: processedCrossConnectNrc, cross_connect_nrc_currency, cross_connect_mrc: processedCrossConnectMrc, cross_connect_mrc_currency, cross_connect_notes 
           }, req);
         } catch (logError) {
           console.error('Failed to log location creation:', logError);
@@ -2531,8 +2562,13 @@ router.post('/locations', authenticateToken, authorizePermission('locations', 'c
 // Update location
 router.put('/locations/:id', authenticateToken, authorizePermission('locations', 'edit'), (req, res) => {
   const { region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info,
-          min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus } = req.body;
+          min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus,
+          cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes } = req.body;
   const locationId = req.params.id;
+  
+  // Process cross connect values - convert 'POA' string to NULL for database storage
+  const processedCrossConnectNrc = (cross_connect_nrc === 'POA' || cross_connect_nrc === '' || cross_connect_nrc === undefined) ? null : parseFloat(cross_connect_nrc);
+  const processedCrossConnectMrc = (cross_connect_mrc === 'POA' || cross_connect_mrc === '' || cross_connect_mrc === undefined) ? null : parseFloat(cross_connect_mrc);
   
   // Get current location data for change logging
   db.get('SELECT * FROM location_reference WHERE id = ?', [locationId], (err, oldLocation) => {
@@ -2540,16 +2576,101 @@ router.put('/locations/:id', authenticateToken, authorizePermission('locations',
     if (!oldLocation) return res.status(404).json({ error: 'Location not found' });
     
     db.run(
-      'UPDATE location_reference SET region = ?, city = ?, country = ?, datacenter_name = ?, datacenter_address = ?, latitude = ?, longitude = ?, time_zone = ?, pop_type = ?, status = ?, provider = ?, access_info = ?, min_price_under_100mb = ?, min_price_100_to_999mb = ?, min_price_1000_to_2999mb = ?, min_price_3000mb_plus = ?, updated_by = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?',
+      `UPDATE location_reference SET 
+        region = ?, city = ?, country = ?, datacenter_name = ?, datacenter_address = ?, latitude = ?, longitude = ?, time_zone = ?, pop_type = ?, status = ?, provider = ?, access_info = ?, 
+        min_price_under_100mb = ?, min_price_100_to_999mb = ?, min_price_1000_to_2999mb = ?, min_price_3000mb_plus = ?,
+        cross_connect_nrc = ?, cross_connect_nrc_currency = ?, cross_connect_mrc = ?, cross_connect_mrc_currency = ?, cross_connect_notes = ?,
+        updated_by = ?, updated_date = CURRENT_TIMESTAMP 
+       WHERE id = ?`,
       [region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, 
-       min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus, req.user.id, locationId],
+       min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus,
+       processedCrossConnectNrc, cross_connect_nrc_currency || 'USD', processedCrossConnectMrc, cross_connect_mrc_currency || 'USD', cross_connect_notes || '',
+       req.user.id, locationId],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
         
-        logChange(req.user.id, 'location_reference', oldLocation.location_code, 'UPDATE', oldLocation, { region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus }, req);
+        logChange(req.user.id, 'location_reference', oldLocation.location_code, 'UPDATE', oldLocation, { 
+          region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, 
+          min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus,
+          cross_connect_nrc: processedCrossConnectNrc, cross_connect_nrc_currency, cross_connect_mrc: processedCrossConnectMrc, cross_connect_mrc_currency, cross_connect_notes 
+        }, req);
         
         res.json({ message: 'Location updated' });
+      }
+    );
+  });
+});
+
+// Get cross connect information for a specific location
+router.get('/locations/:id/cross-connect', authenticateToken, authorizePermission('network_design', 'view'), (req, res) => {
+  const locationId = req.params.id;
+  
+  db.get(
+    `SELECT location_code, datacenter_name, 
+     cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes
+     FROM location_reference WHERE id = ?`, 
+    [locationId], 
+    (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!row) return res.status(404).json({ error: 'Location not found' });
+      
+      // Process data for display
+      const crossConnectInfo = {
+        ...row,
+        cross_connect_nrc_display: row.cross_connect_nrc ? row.cross_connect_nrc : 'POA',
+        cross_connect_mrc_display: row.cross_connect_mrc ? row.cross_connect_mrc : 'POA',
+        cross_connect_nrc_currency: row.cross_connect_nrc_currency || 'USD',
+        cross_connect_mrc_currency: row.cross_connect_mrc_currency || 'USD',
+        cross_connect_notes: row.cross_connect_notes || ''
+      };
+      
+      res.json(crossConnectInfo);
+    }
+  );
+});
+
+// Update cross connect information for a specific location
+router.put('/locations/:id/cross-connect', authenticateToken, authorizePermission('locations', 'edit'), (req, res) => {
+  const { cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes } = req.body;
+  const locationId = req.params.id;
+  
+  // Process cross connect values - convert 'POA' string to NULL for database storage
+  const processedCrossConnectNrc = (cross_connect_nrc === 'POA' || cross_connect_nrc === '' || cross_connect_nrc === undefined) ? null : parseFloat(cross_connect_nrc);
+  const processedCrossConnectMrc = (cross_connect_mrc === 'POA' || cross_connect_mrc === '' || cross_connect_mrc === undefined) ? null : parseFloat(cross_connect_mrc);
+  
+  // Get current location data for change logging
+  db.get('SELECT * FROM location_reference WHERE id = ?', [locationId], (err, oldLocation) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldLocation) return res.status(404).json({ error: 'Location not found' });
+    
+    db.run(
+      `UPDATE location_reference SET 
+        cross_connect_nrc = ?, cross_connect_nrc_currency = ?, cross_connect_mrc = ?, cross_connect_mrc_currency = ?, cross_connect_notes = ?,
+        updated_by = ?, updated_date = CURRENT_TIMESTAMP 
+       WHERE id = ?`,
+      [processedCrossConnectNrc, cross_connect_nrc_currency || 'USD', processedCrossConnectMrc, cross_connect_mrc_currency || 'USD', cross_connect_notes || '', req.user.id, locationId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
+        
+        logChange(req.user.id, 'location_reference', oldLocation.location_code, 'CROSS_CONNECT_UPDATE', 
+          { 
+            cross_connect_nrc: oldLocation.cross_connect_nrc, 
+            cross_connect_nrc_currency: oldLocation.cross_connect_nrc_currency, 
+            cross_connect_mrc: oldLocation.cross_connect_mrc, 
+            cross_connect_mrc_currency: oldLocation.cross_connect_mrc_currency, 
+            cross_connect_notes: oldLocation.cross_connect_notes 
+          }, 
+          { 
+            cross_connect_nrc: processedCrossConnectNrc, 
+            cross_connect_nrc_currency, 
+            cross_connect_mrc: processedCrossConnectMrc, 
+            cross_connect_mrc_currency, 
+            cross_connect_notes 
+          }, req);
+        
+        res.json({ message: 'Cross connect information updated' });
       }
     );
   });
@@ -3481,6 +3602,11 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
     });
   });
 });
+// Helper function to round up to nearest $10
+const roundUpToNearest10 = (amount) => {
+  return Math.ceil(amount / 10) * 10;
+};
+
 // Network Design with Enhanced Pricing
 router.post('/network_design/calculate_pricing', authenticateToken, async (req, res) => {
   const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, use_100gb_and_df_only = false, bandwidth, source, destination, protection_required = false, customerName, quoteRequestId } = req.body;
@@ -3616,9 +3742,9 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
               const promoNrcCharge = convertCurrency(termConfig.nrcCharge, 'USD', output_currency);
               
               return {
-                allocatedCost: Math.round(totalAllocatedCost * 100) / 100,
-                minimumPrice: Math.round(discountedPromoPrice * 100) / 100,
-                suggestedPrice: Math.round(discountedPromoPrice * 100) / 100,
+                allocatedCost: roundUpToNearest10(totalAllocatedCost),
+                minimumPrice: roundUpToNearest10(discountedPromoPrice),
+                suggestedPrice: roundUpToNearest10(discountedPromoPrice),
                 minimumMargin: Math.round(actualMargin * 10) / 10,
                 suggestedMargin: Math.round(actualMargin * 10) / 10,
                 locationMinimum: 0,
@@ -3666,12 +3792,12 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       const actualSuggestedMargin = ((finalSuggestedPrice - totalAllocatedCost) / finalSuggestedPrice) * 100;
 
       return {
-        allocatedCost: Math.round(totalAllocatedCost * 100) / 100,
-        minimumPrice: Math.round(finalMinPrice * 100) / 100,
-        suggestedPrice: Math.round(finalSuggestedPrice * 100) / 100,
+        allocatedCost: roundUpToNearest10(totalAllocatedCost),
+        minimumPrice: roundUpToNearest10(finalMinPrice),
+        suggestedPrice: roundUpToNearest10(finalSuggestedPrice),
         minimumMargin: Math.round(actualMinMargin * 10) / 10,
         suggestedMargin: Math.round(actualSuggestedMargin * 10) / 10,
-        locationMinimum: Math.round(locationMinPrice * 100) / 100,
+        locationMinimum: roundUpToNearest10(locationMinPrice),
         marginEnforced: finalMinPrice > minPriceByMargin || finalSuggestedPrice > suggestedPriceByMargin,
         contractTerm: contract_term,
         targetMinMargin: minMarginPercent,
@@ -3725,9 +3851,9 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       const protectionNrcCharge = primaryPricing.nrcCharge;
 
       protectionPricing = {
-        minimumPrice: Math.round(protectedMinPrice * 100) / 100,
-        suggestedPrice: Math.round(protectedSuggestedPrice * 100) / 100,
-        allocatedCost: Math.round(protectedAllocatedCost * 100) / 100,
+        minimumPrice: roundUpToNearest10(protectedMinPrice),
+        suggestedPrice: roundUpToNearest10(protectedSuggestedPrice),
+        allocatedCost: roundUpToNearest10(protectedAllocatedCost),
         minimumMargin: Math.round(actualProtectedMinMargin * 10) / 10,
         suggestedMargin: Math.round(actualProtectedSuggestedMargin * 10) / 10,
         nrcCharge: protectionNrcCharge,
@@ -3742,9 +3868,9 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
             weight: '100%'
           },
           secondary: {
-            minimumPrice: Math.round((secondaryPricing.minimumPrice * protectionMultiplier) * 100) / 100,
-            suggestedPrice: Math.round((secondaryPricing.suggestedPrice * protectionMultiplier) * 100) / 100,
-            allocatedCost: Math.round((secondaryPricing.allocatedCost * protectionMultiplier) * 100) / 100,
+            minimumPrice: roundUpToNearest10(secondaryPricing.minimumPrice * protectionMultiplier),
+            suggestedPrice: roundUpToNearest10(secondaryPricing.suggestedPrice * protectionMultiplier),
+            allocatedCost: roundUpToNearest10(secondaryPricing.allocatedCost * protectionMultiplier),
             weight: `${Math.round(protectionMultiplier * 100)}%`
           }
         }
@@ -5661,7 +5787,8 @@ const bulkUploadModules = {
     templateFields: [
       'location_code', 'region', 'city', 'country', 'datacenter_name', 'datacenter_address',
       'latitude', 'longitude', 'time_zone', 'pop_type', 'status', 'provider', 'access_info',
-      'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus'
+      'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus',
+      'cross_connect_nrc', 'cross_connect_nrc_currency', 'cross_connect_mrc', 'cross_connect_mrc_currency', 'cross_connect_notes'
     ],
     requiredFields: ['location_code', 'city', 'country', 'datacenter_name', 'pop_type', 'status'],
     sampleData: {
@@ -5681,7 +5808,12 @@ const bulkUploadModules = {
       min_price_under_100mb: '100',
       min_price_100_to_999mb: '200',
       min_price_1000_to_2999mb: '500',
-      min_price_3000mb_plus: '1000'
+      min_price_3000mb_plus: '1000',
+      cross_connect_nrc: '500',
+      cross_connect_nrc_currency: 'USD',
+      cross_connect_mrc: '100',
+      cross_connect_mrc_currency: 'USD',
+      cross_connect_notes: 'Standard cross connect pricing, 24/7 support available'
     }
   },
   carriers: {
@@ -6675,8 +6807,27 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
             sql = `INSERT OR REPLACE INTO exchange_rates (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => cleanRow[field] || null);
           } else if (module === 'locations') {
+            // Process cross connect values - convert 'POA' string to NULL for database storage
+            const processedRow = { ...cleanRow };
+            if (processedRow.cross_connect_nrc === 'POA' || processedRow.cross_connect_nrc === '' || processedRow.cross_connect_nrc === undefined) {
+              processedRow.cross_connect_nrc = null;
+            } else if (processedRow.cross_connect_nrc) {
+              processedRow.cross_connect_nrc = parseFloat(processedRow.cross_connect_nrc);
+            }
+            
+            if (processedRow.cross_connect_mrc === 'POA' || processedRow.cross_connect_mrc === '' || processedRow.cross_connect_mrc === undefined) {
+              processedRow.cross_connect_mrc = null;
+            } else if (processedRow.cross_connect_mrc) {
+              processedRow.cross_connect_mrc = parseFloat(processedRow.cross_connect_mrc);
+            }
+            
+            // Ensure currency defaults
+            processedRow.cross_connect_nrc_currency = processedRow.cross_connect_nrc_currency || 'USD';
+            processedRow.cross_connect_mrc_currency = processedRow.cross_connect_mrc_currency || 'USD';
+            processedRow.cross_connect_notes = processedRow.cross_connect_notes || '';
+            
             sql = `INSERT OR REPLACE INTO location_reference (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
-            values = config.templateFields.map(field => cleanRow[field] || null);
+            values = config.templateFields.map(field => processedRow[field] || null);
           } else if (module === 'carrier_contacts') {
             try {
               // Check for existing contact with same carrier_id and contact_name
@@ -6904,7 +7055,7 @@ router.get('/bulk-upload/history', authenticateToken, authorizeRole('administrat
 });
 
 // Get pricing logic configuration 
-router.get('/pricing_logic/config', authenticateToken, authorizeRole('administrator'), (req, res) => {
+router.get('/pricing_logic/config', authenticateToken, (req, res) => {
   db.all('SELECT * FROM pricing_logic_config', [], (err, configs) => {
     if (err) return res.status(500).json({ error: err.message });
     
@@ -6933,6 +7084,10 @@ router.get('/pricing_logic/config', authenticateToken, authorizeRole('administra
         minimumMarginPercent: 35,
         discount24Month: 5,
         discount36Month: 10
+      },
+      crossConnect: {
+        nrcMargin: 10,
+        mrcMargin: 10
       }
     };
     
@@ -6955,6 +7110,8 @@ router.get('/pricing_logic/config', authenticateToken, authorizeRole('administra
         configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
       } else if (parts.length === 2 && parts[0] === 'promoPricing') {
         configData.promoPricing[parts[1]] = parseFloat(config.config_value);
+      } else if (parts.length === 2 && parts[0] === 'crossConnect') {
+        configData.crossConnect[parts[1]] = parseFloat(config.config_value);
       }
     });
     
@@ -6973,10 +7130,10 @@ router.put('/pricing_logic/config', authenticateToken, (req, res) => {
     return res.status(403).json({ error: 'Admin access required' });
   }
 
-  const { contractTerms, protectedServiceMargins, charges, utilizationFactors, promoPricing } = req.body;
+  const { contractTerms, protectedServiceMargins, charges, utilizationFactors, promoPricing, crossConnect } = req.body;
 
   // Validate input
-  if (!contractTerms || !protectedServiceMargins || !charges || !utilizationFactors || !promoPricing) {
+  if (!contractTerms || !protectedServiceMargins || !charges || !utilizationFactors || !promoPricing || !crossConnect) {
     return res.status(400).json({ error: 'All configuration sections are required' });
   }
 
@@ -7026,6 +7183,14 @@ router.put('/pricing_logic/config', authenticateToken, (req, res) => {
     updateOperations.push({
       key: `promoPricing.${settingType}`,
       value: promoPricing[settingType]
+    });
+  });
+
+  // Cross connect settings
+  Object.keys(crossConnect).forEach(settingType => {
+    updateOperations.push({
+      key: `crossConnect.${settingType}`,
+      value: crossConnect[settingType]
     });
   });
 
@@ -7171,6 +7336,10 @@ const getPricingLogicConfig = () => {
         minimumMarginPercent: 35,
         discount24Month: 5,
         discount36Month: 10
+      },
+      crossConnect: {
+        nrcMargin: 10,
+        mrcMargin: 10
       }
     };
 
@@ -7193,6 +7362,8 @@ const getPricingLogicConfig = () => {
           configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
         } else if (parts.length === 2 && parts[0] === 'promoPricing') {
           configData.promoPricing[parts[1]] = parseFloat(config.config_value);
+        } else if (parts.length === 2 && parts[0] === 'crossConnect') {
+          configData.crossConnect[parts[1]] = parseFloat(config.config_value);
         }
       });
 

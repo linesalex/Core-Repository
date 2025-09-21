@@ -15,7 +15,8 @@ import InfoIcon from '@mui/icons-material/Info';
 import SettingsIcon from '@mui/icons-material/Settings';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
-import { locationDataApi } from './api';
+import CableIcon from '@mui/icons-material/Cable';
+import { locationDataApi, getCrossConnectInfo, updateCrossConnectInfo, networkDesignApi } from './api';
 import { API_BASE_URL } from './config';
 import * as FormValidation from './components/FormValidation';
 const { ValidatedTextField, ValidatedSelect } = FormValidation;
@@ -35,10 +36,12 @@ const LocationDataManager = ({ hasPermission }) => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [accessInfoDialogOpen, setAccessInfoDialogOpen] = useState(false);
   const [popCapabilitiesDialogOpen, setPopCapabilitiesDialogOpen] = useState(false);
+  const [crossConnectDialogOpen, setCrossConnectDialogOpen] = useState(false);
   const [currentAccessInfo, setCurrentAccessInfo] = useState('');
   const [currentCapabilities, setCurrentCapabilities] = useState({});
   const [currentLocationTracking, setCurrentLocationTracking] = useState(null);
-  
+  const [currentCrossConnect, setCurrentCrossConnect] = useState({});
+  const [currencies, setCurrencies] = useState([]);
 
   
   // Form data
@@ -154,6 +157,7 @@ const LocationDataManager = ({ hasPermission }) => {
   // Load locations on component mount
   useEffect(() => {
     loadLocations();
+    loadCurrencies();
   }, []);
 
   // Cleanup debounce timeouts on unmount
@@ -174,6 +178,20 @@ const LocationDataManager = ({ hasPermission }) => {
       setError('Failed to load locations: ' + err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadCurrencies = async () => {
+    try {
+      const data = await networkDesignApi.getExchangeRates();
+      // Extract currency codes from exchange rates data
+      const availableCurrencies = data.map(rate => rate.currency_code);
+      setCurrencies(availableCurrencies);
+      console.log('Loaded currencies:', availableCurrencies); // Debug log
+    } catch (err) {
+      console.error('Failed to load currencies:', err);
+      // Default to USD if can't load currencies
+      setCurrencies(['USD']);
     }
   };
 
@@ -505,6 +523,49 @@ const LocationDataManager = ({ hasPermission }) => {
     }
   };
 
+  const handleCrossConnectClick = async (location) => {
+    try {
+      setSelectedLocation(location);
+      const crossConnectData = await getCrossConnectInfo(location.id);
+      
+      // Process the data to handle POA display correctly
+      const processedData = {
+        ...crossConnectData,
+        cross_connect_nrc: crossConnectData.cross_connect_nrc !== null ? crossConnectData.cross_connect_nrc : 'POA',
+        cross_connect_mrc: crossConnectData.cross_connect_mrc !== null ? crossConnectData.cross_connect_mrc : 'POA'
+      };
+      
+      setCurrentCrossConnect(processedData);
+      setCrossConnectDialogOpen(true);
+    } catch (err) {
+      setError('Failed to load cross connect info: ' + err.message);
+    }
+  };
+
+  const handleCrossConnectSave = async () => {
+    try {
+      await updateCrossConnectInfo(selectedLocation.id, {
+        cross_connect_nrc: currentCrossConnect.cross_connect_nrc,
+        cross_connect_nrc_currency: currentCrossConnect.cross_connect_nrc_currency,
+        cross_connect_mrc: currentCrossConnect.cross_connect_mrc,
+        cross_connect_mrc_currency: currentCrossConnect.cross_connect_mrc_currency,
+        cross_connect_notes: currentCrossConnect.cross_connect_notes
+      });
+      setSuccess('Cross connect info updated successfully');
+      setCrossConnectDialogOpen(false);
+      await loadLocations();
+    } catch (err) {
+      setError('Failed to update cross connect info: ' + err.message);
+    }
+  };
+
+  const handleCrossConnectInputChange = (field, value) => {
+    setCurrentCrossConnect(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
   const handleExportCSV = async () => {
     try {
       setLoading(true);
@@ -744,6 +805,7 @@ const LocationDataManager = ({ hasPermission }) => {
               <TableCell>Status</TableCell>
               <TableCell align="center">POP Capabilities</TableCell>
               <TableCell align="center">Access Info</TableCell>
+              <TableCell align="center">Cross Connect Info</TableCell>
               <TableCell align="center">Actions</TableCell>
             </TableRow>
           </TableHead>
@@ -786,6 +848,15 @@ const LocationDataManager = ({ hasPermission }) => {
                     size="small"
                     startIcon={<InfoIcon />}
                     onClick={() => handleAccessInfoClick(location)}
+                  >
+                    {hasPermission && hasPermission('locations', 'edit') ? 'View/Edit' : 'View'}
+                  </Button>
+                </TableCell>
+                <TableCell align="center">
+                  <Button
+                    size="small"
+                    startIcon={<CableIcon />}
+                    onClick={() => handleCrossConnectClick(location)}
                   >
                     {hasPermission && hasPermission('locations', 'edit') ? 'View/Edit' : 'View'}
                   </Button>
@@ -1078,6 +1149,113 @@ const LocationDataManager = ({ hasPermission }) => {
           </Button>
           {hasPermission && hasPermission('locations', 'edit') && (
             <Button onClick={handleCapabilitiesSave} variant="contained">
+              Save
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+
+      {/* Cross Connect Info Dialog */}
+      <Dialog open={crossConnectDialogOpen} onClose={() => setCrossConnectDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          Cross Connect Info - {selectedLocation?.location_code}
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="h6" gutterBottom>
+              {currentCrossConnect.datacenter_name}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              POP Code: {currentCrossConnect.location_code}
+            </Typography>
+            
+            <Grid container spacing={3} sx={{ mt: 2 }}>
+              {/* NRC Section */}
+              <Grid item xs={12} sm={6}>
+                <Typography variant="subtitle1" gutterBottom>
+                  Non-Recurring Charge (NRC)
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
+                  <TextField
+                    label="NRC Amount"
+                    value={currentCrossConnect.cross_connect_nrc || ''}
+                    onChange={(e) => handleCrossConnectInputChange('cross_connect_nrc', e.target.value)}
+                    placeholder="Enter amount or POA"
+                    disabled={!hasPermission || !hasPermission('locations', 'edit')}
+                    sx={{ flexGrow: 1 }}
+                  />
+                  <FormControl sx={{ minWidth: 80 }}>
+                    <InputLabel>Currency</InputLabel>
+                    <Select
+                      value={currentCrossConnect.cross_connect_nrc_currency || 'USD'}
+                      onChange={(e) => handleCrossConnectInputChange('cross_connect_nrc_currency', e.target.value)}
+                      label="Currency"
+                      disabled={!hasPermission || !hasPermission('locations', 'edit')}
+                    >
+                      {currencies.map(currency => (
+                        <MenuItem key={currency} value={currency}>{currency}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
+              </Grid>
+
+              {/* MRC Section */}
+              <Grid item xs={12} sm={6}>
+                <Typography variant="subtitle1" gutterBottom>
+                  Monthly Recurring Charge (MRC)
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
+                  <TextField
+                    label="MRC Amount"
+                    value={currentCrossConnect.cross_connect_mrc || ''}
+                    onChange={(e) => handleCrossConnectInputChange('cross_connect_mrc', e.target.value)}
+                    placeholder="Enter amount or POA"
+                    disabled={!hasPermission || !hasPermission('locations', 'edit')}
+                    sx={{ flexGrow: 1 }}
+                  />
+                  <FormControl sx={{ minWidth: 80 }}>
+                    <InputLabel>Currency</InputLabel>
+                    <Select
+                      value={currentCrossConnect.cross_connect_mrc_currency || 'USD'}
+                      onChange={(e) => handleCrossConnectInputChange('cross_connect_mrc_currency', e.target.value)}
+                      label="Currency"
+                      disabled={!hasPermission || !hasPermission('locations', 'edit')}
+                    >
+                      {currencies.map(currency => (
+                        <MenuItem key={currency} value={currency}>{currency}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
+              </Grid>
+
+              {/* Notes Section */}
+              <Grid item xs={12}>
+                <Typography variant="subtitle1" gutterBottom>
+                  Cross Connect Notes
+                </Typography>
+                <TextField
+                  fullWidth
+                  multiline
+                  rows={4}
+                  value={currentCrossConnect.cross_connect_notes || ''}
+                  onChange={(e) => handleCrossConnectInputChange('cross_connect_notes', e.target.value)}
+                  placeholder="Enter any notes about cross connect pricing, requirements, or special conditions..."
+                  disabled={!hasPermission || !hasPermission('locations', 'edit')}
+                  inputProps={{ maxLength: 256 }}
+                  helperText={`${(currentCrossConnect.cross_connect_notes || '').length}/256 characters`}
+                />
+              </Grid>
+            </Grid>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCrossConnectDialogOpen(false)}>
+            {hasPermission && hasPermission('locations', 'edit') ? 'Cancel' : 'Close'}
+          </Button>
+          {hasPermission && hasPermission('locations', 'edit') && (
+            <Button onClick={handleCrossConnectSave} variant="contained">
               Save
             </Button>
           )}

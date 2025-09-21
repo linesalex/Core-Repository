@@ -94,28 +94,27 @@ const textCellStyle = {
 };
 
 const SmallTableCell = styled(TableCell)(({ theme }) => ({
-  fontSize: '0.75rem', // ~12px, 2pt smaller than default
+  fontSize: '0.6875rem', // ~11px, reduced by 1pt from 0.75rem
   padding: '6px 8px',
 }));
 
 const SmallTableHeaderCell = styled(TableCell)(({ theme }) => ({
-  fontSize: '0.8125rem', // ~13px, 2pt smaller than default header
+  fontSize: '0.75rem', // ~12px, reduced by 1pt from 0.8125rem
   fontWeight: 600,
   padding: '6px 8px',
 }));
 
 const VerticalHeaderCell = styled(TableCell)(({ theme }) => ({
-  fontSize: '0.8125rem',
+  fontSize: '0.75rem', // ~12px, reduced by 1pt from 0.8125rem
   fontWeight: 600,
-  padding: '6px 4px',
+  padding: '6px 8px', // Match data cell padding
   whiteSpace: 'pre-line',
-  textAlign: 'center',
   lineHeight: 1.2,
   minWidth: '60px',
 }));
 
 const compactButtonStyle = {
-  fontSize: '0.75rem',
+  fontSize: '0.6875rem', // ~11px, reduced by 1pt from 0.75rem
   minWidth: 0,
   padding: '2px 8px',
   lineHeight: 1,
@@ -123,7 +122,7 @@ const compactButtonStyle = {
 };
 
 const linkStyle = {
-  fontSize: '0.75rem',
+  fontSize: '0.6875rem', // ~11px, reduced by 1pt from 0.75rem
   color: '#1976d2',
   cursor: 'pointer',
   textDecoration: 'underline',

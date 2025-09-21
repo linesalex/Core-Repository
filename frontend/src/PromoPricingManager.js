@@ -91,6 +91,36 @@ const PromoPricingManager = ({ hasPermission }) => {
     }
   };
 
+  // Helper function to create enhanced options with city code grouping
+  const createLocationOptions = () => {
+    const locationCodes = locations.map(loc => loc.location_code);
+    const cityGroups = {};
+    
+    // Group locations by city code pattern
+    locationCodes.forEach(code => {
+      // Extract base city code (remove trailing digits/suffixes)
+      const baseCode = code.match(/^[A-Z]+/)?.[0];
+      if (baseCode && baseCode !== code) {
+        if (!cityGroups[baseCode]) {
+          cityGroups[baseCode] = [];
+        }
+        cityGroups[baseCode].push(code);
+      }
+    });
+    
+    // Create options array with individual locations and city groups
+    const options = [...locationCodes];
+    
+    // Add city group options for groups with more than one location
+    Object.entries(cityGroups).forEach(([baseCode, codes]) => {
+      if (codes.length > 1) {
+        options.unshift(`${baseCode} (All ${codes.length} locations)`);
+      }
+    });
+    
+    return { options, cityGroups };
+  };
+
   const handleSearch = () => {
     loadPromoRules();
   };
@@ -468,17 +498,53 @@ const PromoPricingManager = ({ hasPermission }) => {
             <Grid item xs={12} md={6}>
               <Autocomplete
                 multiple
-                options={locations.map(loc => loc.location_code)}
+                options={createLocationOptions().options}
                 value={formData.source_locations}
-                onChange={(event, newValue) => handleFormChange('source_locations', newValue)}
+                onChange={(event, newValue, reason, details) => {
+                  if (reason === 'selectOption' && details?.option) {
+                    const selectedOption = details.option;
+                    const { cityGroups } = createLocationOptions();
+                    
+                    // Check if this is a city group option
+                    const cityGroupMatch = selectedOption.match(/^([A-Z]+) \(All \d+ locations\)$/);
+                    if (cityGroupMatch) {
+                      const baseCode = cityGroupMatch[1];
+                      const locationsToAdd = cityGroups[baseCode] || [];
+                      const currentValues = formData.source_locations || [];
+                      const uniqueValues = [...new Set([...currentValues, ...locationsToAdd])];
+                      handleFormChange('source_locations', uniqueValues);
+                    } else {
+                      // Regular single location selection
+                      handleFormChange('source_locations', newValue);
+                    }
+                  } else {
+                    handleFormChange('source_locations', newValue);
+                  }
+                }}
                 renderInput={(params) => (
                   <TextField
                     {...params}
                     label="Source Locations"
-                    placeholder="Select source locations"
-                    helperText="Locations on the source side of the circuit"
+                    placeholder="Select source locations or city groups"
+                    helperText="Select individual locations or city groups (e.g., 'IPCSNG (All X locations)')"
                     required
                   />
+                )}
+                renderOption={(props, option) => (
+                  <li {...props}>
+                    {option.includes('(All') ? (
+                      <Box>
+                        <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                          {option}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Adds all matching locations
+                        </Typography>
+                      </Box>
+                    ) : (
+                      option
+                    )}
+                  </li>
                 )}
                 renderTags={(value, getTagProps) =>
                   value.map((option, index) => (
@@ -497,17 +563,53 @@ const PromoPricingManager = ({ hasPermission }) => {
             <Grid item xs={12} md={6}>
               <Autocomplete
                 multiple
-                options={locations.map(loc => loc.location_code)}
+                options={createLocationOptions().options}
                 value={formData.destination_locations}
-                onChange={(event, newValue) => handleFormChange('destination_locations', newValue)}
+                onChange={(event, newValue, reason, details) => {
+                  if (reason === 'selectOption' && details?.option) {
+                    const selectedOption = details.option;
+                    const { cityGroups } = createLocationOptions();
+                    
+                    // Check if this is a city group option
+                    const cityGroupMatch = selectedOption.match(/^([A-Z]+) \(All \d+ locations\)$/);
+                    if (cityGroupMatch) {
+                      const baseCode = cityGroupMatch[1];
+                      const locationsToAdd = cityGroups[baseCode] || [];
+                      const currentValues = formData.destination_locations || [];
+                      const uniqueValues = [...new Set([...currentValues, ...locationsToAdd])];
+                      handleFormChange('destination_locations', uniqueValues);
+                    } else {
+                      // Regular single location selection
+                      handleFormChange('destination_locations', newValue);
+                    }
+                  } else {
+                    handleFormChange('destination_locations', newValue);
+                  }
+                }}
                 renderInput={(params) => (
                   <TextField
                     {...params}
                     label="Destination Locations"
-                    placeholder="Select destination locations"
-                    helperText="Locations on the destination side of the circuit"
+                    placeholder="Select destination locations or city groups"
+                    helperText="Select individual locations or city groups (e.g., 'IPCSNG (All X locations)')"
                     required
                   />
+                )}
+                renderOption={(props, option) => (
+                  <li {...props}>
+                    {option.includes('(All') ? (
+                      <Box>
+                        <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'secondary.main' }}>
+                          {option}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Adds all matching locations
+                        </Typography>
+                      </Box>
+                    ) : (
+                      option
+                    )}
+                  </li>
                 )}
                 renderTags={(value, getTagProps) =>
                   value.map((option, index) => (

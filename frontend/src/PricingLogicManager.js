@@ -32,7 +32,8 @@ import {
   AttachMoney as AttachMoneyIcon,
   Speed as SpeedIcon,
   Security as SecurityIcon,
-  LocalOffer as LocalOfferIcon
+  LocalOffer as LocalOfferIcon,
+  Cable as CableIcon
 } from '@mui/icons-material';
 import { networkDesignApi } from './api';
 
@@ -61,6 +62,10 @@ const PricingLogicManager = ({ hasPermission }) => {
       minimumMarginPercent: 35,
       discount24Month: 5,
       discount36Month: 10
+    },
+    crossConnect: {
+      nrcMargin: 10,
+      mrcMargin: 10
     }
   });
   
@@ -165,6 +170,16 @@ const PricingLogicManager = ({ hasPermission }) => {
     }));
   };
 
+  const updateCrossConnect = (settingType, value) => {
+    setConfig(prev => ({
+      ...prev,
+      crossConnect: {
+        ...prev.crossConnect,
+        [settingType]: parseFloat(value) || 0
+      }
+    }));
+  };
+
   const resetToDefaults = () => {
     setConfig({
       contractTerms: {
@@ -190,6 +205,10 @@ const PricingLogicManager = ({ hasPermission }) => {
         minimumMarginPercent: 35,
         discount24Month: 5,
         discount36Month: 10
+      },
+      crossConnect: {
+        nrcMargin: 10,
+        mrcMargin: 10
       }
     });
   };
@@ -522,6 +541,48 @@ const PricingLogicManager = ({ hasPermission }) => {
                         endAdornment: <InputAdornment position="end">%</InputAdornment>
                       }}
                       helperText="Additional discount from base promo price for 36-month contracts"
+                    />
+                  </Grid>
+                </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Cross Connect Settings */}
+          <Grid item xs={12} md={6}>
+            <Card>
+              <CardContent>
+                <Box display="flex" alignItems="center" gap={1} mb={2}>
+                  <CableIcon color="primary" />
+                  <Typography variant="h6">Cross Connect Settings</Typography>
+                </Box>
+                <Grid container spacing={2}>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Cross Connect NRC Margin"
+                      type="number"
+                      inputProps={{ step: 0.1, min: 0, max: 100 }}
+                      value={config.crossConnect?.nrcMargin || 10}
+                      onChange={(e) => updateCrossConnect('nrcMargin', e.target.value)}
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>
+                      }}
+                      helperText="Margin percentage applied to cross connect NRC pricing"
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Cross Connect MRC Margin"
+                      type="number"
+                      inputProps={{ step: 0.1, min: 0, max: 100 }}
+                      value={config.crossConnect?.mrcMargin || 10}
+                      onChange={(e) => updateCrossConnect('mrcMargin', e.target.value)}
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>
+                      }}
+                      helperText="Margin percentage applied to cross connect MRC pricing"
                     />
                   </Grid>
                 </Grid>
