@@ -486,11 +486,17 @@ ${pricingDisclaimer}`;
                       label="Delivery Datacenter"
                       onChange={(e) => handleInputChange('delivery_datacenter', e.target.value)}
                     >
-                      {availableDatacenters.map(datacenter => (
-                        <MenuItem key={datacenter.location_code} value={datacenter.location_code}>
-                          {datacenter.location_code} - {datacenter.location_name}
+                      {availableDatacenters.length > 0 ? (
+                        availableDatacenters.map(datacenter => (
+                          <MenuItem key={datacenter.location_code} value={datacenter.location_code}>
+                            {datacenter.location_code} - {datacenter.datacenter_name}
+                          </MenuItem>
+                        ))
+                      ) : (
+                        <MenuItem disabled value="">
+                          No Datacenters Available - See Pricing
                         </MenuItem>
-                      ))}
+                      )}
                     </Select>
                   </FormControl>
                 </Grid>

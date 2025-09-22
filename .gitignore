@@ -146,3 +146,12 @@ complete_project_updated.tar.gz
 *.pack
 *.pack
 frontend/node_modules/.cache/default-development/10.pack
+frontend/node_modules/.cache/default-development/1.pack
+frontend/node_modules/.cache/default-development/13.pack
+frontend/node_modules/.cache/default-development/5.pack
+frontend/node_modules/.cache/default-development/6.pack
+frontend/node_modules/.cache/default-development/7.pack
+frontend/node_modules/.cache/default-development/8.pack
+frontend/node_modules/.cache/default-development/9.pack
+frontend/node_modules/.cache/default-development/index.pack
+frontend/node_modules/.cache/default-development/index.pack.old

@@ -1,14 +1,14 @@
-// Cross Connect Database Migration Script
-// Run with: node migrate_crossconnect.js
+// Exchange Pricing Capability Database Migration Script
+// Run with: node migrate_exchange_pricing_capability.js
 
 const fs = require('fs');
 const path = require('path');
 const db = require('./db');
 
-console.log('🚀 Starting Cross Connect Database Migration...');
+console.log('🚀 Starting Exchange Pricing Capability Database Migration...');
 
 // Read the SQL migration file
-const migrationPath = path.join(__dirname, 'migrate_crossconnect.sql');
+const migrationPath = path.join(__dirname, 'migrate_exchange_pricing_capability.sql');
 let migrationSQL;
 
 try {
@@ -23,7 +23,7 @@ try {
 const statements = migrationSQL
   .split(';')
   .map(stmt => stmt.trim())
-  .filter(stmt => stmt.length > 0 && !stmt.startsWith('--'));
+  .filter(stmt => stmt.length > 0);
 
 console.log(`📝 Found ${statements.length} SQL statements to execute`);
 
@@ -69,51 +69,30 @@ async function runMigration() {
   });
 }
 
-// Verify the migration by checking if new columns exist
+// Verify the migration by checking if new column exists
 async function verifyMigration() {
   return new Promise((resolve, reject) => {
-    db.all("PRAGMA table_info(location_reference)", [], (err, columns) => {
+    db.all("PRAGMA table_info(pop_capabilities)", [], (err, columns) => {
       if (err) {
         reject(err);
         return;
       }
 
-      const expectedColumns = [
-        'cross_connect_nrc',
-        'cross_connect_nrc_currency', 
-        'cross_connect_mrc',
-        'cross_connect_mrc_currency',
-        'cross_connect_notes'
-      ];
-
+      const expectedColumn = 'exchange_pricing_in_region';
       const existingColumns = columns.map(col => col.name);
-      const missingColumns = expectedColumns.filter(col => !existingColumns.includes(col));
+      const hasNewColumn = existingColumns.includes(expectedColumn);
 
-      if (missingColumns.length === 0) {
-        console.log('✅ All cross connect columns verified in location_reference table');
+      if (hasNewColumn) {
+        console.log('✅ exchange_pricing_in_region column verified in pop_capabilities table');
         
-        // Also verify pricing logic config
-        db.all("SELECT config_key FROM pricing_logic_config WHERE config_key LIKE 'cross_connect_%'", [], (err, configs) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-
-          const expectedConfigs = ['cross_connect_nrc_margin', 'cross_connect_mrc_margin'];
-          const existingConfigs = configs.map(config => config.config_key);
-          const missingConfigs = expectedConfigs.filter(config => !existingConfigs.includes(config));
-
-          if (missingConfigs.length === 0) {
-            console.log('✅ All cross connect pricing configurations verified');
-            resolve();
-          } else {
-            console.log(`⚠️  Missing pricing configurations: ${missingConfigs.join(', ')}`);
-            resolve(); // Not critical, continue
-          }
-        });
+        // Check the column details
+        const columnInfo = columns.find(col => col.name === expectedColumn);
+        console.log(`✅ Column details: type=${columnInfo.type}, default=${columnInfo.dflt_value}`);
+        
+        resolve();
       } else {
-        console.log(`❌ Missing columns: ${missingColumns.join(', ')}`);
-        reject(new Error(`Missing required columns: ${missingColumns.join(', ')}`));
+        console.log(`❌ Missing column: ${expectedColumn}`);
+        reject(new Error(`Missing required column: ${expectedColumn}`));
       }
     });
   });
@@ -125,11 +104,11 @@ async function main() {
     await runMigration();
     await verifyMigration();
     
-    console.log('\n🎯 Cross Connect Migration Summary:');
+    console.log('\n🎯 Exchange Pricing Capability Migration Summary:');
     console.log('   ✅ Database schema updated');
-    console.log('   ✅ Cross connect fields added to location_reference');
-    console.log('   ✅ Pricing logic defaults configured (10% margins)');
-    console.log('   📝 Ready for backend API updates');
+    console.log('   ✅ exchange_pricing_in_region field added to pop_capabilities');
+    console.log('   ✅ Default value set to false (0) for all existing locations');
+    console.log('   📝 Ready for frontend and API updates');
     
     process.exit(0);
   } catch (error) {
@@ -157,4 +136,3 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 main();
-

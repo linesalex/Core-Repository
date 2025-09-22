@@ -55,7 +55,13 @@ const LocationDataManager = ({ hasPermission }) => {
     pop_type: 'Tier 1',
     status: 'Active',
     provider: '',
-    access_info: ''
+    access_info: '',
+    // Cross-connect fields
+    cross_connect_nrc: '',
+    cross_connect_nrc_currency: 'USD',
+    cross_connect_mrc: '',
+    cross_connect_mrc_currency: 'USD',
+    cross_connect_notes: ''
   });
 
   // Local state for address field to prevent lag during typing
@@ -145,7 +151,8 @@ const LocationDataManager = ({ hasPermission }) => {
     { key: 'exchange_on_ramp', label: 'Exchange On Ramp' },
     { key: 'internet_on_ramp', label: 'Internet On Ramp' },
     { key: 'transport_only_pop', label: 'Transport Only POP' },
-    { key: 'cnx_colocation', label: 'CNX Colocation' }
+    { key: 'cnx_colocation', label: 'CNX Colocation' },
+    { key: 'exchange_pricing_in_region', label: 'Exchange Pricing - In Region' }
   ];
 
   // Filter states
@@ -218,7 +225,13 @@ const LocationDataManager = ({ hasPermission }) => {
       pop_type: 'Tier 1',
       status: 'Active',
       provider: '',
-      access_info: ''
+      access_info: '',
+      // Reset cross-connect fields
+      cross_connect_nrc: '',
+      cross_connect_nrc_currency: 'USD',
+      cross_connect_mrc: '',
+      cross_connect_mrc_currency: 'USD',
+      cross_connect_notes: ''
     });
     setLocalAddressValue(''); // Reset local address state
     setFormCapabilities({ // Reset capabilities for new location
@@ -253,7 +266,13 @@ const LocationDataManager = ({ hasPermission }) => {
       pop_type: location.pop_type || 'Tier 1',
       status: location.status || 'Active',
       provider: location.provider || '',
-      access_info: location.access_info || ''
+      access_info: location.access_info || '',
+      // Cross-connect fields from location data
+      cross_connect_nrc: location.cross_connect_nrc_display === 'POA' ? 'POA' : (location.cross_connect_nrc || ''),
+      cross_connect_nrc_currency: location.cross_connect_nrc_currency || 'USD',
+      cross_connect_mrc: location.cross_connect_mrc_display === 'POA' ? 'POA' : (location.cross_connect_mrc || ''),
+      cross_connect_mrc_currency: location.cross_connect_mrc_currency || 'USD',
+      cross_connect_notes: location.cross_connect_notes || ''
     });
     setLocalAddressValue(location.datacenter_address || ''); // Set local address state
     setFormErrors({}); // Clear validation errors
@@ -1026,7 +1045,95 @@ const LocationDataManager = ({ hasPermission }) => {
               />
             </Grid>
 
+            {/* Cross-Connect Pricing Section */}
+            <Grid item xs={12}>
+              <Typography variant="h6" sx={{ mt: 2, mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <CableIcon />
+                Cross-Connect Pricing
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Set cross-connect pricing for this location. Use "POA" for "Price on Application".
+              </Typography>
+            </Grid>
 
+            {/* NRC (Non-Recurring Charge) Section */}
+            <Grid item xs={12} sm={6}>
+              <ValidatedTextField
+                fullWidth
+                label="Cross-Connect NRC"
+                value={formData.cross_connect_nrc}
+                onChange={(e) => handleInputChange('cross_connect_nrc', e.target.value)}
+                placeholder="Enter amount or 'POA'"
+                field="cross_connect_nrc"
+                errors={formErrors}
+                helperText="One-time setup charge"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <ValidatedSelect
+                fullWidth
+                label="NRC Currency"
+                value={formData.cross_connect_nrc_currency}
+                onChange={(e) => handleInputChange('cross_connect_nrc_currency', e.target.value)}
+                field="cross_connect_nrc_currency"
+                errors={formErrors}
+              >
+                <MenuItem value="USD">USD</MenuItem>
+                <MenuItem value="EUR">EUR</MenuItem>
+                <MenuItem value="GBP">GBP</MenuItem>
+                <MenuItem value="CAD">CAD</MenuItem>
+                <MenuItem value="AUD">AUD</MenuItem>
+                <MenuItem value="SGD">SGD</MenuItem>
+                <MenuItem value="JPY">JPY</MenuItem>
+              </ValidatedSelect>
+            </Grid>
+
+            {/* MRC (Monthly Recurring Charge) Section */}
+            <Grid item xs={12} sm={6}>
+              <ValidatedTextField
+                fullWidth
+                label="Cross-Connect MRC"
+                value={formData.cross_connect_mrc}
+                onChange={(e) => handleInputChange('cross_connect_mrc', e.target.value)}
+                placeholder="Enter amount or 'POA'"
+                field="cross_connect_mrc"
+                errors={formErrors}
+                helperText="Monthly recurring charge"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <ValidatedSelect
+                fullWidth
+                label="MRC Currency"
+                value={formData.cross_connect_mrc_currency}
+                onChange={(e) => handleInputChange('cross_connect_mrc_currency', e.target.value)}
+                field="cross_connect_mrc_currency"
+                errors={formErrors}
+              >
+                <MenuItem value="USD">USD</MenuItem>
+                <MenuItem value="EUR">EUR</MenuItem>
+                <MenuItem value="GBP">GBP</MenuItem>
+                <MenuItem value="CAD">CAD</MenuItem>
+                <MenuItem value="AUD">AUD</MenuItem>
+                <MenuItem value="SGD">SGD</MenuItem>
+                <MenuItem value="JPY">JPY</MenuItem>
+              </ValidatedSelect>
+            </Grid>
+
+            {/* Cross-Connect Notes */}
+            <Grid item xs={12}>
+              <ValidatedTextField
+                fullWidth
+                label="Cross-Connect Notes"
+                value={formData.cross_connect_notes}
+                onChange={(e) => handleInputChange('cross_connect_notes', e.target.value)}
+                multiline
+                rows={3}
+                placeholder="Enter any additional notes about cross-connect services, terms, or conditions..."
+                field="cross_connect_notes"
+                errors={formErrors}
+              />
+            </Grid>
 
             {/* POP Capabilities Section - Only show in Add mode */}
             {dialogMode === 'add' && (

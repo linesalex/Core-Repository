@@ -2500,7 +2500,7 @@ router.post('/locations', authenticateToken, authorizePermission('locations', 'c
       min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus,
       cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes,
       created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [location_code, region || 'AMERs', city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type || 'Tier 1', status || 'Active', provider, access_info, 
      min_price_under_100mb || 0, min_price_100_to_999mb || 0, min_price_1000_to_2999mb || 0, min_price_3000mb_plus || 0,
      processedCrossConnectNrc, cross_connect_nrc_currency || 'USD', processedCrossConnectMrc, cross_connect_mrc_currency || 'USD', cross_connect_notes || '',
@@ -2776,12 +2776,12 @@ router.post('/locations/:id/capabilities', authenticateToken, authorizePermissio
         `UPDATE pop_capabilities SET 
          cnx_extranet_wan = ?, cnx_ethernet = ?, cnx_voice = ?, tdm_gateway = ?, 
          cnx_unigy = ?, cnx_alpha = ?, cnx_chrono = ?, cnx_sdwan = ?, 
-         csp_on_ramp = ?, exchange_on_ramp = ?, internet_on_ramp = ?, transport_only_pop = ?, cnx_colocation = ?,
+         csp_on_ramp = ?, exchange_on_ramp = ?, internet_on_ramp = ?, transport_only_pop = ?, cnx_colocation = ?, exchange_pricing_in_region = ?,
          updated_by = ? WHERE location_id = ?`,
         [
           capabilities.cnx_extranet_wan, capabilities.cnx_ethernet, capabilities.cnx_voice, capabilities.tdm_gateway,
           capabilities.cnx_unigy, capabilities.cnx_alpha, capabilities.cnx_chrono, capabilities.cnx_sdwan,
-          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop, capabilities.cnx_colocation,
+          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop, capabilities.cnx_colocation, capabilities.exchange_pricing_in_region,
           req.user.id, locationId
         ],
         function(err) {
@@ -2796,12 +2796,12 @@ router.post('/locations/:id/capabilities', authenticateToken, authorizePermissio
       // Create new capabilities
       db.run(
         `INSERT INTO pop_capabilities (location_id, cnx_extranet_wan, cnx_ethernet, cnx_voice, tdm_gateway, 
-         cnx_unigy, cnx_alpha, cnx_chrono, cnx_sdwan, csp_on_ramp, exchange_on_ramp, internet_on_ramp, transport_only_pop, cnx_colocation, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         cnx_unigy, cnx_alpha, cnx_chrono, cnx_sdwan, csp_on_ramp, exchange_on_ramp, internet_on_ramp, transport_only_pop, cnx_colocation, exchange_pricing_in_region, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           locationId, capabilities.cnx_extranet_wan, capabilities.cnx_ethernet, capabilities.cnx_voice, capabilities.tdm_gateway,
           capabilities.cnx_unigy, capabilities.cnx_alpha, capabilities.cnx_chrono, capabilities.cnx_sdwan,
-          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop, capabilities.cnx_colocation,
+          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop, capabilities.cnx_colocation, capabilities.exchange_pricing_in_region,
           req.user.id
         ],
         function(err) {
@@ -5867,7 +5867,7 @@ const bulkUploadModules = {
       'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus',
       'location_id', 'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
       'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
-      'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation'
+      'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation', 'exchange_pricing_in_region'
     ],
     requiredFields: ['location_code'],
     sampleData: {
@@ -5901,7 +5901,8 @@ const bulkUploadModules = {
       exchange_on_ramp: 'true',
       internet_on_ramp: 'false',
       transport_only_pop: 'false',
-      cnx_colocation: 'false'
+      cnx_colocation: 'false',
+      exchange_pricing_in_region: 'false'
     }
   },
   exchanges: {
@@ -5982,7 +5983,8 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
              COALESCE(pc.exchange_on_ramp, 0) as exchange_on_ramp, 
              COALESCE(pc.internet_on_ramp, 0) as internet_on_ramp, 
              COALESCE(pc.transport_only_pop, 0) as transport_only_pop, 
-             COALESCE(pc.cnx_colocation, 0) as cnx_colocation
+             COALESCE(pc.cnx_colocation, 0) as cnx_colocation,
+             COALESCE(pc.exchange_pricing_in_region, 0) as exchange_pricing_in_region
              FROM location_reference lr 
              LEFT JOIN pop_capabilities pc ON lr.id = pc.location_id 
              LIMIT ?`;
@@ -6668,7 +6670,7 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               const booleanFields = [
                 'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
                 'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
-                'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation'
+                'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation', 'exchange_pricing_in_region'
               ];
               booleanFields.forEach(field => {
                 if (cleanRow[field] === null || cleanRow[field] === undefined) {
@@ -6692,7 +6694,7 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               const capabilityFields = [
                 'location_id', 'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
                 'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
-                'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation'
+                'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation', 'exchange_pricing_in_region'
               ];
               
               if (existingCapabilities) {
@@ -7750,7 +7752,11 @@ router.get('/exchange-pricing/datacenters/:region', authenticateToken, (req, res
   const { region } = req.params;
   
   db.all(
-    'SELECT location_code, datacenter_name, region FROM location_reference WHERE region = ? ORDER BY datacenter_name',
+    `SELECT lr.location_code, lr.datacenter_name, lr.region 
+     FROM location_reference lr
+     LEFT JOIN pop_capabilities pc ON lr.id = pc.location_id
+     WHERE lr.region = ? AND COALESCE(pc.exchange_pricing_in_region, 0) = 1 
+     ORDER BY lr.datacenter_name`,
     [region],
     (err, datacenters) => {
       if (err) return res.status(500).json({ error: err.message });

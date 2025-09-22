@@ -4,7 +4,8 @@ import {
   Chip, Alert, CircularProgress, Accordion, AccordionSummary, AccordionDetails, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, Card, CardContent, CardHeader, Divider,
   Switch, FormControlLabel, Dialog, DialogTitle, DialogContent, DialogActions, List, ListItem,
-  ListItemText, ListItemIcon, Checkbox, Tooltip, IconButton, Snackbar, Tabs, Tab, Autocomplete
+  ListItemText, ListItemIcon, Checkbox, Tooltip, IconButton, Snackbar, Tabs, Tab, Autocomplete,
+  InputAdornment
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchIcon from '@mui/icons-material/Search';
@@ -12,6 +13,8 @@ import RouteIcon from '@mui/icons-material/Route';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteIcon from '@mui/icons-material/Delete';
+import EmailIcon from '@mui/icons-material/Email';
+import FilterListOffIcon from '@mui/icons-material/FilterListOff';
 
 import SaveIcon from '@mui/icons-material/Save';
 import HistoryIcon from '@mui/icons-material/History';
@@ -91,6 +94,22 @@ const NetworkDesignTool = () => {
   const [expandedAccordion, setExpandedAccordion] = useState('search');
   const [currentTab, setCurrentTab] = useState(0); // Tab state
   const [expandedLogs, setExpandedLogs] = useState(new Set()); // Track expanded log details
+  
+  // Pricing logs filtering state
+  const [filteredAuditLogs, setFilteredAuditLogs] = useState([]);
+  const [logSearchTerm, setLogSearchTerm] = useState('');
+  const [logDateFilter, setLogDateFilter] = useState({
+    startDate: '',
+    endDate: ''
+  });
+  
+  // Export dialog state
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportOptions, setExportOptions] = useState({
+    primaryPricing: false,
+    secondaryPricing: false,
+    protectedPricing: false
+  });
 
   // Currency options
   const currencies = [
@@ -546,6 +565,623 @@ const NetworkDesignTool = () => {
       console.error('Export error:', err);
       setError('Failed to export pricing logs: ' + err.message);
     }
+  };
+
+  // Export Functions
+  const handleExportOpen = () => {
+    setExportDialogOpen(true);
+  };
+
+  const handleExportClose = () => {
+    setExportDialogOpen(false);
+    setExportOptions({
+      primaryPricing: false,
+      secondaryPricing: false,
+      protectedPricing: false
+    });
+  };
+
+  const handleExportOptionChange = (option) => {
+    setExportOptions(prev => ({
+      ...prev,
+      [option]: !prev[option]
+    }));
+  };
+
+  const generateEmailBody = () => {
+    if (!pricingResults || !searchResults) return '';
+
+    let emailBody = '';
+    
+    // Header information - always shown
+    emailBody += `Customer Name: ${formData.customerName || 'Not Specified'}\n`;
+    emailBody += `Quote Request ID: ${formData.quoteRequestId || 'Not Specified'}\n`;
+    emailBody += `Source Location: ${formData.source}\n`;
+    emailBody += `Destination Location: ${formData.destination}\n`;
+    emailBody += `Bandwidth: ${formData.bandwidth} Mbps\n`;
+    emailBody += `Quote Time & Date: ${new Date().toLocaleString()}\n\n`;
+
+    // Helper function to generate route table
+    const generateRouteTable = (pathData, pathType) => {
+      if (!pathData || !pathData.route) return '';
+      
+      let table = `${pathType} Route:\n`;
+      table += `Circuit ID\tRoute Segment\tLatency\n`;
+      table += `${'='.repeat(50)}\n`;
+      
+      pathData.route.forEach(segment => {
+        table += `${segment.circuit_id || 'N/A'}\t${segment.from} → ${segment.to}\t${formatLatency(segment.latency)}ms\n`;
+      });
+      
+      table += `${'='.repeat(50)}\n`;
+      table += `Total Latency: ${formatLatency(pathData.totalLatency)}ms\n\n`;
+      
+      return table;
+    };
+
+    // Helper function to format pricing
+    const formatPricingSection = (pricing, pathType) => {
+      let section = `${pathType} Pricing:\n`;
+      section += `NRC: ${pricing.nrcCharge > 0 ? formatCurrency(pricing.nrcCharge, pricing.currency) : 'FREE'}\n`;
+      section += `MRC (Minimum): ${formatCurrency(pricing.minimumPrice, pricing.currency)}\n`;
+      section += `MRC (Suggested): ${formatCurrency(pricing.suggestedPrice, pricing.currency)}\n`;
+      section += `Currency: ${pricing.currency}\n`;
+      section += `Contract Term: ${pricing.contractTerm} months\n\n`;
+      return section;
+    };
+
+    // Generate content based on selected options
+    const hasMultipleSelections = Object.values(exportOptions).filter(Boolean).length > 1;
+    const hasAllThreeSelected = exportOptions.primaryPricing && exportOptions.secondaryPricing && exportOptions.protectedPricing;
+
+    // Primary Path
+    if (exportOptions.primaryPricing) {
+      const primaryResult = pricingResults.results.find(r => r.pathType === 'primary');
+      if (primaryResult && searchResults.primaryPath) {
+        emailBody += generateRouteTable(searchResults.primaryPath, 'Primary');
+        emailBody += formatPricingSection(primaryResult.pricing, 'Primary');
+      }
+    }
+
+    // Secondary Path  
+    if (exportOptions.secondaryPricing) {
+      const secondaryResult = pricingResults.results.find(r => r.pathType === 'protection');
+      if (secondaryResult && searchResults.diversePath) {
+        emailBody += generateRouteTable(searchResults.diversePath, 'Secondary');
+        emailBody += formatPricingSection(secondaryResult.pricing, 'Secondary');
+      }
+    }
+
+    // Protected Pricing - special handling when all three are selected
+    if (exportOptions.protectedPricing) {
+      if (hasAllThreeSelected) {
+        // Don't repeat route tables, just show protected pricing
+        if (pricingResults.protectionPricing) {
+          emailBody += formatPricingSection(pricingResults.protectionPricing, 'Protected Service');
+        }
+      } else {
+        // Show both route tables and protected pricing
+        if (searchResults.primaryPath) {
+          emailBody += generateRouteTable(searchResults.primaryPath, 'Primary');
+        }
+        if (searchResults.diversePath) {
+          emailBody += generateRouteTable(searchResults.diversePath, 'Secondary');
+        }
+        if (pricingResults.protectionPricing) {
+          emailBody += formatPricingSection(pricingResults.protectionPricing, 'Protected Service');
+        }
+      }
+    }
+
+    // Cross Connect Information
+    if (crossConnectResults.source) {
+      emailBody += `Source Cross Connect\n`;
+      emailBody += `POP Name: ${crossConnectResults.source.locationCode} - ${crossConnectResults.source.datacenterName}\n`;
+      emailBody += `NRC: ${crossConnectResults.source.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.nrc, crossConnectResults.source.currency)}\n`;
+      emailBody += `MRC: ${crossConnectResults.source.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.mrc, crossConnectResults.source.currency)}\n`;
+      if (crossConnectResults.source.notes) {
+        emailBody += `Notes: ${crossConnectResults.source.notes}\n`;
+      }
+      emailBody += `Currency: ${crossConnectResults.source.currency}\n\n`;
+    }
+
+    if (crossConnectResults.destination) {
+      emailBody += `Destination Cross Connect\n`;
+      emailBody += `POP Name: ${crossConnectResults.destination.locationCode} - ${crossConnectResults.destination.datacenterName}\n`;
+      emailBody += `NRC: ${crossConnectResults.destination.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.nrc, crossConnectResults.destination.currency)}\n`;
+      emailBody += `MRC: ${crossConnectResults.destination.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.mrc, crossConnectResults.destination.currency)}\n`;
+      if (crossConnectResults.destination.notes) {
+        emailBody += `Notes: ${crossConnectResults.destination.notes}\n`;
+      }
+      emailBody += `Currency: ${crossConnectResults.destination.currency}\n\n`;
+    }
+
+    // Pricing Disclaimer
+    emailBody += `${'='.repeat(80)}\n`;
+    emailBody += `PRICING DISCLAIMER\n`;
+    emailBody += `${'='.repeat(80)}\n`;
+    emailBody += `This quotation is valid for 90 days.\n`;
+    emailBody += `All Pricing is subject to IPC standard terms and conditions.\n`;
+    emailBody += `All Pricing is budgetary and subject to survey and facility/feasibility checks.\n`;
+    emailBody += `All Pricing is exclusive of any applicable Taxes and Surcharges.\n`;
+    emailBody += `Any additional 3rd Party costs incurred on order of the service will be chargeable to the customer, including but not limited to cross connects, additional cabling, out of hours charges, etc\n`;
+    emailBody += `Unless otherwise stated any additional costs incurred for out of hours work will be chargeable to the customer.\n`;
+    emailBody += `Customer must provide all necessary rack space and power supply.\n`;
+    emailBody += `Pricing is for connectivity only, and does not include any fees associated with data feeds unless specified otherwise within the quotation.\n`;
+    emailBody += `IPC reserves the right to correct any computational errors in this quote.\n`;
+    emailBody += `Where Pricing is associated with a network or multi circuit design, individual element pricing is indicative, and cannot be ordered as individual elements.\n`;
+
+    return emailBody;
+  };
+
+  const handleExportConfirm = () => {
+    // Check if at least one option is selected
+    const hasSelection = Object.values(exportOptions).some(Boolean);
+    if (!hasSelection) {
+      setError('Please select at least one pricing option to export');
+      return;
+    }
+
+    try {
+      // Generate email content
+      const emailBody = generateEmailBody();
+      
+      // Generate subject line
+      const today = new Date().toLocaleDateString();
+      const subject = `${formData.quoteRequestId || 'Quote'} - ${formData.customerName || 'Customer'} - Pricing Request - ${today}`;
+      
+      console.log('Creating downloadable .eml email file');
+      
+      // Always create downloadable .eml file for reliability
+      handleDownloadEmailFile(emailBody, subject);
+      
+    } catch (error) {
+      console.error('Email export error:', error);
+      // Fallback to clipboard copy
+      const emailBody = generateEmailBody();
+      const today = new Date().toLocaleDateString();
+      const subject = `${formData.quoteRequestId || 'Quote'} - ${formData.customerName || 'Customer'} - Pricing Request - ${today}`;
+      handleCopyToClipboard(emailBody, subject);
+    }
+  };
+
+  const handleDownloadEmailFile = (emailBody, subject) => {
+    try {
+      // Create proper .eml email file content
+      const timestamp = new Date().toISOString();
+      const emailContent = [
+        `From: Network Design Tool <noreply@ipc.com>`,
+        `To: `,
+        `Subject: ${subject}`,
+        `Date: ${timestamp}`,
+        `MIME-Version: 1.0`,
+        `Content-Type: text/plain; charset=utf-8`,
+        `Content-Transfer-Encoding: 8bit`,
+        ``,
+        emailBody
+      ].join('\r\n');
+      
+      // Create blob as .eml file
+      const blob = new Blob([emailContent], { type: 'message/rfc822' });
+      const url = window.URL.createObjectURL(blob);
+      
+      // Create download link
+      const downloadLink = document.createElement('a');
+      downloadLink.href = url;
+      
+      // Generate filename with timestamp
+      const fileTimestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+      const customerName = (formData.customerName || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
+      const quoteId = (formData.quoteRequestId || 'Quote').replace(/[^a-zA-Z0-9]/g, '_');
+      downloadLink.download = `${quoteId}_${customerName}_Pricing_${fileTimestamp}.eml`;
+      
+      downloadLink.style.display = 'none';
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      
+      // Cleanup
+      setTimeout(() => {
+        document.body.removeChild(downloadLink);
+        window.URL.revokeObjectURL(url);
+      }, 100);
+      
+      // Close dialog and show success message
+      handleExportClose();
+      setSuccess('Email file (.eml) downloaded - double-click to open in your email client');
+      
+    } catch (downloadError) {
+      console.error('File download failed:', downloadError);
+      // Final fallback to clipboard
+      const emailBody = generateEmailBody();
+      const today = new Date().toLocaleDateString();
+      const subject = `${formData.quoteRequestId || 'Quote'} - ${formData.customerName || 'Customer'} - Pricing Request - ${today}`;
+      handleCopyToClipboard(emailBody, subject);
+    }
+  };
+
+  const handleCopyToClipboard = async (emailBody, subject) => {
+    try {
+      const fullContent = `Subject: ${subject}\n\n${emailBody}`;
+      await navigator.clipboard.writeText(fullContent);
+      handleExportClose();
+      setSuccess('Email content copied to clipboard - paste into your email client');
+    } catch (clipboardError) {
+      console.error('Clipboard copy failed:', clipboardError);
+      // Final fallback - show in a new window
+      showEmailInNewWindow(emailBody, subject);
+    }
+  };
+
+  const showEmailInNewWindow = (emailBody, subject) => {
+    const newWindow = window.open('', '_blank');
+    if (newWindow) {
+      newWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Email Export</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+            .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            .header { background: #1976d2; color: white; padding: 15px; margin: -20px -20px 20px -20px; border-radius: 8px 8px 0 0; }
+            .subject { font-weight: bold; margin-bottom: 10px; color: #333; }
+            .content { white-space: pre-wrap; font-family: monospace; background: #f8f9fa; padding: 15px; border-radius: 4px; border: 1px solid #dee2e6; }
+            .buttons { margin-top: 20px; text-align: center; }
+            button { background: #1976d2; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin: 0 5px; }
+            button:hover { background: #1565c0; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h2>📧 Email Export - Copy and Paste</h2>
+            </div>
+            <div class="subject">Subject: ${subject}</div>
+            <div class="content">${emailBody}</div>
+            <div class="buttons">
+              <button onclick="selectAll()">Select All</button>
+              <button onclick="copyToClipboard()">Copy to Clipboard</button>
+              <button onclick="window.close()">Close</button>
+            </div>
+          </div>
+          <script>
+            function selectAll() {
+              const content = document.querySelector('.content');
+              const range = document.createRange();
+              range.selectNodeContents(content);
+              const selection = window.getSelection();
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }
+            
+            function copyToClipboard() {
+              const subject = '${subject}';
+              const body = \`${emailBody.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
+              const fullContent = 'Subject: ' + subject + '\\n\\n' + body;
+              navigator.clipboard.writeText(fullContent).then(() => {
+                alert('Content copied to clipboard!');
+              }).catch(() => {
+                selectAll();
+                alert('Please copy the selected text manually');
+              });
+            }
+          </script>
+        </body>
+        </html>
+      `);
+      newWindow.document.close();
+      handleExportClose();
+      setSuccess('Email content opened in new window - copy and paste into your email client');
+    } else {
+      handleExportClose();
+      setError('Unable to open email client or new window. Please check your browser settings.');
+    }
+  };
+
+  // Pricing Log Export Function
+  const handleExportPricingLog = (log) => {
+    try {
+      // Extract data from log
+      const params = log.parameters || log.pricing_data?.inputParameters;
+      const results = log.results || log.pricing_data?.calculationResults;
+      
+      if (!params || !results) {
+        setError('Unable to export - missing pricing data in log');
+        return;
+      }
+
+      // Generate email content for pricing log
+      const emailBody = generatePricingLogEmailBody(params, results);
+      
+      // Generate subject line
+      const logDate = new Date(log.timestamp).toLocaleDateString();
+      const subject = `${params.quoteRequestId || params.quote_request_id || 'Quote'} - ${params.customerName || params.customer_name || 'Customer'} - Pricing Request - ${logDate}`;
+      
+      // Create .eml file
+      handleDownloadEmailFile(emailBody, subject);
+      
+    } catch (error) {
+      console.error('Pricing log export error:', error);
+      setError('Failed to export pricing log: ' + error.message);
+    }
+  };
+
+  const generatePricingLogEmailBody = (params, results) => {
+    let emailBody = '';
+    
+    // Header information - always shown
+    emailBody += `Customer Name: ${params.customerName || params.customer_name || 'Not Specified'}\n`;
+    emailBody += `Quote Request ID: ${params.quoteRequestId || params.quote_request_id || 'Not Specified'}\n`;
+    emailBody += `Source Location: ${params.source || 'Not Specified'}\n`;
+    emailBody += `Destination Location: ${params.destination || 'Not Specified'}\n`;
+    emailBody += `Bandwidth: ${params.bandwidth || 'Not Specified'} Mbps\n`;
+    emailBody += `Quote Time & Date: ${new Date().toLocaleString()}\n\n`;
+
+    // Helper function to generate route table from log data with better structure mapping
+    const generateRouteTableFromLog = (pathData, pathType) => {
+      // Try different possible route data structures
+      const routeData = pathData?.route || pathData?.routes || pathData?.path;
+      
+      if (!routeData || (!Array.isArray(routeData) && !routeData.length)) {
+        // Try alternative data structure
+        if (pathData?.hops && Array.isArray(pathData.hops)) {
+          const routes = pathData.hops;
+          let table = `${pathType} Route:\n`;
+          table += `Circuit ID\tRoute Segment\tLatency\n`;
+          table += `${'='.repeat(50)}\n`;
+          
+          routes.forEach(segment => {
+            const circuitId = segment.circuit_id || segment.circuitId || 'N/A';
+            const from = segment.from || segment.location_a || segment.source || 'N/A';
+            const to = segment.to || segment.location_b || segment.destination || 'N/A';
+            const latency = segment.latency || 0;
+            table += `${circuitId}\t${from} → ${to}\t${formatLatency(latency)}ms\n`;
+          });
+          
+          table += `${'='.repeat(50)}\n`;
+          table += `Total Latency: ${formatLatency(pathData.totalLatency || pathData.total_latency || 0)}ms\n\n`;
+          return table;
+        }
+        return '';
+      }
+      
+      let table = `${pathType} Route:\n`;
+      table += `Circuit ID\tRoute Segment\tLatency\n`;
+      table += `${'='.repeat(50)}\n`;
+      
+      const routes = Array.isArray(routeData) ? routeData : [routeData];
+      routes.forEach(segment => {
+        const circuitId = segment.circuit_id || segment.circuitId || 'N/A';
+        const from = segment.from || segment.location_a || segment.source || 'N/A';
+        const to = segment.to || segment.location_b || segment.destination || 'N/A';
+        const latency = segment.latency || 0;
+        table += `${circuitId}\t${from} → ${to}\t${formatLatency(latency)}ms\n`;
+      });
+      
+      table += `${'='.repeat(50)}\n`;
+      table += `Total Latency: ${formatLatency(pathData.totalLatency || pathData.total_latency || 0)}ms\n\n`;
+      
+      return table;
+    };
+
+    // Helper function to format pricing section from log data
+    const formatPricingSectionFromLog = (pricing, pathType) => {
+      if (!pricing) return '';
+      
+      let section = `${pathType} Pricing:\n`;
+      section += `NRC: ${pricing.nrcCharge > 0 ? formatCurrency(pricing.nrcCharge, pricing.currency) : 'FREE'}\n`;
+      section += `MRC (Minimum): ${formatCurrency(pricing.minimumPrice, pricing.currency)}\n`;
+      section += `MRC (Suggested): ${formatCurrency(pricing.suggestedPrice, pricing.currency)}\n`;
+      section += `Currency: ${pricing.currency}\n`;
+      section += `Contract Term: ${pricing.contractTerm} months\n`;
+      section += `Bandwidth: ${pricing.bandwidth} Mbps\n`;
+      
+      // Add detailed pricing breakdown if available
+      if (pricing.allocatedCost !== undefined) {
+        section += `Allocated Cost: ${formatCurrency(pricing.allocatedCost, pricing.currency)}\n`;
+      }
+      if (pricing.minimumMargin !== undefined) {
+        section += `Minimum Margin: ${pricing.minimumMargin.toFixed(1)}%\n`;
+      }
+      if (pricing.suggestedMargin !== undefined) {
+        section += `Suggested Margin: ${pricing.suggestedMargin.toFixed(1)}%\n`;
+      }
+      
+      // Add promo pricing information if used
+      if (pricing.promoPricing && pricing.promoPricing.used) {
+        section += `\nPromo Pricing Applied:\n`;
+        section += `Rule: ${pricing.promoPricing.ruleName} (ID: ${pricing.promoPricing.ruleId})\n`;
+        section += `Original Price: ${formatCurrency(pricing.promoPricing.originalPriceUSD, 'USD')}\n`;
+        section += `Price Field: ${pricing.promoPricing.priceField}\n`;
+      }
+      
+      section += `\n`;
+      return section;
+    };
+
+    console.log('Export Debug - Results structure:', results); // Debug log
+
+    // Process all available pricing results from the log with improved data extraction
+    
+    // Handle "individual" array structure (new format)
+    if (results && results.individual && Array.isArray(results.individual)) {
+      console.log('Export Debug - Found individual array:', results.individual);
+      
+      results.individual.forEach((result, index) => {
+        const pathType = result.pathType === 'primary' ? 'Primary' : 
+                        result.pathType === 'protection' ? 'Secondary' : 
+                        `Path ${index + 1}`;
+        
+        console.log(`Export Debug - Processing ${pathType}:`, result);
+        
+        // Generate route table from path array
+        if (result.path && Array.isArray(result.path)) {
+          let table = `${pathType} Route:\n`;
+          table += `Circuit ID\tRoute Segment\tLatency\n`;
+          table += `${'='.repeat(50)}\n`;
+          
+          // Convert path array to route segments
+          for (let i = 0; i < result.path.length - 1; i++) {
+            const from = result.path[i];
+            const to = result.path[i + 1];
+            table += `Direct Route\t${from} → ${to}\t${formatLatency(result.totalLatency || 0)}ms\n`;
+          }
+          
+          table += `${'='.repeat(50)}\n`;
+          table += `Total Latency: ${formatLatency(result.totalLatency || 0)}ms\n`;
+          table += `Hops: ${result.hops || 'N/A'}\n\n`;
+          
+          emailBody += table;
+        }
+        
+        // Add pricing information
+        if (result.pricing) {
+          emailBody += formatPricingSectionFromLog(result.pricing, pathType);
+        }
+      });
+    }
+    
+    // Handle legacy "results" or "paths" array structure
+    else if (results && (results.results || results.paths)) {
+      const pathResults = results.results || results.paths || [];
+      
+      // Find primary and protection paths
+      const primaryResult = pathResults.find(r => r.pathType === 'primary' || r.type === 'primary');
+      const protectionResult = pathResults.find(r => r.pathType === 'protection' || r.type === 'protection');
+      
+      // Add primary path and pricing
+      if (primaryResult) {
+        console.log('Export Debug - Primary result:', primaryResult); // Debug log
+        emailBody += generateRouteTableFromLog(primaryResult, 'Primary');
+        if (primaryResult.pricing) {
+          emailBody += formatPricingSectionFromLog(primaryResult.pricing, 'Primary');
+        }
+      }
+      
+      // Add protection/secondary path and pricing
+      if (protectionResult) {
+        console.log('Export Debug - Protection result:', protectionResult); // Debug log
+        emailBody += generateRouteTableFromLog(protectionResult, 'Secondary');
+        if (protectionResult.pricing) {
+          emailBody += formatPricingSectionFromLog(protectionResult.pricing, 'Secondary');
+        }
+      }
+    }
+
+    // Also check for search results structure (when exporting from path search logs)
+    if (results.searchResults && results.searchResults.primary) {
+      const primaryPath = results.searchResults.primary;
+      emailBody += generateRouteTableFromLog(primaryPath, 'Primary');
+    }
+
+    if (results.searchResults && results.searchResults.protection) {
+      const protectionPath = results.searchResults.protection;
+      emailBody += generateRouteTableFromLog(protectionPath, 'Secondary');
+    }
+
+    // Handle protection pricing separately if it exists
+    if (results.protection && results.protection.pricing) {
+      emailBody += formatPricingSectionFromLog(results.protection.pricing, 'Protected Service');
+    }
+
+    // Add protected service pricing if available
+    if (results.protectionPricing) {
+      emailBody += formatPricingSectionFromLog(results.protectionPricing, 'Protected Service');
+    }
+
+    // Handle cross connect information from multiple possible locations
+    const logCrossConnect = params.crossConnect || results.crossConnect || {};
+    if (logCrossConnect.source) {
+      emailBody += `Source Cross Connect\n`;
+      emailBody += `POP Name: ${logCrossConnect.source.locationCode} - ${logCrossConnect.source.datacenterName}\n`;
+      emailBody += `NRC: ${logCrossConnect.source.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.nrc, logCrossConnect.source.currency)}\n`;
+      emailBody += `MRC: ${logCrossConnect.source.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.mrc, logCrossConnect.source.currency)}\n`;
+      if (logCrossConnect.source.notes) {
+        emailBody += `Notes: ${logCrossConnect.source.notes}\n`;
+      }
+      emailBody += `Currency: ${logCrossConnect.source.currency}\n\n`;
+    }
+
+    if (logCrossConnect.destination) {
+      emailBody += `Destination Cross Connect\n`;
+      emailBody += `POP Name: ${logCrossConnect.destination.locationCode} - ${logCrossConnect.destination.datacenterName}\n`;
+      emailBody += `NRC: ${logCrossConnect.destination.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.nrc, logCrossConnect.destination.currency)}\n`;
+      emailBody += `MRC: ${logCrossConnect.destination.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.mrc, logCrossConnect.destination.currency)}\n`;
+      if (logCrossConnect.destination.notes) {
+        emailBody += `Notes: ${logCrossConnect.destination.notes}\n`;
+      }
+      emailBody += `Currency: ${logCrossConnect.destination.currency}\n\n`;
+    }
+
+    // Pricing Disclaimer
+    emailBody += `${'='.repeat(80)}\n`;
+    emailBody += `PRICING DISCLAIMER\n`;
+    emailBody += `${'='.repeat(80)}\n`;
+    emailBody += `This quotation is valid for 90 days.\n`;
+    emailBody += `All Pricing is subject to IPC standard terms and conditions.\n`;
+    emailBody += `All Pricing is budgetary and subject to survey and facility/feasibility checks.\n`;
+    emailBody += `All Pricing is exclusive of any applicable Taxes and Surcharges.\n`;
+    emailBody += `Any additional 3rd Party costs incurred on order of the service will be chargeable to the customer, including but not limited to cross connects, additional cabling, out of hours charges, etc\n`;
+    emailBody += `Unless otherwise stated any additional costs incurred for out of hours work will be chargeable to the customer.\n`;
+    emailBody += `Customer must provide all necessary rack space and power supply.\n`;
+    emailBody += `Pricing is for connectivity only, and does not include any fees associated with data feeds unless specified otherwise within the quotation.\n`;
+    emailBody += `IPC reserves the right to correct any computational errors in this quote.\n`;
+    emailBody += `Where Pricing is associated with a network or multi circuit design, individual element pricing is indicative, and cannot be ordered as individual elements.\n`;
+
+    return emailBody;
+  };
+
+  // Pricing Logs Filtering Functions
+  useEffect(() => {
+    filterAuditLogs();
+  }, [auditLogs, logSearchTerm, logDateFilter]);
+
+  const filterAuditLogs = () => {
+    let filtered = [...auditLogs];
+
+    // Search by Quote Request ID
+    if (logSearchTerm.trim()) {
+      filtered = filtered.filter(log => {
+        try {
+          const params = log.parameters || log.pricing_data?.inputParameters;
+          const quoteId = params?.quoteRequestId || params?.quote_request_id || '';
+          return quoteId.toLowerCase().includes(logSearchTerm.toLowerCase());
+        } catch {
+          return false;
+        }
+      });
+    }
+
+    // Filter by date range
+    if (logDateFilter.startDate || logDateFilter.endDate) {
+      filtered = filtered.filter(log => {
+        const logDate = new Date(log.timestamp);
+        const startDate = logDateFilter.startDate ? new Date(logDateFilter.startDate) : null;
+        const endDate = logDateFilter.endDate ? new Date(logDateFilter.endDate + 'T23:59:59') : null;
+
+        if (startDate && logDate < startDate) return false;
+        if (endDate && logDate > endDate) return false;
+        return true;
+      });
+    }
+
+    setFilteredAuditLogs(filtered);
+  };
+
+  const handleLogSearchChange = (event) => {
+    setLogSearchTerm(event.target.value);
+  };
+
+  const handleDateFilterChange = (field) => (event) => {
+    setLogDateFilter(prev => ({
+      ...prev,
+      [field]: event.target.value
+    }));
+  };
+
+  const clearLogFilters = () => {
+    setLogSearchTerm('');
+    setLogDateFilter({ startDate: '', endDate: '' });
   };
 
   // Cross Connect Functions
@@ -1192,6 +1828,18 @@ const NetworkDesignTool = () => {
               </Box>
             </AccordionSummary>
             <AccordionDetails>
+              {/* Export Button */}
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+                <Button
+                  variant="contained"
+                  startIcon={<EmailIcon />}
+                  onClick={handleExportOpen}
+                  color="primary"
+                >
+                  Export Results
+                </Button>
+              </Box>
+
               {/* Contract Term Summary */}
               {pricingResults.contractTermDetails && (
                 <Grid item xs={12} sx={{ mb: 3 }}>
@@ -1504,7 +2152,7 @@ const NetworkDesignTool = () => {
             <Typography variant="h6">Pricing Logs</Typography>
             <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
               <Chip 
-                label={`${auditLogs.length} entries`} 
+                label={`${filteredAuditLogs.length} of ${auditLogs.length} entries`} 
                 color="info" 
                 size="small"
               />
@@ -1531,6 +2179,64 @@ const NetworkDesignTool = () => {
               )}
             </Box>
           </Box>
+
+          {/* Search and Filter Controls */}
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Search Quote Request ID"
+                    value={logSearchTerm}
+                    onChange={handleLogSearchChange}
+                    placeholder="Enter Quote Request ID..."
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon />
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    type="date"
+                    label="Start Date"
+                    value={logDateFilter.startDate}
+                    onChange={handleDateFilterChange('startDate')}
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    type="date"
+                    label="End Date"
+                    value={logDateFilter.endDate}
+                    onChange={handleDateFilterChange('endDate')}
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={2}>
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    size="small"
+                    onClick={clearLogFilters}
+                    startIcon={<FilterListOffIcon />}
+                  >
+                    Clear Filters
+                  </Button>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
           
           <TableContainer component={Paper}>
             <Table size="small">
@@ -1539,14 +2245,15 @@ const NetworkDesignTool = () => {
                   <TableCell><strong>Timestamp</strong></TableCell>
                   <TableCell><strong>User</strong></TableCell>
                   <TableCell><strong>Action</strong></TableCell>
+                  <TableCell><strong>Quote Request ID</strong></TableCell>
                   <TableCell><strong>Request Summary</strong></TableCell>
                   <TableCell><strong>Pricing Results</strong></TableCell>
                   <TableCell><strong>Execution Time</strong></TableCell>
-                  <TableCell align="center"><strong>Details</strong></TableCell>
+                  <TableCell align="center"><strong>Actions</strong></TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {auditLogs.map((log) => (
+                {filteredAuditLogs.map((log) => (
                   <React.Fragment key={log.id}>
                     <TableRow>
                       <TableCell>
@@ -1566,6 +2273,18 @@ const NetworkDesignTool = () => {
                           size="small" 
                         />
                       </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {(() => {
+                            try {
+                              const params = log.parameters || log.pricing_data?.inputParameters;
+                              return params?.quoteRequestId || params?.quote_request_id || 'N/A';
+                            } catch {
+                              return 'N/A';
+                            }
+                          })()}
+                        </Typography>
+                      </TableCell>
                       <TableCell sx={{ maxWidth: 400 }}>
                         <Typography variant="body2">
                           {formatReadableLogSummary(log)}
@@ -1582,18 +2301,30 @@ const NetworkDesignTool = () => {
                         </Typography>
                       </TableCell>
                       <TableCell align="center">
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          onClick={() => toggleLogExpansion(log.id)}
-                        >
-                          {expandedLogs.has(log.id) ? 'Hide Details' : 'View Details'}
-                        </Button>
+                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'center' }}>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            onClick={() => toggleLogExpansion(log.id)}
+                          >
+                            {expandedLogs.has(log.id) ? 'Hide Details' : 'View Details'}
+                          </Button>
+                          <Button
+                            variant="contained"
+                            size="small"
+                            startIcon={<EmailIcon />}
+                            onClick={() => handleExportPricingLog(log)}
+                            disabled={!log.results && !log.pricing_data?.calculationResults}
+                            color="primary"
+                          >
+                            Export
+                          </Button>
+                        </Box>
                       </TableCell>
                     </TableRow>
                     {expandedLogs.has(log.id) && (
                       <TableRow>
-                        <TableCell colSpan={7} sx={{ backgroundColor: '#f8f9fa', border: 'none' }}>
+                        <TableCell colSpan={8} sx={{ backgroundColor: '#f8f9fa', border: 'none' }}>
                           <Box sx={{ p: 2 }}>
                             <Grid container spacing={2}>
                               <Grid item xs={12} md={6}>
@@ -1656,6 +2387,122 @@ const NetworkDesignTool = () => {
           </TableContainer>
         </TabPanel>
       )}
+
+      {/* Export Dialog */}
+      <Dialog
+        open={exportDialogOpen}
+        onClose={handleExportClose}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <EmailIcon color="primary" />
+            <Typography variant="h6">Export Pricing Results</Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Select which pricing results to include in the email export:
+          </Typography>
+          
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {/* Primary Pricing Option */}
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={exportOptions.primaryPricing}
+                  onChange={() => handleExportOptionChange('primaryPricing')}
+                  color="primary"
+                />
+              }
+              label="Primary Pricing"
+              disabled={!pricingResults?.results?.find(r => r.pathType === 'primary') || !searchResults?.primaryPath}
+            />
+            
+            {/* Secondary Pricing Option */}
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={exportOptions.secondaryPricing}
+                  onChange={() => handleExportOptionChange('secondaryPricing')}
+                  color="primary"
+                />
+              }
+              label="Secondary Pricing"
+              disabled={!pricingResults?.results?.find(r => r.pathType === 'protection') || !searchResults?.diversePath}
+            />
+            
+            {/* Protected Pricing Option */}
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={exportOptions.protectedPricing}
+                  onChange={() => handleExportOptionChange('protectedPricing')}
+                  color="primary"
+                />
+              }
+              label="Protected Pricing"
+              disabled={!pricingResults?.protectionPricing}
+            />
+          </Box>
+
+          {/* Cross Connect Info Display */}
+          {(crossConnectResults.source || crossConnectResults.destination) && (
+            <Box sx={{ mt: 2, p: 2, bgcolor: 'info.50', borderRadius: 1 }}>
+              <Typography variant="body2" color="info.main" sx={{ fontWeight: 'bold', mb: 1 }}>
+                Cross Connect Information:
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {crossConnectResults.source && `Source: ${crossConnectResults.source.locationCode}`}
+                {crossConnectResults.source && crossConnectResults.destination && ' • '}
+                {crossConnectResults.destination && `Destination: ${crossConnectResults.destination.locationCode}`}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Cross connect details will be included in the export.
+              </Typography>
+            </Box>
+          )}
+
+          <Alert severity="info" sx={{ mt: 2 }}>
+            <Typography variant="body2">
+              This will download a .eml email file that you can double-click to open in your email client or attach to emails.
+            </Typography>
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleExportClose} color="inherit">
+            Cancel
+          </Button>
+          <Button 
+            onClick={() => {
+              const hasSelection = Object.values(exportOptions).some(Boolean);
+              if (!hasSelection) {
+                setError('Please select at least one pricing option to export');
+                return;
+              }
+              const emailBody = generateEmailBody();
+              const today = new Date().toLocaleDateString();
+              const subject = `${formData.quoteRequestId || 'Quote'} - ${formData.customerName || 'Customer'} - Pricing Request - ${today}`;
+              handleCopyToClipboard(emailBody, subject);
+            }}
+            variant="outlined" 
+            startIcon={<DownloadIcon />}
+            disabled={!Object.values(exportOptions).some(Boolean)}
+            sx={{ mr: 1 }}
+          >
+            Copy to Clipboard
+          </Button>
+          <Button 
+            onClick={handleExportConfirm} 
+            variant="contained" 
+            startIcon={<EmailIcon />}
+            disabled={!Object.values(exportOptions).some(Boolean)}
+          >
+            Download Email File
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Error/Success Messages */}
       <Snackbar
