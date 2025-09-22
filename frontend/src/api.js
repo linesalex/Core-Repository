@@ -89,8 +89,12 @@ export const addRepositoryType = (data) => api.post(`${API_BASE_URL}/repository_
 // Carriers
 export const getCarriers = () => api.get(`${API_BASE_URL}/carriers`).then(res => res.data);
 
-// Core Outages
+// Core Outages - Enhanced with current outages and history
 export const getCoreOutages = () => api.get(`${API_BASE_URL}/core_outages`).then(res => res.data);
+export const getCurrentOutages = () => api.get(`${API_BASE_URL}/core_outages/current`).then(res => res.data);
+export const getOutageHistory = (page = 1, limit = 50) => api.get(`${API_BASE_URL}/core_outages/history?page=${page}&limit=${limit}`).then(res => res.data);
+export const getOutageStats = () => api.get(`${API_BASE_URL}/core_outages/stats`).then(res => res.data);
+export const getOutageMonitorStatus = () => api.get(`${API_BASE_URL}/core_outages/monitor-status`).then(res => res.data);
 
 // Live Latency API - Enhanced System Only
 // Note: Old simulation endpoints removed - no longer generating fake data
@@ -266,6 +270,27 @@ export const getLocations = () => api.get(`${API_BASE_URL}/locations`).then(res 
 // Cross Connect
 export const getCrossConnectInfo = (locationId) => api.get(`${API_BASE_URL}/locations/${locationId}/cross-connect`).then(res => res.data);
 export const updateCrossConnectInfo = (locationId, data) => api.put(`${API_BASE_URL}/locations/${locationId}/cross-connect`, data);
+
+// ====================================
+// ADMIN: LIVE LATENCY API MANAGEMENT
+// ====================================
+
+// Dashboard and overview
+export const liveLatencyAdminApi = {
+  // Get dashboard overview statistics
+  getOverview: () => api.get(`${API_BASE_URL}/admin/live-latency/overview`).then(res => res.data),
+  
+  // Configuration management
+  getConfigurations: () => api.get(`${API_BASE_URL}/admin/live-latency/configurations`).then(res => res.data),
+  getConfiguration: (circuitId) => api.get(`${API_BASE_URL}/admin/live-latency/configurations/${circuitId}`).then(res => res.data),
+  createConfiguration: (data) => api.post(`${API_BASE_URL}/admin/live-latency/configurations`, data),
+  updateConfiguration: (configId, data) => api.put(`${API_BASE_URL}/admin/live-latency/configurations/${configId}`, data),
+  deleteConfiguration: (configId) => api.delete(`${API_BASE_URL}/admin/live-latency/configurations/${configId}`),
+  
+  // Testing and monitoring
+  testConnection: (circuitId) => api.post(`${API_BASE_URL}/admin/live-latency/test/${circuitId}`).then(res => res.data),
+  getApiLogs: (circuitId, limit = 50) => api.get(`${API_BASE_URL}/admin/live-latency/logs/${circuitId}?limit=${limit}`).then(res => res.data)
+};
 
 // Export the base api object for direct use
 export { api }; 

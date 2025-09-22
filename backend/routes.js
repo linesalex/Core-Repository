@@ -26,6 +26,8 @@ const {
   createSuccessResponse, 
   createPaginatedResponse 
 } = require('./dbErrorHandler');
+const LiveLatencyService = require('./liveLatencyService');
+const outageMonitor = require('./outageMonitorService');
 
 // Regex for circuit_id: 6 uppercase letters + 6 digits
 const CIRCUIT_ID_REGEX = /^[A-Z]{6}[0-9]{6}$/;
@@ -1297,12 +1299,72 @@ router.get('/carriers-legacy', (req, res) => {
   });
 });
 
-// Get core outages (routes with live_latency = 0)
-router.get('/core_outages', (req, res) => {
-  db.all('SELECT * FROM network_routes WHERE live_latency = 0 ORDER BY circuit_id', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+// ====================================
+// ENHANCED CORE OUTAGES ENDPOINTS
+// ====================================
+
+// Get current outages (circuits with live_latency = 0)
+router.get('/core_outages/current', authenticateToken, async (req, res) => {
+  try {
+    const currentOutages = await outageMonitor.getCurrentOutages();
+    res.json(createSuccessResponse(currentOutages, 'Current outages retrieved successfully'));
+  } catch (error) {
+    console.error('Failed to get current outages:', error);
+    res.status(500).json({ error: 'Failed to retrieve current outages' });
+  }
+});
+
+// Get outage history
+router.get('/core_outages/history', authenticateToken, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
+    
+    const history = await outageMonitor.getOutageHistory(limit, offset);
+    
+    // Get total count for pagination
+    db.get('SELECT COUNT(*) as total FROM core_outage_history', [], (err, countResult) => {
+      if (err) {
+        console.error('Failed to get outage history count:', err);
+        return res.status(500).json({ error: 'Failed to retrieve outage history' });
+      }
+      
+      const total = countResult.total;
+      res.json(createPaginatedResponse(history, total, page, limit));
+    });
+  } catch (error) {
+    console.error('Failed to get outage history:', error);
+    res.status(500).json({ error: 'Failed to retrieve outage history' });
+  }
+});
+
+// Get outage statistics
+router.get('/core_outages/stats', authenticateToken, async (req, res) => {
+  try {
+    const stats = await outageMonitor.getOutageStats();
+    res.json(createSuccessResponse(stats, 'Outage statistics retrieved successfully'));
+  } catch (error) {
+    console.error('Failed to get outage stats:', error);
+    res.status(500).json({ error: 'Failed to retrieve outage statistics' });
+  }
+});
+
+// Get outage monitor service status
+router.get('/core_outages/monitor-status', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const status = outageMonitor.getStatus();
+  res.json(createSuccessResponse(status, 'Monitor status retrieved successfully'));
+});
+
+// Legacy endpoint for backward compatibility
+router.get('/core_outages', authenticateToken, async (req, res) => {
+  try {
+    const currentOutages = await outageMonitor.getCurrentOutages();
+    res.json(currentOutages);
+  } catch (error) {
+    console.error('Failed to get core outages (legacy):', error);
+    res.status(500).json({ error: 'Failed to retrieve core outages' });
+  }
 });
 
 router.post('/repository_types', (req, res) => {
@@ -8085,6 +8147,570 @@ router.get('/exchange-pricing/audit_logs/export', authenticateToken, (req, res) 
     res.setHeader('Content-Disposition', `attachment; filename="exchange_pricing_logs_${new Date().toISOString().split('T')[0]}.csv"`);
     res.send(csvContent);
   });
+});
+
+// ========================================
+// ADMIN: LIVE LATENCY API MANAGEMENT
+// ========================================
+
+// Get dashboard overview
+router.get('/admin/live-latency/overview', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    const latencyService = new LiveLatencyService();
+    
+    // Get overall statistics
+    const stats = await Promise.all([
+      // Total circuits with configurations
+      new Promise((resolve, reject) => {
+        db.get('SELECT COUNT(*) as total FROM live_latency_config', [], (err, row) => {
+          if (err) reject(err);
+          else resolve(row.total);
+        });
+      }),
+      
+      // Active configurations
+      new Promise((resolve, reject) => {
+        db.get('SELECT COUNT(*) as active FROM live_latency_config WHERE enabled = 1 AND (disabled_until IS NULL OR disabled_until < CURRENT_TIMESTAMP)', [], (err, row) => {
+          if (err) reject(err);
+          else resolve(row.active);
+        });
+      }),
+      
+      // Failed configurations
+      new Promise((resolve, reject) => {
+        db.get('SELECT COUNT(*) as failed FROM live_latency_config WHERE failure_count >= 3', [], (err, row) => {
+          if (err) reject(err);
+          else resolve(row.failed);
+        });
+      }),
+      
+      // Last successful refresh
+      new Promise((resolve, reject) => {
+        db.get('SELECT MAX(last_successful_update) as last_success FROM live_latency_config', [], (err, row) => {
+          if (err) reject(err);
+          else resolve(row.last_success);
+        });
+      }),
+      
+      // Recent API call success rate
+      new Promise((resolve, reject) => {
+        db.get(`
+          SELECT 
+            COUNT(*) as total_calls,
+            SUM(CASE WHEN response_status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) as successful_calls
+          FROM live_latency_api_logs 
+          WHERE created_at > datetime('now', '-24 hours')
+        `, [], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      }),
+      
+      // Check global cooldown status
+      latencyService.isGlobalRefreshOnCooldown()
+    ]);
+
+    const [totalConfigs, activeConfigs, failedConfigs, lastSuccess, apiStats, onCooldown] = stats;
+    const successRate = apiStats.total_calls > 0 ? Math.round((apiStats.successful_calls / apiStats.total_calls) * 100) : 0;
+
+    res.json({
+      success: true,
+      data: {
+        total_configurations: totalConfigs,
+        active_configurations: activeConfigs,
+        failed_configurations: failedConfigs,
+        disabled_configurations: totalConfigs - activeConfigs,
+        last_successful_update: lastSuccess,
+        api_success_rate_24h: successRate,
+        total_api_calls_24h: apiStats.total_calls,
+        global_refresh_on_cooldown: onCooldown,
+        system_status: failedConfigs > (totalConfigs * 0.5) ? 'degraded' : 'healthy'
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error getting live latency overview:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load overview data',
+      message: error.message
+    });
+  }
+});
+
+// Get all circuit configurations
+router.get('/admin/live-latency/configurations', authenticateToken, authorizeRole(['administrator']), (req, res) => {
+  const query = `
+    SELECT 
+      lc.*,
+      nr.circuit_id as route_exists,
+      u1.username as created_by_username,
+      u2.username as updated_by_username
+    FROM live_latency_config lc
+    LEFT JOIN network_routes nr ON lc.circuit_id = nr.circuit_id
+    LEFT JOIN users u1 ON lc.created_by = u1.id
+    LEFT JOIN users u2 ON lc.updated_by = u2.id
+    ORDER BY lc.circuit_id
+  `;
+  
+  db.all(query, [], (err, rows) => {
+    if (err) {
+      console.error('Error fetching configurations:', err);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch configurations'
+      });
+    }
+    
+    // Remove encrypted passwords from response
+    const configurations = rows.map(row => ({
+      ...row,
+      auth_password_encrypted: undefined,
+      has_password: !!row.auth_password_encrypted
+    }));
+    
+    res.json({
+      success: true,
+      data: configurations,
+      count: configurations.length
+    });
+  });
+});
+
+// Get specific circuit configuration
+router.get('/admin/live-latency/configurations/:circuitId', authenticateToken, authorizeRole(['administrator']), (req, res) => {
+  const { circuitId } = req.params;
+  
+  const query = `
+    SELECT 
+      lc.*,
+      nr.circuit_id as route_exists,
+      u1.username as created_by_username,
+      u2.username as updated_by_username
+    FROM live_latency_config lc
+    LEFT JOIN network_routes nr ON lc.circuit_id = nr.circuit_id
+    LEFT JOIN users u1 ON lc.created_by = u1.id
+    LEFT JOIN users u2 ON lc.updated_by = u2.id
+    WHERE lc.circuit_id = ?
+  `;
+  
+  db.get(query, [circuitId], (err, row) => {
+    if (err) {
+      console.error('Error fetching configuration:', err);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch configuration'
+      });
+    }
+    
+    if (!row) {
+      return res.status(404).json({
+        success: false,
+        error: 'Configuration not found'
+      });
+    }
+    
+    // Remove encrypted password from response
+    const configuration = {
+      ...row,
+      auth_password_encrypted: undefined,
+      has_password: !!row.auth_password_encrypted
+    };
+    
+    res.json({
+      success: true,
+      data: configuration
+    });
+  });
+});
+
+// Create new circuit configuration
+router.post('/admin/live-latency/configurations', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    const {
+      circuit_id,
+      enabled = true,
+      api_base_url,
+      api_instance_name,
+      api_indicator = 'AnyVendor - Response Time (ms) - BPI',
+      api_parameters,
+      auth_username,
+      auth_password,
+      update_interval_minutes = 15
+    } = req.body;
+
+    // Validate required fields
+    if (!circuit_id || !api_base_url || !api_instance_name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: circuit_id, api_base_url, api_instance_name'
+      });
+    }
+
+    // Validate circuit_id format
+    if (!isValidCircuitId(circuit_id)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid circuit ID format. Must be 6 uppercase letters followed by 6 digits.'
+      });
+    }
+
+    // Check if circuit exists in network_routes
+    const routeExists = await new Promise((resolve, reject) => {
+      db.get('SELECT circuit_id FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, row) => {
+        if (err) reject(err);
+        else resolve(!!row);
+      });
+    });
+
+    if (!routeExists) {
+      return res.status(400).json({
+        success: false,
+        error: 'Circuit ID not found in network routes database'
+      });
+    }
+
+    // Encrypt password if provided
+    let encryptedPassword = null;
+    if (auth_password) {
+      const latencyService = new LiveLatencyService();
+      encryptedPassword = latencyService.encryptPassword(auth_password);
+    }
+
+    // Insert configuration
+    db.run(
+      `INSERT INTO live_latency_config 
+       (circuit_id, enabled, api_base_url, api_instance_name, api_indicator, 
+        api_parameters, auth_username, auth_password_encrypted, update_interval_minutes,
+        created_by, updated_by) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        circuit_id, enabled, api_base_url, api_instance_name, api_indicator,
+        api_parameters, auth_username, encryptedPassword, update_interval_minutes,
+        req.user.id, req.user.id
+      ],
+      function(err) {
+        if (err) {
+          if (err.message.includes('UNIQUE constraint failed')) {
+            return res.status(409).json({
+              success: false,
+              error: 'Configuration already exists for this circuit'
+            });
+          }
+          console.error('Error creating configuration:', err);
+          return res.status(500).json({
+            success: false,
+            error: 'Failed to create configuration'
+          });
+        }
+
+        // Log the change
+        logChange(req.user.id, 'live_latency_config', this.lastID, 'CREATE', null, {
+          circuit_id,
+          enabled,
+          api_base_url,
+          api_instance_name
+        }, req);
+
+        res.status(201).json({
+          success: true,
+          message: 'Configuration created successfully',
+          data: {
+            id: this.lastID,
+            circuit_id
+          }
+        });
+      }
+    );
+
+  } catch (error) {
+    console.error('Error creating configuration:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create configuration',
+      message: error.message
+    });
+  }
+});
+
+// Update circuit configuration
+router.put('/admin/live-latency/configurations/:configId', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    const { configId } = req.params;
+    const {
+      enabled,
+      api_base_url,
+      api_instance_name,
+      api_indicator,
+      api_parameters,
+      auth_username,
+      auth_password,
+      update_interval_minutes
+    } = req.body;
+
+    // Get existing configuration for logging
+    const existingConfig = await new Promise((resolve, reject) => {
+      db.get('SELECT * FROM live_latency_config WHERE id = ?', [configId], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+
+    if (!existingConfig) {
+      return res.status(404).json({
+        success: false,
+        error: 'Configuration not found'
+      });
+    }
+
+    // Build update query dynamically
+    const updates = [];
+    const values = [];
+
+    if (enabled !== undefined) {
+      updates.push('enabled = ?');
+      values.push(enabled);
+    }
+    if (api_base_url) {
+      updates.push('api_base_url = ?');
+      values.push(api_base_url);
+    }
+    if (api_instance_name) {
+      updates.push('api_instance_name = ?');
+      values.push(api_instance_name);
+    }
+    if (api_indicator) {
+      updates.push('api_indicator = ?');
+      values.push(api_indicator);
+    }
+    if (api_parameters !== undefined) {
+      updates.push('api_parameters = ?');
+      values.push(api_parameters);
+    }
+    if (auth_username !== undefined) {
+      updates.push('auth_username = ?');
+      values.push(auth_username);
+    }
+    if (auth_password) {
+      const latencyService = new LiveLatencyService();
+      const encryptedPassword = latencyService.encryptPassword(auth_password);
+      updates.push('auth_password_encrypted = ?');
+      values.push(encryptedPassword);
+    }
+    if (update_interval_minutes) {
+      updates.push('update_interval_minutes = ?');
+      values.push(update_interval_minutes);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No fields to update'
+      });
+    }
+
+    // Add updated_by and updated_at
+    updates.push('updated_by = ?', 'updated_at = CURRENT_TIMESTAMP');
+    values.push(req.user.id, configId);
+
+    const query = `UPDATE live_latency_config SET ${updates.join(', ')} WHERE id = ?`;
+
+    db.run(query, values, function(err) {
+      if (err) {
+        console.error('Error updating configuration:', err);
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to update configuration'
+        });
+      }
+
+      if (this.changes === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Configuration not found'
+        });
+      }
+
+      // Log the change
+      logChange(req.user.id, 'live_latency_config', configId, 'UPDATE', existingConfig, req.body, req);
+
+      res.json({
+        success: true,
+        message: 'Configuration updated successfully'
+      });
+    });
+
+  } catch (error) {
+    console.error('Error updating configuration:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update configuration',
+      message: error.message
+    });
+  }
+});
+
+// Delete circuit configuration
+router.delete('/admin/live-latency/configurations/:configId', authenticateToken, authorizeRole(['administrator']), (req, res) => {
+  const { configId } = req.params;
+
+  // Get existing configuration for logging
+  db.get('SELECT * FROM live_latency_config WHERE id = ?', [configId], (err, existingConfig) => {
+    if (err) {
+      console.error('Error fetching configuration for deletion:', err);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch configuration'
+      });
+    }
+
+    if (!existingConfig) {
+      return res.status(404).json({
+        success: false,
+        error: 'Configuration not found'
+      });
+    }
+
+    // Delete the configuration
+    db.run('DELETE FROM live_latency_config WHERE id = ?', [configId], function(err) {
+      if (err) {
+        console.error('Error deleting configuration:', err);
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to delete configuration'
+        });
+      }
+
+      // Log the change
+      logChange(req.user.id, 'live_latency_config', configId, 'DELETE', existingConfig, null, req);
+
+      res.json({
+        success: true,
+        message: 'Configuration deleted successfully'
+      });
+    });
+  });
+});
+
+// Test connection for specific circuit
+router.post('/admin/live-latency/test/:circuitId', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    const { circuitId } = req.params;
+    const latencyService = new LiveLatencyService();
+
+    console.log(`🧪 Connection test requested for ${circuitId} by admin: ${req.user?.username}`);
+
+    const result = await latencyService.testCircuitConnection(circuitId, req.user.id);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: `Connection test successful for circuit ${circuitId}`,
+        data: {
+          circuit_id: result.circuit_id,
+          latency_ms: result.latency_ms,
+          response_time_ms: result.response_time_ms,
+          data_points: result.data_points,
+          quality_score: result.quality_score,
+          timestamp: result.timestamp
+        }
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: `Connection test failed for circuit ${circuitId}`,
+        error: result.error,
+        data: {
+          circuit_id: result.circuit_id,
+          response_time_ms: result.response_time_ms,
+          failure_count: result.failure_count,
+          auto_disabled: result.auto_disabled,
+          timestamp: result.timestamp
+        }
+      });
+    }
+
+  } catch (error) {
+    console.error(`Error testing connection for ${req.params.circuitId}:`, error);
+    
+    // Return structured error without crashing
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error during connection test',
+      message: error.message || 'Unknown error occurred',
+      data: {
+        circuit_id: req.params.circuitId,
+        timestamp: new Date().toISOString()
+      },
+      debug: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// Get API call logs for circuit
+router.get('/admin/live-latency/logs/:circuitId', authenticateToken, authorizeRole(['administrator']), (req, res) => {
+  const { circuitId } = req.params;
+  const { limit = 50 } = req.query;
+
+  const query = `
+    SELECT 
+      lal.*,
+      u.username as requested_by_username
+    FROM live_latency_api_logs lal
+    LEFT JOIN users u ON lal.requested_by = u.id
+    WHERE lal.circuit_id = ?
+    ORDER BY lal.created_at DESC
+    LIMIT ?
+  `;
+
+  db.all(query, [circuitId, limit], (err, rows) => {
+    if (err) {
+      console.error('Error fetching API logs:', err);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch API logs'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: rows,
+      count: rows.length
+    });
+  });
+});
+
+// Update existing refresh endpoint to use new service
+router.post('/api/live-latency/refresh-all', authenticateToken, authorizePermission('network_routes', 'view'), async (req, res) => {
+  try {
+    const latencyService = new LiveLatencyService();
+    console.log(`🔄 Manual live latency refresh requested by user: ${req.user?.username}`);
+    
+    const results = await latencyService.refreshAllCircuits(req.user.id);
+    
+    res.json({
+      success: true,
+      message: `Live latency refresh completed. Updated ${results.updated} of ${results.total} circuits.`,
+      updated: results.updated,
+      total: results.total,
+      processed: results.processed,
+      failed: results.failed,
+      errors: results.errors.length,
+      duration_ms: results.duration,
+      timestamp: new Date().toISOString(),
+      error_details: results.errors.length > 0 ? results.errors.slice(0, 5) : undefined
+    });
+    
+  } catch (error) {
+    console.error('❌ Live latency refresh failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to refresh live latency data',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 module.exports = router; 

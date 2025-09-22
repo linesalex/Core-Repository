@@ -27,6 +27,8 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import SettingsIcon from '@mui/icons-material/Settings';
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import CalculateIcon from '@mui/icons-material/Calculate';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import ApiIcon from '@mui/icons-material/Api';
 import { AuthProvider, useAuth } from './AuthContext';
 import LoginForm from './LoginForm';
 import UserRegistration from './UserRegistration';
@@ -45,6 +47,7 @@ import CoreOutagesTable from './CoreOutagesTable';
 import CarriersManager from './CarriersManager';
 import ExchangeDataManager from './ExchangeDataManager';
 import BulkUpload from './BulkUpload';
+import LiveLatencyAdminManager from './LiveLatencyAdminManager';
 
 import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking } from './api';
 import SearchExportBar from './SearchExportBar';
@@ -82,6 +85,7 @@ function AuthenticatedApp() {
   const [exchangeDataOpen, setExchangeDataOpen] = useState(false);
   const [exchangeRatesOpen, setExchangeRatesOpen] = useState(false);
   const [networkDataOpen, setNetworkDataOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   
   // User menu state
   const [userMenuAnchor, setUserMenuAnchor] = useState(null);
@@ -537,6 +541,13 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'live-latency-admin':
+        return hasRole('administrator') ? (
+          <LiveLatencyAdminManager hasPermission={hasPermission} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'user-management':
         return hasModuleAccess('user_management') ? (
           <UserManagement />
@@ -881,28 +892,43 @@ function AuthenticatedApp() {
               </ListItem>
             )}
 
-            {/* User Management */}
-            {hasModuleAccess('user_management') && (
-              <ListItem 
-                button 
-                onClick={() => setCurrentTab('user-management')} 
-                sx={{ backgroundColor: currentTab === 'user-management' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-              >
-                <ListItemIcon><PeopleIcon /></ListItemIcon>
-                <ListItemText primary="User Management" />
-              </ListItem>
-            )}
-
-            {/* Bulk Upload (Admin Only) */}
-            {(isModuleVisible('bulk_upload') && hasModuleAccess('user_management')) && (
-              <ListItem 
-                button 
-                onClick={() => setCurrentTab('bulk-upload')} 
-                sx={{ backgroundColor: currentTab === 'bulk-upload' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-              >
-                <ListItemIcon><CloudUploadIcon /></ListItemIcon>
-                <ListItemText primary="Bulk Upload" />
-              </ListItem>
+            {/* Admin Section (Administrator Only) */}
+            {hasRole('administrator') && (
+              <>
+                <ListItem button onClick={() => setAdminOpen(!adminOpen)}>
+                  <ListItemIcon><AdminPanelSettingsIcon /></ListItemIcon>
+                  <ListItemText primary="Admin" />
+                  {adminOpen ? <ExpandLess /> : <ExpandMore />}
+                </ListItem>
+                <Collapse in={adminOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('live-latency-admin')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'live-latency-admin' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><ApiIcon /></ListItemIcon>
+                      <ListItemText primary="Live Latency API" />
+                    </ListItem>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('bulk-upload')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'bulk-upload' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><CloudUploadIcon /></ListItemIcon>
+                      <ListItemText primary="Bulk Upload" />
+                    </ListItem>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('user-management')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'user-management' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><PeopleIcon /></ListItemIcon>
+                      <ListItemText primary="User Management" />
+                    </ListItem>
+                  </List>
+                </Collapse>
+              </>
             )}
           </List>
         </Box>

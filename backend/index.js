@@ -4,6 +4,7 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const routes = require('./routes');
 const { handleDatabaseError } = require('./dbErrorHandler');
+const outageMonitor = require('./outageMonitorService');
 
 app.use(cors());
 app.use(express.json());
@@ -59,4 +60,22 @@ app.listen(PORT, () => {
   console.log(`📊 Health check available at: http://localhost:${PORT}/health`);
   console.log(`🔍 Database health check: http://localhost:${PORT}/health/database`);
   console.log(`🌐 API Root: http://localhost:${PORT}/`);
+  
+  // Start the outage monitoring service
+  setTimeout(() => {
+    outageMonitor.start();
+  }, 5000); // Wait 5 seconds for server to fully initialize
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('\n🛑 Received SIGINT, shutting down gracefully...');
+  outageMonitor.stop();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n🛑 Received SIGTERM, shutting down gracefully...');
+  outageMonitor.stop();
+  process.exit(0);
 }); 
