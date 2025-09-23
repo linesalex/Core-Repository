@@ -8,3 +8,29 @@ Below features and bugs need to be looked at
 - not seeing any update of data within the network routes table.  i have a successful test of NYKPAR279885 which recieved a latency value back from API, however this latency data was not updated and kept updated with changes within the network routes table.  in addition, the refresh live latency button within network routes table did not push.  the NYKPAR279885 Live Latency field still shows as N/A despite a successful test.  N/A should only be displayed if there is no new data for 24 hours.
 
 please ask questions and clairifcations before proceeding - read all config and do not change anything other than advised here.
+
+
+[root@sni1-ipclon7 Core-Repository]# pm2 start ecosystem.config.js
+[PM2] Applying action restartProcessId on app [network-backend](ids: [ 0 ])
+[PM2] Applying action restartProcessId on app [network-frontend](ids: [ 1 ])
+[PM2][ERROR] Process 0 not found
+Process 0 not found
+[PM2][ERROR] Process 1 not found
+Process 1 not found
+/usr/local/lib/node_modules/pm2/lib/API.js:1719
+        acted.push(proc.pm2_env ? proc.pm2_env.pm_id : proc.pm_id)
+                        ^
+
+TypeError: Cannot read property 'pm2_env' of undefined
+    at /usr/local/lib/node_modules/pm2/lib/API.js:1719:25
+    at Array.forEach (<anonymous>)
+    at API.speedList (/usr/local/lib/node_modules/pm2/lib/API.js:1718:18)
+    at /usr/local/lib/node_modules/pm2/lib/binaries/CLI.js:308:15
+    at wrapper (/usr/local/lib/node_modules/pm2/node_modules/async/internal/once.js:12:16)
+    at replenish (/usr/local/lib/node_modules/pm2/node_modules/async/internal/eachOfLimit.js:76:25)
+    at iterateeCallback (/usr/local/lib/node_modules/pm2/node_modules/async/internal/eachOfLimit.js:65:17)
+    at /usr/local/lib/node_modules/pm2/node_modules/async/internal/onlyOnce.js:12:16
+    at /usr/local/lib/node_modules/pm2/lib/binaries/CLI.js:299:11
+    at /usr/local/lib/node_modules/pm2/lib/API.js:330:21
+[root@sni1-ipclon7 Core-Repository]# pm2 --version
+6.0.8
