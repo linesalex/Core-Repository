@@ -148,6 +148,24 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
     setSnackbar({ open: true, message, severity });
   };
 
+  // Calculate next test time based on last test and interval
+  const calculateNextTestTime = (config) => {
+    if (!config.last_test_at || !config.enabled || config.disabled_until) {
+      return 'N/A';
+    }
+    
+    const lastTest = new Date(config.last_test_at);
+    const intervalMs = (config.update_interval_minutes || 15) * 60 * 1000;
+    const nextTest = new Date(lastTest.getTime() + intervalMs);
+    const now = new Date();
+    
+    if (nextTest <= now) {
+      return 'Overdue';
+    }
+    
+    return nextTest.toLocaleString();
+  };
+
   // Clear dashboard statistics
   const handleClearDashboard = async () => {
     setClearDialog({ open: true, loading: true });
@@ -501,6 +519,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
                 <TableCell>Circuit ID</TableCell>
                 <TableCell>API Instance</TableCell>
                 <TableCell>Last Test</TableCell>
+                <TableCell>Next Test</TableCell>
                 <TableCell>Response Time</TableCell>
                 <TableCell>Failure Count</TableCell>
                 <TableCell>Actions</TableCell>
@@ -541,6 +560,14 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
                           {config.last_test_error.substring(0, 50)}...
                         </Typography>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <Typography 
+                        variant="body2" 
+                        color={calculateNextTestTime(config) === 'Overdue' ? 'error' : 'textPrimary'}
+                      >
+                        {calculateNextTestTime(config)}
+                      </Typography>
                     </TableCell>
                     <TableCell>
                       {formatDuration(config.last_test_response_time_ms)}

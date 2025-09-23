@@ -40,7 +40,7 @@ class LiveLatencyService {
         [settingValue, userId, settingName],
         function(err) {
           if (err) reject(err);
-          else resolve(this.changes > 0);
+          else resolve((this && this.changes) ? this.changes > 0 : true);
         }
       );
     });

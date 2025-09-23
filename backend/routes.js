@@ -8784,6 +8784,28 @@ router.post('/admin/live-latency/clear-statistics', authenticateToken, authorize
   }
 });
 
+// Live latency scheduler status endpoint
+router.get('/admin/live-latency/scheduler-status', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    const liveLatencyScheduler = require('./liveLatencySchedulerService');
+    const status = liveLatencyScheduler.getStatus();
+    
+    res.json({
+      success: true,
+      scheduler: status,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Scheduler status check failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get scheduler status',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Debug endpoint to check a specific circuit's status
 router.get('/admin/live-latency/debug/:circuitId', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
   try {
