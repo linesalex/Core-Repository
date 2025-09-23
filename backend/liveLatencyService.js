@@ -1,4 +1,5 @@
 const axios = require('axios');
+const https = require('https');
 const db = require('./db');
 const { encrypt, decrypt } = require('./encryption');
 const { logUserActivity } = require('./auth');
@@ -162,7 +163,8 @@ class LiveLatencyService {
       timeout: this.defaultTimeout,
       headers: {
         'accept': '*/*'
-      }
+      },
+      httpsAgent: new https.Agent({ rejectUnauthorized: false })
     });
 
     // Add authentication
