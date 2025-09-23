@@ -1,36 +1,20 @@
-Live Latency API maangement - i am now able to ingest live latency data successfully from the API.  
-Below features and bugs need to be looked at
+- Add a next text field to Circuit configurations so can check what time the next automated test will be run 
+- The results of the API data is still not being displayed within the network routes table under Live Latency - despite a working API circuit configuration showing actual latency data being calculated and provided, the network routes table is still showing N/A.  
+Reminder:
+The network routes table should always show N/A when no other available data is possible, however if there is a successful API call active, the data shown in this field should now be the latest result calcualted within the latency testing, or 0, if the last result recieved from API call was 0ms (down).
+- Pls confirm the API requests within Live latency API management are every 15 mins and the last test time will be updated with the latest time of the test.  At that time the data within the networks route table should also be updated.
+- when trying to clear dashboard statistics - the backend crashes:
+0|network-backend  | 2025-09-23T11:44:41: TypeError: Cannot read property 'changes' of undefined
+0|network-backend  | 2025-09-23T11:44:41:     at /root/Core-Repository/backend/liveLatencyService.js:43:29
+0|network-backend  | 2025-09-23T11:44:41:     at Statement.<anonymous> (/root/Core-Repository/backend/db.js:204:23)
+0|network-backend  | 2025-09-23T11:44:41:     at Statement.replacement (/root/Core-Repository/backend/node_modules/sqlite3/lib/trace.js:2    5:27)
+PM2                | App [network-backend:0] exited with code [1] via signal [SIGINT]
+PM2                | App [network-backend:0] starting in -fork mode-
+PM2                | App [network-backend:0] online
+- error is seen when trying to refresh live latency within network routes - is this expected?
+0|network- | 2025-09-23T11:35:56: ❌ Live latency refresh failed: Error: Global refresh is on cooldown. Please wait before trying again.
+0|network- | 2025-09-23T11:35:56:     at LiveLatencyService.refreshAllCircuits (/root/Core-Repository/backend/liveLatencyService.js:505:15)
+0|network- | 2025-09-23T11:35:56:     at async /root/Core-Repository/backend/routes.js:8855:21
 
-- add a clear dashboard button which resets all statistics within the live latency api management console, this should be next to the refresh button which already exists
-- add ability within view logs button on each circuit configuration to see results for how the latency figure was calculated - showing the output of all results recieved and how the calculation came back with the latency result it did
-- add ability for user to override auto-disable of API call - user can toggle auto-disable off and resume normal function by clicking the Auto-Disabled button within individual circuit configurations.  the button should then turn to enabled again and restart the standard process.  
-- Add Configuration - it should only be possible to add API configuration to already existing network routes - must select from list of circuit IDs / UCNs from network routes table. 
-- not seeing any update of data within the network routes table.  i have a successful test of NYKPAR279885 which recieved a latency value back from API, however this latency data was not updated and kept updated with changes within the network routes table.  in addition, the refresh live latency button within network routes table did not push.  the NYKPAR279885 Live Latency field still shows as N/A despite a successful test.  N/A should only be displayed if there is no new data for 24 hours.
 
-please ask questions and clairifcations before proceeding - read all config and do not change anything other than advised here.
-
-
-[root@sni1-ipclon7 Core-Repository]# pm2 start ecosystem.config.js
-[PM2] Applying action restartProcessId on app [network-backend](ids: [ 0 ])
-[PM2] Applying action restartProcessId on app [network-frontend](ids: [ 1 ])
-[PM2][ERROR] Process 0 not found
-Process 0 not found
-[PM2][ERROR] Process 1 not found
-Process 1 not found
-/usr/local/lib/node_modules/pm2/lib/API.js:1719
-        acted.push(proc.pm2_env ? proc.pm2_env.pm_id : proc.pm_id)
-                        ^
-
-TypeError: Cannot read property 'pm2_env' of undefined
-    at /usr/local/lib/node_modules/pm2/lib/API.js:1719:25
-    at Array.forEach (<anonymous>)
-    at API.speedList (/usr/local/lib/node_modules/pm2/lib/API.js:1718:18)
-    at /usr/local/lib/node_modules/pm2/lib/binaries/CLI.js:308:15
-    at wrapper (/usr/local/lib/node_modules/pm2/node_modules/async/internal/once.js:12:16)
-    at replenish (/usr/local/lib/node_modules/pm2/node_modules/async/internal/eachOfLimit.js:76:25)
-    at iterateeCallback (/usr/local/lib/node_modules/pm2/node_modules/async/internal/eachOfLimit.js:65:17)
-    at /usr/local/lib/node_modules/pm2/node_modules/async/internal/onlyOnce.js:12:16
-    at /usr/local/lib/node_modules/pm2/lib/binaries/CLI.js:299:11
-    at /usr/local/lib/node_modules/pm2/lib/API.js:330:21
-[root@sni1-ipclon7 Core-Repository]# pm2 --version
-6.0.8
+please ask questions and clairifcations before proceeding - read all config and do not change anything other than advised here.  Ask clarification questions before doing any configuration changes.  
