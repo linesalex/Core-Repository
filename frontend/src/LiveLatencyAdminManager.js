@@ -35,7 +35,12 @@ import {
   List,
   ListItem,
   ListItemText,
-  Divider
+  Divider,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Autocomplete
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -43,6 +48,7 @@ import {
   Delete as DeleteIcon,
   PlayArrow as TestIcon,
   Refresh as RefreshIcon,
+  Clear as ClearIcon,
   ExpandMore as ExpandMoreIcon,
   CheckCircle as SuccessIcon,
   Error as ErrorIcon,
@@ -92,6 +98,9 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
   
   // Snackbar
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
+  
+  // Clear dashboard dialog
+  const [clearDialog, setClearDialog] = useState({ open: false, loading: false });
 
   // Load data on mount
   useEffect(() => {
@@ -137,6 +146,21 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
 
   const showSnackbar = (message, severity = 'info') => {
     setSnackbar({ open: true, message, severity });
+  };
+
+  // Clear dashboard statistics
+  const handleClearDashboard = async () => {
+    setClearDialog({ open: true, loading: true });
+    try {
+      await liveLatencyAdminApi.clearStatistics();
+      showSnackbar('Dashboard statistics cleared successfully', 'success');
+      setClearDialog({ open: false, loading: false });
+      await loadData(); // Refresh data
+    } catch (error) {
+      const errorMessage = error.response?.data?.error || error.message;
+      showSnackbar('Failed to clear dashboard statistics: ' + errorMessage, 'error');
+      setClearDialog({ open: false, loading: false });
+    }
   };
 
   const handleTabChange = (event, newValue) => {
@@ -247,6 +271,18 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
     }
   };
 
+  // Auto-disable override functionality
+  const handleOverrideAutoDisable = async (configId, circuitId) => {
+    try {
+      await liveLatencyAdminApi.overrideAutoDisable(configId);
+      showSnackbar(`Auto-disable overridden for ${circuitId}. Circuit is now enabled.`, 'success');
+      await loadConfigurations(); // Refresh configurations
+    } catch (error) {
+      const errorMessage = error.response?.data?.error || error.message;
+      showSnackbar('Failed to override auto-disable: ' + errorMessage, 'error');
+    }
+  };
+
   // Status helpers
   const getStatusChip = (config) => {
     if (!config.enabled) {
@@ -254,7 +290,16 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
     }
     
     if (config.disabled_until && new Date(config.disabled_until) > new Date()) {
-      return <Chip label="Auto-Disabled" color="error" size="small" />;
+      return (
+        <Chip 
+          label="Auto-Disabled" 
+          color="error" 
+          size="small" 
+          clickable
+          onClick={() => handleOverrideAutoDisable(config.id, config.circuit_id)}
+          title="Click to override auto-disable and re-enable circuit"
+        />
+      );
     }
     
     if (config.failure_count >= 3) {
@@ -321,13 +366,24 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
           <Grid item xs={12}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="h5">System Overview</Typography>
-              <Button
-                startIcon={<RefreshIcon />}
-                onClick={loadOverview}
-                disabled={overviewLoading}
-              >
-                Refresh
-              </Button>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button
+                  startIcon={<RefreshIcon />}
+                  onClick={loadOverview}
+                  disabled={overviewLoading}
+                >
+                  Refresh
+                </Button>
+                <Button
+                  startIcon={<ClearIcon />}
+                  onClick={() => setClearDialog({ open: true, loading: false })}
+                  disabled={overviewLoading}
+                  color="warning"
+                  variant="outlined"
+                >
+                  Clear Dashboard
+                </Button>
+              </Box>
             </Box>
           </Grid>
           
@@ -599,6 +655,53 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
         </DialogActions>
       </Dialog>
 
+      {/* Clear Dashboard Confirmation Dialog */}
+      <Dialog open={clearDialog.open} onClose={() => !clearDialog.loading && setClearDialog({ open: false, loading: false })}>
+        <DialogTitle>Clear Dashboard Statistics</DialogTitle>
+        <DialogContent>
+          {clearDialog.loading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', p: 3 }}>
+              <CircularProgress />
+              <Typography sx={{ ml: 2 }}>Clearing statistics...</Typography>
+            </Box>
+          ) : (
+            <>
+              <Typography>
+                Are you sure you want to clear all dashboard statistics and API logs?
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                This will:
+              </Typography>
+              <Typography variant="body2" color="textSecondary" component="ul" sx={{ mt: 1, pl: 2 }}>
+                <li>Reset all failure counts to 0</li>
+                <li>Clear auto-disable status for all circuits</li>
+                <li>Delete all API call logs</li>
+                <li>Reset system statistics</li>
+              </Typography>
+              <Typography variant="body2" color="error" sx={{ mt: 1 }}>
+                This action cannot be undone.
+              </Typography>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => setClearDialog({ open: false, loading: false })}
+            disabled={clearDialog.loading}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleClearDashboard}
+            color="warning" 
+            variant="contained"
+            disabled={clearDialog.loading}
+          >
+            Clear All Statistics
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Snackbar */}
       <Snackbar
         open={snackbar.open}
@@ -617,12 +720,34 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
 const ConfigurationDialog = ({ open, onClose, onSave, mode, initialData }) => {
   const [formData, setFormData] = useState(initialData || {});
   const [saving, setSaving] = useState(false);
+  const [availableCircuits, setAvailableCircuits] = useState([]);
+  const [loadingCircuits, setLoadingCircuits] = useState(false);
 
   useEffect(() => {
     if (initialData) {
       setFormData(initialData);
     }
   }, [initialData]);
+
+  // Load available circuits when dialog opens for adding new configuration
+  useEffect(() => {
+    if (open && mode === 'add') {
+      loadAvailableCircuits();
+    }
+  }, [open, mode]);
+
+  const loadAvailableCircuits = async () => {
+    setLoadingCircuits(true);
+    try {
+      const data = await liveLatencyAdminApi.getAvailableCircuits();
+      setAvailableCircuits(data.data || []);
+    } catch (error) {
+      console.error('Failed to load available circuits:', error);
+      setAvailableCircuits([]);
+    } finally {
+      setLoadingCircuits(false);
+    }
+  };
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -646,14 +771,55 @@ const ConfigurationDialog = ({ open, onClose, onSave, mode, initialData }) => {
       </DialogTitle>
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-          <TextField
-            label="Circuit ID"
-            value={formData.circuit_id || ''}
-            onChange={(e) => handleInputChange('circuit_id', e.target.value)}
-            disabled={isEdit}
-            required
-            helperText="6 uppercase letters followed by 6 digits (e.g., NYKPAR279885)"
-          />
+          {isEdit ? (
+            <TextField
+              label="Circuit ID"
+              value={formData.circuit_id || ''}
+              disabled
+              required
+              helperText="Circuit ID cannot be changed when editing"
+            />
+          ) : (
+            <Autocomplete
+              options={availableCircuits}
+              getOptionLabel={(option) => `${option.circuit_id} - ${option.location_a} to ${option.location_b}`}
+              value={availableCircuits.find(circuit => circuit.circuit_id === formData.circuit_id) || null}
+              onChange={(event, newValue) => {
+                handleInputChange('circuit_id', newValue?.circuit_id || '');
+              }}
+              loading={loadingCircuits}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Circuit ID"
+                  required
+                  helperText={loadingCircuits ? "Loading available circuits..." : "Select from existing network routes"}
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {loadingCircuits ? <CircularProgress color="inherit" size={20} /> : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+              renderOption={(props, option) => (
+                <Box component="li" {...props}>
+                  <Box>
+                    <Typography variant="body2" fontWeight="bold">
+                      {option.circuit_id}
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {option.location_a} → {option.location_b} | {option.bandwidth}
+                    </Typography>
+                  </Box>
+                </Box>
+              )}
+              noOptionsText={loadingCircuits ? "Loading..." : "No available circuits (all circuits already configured)"}
+            />
+          )}
           
           <FormControlLabel
             control={
@@ -787,70 +953,291 @@ const TestResultDialog = ({ open, onClose, circuitId, result, loading }) => {
 
 // Logs Dialog Component
 const LogsDialog = ({ open, onClose, circuitId, logs, loading }) => {
+  const [selectedLog, setSelectedLog] = useState(null);
+  const [calculationDialog, setCalculationDialog] = useState({ open: false, log: null });
+
+  const handleViewCalculation = (log) => {
+    setCalculationDialog({ open: true, log });
+  };
+
+  const formatCalculationData = (log) => {
+    try {
+      const extractedValues = log.extracted_values ? JSON.parse(log.extracted_values) : [];
+      const rawResponse = log.raw_response ? JSON.parse(log.raw_response) : null;
+      
+      return {
+        extractedValues,
+        rawResponse,
+        calculatedAverage: log.calculated_average,
+        latestValue: log.latest_value,
+        finalLatencyValue: log.final_latency_value,
+        dataQualityScore: log.data_quality_score
+      };
+    } catch (error) {
+      console.error('Error parsing calculation data:', error);
+      return null;
+    }
+  };
+
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
-      <DialogTitle>
-        API Call Logs - {circuitId}
-      </DialogTitle>
-      <DialogContent>
-        {loading ? (
-          <LoadingIndicator message="Loading API logs..." />
-        ) : (
-          <List>
-            {logs.map((log, index) => (
-              <React.Fragment key={log.id}>
-                <ListItem>
-                  <ListItemText
-                    primary={
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Typography variant="subtitle1">
-                          {log.request_type.toUpperCase()} - {new Date(log.created_at).toLocaleString()}
-                        </Typography>
-                        <Chip 
-                          label={log.response_status || 'Error'} 
-                          color={log.response_status >= 200 && log.response_status < 300 ? 'success' : 'error'}
-                          size="small"
-                        />
-                      </Box>
-                    }
-                    secondary={
-                      <Box sx={{ mt: 1 }}>
-                        {log.error_message ? (
-                          <Typography color="error" variant="body2">
-                            Error: {log.error_message}
+    <>
+      <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
+        <DialogTitle>
+          API Call Logs - {circuitId}
+        </DialogTitle>
+        <DialogContent>
+          {loading ? (
+            <LoadingIndicator message="Loading API logs..." />
+          ) : (
+            <List>
+              {logs.map((log, index) => (
+                <React.Fragment key={log.id}>
+                  <ListItem>
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography variant="subtitle1">
+                            {log.request_type.toUpperCase()} - {new Date(log.created_at).toLocaleString()}
                           </Typography>
-                        ) : (
-                          <Box sx={{ display: 'flex', gap: 2 }}>
-                            <Typography variant="body2">
-                              Latency: {log.final_latency_value}ms
-                            </Typography>
-                            <Typography variant="body2">
-                              Response: {log.response_time_ms}ms
-                            </Typography>
-                            <Typography variant="body2">
-                              Quality: {log.data_quality_score}%
-                            </Typography>
+                          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                            {!log.error_message && (
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={() => handleViewCalculation(log)}
+                                sx={{ minWidth: 'auto', px: 1 }}
+                              >
+                                View Calculation
+                              </Button>
+                            )}
+                            <Chip 
+                              label={log.response_status || 'Error'} 
+                              color={log.response_status >= 200 && log.response_status < 300 ? 'success' : 'error'}
+                              size="small"
+                            />
                           </Box>
-                        )}
-                      </Box>
-                    }
-                  />
+                        </Box>
+                      }
+                      secondary={
+                        <Box sx={{ mt: 1 }}>
+                          {log.error_message ? (
+                            <Typography color="error" variant="body2">
+                              Error: {log.error_message}
+                            </Typography>
+                          ) : (
+                            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                              <Typography variant="body2">
+                                <strong>Final Latency:</strong> {log.final_latency_value}ms
+                              </Typography>
+                              <Typography variant="body2">
+                                <strong>Response Time:</strong> {log.response_time_ms}ms
+                              </Typography>
+                              <Typography variant="body2">
+                                <strong>Data Quality:</strong> {log.data_quality_score}%
+                              </Typography>
+                              {log.calculated_average && (
+                                <Typography variant="body2">
+                                  <strong>Calculated Avg:</strong> {parseFloat(log.calculated_average).toFixed(2)}ms
+                                </Typography>
+                              )}
+                              {log.latest_value !== null && (
+                                <Typography variant="body2">
+                                  <strong>Latest Value:</strong> {log.latest_value}ms
+                                </Typography>
+                              )}
+                            </Box>
+                          )}
+                        </Box>
+                      }
+                    />
+                  </ListItem>
+                  {index < logs.length - 1 && <Divider />}
+                </React.Fragment>
+              ))}
+              {logs.length === 0 && (
+                <ListItem>
+                  <ListItemText primary="No API logs found for this circuit." />
                 </ListItem>
-                {index < logs.length - 1 && <Divider />}
-              </React.Fragment>
-            ))}
-            {logs.length === 0 && (
-              <ListItem>
-                <ListItemText primary="No API logs found for this circuit." />
-              </ListItem>
-            )}
-          </List>
-        )}
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Close</Button>
-      </DialogActions>
-    </Dialog>
+              )}
+            </List>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Calculation Details Dialog */}
+      <Dialog 
+        open={calculationDialog.open} 
+        onClose={() => setCalculationDialog({ open: false, log: null })}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          Latency Calculation Details
+        </DialogTitle>
+        <DialogContent>
+          {calculationDialog.log && (
+            <CalculationDetailsView log={calculationDialog.log} />
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCalculationDialog({ open: false, log: null })}>
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+};
+
+// Calculation Details View Component
+const CalculationDetailsView = ({ log }) => {
+  const [expandedSection, setExpandedSection] = useState('summary');
+  
+  const formatCalculationData = () => {
+    try {
+      const extractedValues = log.extracted_values ? JSON.parse(log.extracted_values) : [];
+      const rawResponse = log.raw_response ? JSON.parse(log.raw_response) : null;
+      
+      return {
+        extractedValues,
+        rawResponse,
+        calculatedAverage: log.calculated_average,
+        latestValue: log.latest_value,
+        finalLatencyValue: log.final_latency_value,
+        dataQualityScore: log.data_quality_score
+      };
+    } catch (error) {
+      console.error('Error parsing calculation data:', error);
+      return null;
+    }
+  };
+
+  const data = formatCalculationData();
+
+  if (!data) {
+    return (
+      <Alert severity="error">
+        Failed to parse calculation data for this log entry.
+      </Alert>
+    );
+  }
+
+  const { extractedValues, rawResponse, calculatedAverage, latestValue, finalLatencyValue, dataQualityScore } = data;
+
+  return (
+    <Box>
+      {/* Summary Section */}
+      <Accordion expanded={expandedSection === 'summary'} onChange={() => setExpandedSection(expandedSection === 'summary' ? '' : 'summary')}>
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography variant="h6">Calculation Summary</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Grid container spacing={2}>
+            <Grid item xs={6}>
+              <Typography variant="body2" color="textSecondary">Data Points Received:</Typography>
+              <Typography variant="h6">{extractedValues.length}</Typography>
+            </Grid>
+            <Grid item xs={6}>
+              <Typography variant="body2" color="textSecondary">Average Quality Score:</Typography>
+              <Typography variant="h6">{dataQualityScore}%</Typography>
+            </Grid>
+            <Grid item xs={6}>
+              <Typography variant="body2" color="textSecondary">Latest Value:</Typography>
+              <Typography variant="h6" color={latestValue === 0 ? 'error.main' : 'text.primary'}>
+                {latestValue}ms {latestValue === 0 && '(Circuit DOWN)'}
+              </Typography>
+            </Grid>
+            <Grid item xs={6}>
+              <Typography variant="body2" color="textSecondary">Calculated Average:</Typography>
+              <Typography variant="h6">
+                {calculatedAverage ? `${parseFloat(calculatedAverage).toFixed(2)}ms` : 'N/A'}
+              </Typography>
+            </Grid>
+            <Grid item xs={12}>
+              <Typography variant="body2" color="textSecondary">Final Latency Value:</Typography>
+              <Typography variant="h5" color="primary.main">{finalLatencyValue}ms</Typography>
+            </Grid>
+          </Grid>
+          
+          <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
+            <Typography variant="subtitle2" gutterBottom>Calculation Logic:</Typography>
+            <Typography variant="body2">
+              {latestValue === 0 
+                ? "Latest value is 0, indicating circuit is DOWN. Final latency set to 0."
+                : calculatedAverage 
+                  ? `Average calculated from ${extractedValues.filter(v => v.value !== 0).length} non-zero values: ${parseFloat(calculatedAverage).toFixed(2)}ms`
+                  : "No valid data points for calculation."
+              }
+            </Typography>
+          </Box>
+        </AccordionDetails>
+      </Accordion>
+
+      {/* Data Points Section */}
+      <Accordion expanded={expandedSection === 'datapoints'} onChange={() => setExpandedSection(expandedSection === 'datapoints' ? '' : 'datapoints')}>
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography variant="h6">Extracted Data Points ({extractedValues.length})</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          {extractedValues.length > 0 ? (
+            <TableContainer component={Paper} variant="outlined">
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Timestamp</TableCell>
+                    <TableCell align="right">Value (ms)</TableCell>
+                    <TableCell align="right">Quality</TableCell>
+                    <TableCell align="right">Min</TableCell>
+                    <TableCell align="right">Max</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {extractedValues.map((point, index) => (
+                    <TableRow key={index} sx={{ 
+                      bgcolor: point.value === 0 ? 'error.light' : 'inherit',
+                      '&:nth-of-type(odd)': { bgcolor: point.value === 0 ? 'error.light' : 'action.hover' }
+                    }}>
+                      <TableCell>{new Date(point.timestamp).toLocaleString()}</TableCell>
+                      <TableCell align="right">
+                        <Typography color={point.value === 0 ? 'error.main' : 'text.primary'}>
+                          {point.value}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="right">{point.quality}</TableCell>
+                      <TableCell align="right">{point.min || 'N/A'}</TableCell>
+                      <TableCell align="right">{point.max || 'N/A'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          ) : (
+            <Alert severity="warning">No data points were extracted from the API response.</Alert>
+          )}
+        </AccordionDetails>
+      </Accordion>
+
+      {/* Raw Response Section */}
+      <Accordion expanded={expandedSection === 'raw'} onChange={() => setExpandedSection(expandedSection === 'raw' ? '' : 'raw')}>
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography variant="h6">Raw API Response</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          {rawResponse ? (
+            <Box sx={{ bgcolor: 'background.default', p: 2, borderRadius: 1, overflow: 'auto' }}>
+              <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                {JSON.stringify(rawResponse, null, 2)}
+              </Typography>
+            </Box>
+          ) : (
+            <Alert severity="info">Raw response data not available for this log entry.</Alert>
+          )}
+        </AccordionDetails>
+      </Accordion>
+    </Box>
   );
 };
 

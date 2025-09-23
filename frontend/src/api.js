@@ -289,7 +289,19 @@ export const liveLatencyAdminApi = {
   
   // Testing and monitoring
   testConnection: (circuitId) => api.post(`${API_BASE_URL}/admin/live-latency/test/${circuitId}`).then(res => res.data),
-  getApiLogs: (circuitId, limit = 50) => api.get(`${API_BASE_URL}/admin/live-latency/logs/${circuitId}?limit=${limit}`).then(res => res.data)
+  getApiLogs: (circuitId, limit = 50) => api.get(`${API_BASE_URL}/admin/live-latency/logs/${circuitId}?limit=${limit}`).then(res => res.data),
+  
+  // Clear all statistics and logs
+  clearStatistics: () => api.post(`${API_BASE_URL}/admin/live-latency/clear-statistics`),
+  
+  // Override auto-disable for a circuit configuration
+  overrideAutoDisable: (configId) => api.post(`${API_BASE_URL}/admin/live-latency/override-auto-disable/${configId}`),
+  
+  // Get available circuit IDs from network routes
+  getAvailableCircuits: () => api.get(`${API_BASE_URL}/admin/live-latency/available-circuits`).then(res => res.data),
+  
+  // Debug a specific circuit
+  debugCircuit: (circuitId) => api.get(`${API_BASE_URL}/admin/live-latency/debug/${circuitId}`).then(res => res.data)
 };
 
 // Export the base api object for direct use
