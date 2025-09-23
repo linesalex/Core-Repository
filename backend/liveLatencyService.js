@@ -468,15 +468,24 @@ class LiveLatencyService {
    */
   async updateNetworkRouteLatency(circuitId, latencyMs, source = 'live_latency_api') {
     return new Promise((resolve, reject) => {
+      console.log(`🔄 Attempting to update network route ${circuitId} with latency ${latencyMs}ms from source: ${source}`);
+      
       db.run(
         'UPDATE network_routes SET live_latency = ?, live_latency_last_updated = ?, live_latency_source = ? WHERE circuit_id = ?',
         [latencyMs, new Date().toISOString(), source, circuitId],
         function(err) {
           if (err) {
-            console.error(`Failed to update network route ${circuitId}:`, err);
+            console.error(`❌ Failed to update network route ${circuitId}:`, err);
             reject(err);
           } else {
-            resolve(this ? this.changes > 0 : true); // Return true if context is lost
+            const rowsAffected = this ? this.changes : 0;
+            if (rowsAffected > 0) {
+              console.log(`✅ Successfully updated network route ${circuitId} with latency ${latencyMs}ms`);
+              resolve(true);
+            } else {
+              console.warn(`⚠️ No rows affected when updating ${circuitId} - circuit may not exist in network_routes table`);
+              resolve(false);
+            }
           }
         }
       );

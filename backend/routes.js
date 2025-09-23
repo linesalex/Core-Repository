@@ -1450,20 +1450,7 @@ router.post('/api/external/update-live-latency', (req, res) => {
   });
 });
 
-// Manual refresh endpoint - triggers fetch from external source
-router.post('/api/live-latency/refresh-all', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
-  // TODO: When external API details are available, implement actual API calls here
-  // For now, return a clear message that no external source is configured
-  
-  res.json({
-    success: false,
-    message: 'No external live latency data source configured. Please configure your external monitoring API first.',
-    updated: 0,
-    total: 0,
-    timestamp: new Date().toISOString(),
-    note: 'Use the /api/external/update-live-latency endpoint to push data from your monitoring system'
-  });
-});
+// Legacy endpoint - removed, functionality moved to admin section
 
 // Get live latency history for a specific circuit
 router.get('/api/live-latency/history/:circuit_id', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
@@ -8679,6 +8666,184 @@ router.get('/admin/live-latency/logs/:circuitId', authenticateToken, authorizeRo
       count: rows.length
     });
   });
+});
+
+// Get available circuit IDs from network routes (excluding ones with existing configurations)
+router.get('/admin/live-latency/available-circuits', authenticateToken, authorizeRole(['administrator']), (req, res) => {
+  const query = `
+    SELECT nr.circuit_id, nr.location_a, nr.location_b, nr.bandwidth
+    FROM network_routes nr
+    LEFT JOIN live_latency_config llc ON nr.circuit_id = llc.circuit_id
+    WHERE llc.circuit_id IS NULL
+    ORDER BY nr.circuit_id
+  `;
+  
+  db.all(query, [], (err, rows) => {
+    if (err) {
+      console.error('Error fetching available circuits:', err);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch available circuits',
+        message: err.message
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: rows,
+      count: rows.length
+    });
+  });
+});
+
+// Override auto-disable for a circuit configuration
+router.post('/admin/live-latency/override-auto-disable/:configId', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    const { configId } = req.params;
+    console.log(`🔄 Auto-disable override requested for config ${configId} by user: ${req.user?.username}`);
+    
+    // Reset failure count and clear disabled_until timestamp
+    const result = await new Promise((resolve, reject) => {
+      db.run(
+        'UPDATE live_latency_config SET failure_count = 0, disabled_until = NULL, last_test_error = NULL, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?',
+        [req.user.id, configId],
+        function(err) {
+          if (err) reject(err);
+          else resolve(this.changes);
+        }
+      );
+    });
+    
+    if (result === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Configuration not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Auto-disable override successful. Circuit is now enabled.',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Auto-disable override failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to override auto-disable',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Clear dashboard statistics and logs
+router.post('/admin/live-latency/clear-statistics', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    console.log(`🧹 Clear statistics requested by user: ${req.user?.username}`);
+    
+    // Clear all failure counts and auto-disable status
+    await new Promise((resolve, reject) => {
+      db.run(
+        'UPDATE live_latency_config SET failure_count = 0, disabled_until = NULL, last_test_error = NULL',
+        [],
+        function(err) {
+          if (err) reject(err);
+          else resolve(this.changes);
+        }
+      );
+    });
+    
+    // Clear all API logs
+    await new Promise((resolve, reject) => {
+      db.run('DELETE FROM live_latency_api_logs', [], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+    
+    // Reset system configuration timestamps
+    const latencyService = new LiveLatencyService();
+    await latencyService.updateSystemConfig('last_global_refresh', '1970-01-01 00:00:00', req.user.id);
+    
+    res.json({
+      success: true,
+      message: 'Dashboard statistics cleared successfully',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Clear statistics failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to clear dashboard statistics',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Debug endpoint to check a specific circuit's status
+router.get('/admin/live-latency/debug/:circuitId', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    const { circuitId } = req.params;
+    console.log(`🔍 Debug request for circuit ${circuitId}`);
+    
+    // Check if circuit exists in network_routes
+    const networkRoute = await new Promise((resolve, reject) => {
+      db.get('SELECT circuit_id, live_latency, live_latency_last_updated, live_latency_source FROM network_routes WHERE circuit_id = ?', 
+        [circuitId], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+    });
+    
+    // Check if there's a configuration for this circuit
+    const config = await new Promise((resolve, reject) => {
+      db.get('SELECT * FROM live_latency_config WHERE circuit_id = ?', 
+        [circuitId], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+    });
+    
+    // Get recent API logs
+    const logs = await new Promise((resolve, reject) => {
+      db.all('SELECT * FROM live_latency_api_logs WHERE circuit_id = ? ORDER BY created_at DESC LIMIT 5', 
+        [circuitId], (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows);
+        });
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        circuit_id: circuitId,
+        network_route: networkRoute,
+        configuration: config,
+        recent_logs: logs,
+        has_network_route: !!networkRoute,
+        has_configuration: !!config,
+        is_configured: !!config && config.enabled,
+        debug_info: {
+          message: !networkRoute ? 'Circuit not found in network_routes table' :
+                  !config ? 'No live latency configuration found for this circuit' :
+                  !config.enabled ? 'Configuration exists but is disabled' :
+                  'Circuit appears to be properly configured'
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Debug request failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Debug request failed',
+      error: error.message
+    });
+  }
 });
 
 // Update existing refresh endpoint to use new service
