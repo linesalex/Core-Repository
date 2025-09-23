@@ -1,9 +1,8 @@
+Live Latency API maangement - i am now able to ingest live latency data successfully from the API.  
+Below features and bugs need to be looked at
 
-0|network-backend   | 2025-09-23T10:21:20: Encryption failed: ENCRYPTION_KEY environment variable must be set in production
-0|network-backend   | 2025-09-23T10:21:20: Failed to encrypt password: Error: Failed to encrypt data
-0|network-backend   | 2025-09-23T10:21:20:     at encrypt (/root/Core-Repository/backend/encryption.js:67:11)
-0|network-backend   | 2025-09-23T10:21:20:     at LiveLatencyService.encryptPassword (/root/Core-Repository/backend/liveLatencyService.js:138:14)
-0|network-backend   | 2025-09-23T10:21:20:     at /root/Core-Repository/backend/routes.js:8497:48
-0|network-backend   | 2025-09-23T10:21:20: Error updating configuration: Error: Password encryption failed
-0|network-backend   | 2025-09-23T10:21:20:     at LiveLatencyService.encryptPassword (/root/Core-Repository/backend/liveLatencyService.js:141:13)
-0|network-backend   | 2025-09-23T10:21:20:     at /root/Core-Repository/backend/routes.js:8497:48
+- add a clear dashboard button which resets all statistics within the live latency api management console, this should be next to the refresh button which already exists
+- add ability within view logs button on each circuit configuration to see results for how the latency figure was calculated - showing the output of all results recieved and how the calculation came back with the latency result it did
+- add ability for user to override auto-disable of API call - user can toggle auto-disable off and resume normal function by clicking the Auto-Disabled button within individual circuit configurations.  the button should then turn to enabled again and restart the standard process.  
+- Add Configuration - it should only be possible to add API configuration to already existing network routes - must select from list of circuit IDs / UCNs from network routes table. 
+- not seeing any update of data within the network routes table.  i have a successful test of NYKPAR279885 which recieved a latency value back from API, however this latency data was not updated and kept updated with changes within the network routes table.  in addition, the refresh live latency button within network routes table did not push.  the NYKPAR279885 Live Latency field still shows as N/A despite a successful test.  N/A should only be displayed if there is no new data for 24 hours.
