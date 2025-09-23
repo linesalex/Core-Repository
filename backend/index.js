@@ -5,6 +5,7 @@ const PORT = process.env.PORT || 4000;
 const routes = require('./routes');
 const { handleDatabaseError } = require('./dbErrorHandler');
 const outageMonitor = require('./outageMonitorService');
+const liveLatencyScheduler = require('./liveLatencySchedulerService');
 
 app.use(cors());
 app.use(express.json());
@@ -65,17 +66,24 @@ app.listen(PORT, () => {
   setTimeout(() => {
     outageMonitor.start();
   }, 5000); // Wait 5 seconds for server to fully initialize
+  
+  // Start the live latency scheduler service
+  setTimeout(() => {
+    liveLatencyScheduler.start();
+  }, 10000); // Wait 10 seconds for server and outage monitor to fully initialize
 });
 
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n🛑 Received SIGINT, shutting down gracefully...');
   outageMonitor.stop();
+  liveLatencyScheduler.stop();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   console.log('\n🛑 Received SIGTERM, shutting down gracefully...');
   outageMonitor.stop();
+  liveLatencyScheduler.stop();
   process.exit(0);
 }); 
