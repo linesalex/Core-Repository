@@ -9,11 +9,13 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 4000,
-        JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production'
+        JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production',
+        ENCRYPTION_KEY: '7b864e1b14288ca6c9c7b905242bd048e5f468c2d008a6a5fe8d940ab7bf40b3'
       },
       env_production: {
         NODE_ENV: 'production',
-        PORT: 4000
+        PORT: 4000,
+        ENCRYPTION_KEY: '7b864e1b14288ca6c9c7b905242bd048e5f468c2d008a6a5fe8d940ab7bf40b3'
       },
       max_memory_restart: '1G',
       min_uptime: '10s',
