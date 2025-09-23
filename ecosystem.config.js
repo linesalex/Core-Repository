@@ -10,12 +10,12 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 4000,
         JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production',
-        ENCRYPTION_KEY: '7b864e1b14288ca6c9c7b905242bd048e5f468c2d008a6a5fe8d940ab7bf40b3'
+        ENCRYPTION_KEY: '40d1aaf98664fa7f23d6f3bf8fbb9c7af3e534f9eb8c5e35a108f4d1da7281fe'
       },
       env_production: {
         NODE_ENV: 'production',
         PORT: 4000,
-        ENCRYPTION_KEY: '7b864e1b14288ca6c9c7b905242bd048e5f468c2d008a6a5fe8d940ab7bf40b3'
+        ENCRYPTION_KEY: '40d1aaf98664fa7f23d6f3bf8fbb9c7af3e534f9eb8c5e35a108f4d1da7281fe'
       },
       max_memory_restart: '1G',
       min_uptime: '10s',
