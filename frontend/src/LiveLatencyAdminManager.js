@@ -304,7 +304,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
 
   return (
     <Box sx={{ width: '100%' }}>
-      <Typography variant="h4" gutterBottom>
+      <Typography variant="h4" sx={{ fontSize: '2rem' }} gutterBottom>
         Live Latency API Management
       </Typography>
       
@@ -339,7 +339,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
                     <Typography color="textSecondary" gutterBottom>
                       Total Configurations
                     </Typography>
-                    <Typography variant="h4">
+                    <Typography variant="h4" sx={{ fontSize: '2rem' }}>
                       {overview.total_configurations}
                     </Typography>
                   </CardContent>
@@ -352,7 +352,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
                     <Typography color="textSecondary" gutterBottom>
                       Active Circuits
                     </Typography>
-                    <Typography variant="h4" color="success.main">
+                    <Typography variant="h4" sx={{ fontSize: '2rem' }} color="success.main">
                       {overview.active_configurations}
                     </Typography>
                   </CardContent>
@@ -365,7 +365,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
                     <Typography color="textSecondary" gutterBottom>
                       Failed Circuits
                     </Typography>
-                    <Typography variant="h4" color="error.main">
+                    <Typography variant="h4" sx={{ fontSize: '2rem' }} color="error.main">
                       {overview.failed_configurations}
                     </Typography>
                   </CardContent>
@@ -378,7 +378,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
                     <Typography color="textSecondary" gutterBottom>
                       Success Rate (24h)
                     </Typography>
-                    <Typography variant="h4" color={overview.api_success_rate_24h >= 90 ? 'success.main' : 'warning.main'}>
+                    <Typography variant="h4" sx={{ fontSize: '2rem' }} color={overview.api_success_rate_24h >= 90 ? 'success.main' : 'warning.main'}>
                       {overview.api_success_rate_24h}%
                     </Typography>
                   </CardContent>
@@ -388,7 +388,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
               <Grid item xs={12}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} gutterBottom>
                       System Status
                     </Typography>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -462,7 +462,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
                       </Box>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" fontWeight="bold">
+                      <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold">
                         {config.circuit_id}
                       </Typography>
                       {!config.route_exists && (
@@ -472,12 +472,12 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" noWrap>
+                      <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} noWrap>
                         {config.api_instance_name}
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2">
+                      <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                         {formatDate(config.last_test_at)}
                       </Typography>
                       {config.last_test_error && (
@@ -585,7 +585,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
             Are you sure you want to delete the configuration for circuit{' '}
             <strong>{deleteDialog.config?.circuit_id}</strong>?
           </Typography>
-          <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="textSecondary" sx={{ mt: 1 }}>
             This action cannot be undone.
           </Typography>
         </DialogContent>
@@ -816,18 +816,18 @@ const LogsDialog = ({ open, onClose, circuitId, logs, loading }) => {
                     secondary={
                       <Box sx={{ mt: 1 }}>
                         {log.error_message ? (
-                          <Typography color="error" variant="body2">
+                          <Typography color="error" variant="body2" sx={{ fontSize: '0.8125rem' }}>
                             Error: {log.error_message}
                           </Typography>
                         ) : (
                           <Box sx={{ display: 'flex', gap: 2 }}>
-                            <Typography variant="body2">
+                            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                               Latency: {log.final_latency_value}ms
                             </Typography>
-                            <Typography variant="body2">
+                            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                               Response: {log.response_time_ms}ms
                             </Typography>
-                            <Typography variant="body2">
+                            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                               Quality: {log.data_quality_score}%
                             </Typography>
                           </Box>

@@ -552,11 +552,11 @@ const CarriersManager = ({ hasPermission }) => {
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <BusinessIcon />
                       <Box>
-                        <Typography variant="body1" fontWeight="bold">
+                        <Typography variant="body1" fontWeight="bold" sx={{ fontSize: '0.875rem' }}>
                           {carrier.carrier_name}
                         </Typography>
                         {carrier.previously_known_as && (
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6875rem' }}>
                             Previously: {carrier.previously_known_as}
                           </Typography>
                         )}
@@ -594,7 +594,7 @@ const CarriersManager = ({ hasPermission }) => {
                       </Tooltip>
                     )}
                     {(!hasPermission || (!hasPermission('carriers', 'edit') && !hasPermission('carriers', 'delete'))) && (
-                      <Typography variant="body2" color="text.secondary">-</Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>-</Typography>
                     )}
                   </TableCell>
                 </TableRow>
@@ -647,10 +647,10 @@ const CarriersManager = ({ hasPermission }) => {
                                     <TableCell>{contact.contact_phone}</TableCell>
                                     <TableCell>
                                       <Box>
-                                        <Typography variant="body2">
+                                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                                           {contact.last_updated ? formatTrackingDate(contact.last_updated) : 'Unknown'}
                                         </Typography>
-                                        <Typography variant="caption" color="text.secondary">
+                                        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6875rem' }}>
                                           {contact.username || 'Unknown User'}
                                         </Typography>
                                       </Box>
@@ -681,7 +681,7 @@ const CarriersManager = ({ hasPermission }) => {
                             </Table>
                           </TableContainer>
                         ) : (
-                          <Typography variant="body2" color="text.secondary">
+                          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
                             No contacts found for this carrier.
                           </Typography>
                         )}
@@ -701,7 +701,7 @@ const CarriersManager = ({ hasPermission }) => {
       {currentTab === 1 && canViewOverdueContacts() && (
         <Box role="tabpanel" id="carriers-tabpanel-1" aria-labelledby="carriers-tab-1">
           <Box sx={{ mb: 2 }}>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
               Contacts that haven't been updated in 365+ days. Approve contacts after verifying their information is current.
             </Typography>
           </Box>
@@ -726,7 +726,7 @@ const CarriersManager = ({ hasPermission }) => {
                   {overdueContacts.map((contact) => (
                     <TableRow key={`${contact.carrier_id}-${contact.id}`} hover>
                       <TableCell>
-                        <Typography variant="body2" fontWeight="bold">
+                        <Typography variant="body2" fontWeight="bold" sx={{ fontSize: '0.8125rem' }}>
                           {contact.carrier_name}
                         </Typography>
                       </TableCell>
@@ -770,7 +770,7 @@ const CarriersManager = ({ hasPermission }) => {
             </TableContainer>
           ) : (
             <Paper sx={{ p: 3, textAlign: 'center' }}>
-              <Typography variant="body1" color="text.secondary">
+              <Typography variant="body1" color="text.secondary" sx={{ fontSize: '0.875rem' }}>
                 No overdue contacts found. All carrier contacts are up to date!
               </Typography>
             </Paper>
@@ -943,7 +943,7 @@ const CarriersManager = ({ hasPermission }) => {
         <DialogContent>
           Are you sure you want to delete carrier {selectedCarrier?.carrier_name}?
           <br />
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontSize: '0.8125rem' }}>
             This will also delete all associated contacts.
           </Typography>
         </DialogContent>

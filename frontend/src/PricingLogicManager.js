@@ -217,7 +217,7 @@ const PricingLogicManager = ({ hasPermission }) => {
     return (
       <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
         <Alert severity="error">
-          <Typography variant="h6">Access Denied</Typography>
+          <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Access Denied</Typography>
           Pricing logic configuration is restricted to administrators only.
         </Alert>
       </Container>
@@ -230,7 +230,7 @@ const PricingLogicManager = ({ hasPermission }) => {
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
           <Box display="flex" alignItems="center" gap={2}>
             <SettingsIcon color="primary" sx={{ fontSize: 32 }} />
-            <Typography variant="h4" component="h1">
+            <Typography variant="h4" sx={{ fontSize: '2rem' }} component="h1">
               Pricing Logic Configuration
             </Typography>
           </Box>
@@ -272,7 +272,7 @@ const PricingLogicManager = ({ hasPermission }) => {
           </Alert>
         )}
 
-        <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
+        <Typography variant="body1" color="text.secondary" sx={{ mb: 4, fontSize: '0.875rem' }}>
           Configure the core pricing logic parameters that affect all network design calculations, including 
           standard service margins and premium protected service margins for redundant connectivity. 
           Changes take effect immediately for new pricing calculations.
@@ -285,7 +285,7 @@ const PricingLogicManager = ({ hasPermission }) => {
               <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                 <Box display="flex" alignItems="center" gap={1}>
                   <TrendingUpIcon color="primary" />
-                  <Typography variant="h6">Contract Term Pricing Rules</Typography>
+                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Contract Term Pricing Rules</Typography>
                   <Chip label="Core Logic" color="primary" size="small" />
                 </Box>
               </AccordionSummary>
@@ -357,7 +357,7 @@ const PricingLogicManager = ({ hasPermission }) => {
               <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                 <Box display="flex" alignItems="center" gap={1}>
                   <SecurityIcon color="primary" />
-                  <Typography variant="h6">Protected Service Margin Rules</Typography>
+                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Protected Service Margin Rules</Typography>
                 </Box>
               </AccordionSummary>
               <AccordionDetails>
@@ -415,7 +415,7 @@ const PricingLogicManager = ({ hasPermission }) => {
               <CardContent>
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <AttachMoneyIcon color="primary" />
-                  <Typography variant="h6">Additional Charges</Typography>
+                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Additional Charges</Typography>
                 </Box>
                 <Grid container spacing={2}>
                   <Grid item xs={12}>
@@ -440,7 +440,7 @@ const PricingLogicManager = ({ hasPermission }) => {
               <CardContent>
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <SpeedIcon color="primary" />
-                  <Typography variant="h6">Utilization Factors</Typography>
+                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Utilization Factors</Typography>
                 </Box>
                 <Grid container spacing={2}>
                   <Grid item xs={12} sm={6}>
@@ -498,7 +498,7 @@ const PricingLogicManager = ({ hasPermission }) => {
               <CardContent>
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <LocalOfferIcon color="primary" />
-                  <Typography variant="h6">Promo Pricing Settings</Typography>
+                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Promo Pricing Settings</Typography>
                 </Box>
                 <Grid container spacing={2}>
                   <Grid item xs={12}>
@@ -554,7 +554,7 @@ const PricingLogicManager = ({ hasPermission }) => {
               <CardContent>
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <CableIcon color="primary" />
-                  <Typography variant="h6">Cross Connect Settings</Typography>
+                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Cross Connect Settings</Typography>
                 </Box>
                 <Grid container spacing={2}>
                   <Grid item xs={12}>
@@ -596,7 +596,7 @@ const PricingLogicManager = ({ hasPermission }) => {
               <CardContent>
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <SecurityIcon color="primary" />
-                  <Typography variant="h6" color="primary">
+                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} color="primary">
                     Configuration Impact
                   </Typography>
                 </Box>

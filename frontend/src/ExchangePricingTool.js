@@ -336,10 +336,10 @@ ${pricingDisclaimer}`;
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom>
+      <Typography variant="h4" gutterBottom sx={{ fontSize: '2rem' }}>
         Exchange Feed Pricing Tool
       </Typography>
-      <Typography variant="body2" color="text.secondary" gutterBottom sx={{ mb: 3 }}>
+      <Typography variant="body2" color="text.secondary" gutterBottom sx={{ mb: 3, fontSize: '0.8125rem' }}>
         Ensure corresponding QR is raised for pricing confirmation and design. Include requested sell price within QR.<br/>
         Pricing valid for combined A + B feeds for delivery to IPC Tier 1 Datacenters within same region as feed source.<br/>
         Order Entry is available for each listed market - Unicast 10Mb - Price dependant on market.<br/>
@@ -566,57 +566,57 @@ ${pricingDisclaimer}`;
                   </Grid>
 
                   <Grid item xs={12}>
-                    <Typography variant="body2" color="text.secondary">Customer Name</Typography>
-                    <Typography variant="body1">{results.customer_name}</Typography>
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">Customer Name</Typography>
+                    <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>{results.customer_name}</Typography>
                   </Grid>
 
                   <Grid item xs={12}>
-                    <Typography variant="body2" color="text.secondary">Feed (Exchange Name - Feed Name)</Typography>
-                    <Typography variant="body1">
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">Feed (Exchange Name - Feed Name)</Typography>
+                    <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>
                       {results.exchange_name} - {results.feed_name}
                     </Typography>
                   </Grid>
 
                   <Grid item xs={12}>
-                    <Typography variant="body2" color="text.secondary">Feed NRC</Typography>
-                    <Typography variant="body1">
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">Feed NRC</Typography>
+                    <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>
                       {formatCurrency(convertFromUSD(1000, results.exchange_rate, results.currency_requested), results.currency_requested)}
                     </Typography>
                   </Grid>
 
                   <Grid item xs={12}>
-                    <Typography variant="body2" color="text.secondary">Desired Sell Price</Typography>
-                    <Typography variant="body1">
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">Desired Sell Price</Typography>
+                    <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>
                       {formatCurrency(results.desired_sell_price, results.currency_requested)}
                     </Typography>
                   </Grid>
 
                   <Grid item xs={12}>
-                    <Typography variant="body2" color="text.secondary">Pass Through Fees</Typography>
-                    <Typography variant="body1">
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">Pass Through Fees</Typography>
+                    <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>
                       {results.pass_through_fees && results.pass_through_fees > 0 ? 'Yes' : 'No'}
                     </Typography>
                   </Grid>
 
                   <Grid item xs={12}>
-                    <Typography variant="body2" color="text.secondary">ISF A</Typography>
-                    <Typography variant="body1">{results.isf_a || 'Not specified'}</Typography>
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">ISF A</Typography>
+                    <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>{results.isf_a || 'Not specified'}</Typography>
                   </Grid>
 
                   <Grid item xs={12}>
-                    <Typography variant="body2" color="text.secondary">ISF B</Typography>
-                    <Typography variant="body1">{results.isf_b || 'Not specified'}</Typography>
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">ISF B</Typography>
+                    <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>{results.isf_b || 'Not specified'}</Typography>
                   </Grid>
 
                   <Grid item xs={12}>
-                    <Typography variant="body2" color="text.secondary">Bandwidth</Typography>
-                    <Typography variant="body1">{results.bandwidth || 'Not specified'}</Typography>
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">Bandwidth</Typography>
+                    <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>{results.bandwidth || 'Not specified'}</Typography>
                   </Grid>
 
                   {results.order_entry_required && (
                     <Grid item xs={12}>
-                      <Typography variant="body2" color="text.secondary">Order Entry NRC</Typography>
-                      <Typography variant="body1">
+                      <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">Order Entry NRC</Typography>
+                      <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>
                         {formatCurrency(convertFromUSD(500, results.exchange_rate, results.currency_requested), results.currency_requested)}
                       </Typography>
                     </Grid>
@@ -625,22 +625,22 @@ ${pricingDisclaimer}`;
                   {results.order_entry_required && (
                     <>
                       <Grid item xs={12}>
-                        <Typography variant="body2" color="text.secondary">Order Entry Cost</Typography>
-                        <Typography variant="body1">
+                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">Order Entry Cost</Typography>
+                        <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>
                           {results.order_entry_cost ? formatCurrency(convertFromUSD(results.order_entry_cost, results.exchange_rate, results.currency_requested), results.currency_requested) : 'Not specified'}
                         </Typography>
                       </Grid>
 
                       <Grid item xs={12}>
-                        <Typography variant="body2" color="text.secondary">Order Entry ISF</Typography>
-                        <Typography variant="body1">{results.order_entry_isf || 'Not specified'}</Typography>
+                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">Order Entry ISF</Typography>
+                        <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>{results.order_entry_isf || 'Not specified'}</Typography>
                       </Grid>
                     </>
                   )}
 
                   <Grid item xs={12}>
-                    <Typography variant="body2" color="text.secondary">Delivery Datacenter</Typography>
-                    <Typography variant="body1">{results.delivery_datacenter}</Typography>
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">Delivery Datacenter</Typography>
+                    <Typography variant="body1" sx={{ fontSize: '0.875rem' }}>{results.delivery_datacenter}</Typography>
                   </Grid>
                 </Grid>
               </CardContent>

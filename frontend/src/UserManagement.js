@@ -366,7 +366,7 @@ const UserManagement = () => {
     <Box sx={{ width: '100%' }}>
       {/* Header with Actions */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h6" component="h2">
+        <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} component="h2">
           User Management
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
@@ -418,7 +418,7 @@ const UserManagement = () => {
               {users.map((user) => (
                 <TableRow key={user.id} hover>
                   <TableCell>
-                    <Typography variant="body1" fontWeight="bold">
+                    <Typography variant="body1" sx={{ fontSize: '0.875rem' }} fontWeight="bold">
                       {user.username}
                     </Typography>
                   </TableCell>
@@ -474,10 +474,10 @@ const UserManagement = () => {
         <Box>
           {pendingUsers.length === 0 ? (
             <Paper sx={{ p: 3, textAlign: 'center' }}>
-              <Typography variant="h6" color="text.secondary">
+              <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} color="text.secondary">
                 No pending user registrations
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mt: 1 }}>
                 New user registration requests will appear here for admin approval
               </Typography>
             </Paper>
@@ -497,7 +497,7 @@ const UserManagement = () => {
                   {pendingUsers.map((user) => (
                     <TableRow key={user.id} hover>
                       <TableCell>
-                        <Typography variant="body1" fontWeight="bold">
+                        <Typography variant="body1" sx={{ fontSize: '0.875rem' }} fontWeight="bold">
                           {user.username}
                         </Typography>
                       </TableCell>
@@ -675,7 +675,7 @@ const UserManagement = () => {
           <Typography>
             Are you sure you want to delete user <strong>{selectedUser?.username}</strong>?
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mt: 1 }}>
             This action cannot be undone.
           </Typography>
         </DialogContent>
@@ -700,7 +700,7 @@ const UserManagement = () => {
           Manage Module Visibility - {selectedUser?.username}
         </DialogTitle>
         <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mb: 2 }}>
             Control which modules are visible to this user. This affects UI visibility only and does not change user permissions.
           </Typography>
           <Divider sx={{ mb: 2 }} />
@@ -742,23 +742,23 @@ const UserManagement = () => {
           Approve User: {pendingUserForApproval?.username}
         </DialogTitle>
         <DialogContent>
-          <Typography variant="body1" sx={{ mb: 2 }}>
+          <Typography variant="body1" sx={{ fontSize: '0.875rem' }} sx={{ mb: 2 }}>
             <strong>Role:</strong> {selectedRole === 'administrator' ? 'Administrator' : 
                                    selectedRole === 'provisioner' ? 'Provisioner' : 'Read-Only'}
           </Typography>
-          <Typography variant="body1" sx={{ mb: 2 }}>
+          <Typography variant="body1" sx={{ fontSize: '0.875rem' }} sx={{ mb: 2 }}>
             <strong>Email:</strong> {pendingUserForApproval?.email}
           </Typography>
-          <Typography variant="body1" sx={{ mb: 2 }}>
+          <Typography variant="body1" sx={{ fontSize: '0.875rem' }} sx={{ mb: 2 }}>
             <strong>Full Name:</strong> {pendingUserForApproval?.full_name}
           </Typography>
           
           <Divider sx={{ my: 2 }} />
           
-          <Typography variant="h6" sx={{ mb: 2 }}>
+          <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} sx={{ mb: 2 }}>
             Module Visibility Settings
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mb: 2 }}>
             Select which modules this user can see in the navigation menu. 
             {selectedRole === 'administrator' ? 
               'Administrators have all modules enabled by default.' : 
@@ -801,7 +801,7 @@ const UserManagement = () => {
           <Typography>
             Are you sure you want to reset the password for user <strong>{selectedUser?.username}</strong>?
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mt: 1 }}>
             This will set the password to 'abc123' and the user will be prompted to change it on their next login.
           </Typography>
         </DialogContent>

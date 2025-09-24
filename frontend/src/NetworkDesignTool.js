@@ -1308,7 +1308,7 @@ const NetworkDesignTool = () => {
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
               <SearchIcon sx={{ mr: 1 }} />
-              <Typography variant="h6">Search Parameters</Typography>
+              <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Search Parameters</Typography>
             </Box>
           </AccordionSummary>
           <AccordionDetails>
@@ -1549,7 +1549,7 @@ const NetworkDesignTool = () => {
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <RouteIcon sx={{ mr: 1 }} />
-                <Typography variant="h6">Search Results</Typography>
+                <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Search Results</Typography>
               </Box>
             </AccordionSummary>
             <AccordionDetails>
@@ -1585,10 +1585,10 @@ const NetworkDesignTool = () => {
                         </Table>
                       </TableContainer>
                       <Box sx={{ mt: 2 }}>
-                        <Typography variant="body2">
+                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                           <strong>Total Latency:</strong> {formatLatency(searchResults.primaryPath.totalLatency)}ms
                         </Typography>
-                        <Typography variant="body2">
+                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                           <strong>Total Hops:</strong> {searchResults.primaryPath.hops}
                         </Typography>
                       </Box>
@@ -1628,10 +1628,10 @@ const NetworkDesignTool = () => {
                           </Table>
                         </TableContainer>
                         <Box sx={{ mt: 2 }}>
-                          <Typography variant="body2">
+                          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                             <strong>Total Latency:</strong> {formatLatency(searchResults.diversePath.totalLatency)}ms
                           </Typography>
-                          <Typography variant="body2">
+                          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                             <strong>Total Hops:</strong> {searchResults.diversePath.hops}
                           </Typography>
                         </Box>
@@ -1644,7 +1644,7 @@ const NetworkDesignTool = () => {
                 <Grid item xs={12}>
                   <Card variant="outlined">
                     <CardContent>
-                      <Typography variant="h6" gutterBottom>Route Information</Typography>
+                      <Typography variant="h6" gutterBottom sx={{ fontSize: '1.1875rem' }}>Route Information</Typography>
                       
                       {/* Protection Status */}
                       {searchResults.protectionStatus && (
@@ -1662,7 +1662,7 @@ const NetworkDesignTool = () => {
                           {/* Show alert when protection is required but not available */}
                           {searchResults.protectionStatus.required && !searchResults.protectionStatus.available && (
                             <Alert severity="warning" sx={{ mt: 1 }}>
-                              <Typography variant="body2">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                                 <strong>Protection Route Not Available:</strong> No diverse path could be found with the current constraints. 
                                 The primary route is available, but protection requirements cannot be met.
                               </Typography>
@@ -1670,27 +1670,27 @@ const NetworkDesignTool = () => {
                               {/* Show detailed failure reasons if available */}
                               {searchResults.protectionStatus.failureReasons && (
                                 <Box sx={{ mt: 2 }}>
-                                  <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>
+                                  <Typography variant="body2" sx={{ fontSize: '0.8125rem', fontWeight: 'bold', mb: 1 }}>
                                     Protection Failure Analysis:
                                   </Typography>
                                   
-                                  <Typography variant="body2" sx={{ mb: 1 }}>
+                                  <Typography variant="body2" sx={{ fontSize: '0.8125rem', mb: 1 }}>
                                     • Primary path using: {searchResults.protectionStatus.failureReasons.primary_path_blocked}
                                   </Typography>
                                   
                                   {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.source_isolated && (
-                                    <Typography variant="body2" sx={{ mb: 1, color: 'error.main' }}>
+                                    <Typography variant="body2" sx={{ fontSize: '0.8125rem', mb: 1, color: 'error.main' }}>
                                       • Source location has no alternative connections after removing primary path
                                     </Typography>
                                   )}
                                   
                                   {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.destination_isolated && (
-                                    <Typography variant="body2" sx={{ mb: 1, color: 'error.main' }}>
+                                    <Typography variant="body2" sx={{ fontSize: '0.8125rem', mb: 1, color: 'error.main' }}>
                                       • Destination location has no alternative connections after removing primary path
                                     </Typography>
                                   )}
                                   
-                                  <Typography variant="body2" sx={{ mb: 1 }}>
+                                  <Typography variant="body2" sx={{ fontSize: '0.8125rem', mb: 1 }}>
                                     • Alternative routes remaining: {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.total_remaining_edges}
                                   </Typography>
                                   
@@ -1699,33 +1699,33 @@ const NetworkDesignTool = () => {
                                     searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.mtu_still_excluding > 0 ||
                                     searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.ull_still_excluding > 0) && (
                                     <Box sx={{ mt: 1 }}>
-                                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                                      <Typography variant="body2" sx={{ fontSize: '0.8125rem', fontWeight: 'bold' }}>
                                         Constraints still limiting protection routes:
                                       </Typography>
                                       {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.bandwidth_still_excluding > 0 && (
-                                        <Typography variant="body2">
+                                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                                           • Bandwidth constraints excluding {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.bandwidth_still_excluding} additional routes
                                         </Typography>
                                       )}
                                       {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.carrier_avoidance_still_excluding > 0 && (
-                                        <Typography variant="body2">
+                                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                                           • Carrier avoidance excluding {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.carrier_avoidance_still_excluding} additional routes
                                         </Typography>
                                       )}
                                       {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.mtu_still_excluding > 0 && (
-                                        <Typography variant="body2">
+                                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                                           • MTU requirements excluding {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.mtu_still_excluding} additional routes
                                         </Typography>
                                       )}
                                       {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.ull_still_excluding > 0 && (
-                                        <Typography variant="body2">
+                                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                                           • ULL restrictions excluding {searchResults.protectionStatus.failureReasons.remaining_routes_analysis.affected_constraints.ull_still_excluding} additional routes
                                         </Typography>
                                       )}
                                     </Box>
                                   )}
                                   
-                                  <Typography variant="body2" sx={{ mt: 2, fontStyle: 'italic', color: 'text.secondary' }}>
+                                  <Typography variant="body2" sx={{ fontSize: '0.8125rem', mt: 2, fontStyle: 'italic', color: 'text.secondary' }}>
                                     Suggestion: {searchResults.protectionStatus.failureReasons.suggestion}
                                   </Typography>
                                 </Box>
@@ -1741,7 +1741,7 @@ const NetworkDesignTool = () => {
                           <Typography variant="subtitle2" gutterBottom>
                             Route Filtering Summary:
                           </Typography>
-                          <Typography variant="body2" color="text.secondary">
+                          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                             Total routes available: {searchResults.exclusionReasons.total_routes_available}, 
                             Excluded: {searchResults.exclusionReasons.total_routes_excluded}
                           </Typography>
@@ -1754,51 +1754,51 @@ const NetworkDesignTool = () => {
                             searchResults.exclusionReasons.circuit_exclusion?.count > 0 ||
                             searchResults.exclusionReasons.equipment_restriction?.count > 0) && (
                             <Box sx={{ mt: 1 }}>
-                              <Typography variant="body2" color="text.secondary">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                 Exclusion reasons:
                               </Typography>
                               <Box component="ul" sx={{ m: 0, pl: 2 }}>
                                 {searchResults.exclusionReasons.bandwidth.count > 0 && (
-                                  <Typography component="li" variant="body2" color="text.secondary">
+                                  <Typography component="li" variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                     {searchResults.exclusionReasons.bandwidth.count} routes excluded due to insufficient bandwidth
                                   </Typography>
                                 )}
                                 {searchResults.exclusionReasons.carrier_avoidance.count > 0 && (
-                                  <Typography component="li" variant="body2" color="text.secondary">
+                                  <Typography component="li" variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                     {searchResults.exclusionReasons.carrier_avoidance.count} routes excluded due to carrier avoidance 
                                     ({searchResults.exclusionReasons.carrier_avoidance.carriers.join(', ')})
                                   </Typography>
                                 )}
                                 {searchResults.exclusionReasons.local_loop_carrier_avoidance?.count > 0 && (
-                                  <Typography component="li" variant="body2" color="text.secondary">
+                                  <Typography component="li" variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                     {searchResults.exclusionReasons.local_loop_carrier_avoidance.count} routes excluded due to local loop carrier avoidance 
                                     ({searchResults.exclusionReasons.local_loop_carrier_avoidance.carriers.join(', ')})
                                   </Typography>
                                 )}
                                 {searchResults.exclusionReasons.circuit_exclusion?.count > 0 && (
-                                  <Typography component="li" variant="body2" color="text.secondary">
+                                  <Typography component="li" variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                     {searchResults.exclusionReasons.circuit_exclusion.count} routes excluded due to user requested circuit exclusion 
                                     ({searchResults.exclusionReasons.circuit_exclusion.circuits.join(', ')})
                                   </Typography>
                                 )}
                                 {searchResults.exclusionReasons.mtu_requirement.count > 0 && (
-                                  <Typography component="li" variant="body2" color="text.secondary">
+                                  <Typography component="li" variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                     {searchResults.exclusionReasons.mtu_requirement.count} routes excluded due to MTU requirements
                                   </Typography>
                                 )}
                                 {searchResults.exclusionReasons.ull_restriction.count > 0 && (
-                                  <Typography component="li" variant="body2" color="text.secondary">
+                                  <Typography component="li" variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                     {searchResults.exclusionReasons.ull_restriction.count} Special/ULL routes excluded (Include ULL disabled)
                                   </Typography>
                                 )}
                                 {searchResults.exclusionReasons.equipment_restriction?.count > 0 && (
-                                  <Typography component="li" variant="body2" color="text.secondary">
+                                  <Typography component="li" variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                     {searchResults.exclusionReasons.equipment_restriction.count} routes excluded due to equipment restrictions 
                                     (Cisco equipment excluded - Include Cisco Only Routes disabled)
                                   </Typography>
                                 )}
                                 {searchResults.exclusionReasons.bandwidth_100gb_df_restriction?.count > 0 && (
-                                  <Typography component="li" variant="body2" color="text.secondary">
+                                  <Typography component="li" variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                     {searchResults.exclusionReasons.bandwidth_100gb_df_restriction.count} routes excluded 
                                     (Use 100Gb and DF routes only enabled)
                                   </Typography>
@@ -1868,7 +1868,7 @@ const NetworkDesignTool = () => {
                               <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>
                                 {term} Months {term == pricingResults.contractTermDetails.term ? '(Selected)' : ''}
                               </Typography>
-                              <Typography variant="body2" color={rules.nrc > 0 ? 'info.main' : 'success.main'} fontWeight="bold">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color={rules.nrc > 0 ? 'info.main' : 'success.main'} fontWeight="bold">
                                 Setup Fee: {rules.nrc > 0 ? formatCurrency(rules.nrc, pricingResults.contractTermDetails.currency) : 'FREE'}
                               </Typography>
                             </Box>
@@ -1897,18 +1897,18 @@ const NetworkDesignTool = () => {
                               Monthly Price Range ({result.pricing.contractTerm}-month term)
                             </Typography>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                              <Typography variant="body2" color="success.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="success.main">
                                 Minimum:
                               </Typography>
-                              <Typography variant="body2" fontWeight="bold" color="success.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold" color="success.main">
                                 {formatCurrency(result.pricing.minimumPrice, result.pricing.currency)}
                               </Typography>
                             </Box>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                              <Typography variant="body2" color="warning.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="warning.main">
                                 Suggested:
                               </Typography>
-                              <Typography variant="body2" fontWeight="bold" color="warning.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold" color="warning.main">
                                 {formatCurrency(result.pricing.suggestedPrice, result.pricing.currency)}
                               </Typography>
                             </Box>
@@ -1931,8 +1931,8 @@ const NetworkDesignTool = () => {
                             <Box sx={{ bgcolor: 'info.50', p: 2, borderRadius: 1 }}>
                               <Typography variant="subtitle2" gutterBottom>Non-Recurring Charges (NRC)</Typography>
                               <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <Typography variant="body2">Setup Fee ({result.pricing.contractTerm}-month term):</Typography>
-                                <Typography variant="body2" fontWeight="bold" color="info.main">
+                                <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>Setup Fee ({result.pricing.contractTerm}-month term):</Typography>
+                                <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold" color="info.main">
                                   {formatCurrency(result.pricing.nrcCharge, result.pricing.currency)}
                                 </Typography>
                               </Box>
@@ -1943,8 +1943,8 @@ const NetworkDesignTool = () => {
                             <Box sx={{ bgcolor: 'success.50', p: 2, borderRadius: 1 }}>
                               <Typography variant="subtitle2" gutterBottom>Non-Recurring Charges (NRC)</Typography>
                               <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <Typography variant="body2">Setup Fee ({result.pricing.contractTerm}-month term):</Typography>
-                                <Typography variant="body2" fontWeight="bold" color="success.main">
+                                <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>Setup Fee ({result.pricing.contractTerm}-month term):</Typography>
+                                <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold" color="success.main">
                                   FREE
                                 </Typography>
                               </Box>
@@ -1974,18 +1974,18 @@ const NetworkDesignTool = () => {
                               Monthly Price Range
                             </Typography>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                              <Typography variant="body2" color="success.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="success.main">
                                 Minimum:
                               </Typography>
-                              <Typography variant="body2" fontWeight="bold" color="success.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold" color="success.main">
                                 {formatCurrency(pricingResults.protectionPricing.minimumPrice, pricingResults.protectionPricing.currency)}
                               </Typography>
                             </Box>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                              <Typography variant="body2" color="warning.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="warning.main">
                                 Suggested:
                               </Typography>
-                              <Typography variant="body2" fontWeight="bold" color="warning.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold" color="warning.main">
                                 {formatCurrency(pricingResults.protectionPricing.suggestedPrice, pricingResults.protectionPricing.currency)}
                               </Typography>
                             </Box>
@@ -1993,10 +1993,10 @@ const NetworkDesignTool = () => {
                           
                           {/* NRC for Protection */}
                           <Box sx={{ bgcolor: pricingResults.protectionPricing.nrcCharge > 0 ? 'info.50' : 'success.50', p: 1.5, borderRadius: 1 }}>
-                            <Typography variant="body2" sx={{ mb: 0.5 }}>
+                            <Typography variant="body2" sx={{ fontSize: '0.8125rem', mb: 0.5 }}>
                               <strong>Setup Fee:</strong>
                             </Typography>
-                            <Typography variant="body2" fontWeight="bold" color={pricingResults.protectionPricing.nrcCharge > 0 ? 'info.main' : 'success.main'}>
+                            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold" color={pricingResults.protectionPricing.nrcCharge > 0 ? 'info.main' : 'success.main'}>
                               {pricingResults.protectionPricing.nrcCharge > 0 
                                 ? formatCurrency(pricingResults.protectionPricing.nrcCharge, pricingResults.protectionPricing.currency)
                                 : 'FREE'
@@ -2069,18 +2069,18 @@ const NetworkDesignTool = () => {
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                           <Box sx={{ bgcolor: 'white', p: 1.5, borderRadius: 1 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                              <Typography variant="body2" color="text.secondary">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                 NRC (One-time):
                               </Typography>
-                              <Typography variant="body2" fontWeight="bold" color="primary.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold" color="primary.main">
                                 {crossConnectResults.source.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.nrc, crossConnectResults.source.currency)}
                               </Typography>
                             </Box>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                              <Typography variant="body2" color="text.secondary">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                 MRC (Monthly):
                               </Typography>
-                              <Typography variant="body2" fontWeight="bold" color="secondary.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold" color="secondary.main">
                                 {crossConnectResults.source.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.mrc, crossConnectResults.source.currency)}
                               </Typography>
                             </Box>
@@ -2111,18 +2111,18 @@ const NetworkDesignTool = () => {
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                           <Box sx={{ bgcolor: 'white', p: 1.5, borderRadius: 1 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                              <Typography variant="body2" color="text.secondary">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                 NRC (One-time):
                               </Typography>
-                              <Typography variant="body2" fontWeight="bold" color="primary.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold" color="primary.main">
                                 {crossConnectResults.destination.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.nrc, crossConnectResults.destination.currency)}
                               </Typography>
                             </Box>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                              <Typography variant="body2" color="text.secondary">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                                 MRC (Monthly):
                               </Typography>
-                              <Typography variant="body2" fontWeight="bold" color="secondary.main">
+                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold" color="secondary.main">
                                 {crossConnectResults.destination.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.mrc, crossConnectResults.destination.currency)}
                               </Typography>
                             </Box>
@@ -2257,12 +2257,12 @@ const NetworkDesignTool = () => {
                   <React.Fragment key={log.id}>
                     <TableRow>
                       <TableCell>
-                        <Typography variant="body2">
+                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                           {new Date(log.timestamp).toLocaleString()}
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2">
+                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                           {log.user_name || 'Unknown User'}
                         </Typography>
                       </TableCell>
@@ -2274,7 +2274,7 @@ const NetworkDesignTool = () => {
                         />
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2">
+                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                           {(() => {
                             try {
                               const params = log.parameters || log.pricing_data?.inputParameters;
@@ -2286,17 +2286,17 @@ const NetworkDesignTool = () => {
                         </Typography>
                       </TableCell>
                       <TableCell sx={{ maxWidth: 400 }}>
-                        <Typography variant="body2">
+                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                           {formatReadableLogSummary(log)}
                         </Typography>
                       </TableCell>
                       <TableCell sx={{ maxWidth: 400 }}>
-                        <Typography variant="body2">
+                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                           {formatReadableResultsSummary(log)}
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2">
+                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                           {log.execution_time ? `${log.execution_time}ms` : 'N/A'}
                         </Typography>
                       </TableCell>
@@ -2402,7 +2402,7 @@ const NetworkDesignTool = () => {
           </Box>
         </DialogTitle>
         <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem', mb: 2 }}>
             Select which pricing results to include in the email export:
           </Typography>
           
@@ -2450,22 +2450,22 @@ const NetworkDesignTool = () => {
           {/* Cross Connect Info Display */}
           {(crossConnectResults.source || crossConnectResults.destination) && (
             <Box sx={{ mt: 2, p: 2, bgcolor: 'info.50', borderRadius: 1 }}>
-              <Typography variant="body2" color="info.main" sx={{ fontWeight: 'bold', mb: 1 }}>
+              <Typography variant="body2" color="info.main" sx={{ fontSize: '0.8125rem', fontWeight: 'bold', mb: 1 }}>
                 Cross Connect Information:
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                 {crossConnectResults.source && `Source: ${crossConnectResults.source.locationCode}`}
                 {crossConnectResults.source && crossConnectResults.destination && ' • '}
                 {crossConnectResults.destination && `Destination: ${crossConnectResults.destination.locationCode}`}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                 Cross connect details will be included in the export.
               </Typography>
             </Box>
           )}
 
           <Alert severity="info" sx={{ mt: 2 }}>
-            <Typography variant="body2">
+            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
               This will download a .eml email file that you can double-click to open in your email client or attach to emails.
             </Typography>
           </Alert>

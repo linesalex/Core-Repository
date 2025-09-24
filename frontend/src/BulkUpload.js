@@ -512,11 +512,11 @@ const BulkUpload = ({ onDataRefresh }) => {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom>
+      <Typography variant="h4" sx={{ fontSize: '2rem' }} gutterBottom>
         Bulk Upload Facility
       </Typography>
       
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
+      <Typography variant="body1" sx={{ fontSize: '0.875rem' }} color="text.secondary" sx={{ mb: 3 }}>
         Import CSV data in bulk to any module. Download templates or existing database exports to get started.
         <strong> Administrator access only.</strong>
       </Typography>
@@ -581,7 +581,7 @@ const BulkUpload = ({ onDataRefresh }) => {
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} gutterBottom>
                 1. Select Module
               </Typography>
               
@@ -617,7 +617,7 @@ const BulkUpload = ({ onDataRefresh }) => {
               </ValidatedSelect>
 
               {selectedModuleInfo && (
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
                   {selectedModuleInfo.description}
                 </Typography>
               )}
@@ -629,7 +629,7 @@ const BulkUpload = ({ onDataRefresh }) => {
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} gutterBottom>
                 2. Download Template or Data
               </Typography>
               
@@ -666,7 +666,7 @@ const BulkUpload = ({ onDataRefresh }) => {
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} gutterBottom>
                 3. Upload CSV File
               </Typography>
               
@@ -708,7 +708,7 @@ const BulkUpload = ({ onDataRefresh }) => {
                     variant={uploadProgress?.progress ? "determinate" : "indeterminate"}
                     value={uploadProgress?.progress || 0}
                   />
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mt: 1 }}>
                     {uploadProgress?.stage || 'Processing CSV file and importing data...'}
                   </Typography>
                   {uploadProgress && (
@@ -733,7 +733,7 @@ const BulkUpload = ({ onDataRefresh }) => {
           <Grid item xs={12}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} gutterBottom>
                   Upload Results
                 </Typography>
                 
@@ -842,7 +842,7 @@ const BulkUpload = ({ onDataRefresh }) => {
                       </TableCell>
                       <TableCell>
                         {log.new_values && (
-                          <Typography variant="body2">
+                          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
                             {JSON.parse(log.new_values).rows_imported && 
                               `${JSON.parse(log.new_values).rows_imported} rows imported`}
                             {JSON.parse(log.new_values).rows_exported && 
