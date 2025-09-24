@@ -16,7 +16,7 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import HistoryIcon from '@mui/icons-material/History';
-import { downloadTestResults, refreshAllLiveLatency, getLiveLatencyHistory } from './api';
+import { downloadTestResults, refreshAllLiveLatency, getLiveLatencyHistory, getLatestApiCallDetails } from './api';
 import { API_BASE_URL } from './config';
 
 // All available columns with their configurations
@@ -147,6 +147,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
   const [refreshing, setRefreshing] = useState(false);
   const [timestampDialog, setTimestampDialog] = useState({ open: false, row: null });
   const [historyDialog, setHistoryDialog] = useState({ open: false, circuit_id: null, data: null, loading: false });
+  const [apiCallDialog, setApiCallDialog] = useState({ open: false, circuit_id: null, data: null, loading: false });
   const [historyDays, setHistoryDays] = useState(30);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
 
@@ -331,6 +332,21 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
         severity: 'error'
       });
       setHistoryDialog({ open: false, circuit_id: null, data: null, loading: false });
+    }
+  };
+
+  const handleApiCallDetailsClick = async (circuit_id) => {
+    setApiCallDialog({ open: true, circuit_id, data: null, loading: true });
+    try {
+      const apiCallData = await getLatestApiCallDetails(circuit_id);
+      setApiCallDialog(prev => ({ ...prev, data: apiCallData.data, loading: false }));
+    } catch (error) {
+      setSnackbar({
+        open: true,
+        message: `Failed to load API call details: ${error.response?.data?.error || error.message}`,
+        severity: 'error'
+      });
+      setApiCallDialog({ open: false, circuit_id: null, data: null, loading: false });
     }
   };
 
@@ -732,12 +748,12 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
         {timestampDialog.row && (
           <Button 
             onClick={() => {
-              handleHistoryClick(timestampDialog.row.circuit_id);
+              handleApiCallDetailsClick(timestampDialog.row.circuit_id);
               setTimestampDialog({ open: false, row: null });
             }}
             startIcon={<HistoryIcon />}
           >
-            View History
+            Latency Calculation Details
           </Button>
         )}
       </DialogActions>
@@ -816,6 +832,83 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
       </DialogContent>
       <DialogActions>
         <Button onClick={() => setHistoryDialog({ open: false, circuit_id: null, data: null, loading: false })}>
+          Close
+        </Button>
+      </DialogActions>
+    </Dialog>
+
+    {/* API Call Details Dialog */}
+    <Dialog 
+      open={apiCallDialog.open} 
+      onClose={() => setApiCallDialog({ open: false, circuit_id: null, data: null, loading: false })}
+      maxWidth="md"
+      fullWidth
+    >
+      <DialogTitle>Latency Calculation Details</DialogTitle>
+      <DialogContent>
+        {apiCallDialog.loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+            <CircularProgress />
+          </Box>
+        ) : apiCallDialog.data ? (
+          <Box sx={{ mt: 1 }}>
+            {/* Summary Information */}
+            <Typography variant="h6" gutterBottom>API Call Summary</Typography>
+            <Box sx={{ mb: 3, pl: 2, borderLeft: 4, borderColor: 'primary.main' }}>
+              <Typography variant="body2"><strong>Circuit ID:</strong> {apiCallDialog.data.circuit_id}</Typography>
+              <Typography variant="body2"><strong>Request Time:</strong> {new Date(apiCallDialog.data.request_timestamp).toLocaleString()}</Typography>
+              <Typography variant="body2"><strong>Request Type:</strong> {apiCallDialog.data.request_type}</Typography>
+              <Typography variant="body2"><strong>Response Time:</strong> {apiCallDialog.data.response_time_ms}ms</Typography>
+              <Typography variant="body2"><strong>Requested By:</strong> {apiCallDialog.data.requested_by}</Typography>
+            </Box>
+
+            {/* Calculation Details */}
+            <Typography variant="h6" gutterBottom>Calculation Details</Typography>
+            <Box sx={{ mb: 3, pl: 2, borderLeft: 4, borderColor: 'success.main' }}>
+              <Typography variant="body2"><strong>Data Points Found:</strong> {apiCallDialog.data.data_points_found}</Typography>
+              <Typography variant="body2"><strong>Latest Value:</strong> {apiCallDialog.data.latest_value}ms</Typography>
+              <Typography variant="body2"><strong>Calculated Average:</strong> {apiCallDialog.data.calculated_average ? `${apiCallDialog.data.calculated_average.toFixed(2)}ms` : 'N/A'}</Typography>
+              <Typography variant="body2"><strong>Final Latency Value:</strong> {apiCallDialog.data.final_latency_value}ms</Typography>
+              <Typography variant="body2"><strong>Calculation Method:</strong> {apiCallDialog.data.calculation_method}</Typography>
+              <Typography variant="body2"><strong>Data Quality Score:</strong> {apiCallDialog.data.data_quality_score || 'N/A'}</Typography>
+            </Box>
+
+            {/* Extracted Values */}
+            {apiCallDialog.data.extracted_values && apiCallDialog.data.extracted_values.length > 0 && (
+              <>
+                <Typography variant="h6" gutterBottom>Extracted Data Points</Typography>
+                <Box sx={{ maxHeight: 300, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: 1, p: 2 }}>
+                  {apiCallDialog.data.extracted_values.map((point, index) => (
+                    <Box key={index} sx={{ mb: 1, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                      <Typography variant="body2">
+                        <strong>#{index + 1}:</strong> {point.value}ms at {new Date(point.timestamp).toLocaleString()}
+                        {point.quality && ` (Quality: ${point.quality})`}
+                        {point.min !== undefined && point.max !== undefined && 
+                          ` [Min: ${point.min}ms, Max: ${point.max}ms]`
+                        }
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
+              </>
+            )}
+
+            {/* Calculation Explanation */}
+            <Box sx={{ mt: 3, p: 2, bgcolor: 'info.main', color: 'info.contrastText', borderRadius: 1 }}>
+              <Typography variant="body2" sx={{ fontStyle: 'italic' }}>
+                <strong>How latency is calculated:</strong><br/>
+                • If the latest measurement is 0ms, the circuit is considered down and final latency = 0ms<br/>
+                • Otherwise, the final latency is the average of all non-zero measurements in the time window<br/>
+                • Data points with "good" status and valid numeric values are included in calculations
+              </Typography>
+            </Box>
+          </Box>
+        ) : (
+          <Typography>No data available</Typography>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setApiCallDialog({ open: false, circuit_id: null, data: null, loading: false })}>
           Close
         </Button>
       </DialogActions>

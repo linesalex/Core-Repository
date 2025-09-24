@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Typography, Alert, CircularProgress, Box, Chip, Tabs, Tab, TablePagination,
-  Button, Grid, Card, CardContent, TextField, InputAdornment, IconButton
+  Button, Grid, Card, CardContent, TextField, InputAdornment, IconButton,
+  Dialog, DialogTitle, DialogContent, DialogActions
 } from '@mui/material';
 import {
   Warning as WarningIcon,
@@ -11,9 +12,12 @@ import {
   CheckCircle as CheckCircleIcon,
   Search as SearchIcon,
   FileDownload as DownloadIcon,
-  Clear as ClearIcon
+  Clear as ClearIcon,
+  Speed as SpeedIcon,
+  Edit as EditIcon,
+  Note as NoteIcon
 } from '@mui/icons-material';
-import { getCurrentOutages, getOutageHistory, getOutageStats, exportOutageHistory } from './api';
+import { getCurrentOutages, getOutageHistory, getOutageStats, exportOutageHistory, getLatencyWarnings, updateOutageTicket, updateLatencyWarningTicket } from './api';
 import { debounce } from 'lodash';
 import LoadingIndicator from './components/LoadingIndicator';
 
@@ -56,12 +60,26 @@ const CoreOutagesTable = () => {
   const [historyEndDate, setHistoryEndDate] = useState('');
   const [exportLoading, setExportLoading] = useState(false);
   
+  // Latency warnings state
+  const [latencyWarnings, setLatencyWarnings] = useState([]);
+  const [warningsLoading, setWarningsLoading] = useState(true);
+  const [warningsSearch, setWarningsSearch] = useState('');
+  
   // Stats state
   const [stats, setStats] = useState({});
   const [statsLoading, setStatsLoading] = useState(true);
   
   // Error state
   const [error, setError] = useState(null);
+  
+  // Ticket/Notes dialog state
+  const [ticketDialog, setTicketDialog] = useState({
+    open: false,
+    circuitId: '',
+    currentTicket: '',
+    currentNotes: '',
+    type: 'outage' // 'outage' or 'warning'
+  });
 
   // Debounced search functions
   const debouncedCurrentSearch = useCallback(
@@ -87,6 +105,8 @@ const CoreOutagesTable = () => {
   useEffect(() => {
     if (currentTab === 1) {
       loadOutageHistory();
+    } else if (currentTab === 2) {
+      loadLatencyWarnings();
     }
   }, [currentTab, historyPage, historyRowsPerPage]);
 
@@ -103,6 +123,20 @@ const CoreOutagesTable = () => {
       debouncedHistorySearch(historySearch, historyStartDate, historyEndDate);
     }
   }, [historySearch, historyStartDate, historyEndDate, currentTab, debouncedHistorySearch]);
+
+  // Search effect for latency warnings
+  useEffect(() => {
+    if (currentTab === 2) {
+      debouncedWarningsSearch(warningsSearch);
+    }
+  }, [warningsSearch, currentTab]);
+
+  const debouncedWarningsSearch = useCallback(
+    debounce((search) => {
+      loadLatencyWarnings(search);
+    }, 300),
+    []
+  );
 
   const loadCurrentOutages = async (search = currentSearch) => {
     try {
@@ -130,6 +164,20 @@ const CoreOutagesTable = () => {
       setError('Failed to load outage history: ' + err.message);
     } finally {
       setHistoryLoading(false);
+    }
+  };
+
+  const loadLatencyWarnings = async (search = warningsSearch) => {
+    try {
+      setWarningsLoading(true);
+      const response = await getLatencyWarnings(search);
+      setLatencyWarnings(response.data || []);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to load latency warnings:', err);
+      setError('Failed to load latency warnings: ' + err.message);
+    } finally {
+      setWarningsLoading(false);
     }
   };
 
@@ -183,8 +231,10 @@ const CoreOutagesTable = () => {
     if (currentTab === 0) {
       loadCurrentOutages();
       loadStats();
-    } else {
+    } else if (currentTab === 1) {
       loadOutageHistory();
+    } else if (currentTab === 2) {
+      loadLatencyWarnings();
     }
   };
 
@@ -216,6 +266,60 @@ const CoreOutagesTable = () => {
     setHistorySearch('');
     setHistoryStartDate('');
     setHistoryEndDate('');
+  };
+
+  const handleWarningsSearchChange = (event) => {
+    setWarningsSearch(event.target.value);
+  };
+
+  const handleWarningsSearchClear = () => {
+    setWarningsSearch('');
+  };
+
+  const handleTicketClick = (circuitId, currentTicket, currentNotes, type) => {
+    setTicketDialog({
+      open: true,
+      circuitId,
+      currentTicket: currentTicket || '',
+      currentNotes: currentNotes || '',
+      type
+    });
+  };
+
+  const handleTicketDialogClose = () => {
+    setTicketDialog({
+      open: false,
+      circuitId: '',
+      currentTicket: '',
+      currentNotes: '',
+      type: 'outage'
+    });
+  };
+
+  const handleTicketSave = async () => {
+    try {
+      const { circuitId, currentTicket, currentNotes, type } = ticketDialog;
+      
+      if (type === 'outage') {
+        await updateOutageTicket(circuitId, currentTicket, currentNotes);
+        loadCurrentOutages(); // Refresh current outages
+      } else if (type === 'warning') {
+        await updateLatencyWarningTicket(circuitId, currentTicket, currentNotes);
+        loadLatencyWarnings(); // Refresh warnings
+      }
+      
+      handleTicketDialogClose();
+    } catch (err) {
+      console.error('Failed to update ticket/notes:', err);
+      setError('Failed to update ticket/notes: ' + err.message);
+    }
+  };
+
+  const handleTicketInputChange = (field, value) => {
+    setTicketDialog(prev => ({
+      ...prev,
+      [field]: value
+    }));
   };
 
   const handleExportHistory = async () => {
@@ -349,6 +453,11 @@ const CoreOutagesTable = () => {
               icon={<HistoryIcon />}
               iconPosition="start"
             />
+            <Tab 
+              label={`Latency Warning (${latencyWarnings.length})`} 
+              icon={<SpeedIcon />}
+              iconPosition="start"
+            />
           </Tabs>
           <Button
             startIcon={<RefreshIcon />}
@@ -425,12 +534,15 @@ const CoreOutagesTable = () => {
                     <TableCell><strong>Live Latency</strong></TableCell>
                     <TableCell><strong>Down Since</strong></TableCell>
                     <TableCell><strong>Duration</strong></TableCell>
+                    <TableCell><strong>Ticket Number</strong></TableCell>
+                    <TableCell><strong>Notes</strong></TableCell>
+                    <TableCell><strong>Actions</strong></TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {currentOutages.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} align="center" sx={{ py: 3 }}>
+                      <TableCell colSpan={11} align="center" sx={{ py: 3 }}>
                         <Typography variant="body2" color="textSecondary">
                           {currentSearch ? 'No outages found matching your search criteria.' : 'No current outages detected.'}
                         </Typography>
@@ -438,16 +550,32 @@ const CoreOutagesTable = () => {
                     </TableRow>
                   ) : (
                     currentOutages.map((outage) => (
-                      <TableRow key={outage.circuit_id} sx={{ backgroundColor: 'error.light', opacity: 0.1 }}>
+                      <TableRow key={outage.circuit_id} sx={{ backgroundColor: 'rgba(255, 235, 238, 0.5)' }}>
                         <TableCell>
-                          <Typography variant="body2" fontWeight="bold">
+                          <Typography variant="body2" fontWeight="bold" sx={{ color: '#000' }}>
                             {outage.circuit_id}
                           </Typography>
                         </TableCell>
-                        <TableCell>{outage.location_a || 'N/A'}</TableCell>
-                        <TableCell>{outage.location_b || 'N/A'}</TableCell>
-                        <TableCell>{outage.bandwidth ? `${outage.bandwidth} Mbps` : 'N/A'}</TableCell>
-                        <TableCell>{outage.underlying_carrier || 'N/A'}</TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {outage.location_a || 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {outage.location_b || 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {outage.bandwidth ? `${outage.bandwidth} Mbps` : 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {outage.underlying_carrier || 'N/A'}
+                          </Typography>
+                        </TableCell>
                         <TableCell>
                           <Chip 
                             label="0ms" 
@@ -455,11 +583,35 @@ const CoreOutagesTable = () => {
                             size="small"
                           />
                         </TableCell>
-                        <TableCell>{formatDate(outage.outage_start_time)}</TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {formatDate(outage.outage_start_time)}
+                          </Typography>
+                        </TableCell>
                         <TableCell>
                           <Typography variant="body2" color="error.main" fontWeight="bold">
                             {calculateDownTime(outage.outage_start_time)}
                           </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {outage.ticket_number || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {outage.notes || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="small"
+                            startIcon={<EditIcon />}
+                            onClick={() => handleTicketClick(outage.circuit_id, outage.ticket_number, outage.notes, 'outage')}
+                            variant="outlined"
+                          >
+                            Edit
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))
@@ -582,12 +734,14 @@ const CoreOutagesTable = () => {
                     <TableCell><strong>Start Time</strong></TableCell>
                     <TableCell><strong>End Time</strong></TableCell>
                     <TableCell><strong>Duration</strong></TableCell>
+                    <TableCell><strong>Ticket Number</strong></TableCell>
+                    <TableCell><strong>Notes</strong></TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {outageHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} align="center" sx={{ py: 3 }}>
+                      <TableCell colSpan={10} align="center" sx={{ py: 3 }}>
                         <Typography variant="body2" color="textSecondary">
                           {historySearch || historyStartDate || historyEndDate 
                             ? 'No outage history found matching your filters.' 
@@ -599,22 +753,56 @@ const CoreOutagesTable = () => {
                     outageHistory.map((outage, index) => (
                       <TableRow key={`${outage.circuit_id}-${index}`}>
                         <TableCell>
-                          <Typography variant="body2" fontWeight="bold">
+                          <Typography variant="body2" fontWeight="bold" sx={{ color: '#000' }}>
                             {outage.circuit_id}
                           </Typography>
                         </TableCell>
-                        <TableCell>{outage.location_a || 'N/A'}</TableCell>
-                        <TableCell>{outage.location_b || 'N/A'}</TableCell>
-                        <TableCell>{outage.bandwidth ? `${outage.bandwidth} Mbps` : 'N/A'}</TableCell>
-                        <TableCell>{outage.underlying_carrier || 'N/A'}</TableCell>
-                        <TableCell>{formatDate(outage.outage_start_time)}</TableCell>
-                        <TableCell>{formatDate(outage.outage_end_time)}</TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {outage.location_a || 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {outage.location_b || 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {outage.bandwidth ? `${outage.bandwidth} Mbps` : 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {outage.underlying_carrier || 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {formatDate(outage.outage_start_time)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {formatDate(outage.outage_end_time)}
+                          </Typography>
+                        </TableCell>
                         <TableCell>
                           <Chip 
                             label={formatDuration(outage.outage_duration_minutes)} 
                             color="default" 
                             size="small"
                           />
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {outage.ticket_number || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {outage.notes || '-'}
+                          </Typography>
                         </TableCell>
                       </TableRow>
                     ))
@@ -634,6 +822,211 @@ const CoreOutagesTable = () => {
           </>
         )}
       </TabPanel>
+
+      {/* Latency Warning Tab */}
+      <TabPanel value={currentTab} index={2}>
+        {/* Search Bar for Latency Warnings */}
+        <Box sx={{ mb: 2 }}>
+          <TextField
+            fullWidth
+            variant="outlined"
+            size="small"
+            placeholder="Search latency warnings by Circuit ID, Location, or Carrier..."
+            value={warningsSearch}
+            onChange={handleWarningsSearchChange}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" />
+                </InputAdornment>
+              ),
+              endAdornment: warningsSearch && (
+                <InputAdornment position="end">
+                  <IconButton onClick={handleWarningsSearchClear} size="small">
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+          />
+        </Box>
+
+        {warningsLoading ? (
+          <LoadingIndicator message="Loading latency warnings..." />
+        ) : (
+          <>
+            {/* Status Alert */}
+            {latencyWarnings.length === 0 ? (
+              <Alert severity="success" sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                <CheckCircleIcon sx={{ mr: 1 }} />
+                {warningsSearch ? 'No latency warnings found matching your search.' : 'No latency warnings detected. All circuits are performing within expected parameters.'}
+              </Alert>
+            ) : (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                <SpeedIcon sx={{ mr: 1 }} />
+                {warningsSearch ? `Found ${latencyWarnings.length} latency warning(s) matching your search:` : `The following ${latencyWarnings.length} circuit(s) are exceeding expected latency by more than 5%:`}
+              </Alert>
+            )}
+            
+            {/* Latency Warning Note */}
+            <Typography variant="body2" color="textSecondary" sx={{ mb: 2, fontStyle: 'italic' }}>
+              Note: This table updates every 15 minutes with circuits where live latency exceeds expected latency by more than 5%.
+            </Typography>
+            
+            {/* Latency Warnings Table - Always Visible */}
+            <TableContainer component={Paper}>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell><strong>Circuit ID</strong></TableCell>
+                    <TableCell><strong>Location A</strong></TableCell>
+                    <TableCell><strong>Location B</strong></TableCell>
+                    <TableCell><strong>Bandwidth</strong></TableCell>
+                    <TableCell><strong>Underlying Carrier</strong></TableCell>
+                    <TableCell><strong>Live Latency</strong></TableCell>
+                    <TableCell><strong>Expected Latency</strong></TableCell>
+                    <TableCell><strong>Percentage Over</strong></TableCell>
+                    <TableCell><strong>Ticket Number</strong></TableCell>
+                    <TableCell><strong>Notes</strong></TableCell>
+                    <TableCell><strong>Actions</strong></TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {latencyWarnings.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={11} align="center" sx={{ py: 3 }}>
+                        <Typography variant="body2" color="textSecondary">
+                          {warningsSearch ? 'No latency warnings found matching your search criteria.' : 'No latency warnings detected.'}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    latencyWarnings.map((warning) => (
+                      <TableRow key={warning.circuit_id} sx={{ backgroundColor: 'rgba(255, 243, 224, 0.5)' }}>
+                        <TableCell>
+                          <Typography variant="body2" fontWeight="bold" sx={{ color: '#000' }}>
+                            {warning.circuit_id}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {warning.location_a || 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {warning.location_b || 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {warning.bandwidth ? `${warning.bandwidth} Mbps` : 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {warning.underlying_carrier || 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Chip 
+                            label={`${warning.live_latency}ms`} 
+                            color="warning" 
+                            size="small"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {warning.expected_latency}ms
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Chip 
+                            label={`+${warning.latency_percentage}%`} 
+                            color="error" 
+                            size="small"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000' }}>
+                            {warning.ticket_number || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ color: '#000', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {warning.notes || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="small"
+                            startIcon={<EditIcon />}
+                            onClick={() => handleTicketClick(warning.circuit_id, warning.ticket_number, warning.notes, 'warning')}
+                            variant="outlined"
+                          >
+                            Edit
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </>
+        )}
+      </TabPanel>
+
+      {/* Ticket/Notes Dialog */}
+      <Dialog open={ticketDialog.open} onClose={handleTicketDialogClose} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          {ticketDialog.type === 'outage' ? 'Edit Outage Ticket & Notes' : 'Edit Latency Warning Ticket & Notes'}
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+            <Typography variant="body2" color="textSecondary">
+              Circuit ID: <strong>{ticketDialog.circuitId}</strong>
+            </Typography>
+            
+            <TextField
+              label="Ticket Number"
+              value={ticketDialog.currentTicket}
+              onChange={(e) => handleTicketInputChange('currentTicket', e.target.value)}
+              placeholder="Enter ticket number (max 32 characters)"
+              inputProps={{ maxLength: 32 }}
+              fullWidth
+              size="small"
+            />
+            
+            <TextField
+              label="Notes"
+              value={ticketDialog.currentNotes}
+              onChange={(e) => handleTicketInputChange('currentNotes', e.target.value)}
+              placeholder="Enter notes (max 256 characters)"
+              inputProps={{ maxLength: 256 }}
+              fullWidth
+              multiline
+              rows={3}
+              size="small"
+            />
+            
+            <Typography variant="caption" color="textSecondary">
+              These details will be visible in both Current Outages and Outage History tables.
+            </Typography>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleTicketDialogClose}>Cancel</Button>
+          <Button onClick={handleTicketSave} variant="contained">Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Note about 24-hour consolidation */}
+      <Box sx={{ mt: 2 }}>
+        <Typography variant="caption" color="textSecondary" sx={{ fontStyle: 'italic' }}>
+          Note: Outages will remain within Live Outages table for 24 hours post recovery to allow for consolidation of recurring issues.
+        </Typography>
+      </Box>
     </Box>
   );
 };

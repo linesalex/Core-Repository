@@ -5,6 +5,7 @@
  */
 
 const LiveLatencyService = require('./liveLatencyService');
+const outageMonitor = require('./outageMonitorService');
 
 class LiveLatencyAutoRefreshService {
   constructor() {
@@ -146,6 +147,15 @@ class LiveLatencyAutoRefreshService {
       
       if (results.errors.length > 0) {
         console.log(`⚠️  ${results.errors.length} auto-refresh errors occurred`);
+      }
+
+      // Update latency warnings after refreshing live latency data
+      try {
+        console.log('🔄 Updating latency warnings...');
+        await outageMonitor.updateLatencyWarnings();
+        console.log('✅ Latency warnings updated successfully');
+      } catch (warningError) {
+        console.error('❌ Failed to update latency warnings:', warningError.message);
       }
 
       return results;

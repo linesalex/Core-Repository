@@ -121,6 +121,32 @@ export const exportOutageHistory = (search = '', startDate = '', endDate = '') =
 export const getOutageStats = () => api.get(`${API_BASE_URL}/core_outages/stats`).then(res => res.data);
 export const getOutageMonitorStatus = () => api.get(`${API_BASE_URL}/core_outages/monitor-status`).then(res => res.data);
 
+// Latency Warnings
+export const getLatencyWarnings = (search = '') => {
+  const params = search ? `?search=${encodeURIComponent(search)}` : '';
+  return api.get(`${API_BASE_URL}/core_outages/latency-warnings${params}`).then(res => res.data);
+};
+
+// Ticket and Notes Management
+export const updateOutageTicket = (circuitId, ticketNumber, notes) => {
+  return api.put(`${API_BASE_URL}/core_outages/current/${circuitId}/ticket`, {
+    ticket_number: ticketNumber,
+    notes: notes
+  }).then(res => res.data);
+};
+
+export const updateLatencyWarningTicket = (circuitId, ticketNumber, notes) => {
+  return api.put(`${API_BASE_URL}/core_outages/latency-warnings/${circuitId}/ticket`, {
+    ticket_number: ticketNumber,
+    notes: notes
+  }).then(res => res.data);
+};
+
+// Get latest live latency API call details for a circuit
+export const getLatestApiCallDetails = (circuitId) => {
+  return api.get(`${API_BASE_URL}/live-latency/${circuitId}/latest-call`).then(res => res.data);
+};
+
 // Live Latency API - Enhanced System Only
 // Note: Old simulation endpoints removed - no longer generating fake data
 export const refreshAllLiveLatency = () => api.post(`${API_BASE_URL}/api/live-latency/refresh-all`).then(res => res.data);

@@ -1418,6 +1418,164 @@ router.get('/core_outages/history/export', authenticateToken, async (req, res) =
   }
 });
 
+// Get latency warnings (circuits exceeding expected latency by >5%)
+router.get('/core_outages/latency-warnings', authenticateToken, async (req, res) => {
+  try {
+    const { search = '' } = req.query;
+    const warnings = await outageMonitor.getLatencyWarnings(search);
+    res.json(createSuccessResponse(warnings, 'Latency warnings retrieved successfully'));
+  } catch (error) {
+    console.error('Failed to get latency warnings:', error);
+    res.status(500).json({ error: 'Failed to retrieve latency warnings' });
+  }
+});
+
+// Update ticket and notes for current outages
+router.put('/core_outages/current/:circuitId/ticket', authenticateToken, async (req, res) => {
+  try {
+    const { circuitId } = req.params;
+    const { ticket_number, notes } = req.body;
+    
+    // Validate input
+    if (ticket_number && ticket_number.length > 32) {
+      return res.status(400).json({ error: 'Ticket number cannot exceed 32 characters' });
+    }
+    if (notes && notes.length > 256) {
+      return res.status(400).json({ error: 'Notes cannot exceed 256 characters' });
+    }
+
+    await new Promise((resolve, reject) => {
+      db.run(
+        'UPDATE core_active_outages SET ticket_number = ?, notes = ? WHERE circuit_id = ?',
+        [ticket_number || null, notes || null, circuitId],
+        function(err) {
+          if (err) reject(err);
+          else if (this.changes === 0) reject(new Error('Circuit not found in active outages'));
+          else resolve();
+        }
+      );
+    });
+
+    // Log the activity
+    logUserActivity(req.user.id, 'outage_ticket_update', {
+      circuit_id: circuitId,
+      ticket_number,
+      notes,
+      userAgent: req.get('User-Agent'),
+      ipAddress: req.ip
+    });
+
+    res.json(createSuccessResponse({ circuitId, ticket_number, notes }, 'Ticket and notes updated successfully'));
+  } catch (error) {
+    console.error('Failed to update outage ticket:', error);
+    res.status(500).json({ error: error.message || 'Failed to update ticket and notes' });
+  }
+});
+
+// Update ticket and notes for latency warnings
+router.put('/core_outages/latency-warnings/:circuitId/ticket', authenticateToken, async (req, res) => {
+  try {
+    const { circuitId } = req.params;
+    const { ticket_number, notes } = req.body;
+    
+    // Validate input
+    if (ticket_number && ticket_number.length > 32) {
+      return res.status(400).json({ error: 'Ticket number cannot exceed 32 characters' });
+    }
+    if (notes && notes.length > 256) {
+      return res.status(400).json({ error: 'Notes cannot exceed 256 characters' });
+    }
+
+    const result = await outageMonitor.updateLatencyWarningTicket(circuitId, ticket_number, notes);
+
+    // Log the activity
+    logUserActivity(req.user.id, 'latency_warning_ticket_update', {
+      circuit_id: circuitId,
+      ticket_number,
+      notes,
+      userAgent: req.get('User-Agent'),
+      ipAddress: req.ip
+    });
+
+    res.json(createSuccessResponse(result, 'Latency warning ticket and notes updated successfully'));
+  } catch (error) {
+    console.error('Failed to update latency warning ticket:', error);
+    res.status(500).json({ error: 'Failed to update ticket and notes' });
+  }
+});
+
+// Get latest live latency API call details for a specific circuit
+router.get('/live-latency/:circuitId/latest-call', authenticateToken, async (req, res) => {
+  try {
+    const { circuitId } = req.params;
+    
+    if (!circuitId) {
+      return res.status(400).json({ error: 'Circuit ID is required' });
+    }
+    
+    // Get the most recent API call log for this circuit
+    const query = `
+      SELECT 
+        lal.*,
+        u.username as requested_by_username
+      FROM live_latency_api_logs lal
+      LEFT JOIN users u ON lal.requested_by = u.id
+      WHERE lal.circuit_id = ?
+        AND lal.response_status BETWEEN 200 AND 299
+        AND lal.raw_response IS NOT NULL
+      ORDER BY lal.created_at DESC
+      LIMIT 1
+    `;
+    
+    db.get(query, [circuitId], (err, logEntry) => {
+      if (err) {
+        console.error('Failed to get latest API call:', err);
+        return res.status(500).json({ error: 'Failed to retrieve latest API call details' });
+      }
+      
+      if (!logEntry) {
+        return res.status(404).json({ error: 'No successful API call logs found for this circuit' });
+      }
+      
+      // Parse the extracted values and format the response
+      let extractedValues = [];
+      let calculationDetails = {};
+      
+      try {
+        if (logEntry.extracted_values) {
+          extractedValues = JSON.parse(logEntry.extracted_values);
+        }
+        
+        calculationDetails = {
+          circuit_id: logEntry.circuit_id,
+          request_timestamp: logEntry.created_at,
+          request_type: logEntry.request_type,
+          response_time_ms: logEntry.response_time_ms,
+          data_points_found: extractedValues.length,
+          extracted_values: extractedValues,
+          calculated_average: logEntry.calculated_average,
+          latest_value: logEntry.latest_value,
+          final_latency_value: logEntry.final_latency_value,
+          data_quality_score: logEntry.data_quality_score,
+          calculation_method: logEntry.latest_value === 0 
+            ? 'Circuit Down (Latest value = 0)' 
+            : 'Average of non-zero values',
+          requested_by: logEntry.requested_by_username || 'System'
+        };
+        
+      } catch (parseError) {
+        console.error('Failed to parse API log data:', parseError);
+        return res.status(500).json({ error: 'Failed to parse API call data' });
+      }
+      
+      res.json(createSuccessResponse(calculationDetails, 'Latest API call details retrieved successfully'));
+    });
+  } catch (error) {
+    console.error('Failed to get latest API call details:', error);
+    res.status(500).json({ error: 'Failed to retrieve latest API call details' });
+  }
+});
+
 // Get outage monitor service status
 router.get('/core_outages/monitor-status', authenticateToken, authorizeRole('administrator'), (req, res) => {
   const status = outageMonitor.getStatus();

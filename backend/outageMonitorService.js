@@ -65,7 +65,8 @@ class OutageMonitorService {
       
       await Promise.all([
         this.detectNewOutages(),
-        this.detectOutageResolutions()
+        this.detectOutageResolutions(),
+        this.processResolvedOutages()
       ]);
       
     } catch (error) {
@@ -186,48 +187,140 @@ class OutageMonitorService {
         const endTime = new Date(outage.live_latency_last_updated);
         const durationMinutes = Math.round((endTime - startTime) / (1000 * 60));
 
-        // Insert into history
-        const historyQuery = `
-          INSERT INTO core_outage_history 
-          (circuit_id, location_a, location_b, bandwidth, underlying_carrier,
-           outage_start_time, outage_end_time, outage_duration_minutes, detected_by)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        // Check if there's a recent outage for the same circuit within 24 hours
+        const checkRecentQuery = `
+          SELECT * FROM core_active_outages 
+          WHERE circuit_id = ? AND status = 'resolved' 
+            AND resolved_at > datetime('now', '-24 hours')
+          ORDER BY resolved_at DESC LIMIT 1
         `;
 
-        const historyValues = [
-          outage.circuit_id,
-          outage.location_a,
-          outage.location_b,
-          outage.bandwidth,
-          outage.underlying_carrier,
-          outage.outage_start_time,
-          outage.live_latency_last_updated,
-          durationMinutes,
-          'live_latency_monitor'
-        ];
-
-        db.run(historyQuery, historyValues, function(historyErr) {
-          if (historyErr) {
-            console.error(`Failed to create history record for ${outage.circuit_id}:`, historyErr);
-            reject(historyErr);
+        db.get(checkRecentQuery, [outage.circuit_id], (checkErr, recentOutage) => {
+          if (checkErr) {
+            console.error(`Failed to check recent outages for ${outage.circuit_id}:`, checkErr);
+            reject(checkErr);
             return;
           }
 
-          // Remove from active outages
-          db.run('DELETE FROM core_active_outages WHERE id = ?', [outage.id], function(deleteErr) {
-            if (deleteErr) {
-              console.error(`Failed to remove active outage for ${outage.circuit_id}:`, deleteErr);
-              reject(deleteErr);
-            } else {
-              console.log(`🎉 Resolved outage for ${outage.circuit_id} (duration: ${durationMinutes} minutes)`);
+          let ticketNumber = outage.ticket_number;
+          let notes = outage.notes;
+          let originalStartTime = outage.outage_start_time;
+
+          // If there's a recent resolved outage for same circuit, reuse its data
+          if (recentOutage) {
+            ticketNumber = recentOutage.ticket_number || ticketNumber;
+            notes = recentOutage.notes || notes;
+            originalStartTime = recentOutage.outage_start_time; // Use original start time
+            
+            // Delete the previous resolved outage since we're consolidating
+            db.run('DELETE FROM core_active_outages WHERE id = ?', [recentOutage.id], (deleteErr) => {
+              if (deleteErr) {
+                console.warn(`Failed to delete previous resolved outage for ${outage.circuit_id}:`, deleteErr);
+              }
+            });
+          }
+
+          // Mark current outage as resolved instead of moving to history immediately
+          db.run(
+            'UPDATE core_active_outages SET status = ?, resolved_at = ? WHERE id = ?',
+            ['resolved', outage.live_latency_last_updated, outage.id],
+            function(updateErr) {
+              if (updateErr) {
+                console.error(`Failed to mark outage as resolved for ${outage.circuit_id}:`, updateErr);
+                reject(updateErr);
+                return;
+              }
+              
+              console.log(`🎉 Marked outage as resolved for ${outage.circuit_id} (will move to history after 24 hours)`);
               resolve();
             }
-          });
+          );
         });
       });
     });
 
     await Promise.all(promises);
+  }
+
+  /**
+   * Move resolved outages to history after 24 hours
+   */
+  async processResolvedOutages() {
+    return new Promise((resolve, reject) => {
+      // Find resolved outages older than 24 hours
+      const query = `
+        SELECT * FROM core_active_outages 
+        WHERE status = 'resolved' 
+          AND resolved_at < datetime('now', '-24 hours')
+      `;
+
+      db.all(query, [], (err, resolvedOutages) => {
+        if (err) {
+          console.error('Failed to query resolved outages:', err);
+          reject(err);
+          return;
+        }
+
+        if (resolvedOutages.length === 0) {
+          resolve();
+          return;
+        }
+
+        console.log(`🔄 Moving ${resolvedOutages.length} resolved outage(s) to history`);
+
+        const promises = resolvedOutages.map(outage => {
+          return new Promise((resolveOutage, rejectOutage) => {
+            const startTime = new Date(outage.outage_start_time);
+            const endTime = new Date(outage.resolved_at);
+            const durationMinutes = Math.round((endTime - startTime) / (1000 * 60));
+
+            // Insert into history
+            const historyQuery = `
+              INSERT INTO core_outage_history 
+              (circuit_id, location_a, location_b, bandwidth, underlying_carrier,
+               outage_start_time, outage_end_time, outage_duration_minutes, detected_by,
+               ticket_number, notes)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `;
+
+            const historyValues = [
+              outage.circuit_id,
+              outage.location_a,
+              outage.location_b,
+              outage.bandwidth,
+              outage.underlying_carrier,
+              outage.outage_start_time,
+              outage.resolved_at,
+              durationMinutes,
+              'live_latency_monitor',
+              outage.ticket_number,
+              outage.notes
+            ];
+
+            db.run(historyQuery, historyValues, function(historyErr) {
+              if (historyErr) {
+                console.error(`Failed to create history record for ${outage.circuit_id}:`, historyErr);
+                rejectOutage(historyErr);
+                return;
+              }
+
+              // Remove from active outages
+              db.run('DELETE FROM core_active_outages WHERE id = ?', [outage.id], function(deleteErr) {
+                if (deleteErr) {
+                  console.error(`Failed to remove resolved outage for ${outage.circuit_id}:`, deleteErr);
+                  rejectOutage(deleteErr);
+                } else {
+                  console.log(`📚 Moved resolved outage for ${outage.circuit_id} to history (duration: ${durationMinutes} minutes)`);
+                  resolveOutage();
+                }
+              });
+            });
+          });
+        });
+
+        Promise.all(promises).then(() => resolve()).catch(reject);
+      });
+    });
   }
 
   /**
@@ -249,10 +342,11 @@ class OutageMonitorService {
       let query = `
         SELECT cao.circuit_id, cao.location_a, cao.location_b, cao.bandwidth,
                cao.underlying_carrier, cao.live_latency, cao.outage_start_time,
+               cao.ticket_number, cao.notes, cao.status,
                nr.live_latency_last_updated
         FROM core_active_outages cao
         JOIN network_routes nr ON cao.circuit_id = nr.circuit_id
-        WHERE nr.live_latency = 0
+        WHERE nr.live_latency = 0 AND cao.status = 'active'
       `;
       
       let params = [];
@@ -288,7 +382,8 @@ class OutageMonitorService {
     return new Promise((resolve, reject) => {
       let query = `
         SELECT circuit_id, location_a, location_b, bandwidth, underlying_carrier,
-               outage_start_time, outage_end_time, outage_duration_minutes, detected_by
+               outage_start_time, outage_end_time, outage_duration_minutes, detected_by,
+               ticket_number, notes
         FROM core_outage_history
         WHERE 1=1
       `;
@@ -369,6 +464,132 @@ class OutageMonitorService {
           resolve(result.total);
         }
       });
+    });
+  }
+
+  /**
+   * Get latency warnings (circuits exceeding expected latency by >5%)
+   */
+  async getLatencyWarnings(searchTerm = '') {
+    return new Promise((resolve, reject) => {
+      let query = `
+        SELECT nr.circuit_id, nr.location_a, nr.location_b, nr.bandwidth,
+               nr.underlying_carrier, nr.live_latency, nr.expected_latency,
+               ROUND(((CAST(CASE WHEN nr.live_latency = '' OR nr.live_latency = 'N/A' THEN '0' ELSE nr.live_latency END AS REAL) - CAST(CASE WHEN nr.expected_latency = '' OR nr.expected_latency = 'N/A' THEN '0' ELSE nr.expected_latency END AS REAL)) / CAST(CASE WHEN nr.expected_latency = '' OR nr.expected_latency = 'N/A' THEN '0' ELSE nr.expected_latency END AS REAL)) * 100, 2) as latency_percentage,
+               lw.ticket_number, lw.notes
+        FROM network_routes nr
+        LEFT JOIN latency_warnings_live lw ON nr.circuit_id = lw.circuit_id
+        WHERE nr.live_latency IS NOT NULL 
+          AND nr.live_latency != '' 
+          AND nr.live_latency != 'N/A'
+          AND nr.live_latency != '0'
+          AND CAST(CASE WHEN nr.live_latency = '' OR nr.live_latency = 'N/A' THEN '0' ELSE nr.live_latency END AS REAL) > 0
+          AND nr.expected_latency IS NOT NULL 
+          AND nr.expected_latency != '' 
+          AND nr.expected_latency != 'N/A'
+          AND nr.expected_latency != '0'
+          AND CAST(CASE WHEN nr.expected_latency = '' OR nr.expected_latency = 'N/A' THEN '0' ELSE nr.expected_latency END AS REAL) > 0
+          AND CAST(CASE WHEN nr.live_latency = '' OR nr.live_latency = 'N/A' THEN '0' ELSE nr.live_latency END AS REAL) > (CAST(CASE WHEN nr.expected_latency = '' OR nr.expected_latency = 'N/A' THEN '0' ELSE nr.expected_latency END AS REAL) * 1.05)
+      `;
+      
+      let params = [];
+      
+      // Add search filter if provided
+      if (searchTerm && searchTerm.trim()) {
+        query += ` AND (
+          nr.circuit_id LIKE ? OR 
+          nr.location_a LIKE ? OR 
+          nr.location_b LIKE ? OR 
+          nr.underlying_carrier LIKE ?
+        )`;
+        const searchPattern = `%${searchTerm.trim()}%`;
+        params.push(searchPattern, searchPattern, searchPattern, searchPattern);
+      }
+      
+      query += ` ORDER BY latency_percentage DESC`;
+
+      db.all(query, params, (err, warnings) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(warnings);
+        }
+      });
+    });
+  }
+
+  /**
+   * Update latency warnings table with current warnings
+   */
+  async updateLatencyWarnings() {
+    try {
+      // Clear existing warnings
+      await new Promise((resolve, reject) => {
+        db.run('DELETE FROM latency_warnings_live', [], (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+
+      // Get current latency warnings with proper filtering
+      const warnings = await this.getLatencyWarnings();
+      
+      // Insert current warnings
+      if (warnings.length > 0) {
+        const insertPromises = warnings.map(warning => {
+          return new Promise((resolve, reject) => {
+            db.run(
+              `INSERT INTO latency_warnings_live 
+               (circuit_id, location_a, location_b, bandwidth, underlying_carrier, 
+                live_latency, expected_latency, latency_percentage, ticket_number, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                warning.circuit_id, warning.location_a, warning.location_b, 
+                warning.bandwidth, warning.underlying_carrier, warning.live_latency,
+                warning.expected_latency, warning.latency_percentage,
+                warning.ticket_number, warning.notes
+              ],
+              (err) => {
+                if (err) reject(err);
+                else resolve();
+              }
+            );
+          });
+        });
+
+        await Promise.all(insertPromises);
+        console.log(`📊 Updated ${warnings.length} latency warnings`);
+      }
+
+      return warnings;
+    } catch (error) {
+      console.error('❌ Failed to update latency warnings:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update ticket and notes for a latency warning
+   */
+  async updateLatencyWarningTicket(circuitId, ticketNumber, notes) {
+    return new Promise((resolve, reject) => {
+      db.run(
+        `INSERT OR REPLACE INTO latency_warnings_live 
+         (circuit_id, ticket_number, notes, last_updated)
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(circuit_id) DO UPDATE SET
+         ticket_number = excluded.ticket_number,
+         notes = excluded.notes,
+         last_updated = excluded.last_updated`,
+        [circuitId, ticketNumber, notes],
+        function(err) {
+          if (err) {
+            reject(err);
+          } else {
+            resolve({ circuitId, ticketNumber, notes });
+          }
+        }
+      );
     });
   }
 
