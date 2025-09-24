@@ -1,5 +1,6 @@
-1. should be a calculated field - i want to ensure that the tests are running automatically as scheduled every 15 mins.  Do you see any issues within the code that would stop the tests running every 15 mins within client conifugraitons of the live altency api management.  currently i have one circuit configuration active, with a last test time of 23/09/2025, 11:41:13.  since it is currently 11:58, i would have expected an automated test to have been run and the last test time updated by now. 
-2. yes - we need to verify that the database update update is actually happening - the data displayed is N/A currently. 
-3.  you should add automated scheduling to run tests every 15 mins within Live latency API management if not already scheduled.  The Network routes database should be updated when any new API result is recieved. 
-4. ok to fix
-5. the error is fine
+- In the network routes live latency table, ensure that if a circuit reports back 0ms as the live latency from the API - the colour of the field switches to red.  Currently it is green as long as the latency is not outside SLA.  This should be the case except for the latency being 0ms.  0ms should be in red.  
+- The network routes live latency refresh should be automated every 15 mins.  Currently it is only on a manual refresh with a 15 minute cooldown.  Continue to allow the manual refresh button to work on a 15 min cooldown but also create an automated process to update the netowkr routes live latneyc table every 15 mins automatically. 
+- In outage history, add date filters alongside filter for Circuit ID - Keep outage history for 
+- Breach in expected latency warning tab to illistrate all services that breach expected latency number.  Include routes that breach expected latency by 5%.    
+- Add ticket number reference field which is a manual addition into the current outages tab 
+- in network routes when you click a live latency - the live latency inforamtion pop up occurs.  I want to remove the view history historical records.  This live latency history that shows daily snapshots can be removed.  Instead, i want this view history to show the latest API call logs view calculations - it should pop up and display the full 'Latency Calculation Details' of the most recent API Call within the specific circuit history.  
