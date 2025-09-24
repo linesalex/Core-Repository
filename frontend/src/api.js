@@ -91,8 +91,33 @@ export const getCarriers = () => api.get(`${API_BASE_URL}/carriers`).then(res =>
 
 // Core Outages - Enhanced with current outages and history
 export const getCoreOutages = () => api.get(`${API_BASE_URL}/core_outages`).then(res => res.data);
-export const getCurrentOutages = () => api.get(`${API_BASE_URL}/core_outages/current`).then(res => res.data);
-export const getOutageHistory = (page = 1, limit = 50) => api.get(`${API_BASE_URL}/core_outages/history?page=${page}&limit=${limit}`).then(res => res.data);
+export const getCurrentOutages = (search = '') => {
+  const params = search ? `?search=${encodeURIComponent(search)}` : '';
+  return api.get(`${API_BASE_URL}/core_outages/current${params}`).then(res => res.data);
+};
+export const getOutageHistory = (page = 1, limit = 20, search = '', startDate = '', endDate = '') => {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    limit: limit.toString()
+  });
+  
+  if (search) params.append('search', search);
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  
+  return api.get(`${API_BASE_URL}/core_outages/history?${params.toString()}`).then(res => res.data);
+};
+export const exportOutageHistory = (search = '', startDate = '', endDate = '') => {
+  const params = new URLSearchParams();
+  
+  if (search) params.append('search', search);
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  
+  return api.get(`${API_BASE_URL}/core_outages/history/export?${params.toString()}`, { 
+    responseType: 'blob'
+  });
+};
 export const getOutageStats = () => api.get(`${API_BASE_URL}/core_outages/stats`).then(res => res.data);
 export const getOutageMonitorStatus = () => api.get(`${API_BASE_URL}/core_outages/monitor-status`).then(res => res.data);
 

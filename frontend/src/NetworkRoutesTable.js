@@ -344,6 +344,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
 
   const getLiveLatencyColor = (row) => {
     if (isDataStale(row)) return '#000000'; // Black for stale/N/A
+    if (row.live_latency === 0) return '#f44336'; // Red for 0ms latency (circuit down)
     if (!row.sla_latency) return '#4caf50'; // Green if no SLA
     return row.live_latency <= row.sla_latency ? '#4caf50' : '#f44336'; // Green if <= SLA, Red if > SLA
   };

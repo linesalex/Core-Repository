@@ -5,6 +5,8 @@ const PORT = process.env.PORT || 4000;
 const routes = require('./routes');
 const { handleDatabaseError } = require('./dbErrorHandler');
 const outageMonitor = require('./outageMonitorService');
+const liveLatencyAutoRefresh = require('./liveLatencyAutoRefreshService');
+const outageHistoryCleanup = require('./outageHistoryCleanupService');
 
 app.use(cors());
 app.use(express.json());
@@ -65,17 +67,31 @@ app.listen(PORT, () => {
   setTimeout(() => {
     outageMonitor.start();
   }, 5000); // Wait 5 seconds for server to fully initialize
+  
+  // Start the automated live latency refresh service
+  setTimeout(() => {
+    liveLatencyAutoRefresh.start();
+  }, 7000); // Wait 7 seconds to avoid conflicts with outage monitor
+  
+  // Start the outage history cleanup service
+  setTimeout(() => {
+    outageHistoryCleanup.start();
+  }, 9000); // Wait 9 seconds to avoid conflicts with other services
 });
 
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n🛑 Received SIGINT, shutting down gracefully...');
   outageMonitor.stop();
+  liveLatencyAutoRefresh.stop();
+  outageHistoryCleanup.stop();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   console.log('\n🛑 Received SIGTERM, shutting down gracefully...');
   outageMonitor.stop();
+  liveLatencyAutoRefresh.stop();
+  outageHistoryCleanup.stop();
   process.exit(0);
 }); 

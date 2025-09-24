@@ -1306,7 +1306,8 @@ router.get('/carriers-legacy', (req, res) => {
 // Get current outages (circuits with live_latency = 0)
 router.get('/core_outages/current', authenticateToken, async (req, res) => {
   try {
-    const currentOutages = await outageMonitor.getCurrentOutages();
+    const { search = '' } = req.query;
+    const currentOutages = await outageMonitor.getCurrentOutages(search);
     res.json(createSuccessResponse(currentOutages, 'Current outages retrieved successfully'));
   } catch (error) {
     console.error('Failed to get current outages:', error);
@@ -1318,21 +1319,14 @@ router.get('/core_outages/current', authenticateToken, async (req, res) => {
 router.get('/core_outages/history', authenticateToken, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
+    const limit = parseInt(req.query.limit) || 20; // Changed default to 20 as requested
     const offset = (page - 1) * limit;
+    const { search = '', start_date = '', end_date = '' } = req.query;
     
-    const history = await outageMonitor.getOutageHistory(limit, offset);
+    const history = await outageMonitor.getOutageHistory(limit, offset, search, start_date, end_date);
+    const total = await outageMonitor.getOutageHistoryCount(search, start_date, end_date);
     
-    // Get total count for pagination
-    db.get('SELECT COUNT(*) as total FROM core_outage_history', [], (err, countResult) => {
-      if (err) {
-        console.error('Failed to get outage history count:', err);
-        return res.status(500).json({ error: 'Failed to retrieve outage history' });
-      }
-      
-      const total = countResult.total;
-      res.json(createPaginatedResponse(history, total, page, limit));
-    });
+    res.json(createPaginatedResponse(history, total, page, limit));
   } catch (error) {
     console.error('Failed to get outage history:', error);
     res.status(500).json({ error: 'Failed to retrieve outage history' });
@@ -1347,6 +1341,80 @@ router.get('/core_outages/stats', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Failed to get outage stats:', error);
     res.status(500).json({ error: 'Failed to retrieve outage statistics' });
+  }
+});
+
+// Export outage history to Excel
+router.get('/core_outages/history/export', authenticateToken, async (req, res) => {
+  try {
+    const { search = '', start_date = '', end_date = '' } = req.query;
+    
+    // Get all filtered history records (no pagination for export)
+    const history = await outageMonitor.getOutageHistory(10000, 0, search, start_date, end_date);
+    
+    if (history.length === 0) {
+      return res.status(404).json({ error: 'No outage history records found for the specified filters' });
+    }
+
+    // Define CSV fields for export
+    const fields = [
+      { label: 'Circuit ID', value: 'circuit_id' },
+      { label: 'Location A', value: 'location_a' },
+      { label: 'Location B', value: 'location_b' },
+      { label: 'Bandwidth (Mbps)', value: 'bandwidth' },
+      { label: 'Underlying Carrier', value: 'underlying_carrier' },
+      { label: 'Outage Start Time', value: 'outage_start_time' },
+      { label: 'Outage End Time', value: 'outage_end_time' },
+      { label: 'Duration (Minutes)', value: 'outage_duration_minutes' },
+      { label: 'Detected By', value: 'detected_by' }
+    ];
+
+    // Process data for export (format dates and handle nulls)
+    const exportData = history.map(record => ({
+      ...record,
+      bandwidth: record.bandwidth ? `${record.bandwidth}` : 'N/A',
+      location_a: record.location_a || 'N/A',
+      location_b: record.location_b || 'N/A',
+      underlying_carrier: record.underlying_carrier || 'N/A',
+      outage_start_time: record.outage_start_time ? new Date(record.outage_start_time).toLocaleString() : 'N/A',
+      outage_end_time: record.outage_end_time ? new Date(record.outage_end_time).toLocaleString() : 'N/A',
+      outage_duration_minutes: record.outage_duration_minutes || 'N/A',
+      detected_by: record.detected_by || 'System'
+    }));
+
+    const json2csvParser = new Parser({ fields });
+    const csv = json2csvParser.parse(exportData);
+
+    // Generate filename with current date and filter info
+    const currentDate = new Date().toISOString().split('T')[0];
+    let filename = `outage_history_${currentDate}`;
+    
+    if (search) {
+      filename += `_search_${search.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    }
+    if (start_date || end_date) {
+      filename += `_${start_date || 'all'}_to_${end_date || 'all'}`;
+    }
+    filename += '.csv';
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+
+    // Log the export activity
+    logUserActivity(req.user.id, 'outage_history_export', {
+      search,
+      start_date,
+      end_date,
+      records_exported: history.length,
+      filename,
+      userAgent: req.get('User-Agent'),
+      ipAddress: req.ip
+    });
+
+  } catch (error) {
+    console.error('Failed to export outage history:', error);
+    res.status(500).json({ error: 'Failed to export outage history' });
   }
 });
 

@@ -244,19 +244,34 @@ class OutageMonitorService {
   /**
    * Get current outages (for API endpoints)
    */
-  async getCurrentOutages() {
+  async getCurrentOutages(searchTerm = '') {
     return new Promise((resolve, reject) => {
-      const query = `
+      let query = `
         SELECT cao.circuit_id, cao.location_a, cao.location_b, cao.bandwidth,
                cao.underlying_carrier, cao.live_latency, cao.outage_start_time,
                nr.live_latency_last_updated
         FROM core_active_outages cao
         JOIN network_routes nr ON cao.circuit_id = nr.circuit_id
         WHERE nr.live_latency = 0
-        ORDER BY cao.outage_start_time DESC
       `;
+      
+      let params = [];
+      
+      // Add search filter if provided
+      if (searchTerm && searchTerm.trim()) {
+        query += ` AND (
+          cao.circuit_id LIKE ? OR 
+          cao.location_a LIKE ? OR 
+          cao.location_b LIKE ? OR 
+          cao.underlying_carrier LIKE ?
+        )`;
+        const searchPattern = `%${searchTerm.trim()}%`;
+        params.push(searchPattern, searchPattern, searchPattern, searchPattern);
+      }
+      
+      query += ` ORDER BY cao.outage_start_time DESC`;
 
-      db.all(query, [], (err, outages) => {
+      db.all(query, params, (err, outages) => {
         if (err) {
           reject(err);
         } else {
@@ -269,21 +284,89 @@ class OutageMonitorService {
   /**
    * Get outage history (for API endpoints)
    */
-  async getOutageHistory(limit = 100, offset = 0) {
+  async getOutageHistory(limit = 100, offset = 0, searchTerm = '', startDate = '', endDate = '') {
     return new Promise((resolve, reject) => {
-      const query = `
+      let query = `
         SELECT circuit_id, location_a, location_b, bandwidth, underlying_carrier,
                outage_start_time, outage_end_time, outage_duration_minutes, detected_by
         FROM core_outage_history
-        ORDER BY outage_start_time DESC
-        LIMIT ? OFFSET ?
+        WHERE 1=1
       `;
+      
+      let params = [];
+      
+      // Add search filter if provided
+      if (searchTerm && searchTerm.trim()) {
+        query += ` AND (
+          circuit_id LIKE ? OR 
+          location_a LIKE ? OR 
+          location_b LIKE ? OR 
+          underlying_carrier LIKE ?
+        )`;
+        const searchPattern = `%${searchTerm.trim()}%`;
+        params.push(searchPattern, searchPattern, searchPattern, searchPattern);
+      }
+      
+      // Add date range filter if provided
+      if (startDate && startDate.trim()) {
+        query += ` AND DATE(outage_start_time) >= DATE(?)`;
+        params.push(startDate.trim());
+      }
+      
+      if (endDate && endDate.trim()) {
+        query += ` AND DATE(outage_start_time) <= DATE(?)`;
+        params.push(endDate.trim());
+      }
+      
+      query += ` ORDER BY outage_start_time DESC LIMIT ? OFFSET ?`;
+      params.push(limit, offset);
 
-      db.all(query, [limit, offset], (err, history) => {
+      db.all(query, params, (err, history) => {
         if (err) {
           reject(err);
         } else {
           resolve(history);
+        }
+      });
+    });
+  }
+
+  /**
+   * Get filtered outage history count for pagination
+   */
+  async getOutageHistoryCount(searchTerm = '', startDate = '', endDate = '') {
+    return new Promise((resolve, reject) => {
+      let query = `SELECT COUNT(*) as total FROM core_outage_history WHERE 1=1`;
+      let params = [];
+      
+      // Add search filter if provided
+      if (searchTerm && searchTerm.trim()) {
+        query += ` AND (
+          circuit_id LIKE ? OR 
+          location_a LIKE ? OR 
+          location_b LIKE ? OR 
+          underlying_carrier LIKE ?
+        )`;
+        const searchPattern = `%${searchTerm.trim()}%`;
+        params.push(searchPattern, searchPattern, searchPattern, searchPattern);
+      }
+      
+      // Add date range filter if provided
+      if (startDate && startDate.trim()) {
+        query += ` AND DATE(outage_start_time) >= DATE(?)`;
+        params.push(startDate.trim());
+      }
+      
+      if (endDate && endDate.trim()) {
+        query += ` AND DATE(outage_start_time) <= DATE(?)`;
+        params.push(endDate.trim());
+      }
+
+      db.get(query, params, (err, result) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(result.total);
         }
       });
     });
