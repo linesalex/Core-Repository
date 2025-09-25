@@ -1,3 +1,8 @@
+// 🔓 IGNORE SSL CERTIFICATE ERRORS GLOBALLY
+// Required for self-signed certificates in live latency APIs
+// This affects all HTTPS requests made by the Node.js process
+process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;
+
 const express = require('express');
 const cors = require('cors');
 const app = express();

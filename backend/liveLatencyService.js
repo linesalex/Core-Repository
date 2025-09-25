@@ -162,7 +162,14 @@ class LiveLatencyService {
       timeout: this.defaultTimeout,
       headers: {
         'accept': '*/*'
-      }
+      },
+      // 🔓 IGNORE SSL CERTIFICATE ERRORS
+      // Required for self-signed certificates or internal APIs
+      httpsAgent: new (require('https').Agent)({
+        rejectUnauthorized: false
+      }),
+      // Also ignore certificate errors for HTTP requests that redirect to HTTPS
+      insecureHTTPParser: true
     });
 
     // Add authentication
