@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, CssBaseline, Drawer, List, ListItem, ListItemIcon, ListItemText, AppBar, Toolbar, Typography, Button, Container, Paper, 
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse, Menu, MenuItem, IconButton, Chip, CircularProgress,
-  Alert, Divider, Avatar, Grid, Snackbar
+  Alert, Divider, Avatar, Grid, Snackbar, Slider
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -29,7 +29,9 @@ import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import CalculateIcon from '@mui/icons-material/Calculate';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import ApiIcon from '@mui/icons-material/Api';
+import TextFormatIcon from '@mui/icons-material/TextFormat';
 import { AuthProvider, useAuth } from './AuthContext';
+import { TextSizeProvider, useTextSize } from './TextSizeContext';
 import LoginForm from './LoginForm';
 import UserRegistration from './UserRegistration';
 import NetworkRoutesTable from './NetworkRoutesTable';
@@ -60,6 +62,7 @@ const drawerWidth = 280;
 // Main authenticated application component
 function AuthenticatedApp() {
   const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, isModuleVisible, hasPermission, hasRole, permissions, connectionError, passwordResetRequired } = useAuth();
+  const { textSizeScale, updateTextSize, resetTextSize } = useTextSize();
   
   // View state for non-authenticated views
   const [currentView, setCurrentView] = useState('login'); // 'login' or 'register'
@@ -618,6 +621,9 @@ function AuthenticatedApp() {
             anchorEl={userMenuAnchor}
             open={Boolean(userMenuAnchor)}
             onClose={handleUserMenuClose}
+            PaperProps={{
+              sx: { minWidth: 280 }
+            }}
           >
             <MenuItem disabled>
               <Typography variant="body2">
@@ -628,6 +634,41 @@ function AuthenticatedApp() {
               <Typography variant="caption" color="text.secondary">
                 Role: {user?.role}
               </Typography>
+            </MenuItem>
+            <Divider />
+            <MenuItem disableRipple>
+              <Box sx={{ width: '100%', px: 1, py: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                  <TextFormatIcon fontSize="small" sx={{ mr: 1 }} />
+                  <Typography variant="body2">
+                    Text Size: {textSizeScale}%
+                  </Typography>
+                </Box>
+                <Slider
+                  value={textSizeScale}
+                  onChange={(e, value) => updateTextSize(value)}
+                  min={80}
+                  max={120}
+                  step={5}
+                  marks={[
+                    { value: 80, label: '80%' },
+                    { value: 100, label: '100%' },
+                    { value: 120, label: '120%' }
+                  ]}
+                  valueLabelDisplay="auto"
+                  size="small"
+                  sx={{ mt: 1 }}
+                />
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
+                  <Button 
+                    size="small" 
+                    onClick={resetTextSize}
+                    disabled={textSizeScale === 100}
+                  >
+                    Reset
+                  </Button>
+                </Box>
+              </Box>
             </MenuItem>
             <Divider />
             <MenuItem onClick={handleLogout}>
@@ -1165,11 +1206,13 @@ function AuthenticatedApp() {
   );
 }
 
-// Main App component with AuthProvider
+// Main App component with AuthProvider and TextSizeProvider
 function App() {
   return (
     <AuthProvider>
-      <AuthenticatedApp />
+      <TextSizeProvider>
+        <AuthenticatedApp />
+      </TextSizeProvider>
     </AuthProvider>
   );
 }

@@ -903,7 +903,7 @@ const LocationDataManager = ({ hasPermission }) => {
                     </Tooltip>
                   )}
                   {(!hasPermission || (!hasPermission('locations', 'edit') && !hasPermission('locations', 'delete'))) && (
-                    <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>-</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
                   )}
                 </TableCell>
               </TableRow>
@@ -1051,7 +1051,7 @@ const LocationDataManager = ({ hasPermission }) => {
                 <CableIcon />
                 Cross-Connect Pricing
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2, fontSize: '0.8125rem' }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2, fontSize: '0.75rem' }}>
                 Set cross-connect pricing for this location. Use "POA" for "Price on Application".
               </Typography>
             </Grid>
@@ -1142,7 +1142,7 @@ const LocationDataManager = ({ hasPermission }) => {
                   <Typography variant="h6" sx={{ mt: 2, mb: 1 }}>
                     POP Capabilities
                   </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2, fontSize: '0.8125rem' }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2, fontSize: '0.75rem' }}>
                     Select the capabilities available at this location. These can be modified later.
                   </Typography>
                 </Grid>
@@ -1194,7 +1194,7 @@ const LocationDataManager = ({ hasPermission }) => {
           
           {/* Tracking Information */}
           <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e0e0e0' }}>
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
               {currentLocationTracking && currentLocationTracking.updated_date ? (
                 <>Last Updated: {currentLocationTracking.username || 'Unknown User'} {formatTrackingDate(currentLocationTracking.updated_date)}</>
               ) : (
@@ -1272,7 +1272,7 @@ const LocationDataManager = ({ hasPermission }) => {
             <Typography variant="h6" gutterBottom>
               {currentCrossConnect.datacenter_name}
             </Typography>
-            <Typography variant="body2" color="text.secondary" gutterBottom sx={{ fontSize: '0.8125rem' }}>
+            <Typography variant="body2" color="text.secondary" gutterBottom sx={{ fontSize: '0.75rem' }}>
               POP Code: {currentCrossConnect.location_code}
             </Typography>
             
@@ -1376,7 +1376,7 @@ const LocationDataManager = ({ hasPermission }) => {
         <DialogContent>
           Are you sure you want to delete location {selectedLocation?.location_code}?
           <br />
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontSize: '0.8125rem' }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontSize: '0.75rem' }}>
             City: {selectedLocation?.city}, Country: {selectedLocation?.country}
           </Typography>
         </DialogContent>

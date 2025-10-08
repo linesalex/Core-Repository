@@ -94,18 +94,18 @@ const textCellStyle = {
 };
 
 const SmallTableCell = styled(TableCell)(({ theme }) => ({
-  fontSize: '0.6875rem', // ~11px, reduced by 1pt from 0.75rem
+  fontSize: '0.75rem', // 12px - standardized body text size
   padding: '6px 8px',
 }));
 
 const SmallTableHeaderCell = styled(TableCell)(({ theme }) => ({
-  fontSize: '0.75rem', // ~12px, reduced by 1pt from 0.8125rem
+  fontSize: '0.8125rem', // 13px - standardized header text size
   fontWeight: 600,
   padding: '6px 8px',
 }));
 
 const VerticalHeaderCell = styled(TableCell)(({ theme }) => ({
-  fontSize: '0.75rem', // ~12px, reduced by 1pt from 0.8125rem
+  fontSize: '0.8125rem', // 13px - standardized header text size
   fontWeight: 600,
   padding: '6px 8px', // Match data cell padding
   whiteSpace: 'pre-line',
@@ -114,7 +114,7 @@ const VerticalHeaderCell = styled(TableCell)(({ theme }) => ({
 }));
 
 const compactButtonStyle = {
-  fontSize: '0.6875rem', // ~11px, reduced by 1pt from 0.75rem
+  fontSize: '0.75rem', // 12px - standardized body text size
   minWidth: 0,
   padding: '2px 8px',
   lineHeight: 1,
@@ -122,7 +122,7 @@ const compactButtonStyle = {
 };
 
 const linkStyle = {
-  fontSize: '0.6875rem', // ~11px, reduced by 1pt from 0.75rem
+  fontSize: '0.75rem', // 12px - standardized body text size
   color: '#1976d2',
   cursor: 'pointer',
   textDecoration: 'underline',
@@ -490,7 +490,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
           
           return (
             <Box key={categoryKey}>
-              <MenuItem disabled sx={{ fontWeight: 'bold', fontSize: '0.8rem', py: 0.5 }}>
+              <MenuItem disabled sx={{ fontWeight: 'bold', fontSize: '0.8125rem', py: 0.5 }}>
                 {categoryLabel}
               </MenuItem>
               {categoryColumns.map(col => (
@@ -509,8 +509,8 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
                     label={col.label.replace(/\n/g, ' ')}
                     sx={{ 
                       margin: 0,
-                      fontSize: '0.85rem',
-                      '& .MuiFormControlLabel-label': { fontSize: '0.85rem' }
+                      fontSize: '0.75rem',
+                      '& .MuiFormControlLabel-label': { fontSize: '0.75rem' }
                     }}
                   />
                 </MenuItem>
@@ -524,13 +524,13 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
         {/* Column Reordering Section */}
         {visibleColumns.length > 1 && (
           <>
-            <MenuItem disabled sx={{ fontWeight: 'bold', fontSize: '0.8rem', py: 0.5 }}>
+            <MenuItem disabled sx={{ fontWeight: 'bold', fontSize: '0.8125rem', py: 0.5 }}>
               Reorder Visible Columns
             </MenuItem>
             {visibleColumns.map((col, index) => (
               <MenuItem key={`reorder-${col.id}`} sx={{ pl: 3, py: 0.5 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
-                  <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                  <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
                     {col.label.replace(/\n/g, ' ')}
                   </Typography>
                   <Box>

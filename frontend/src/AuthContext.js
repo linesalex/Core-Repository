@@ -16,6 +16,7 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [permissions, setPermissions] = useState({});
+  const [modulePermissions, setModulePermissions] = useState({});
   const [moduleVisibility, setModuleVisibility] = useState({});
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem('authToken'));
@@ -135,7 +136,11 @@ export const AuthProvider = ({ children }) => {
         try {
           axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
           const response = await axios.get(`${API_BASE_URL}/me`);
-          setUser(response.data);
+          setUser(response.data.user);
+          setPermissions(response.data.permissions || {});
+          setModulePermissions(response.data.modulePermissions || {});
+          setModuleVisibility(response.data.moduleVisibility || {});
+          setPasswordResetRequired(response.data.passwordResetRequired || false);
           setIsAuthenticated(true);
         } catch (error) {
           console.error('Auth check failed:', error);
@@ -158,7 +163,7 @@ export const AuthProvider = ({ children }) => {
         password
       });
 
-      const { token, user, permissions, moduleVisibility, passwordResetRequired } = response.data;
+      const { token, user, permissions, modulePermissions, moduleVisibility, passwordResetRequired } = response.data;
       
       // Set axios headers IMMEDIATELY to prevent race condition
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
@@ -170,6 +175,7 @@ export const AuthProvider = ({ children }) => {
       setToken(token);
       setUser(user);
       setPermissions(permissions);
+      setModulePermissions(modulePermissions || {});
       setModuleVisibility(moduleVisibility || {});
       setPasswordResetRequired(passwordResetRequired || false);
       setIsAuthenticated(true);
@@ -293,6 +299,7 @@ export const AuthProvider = ({ children }) => {
   const value = {
     user,
     permissions,
+    modulePermissions,
     moduleVisibility,
     loading,
     connectionError,

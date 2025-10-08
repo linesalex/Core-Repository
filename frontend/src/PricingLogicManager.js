@@ -272,7 +272,7 @@ const PricingLogicManager = ({ hasPermission }) => {
           </Alert>
         )}
 
-        <Typography variant="body1" color="text.secondary" sx={{ mb: 4, fontSize: '0.875rem' }}>
+        <Typography variant="body1" color="text.secondary" sx={{ mb: 4, fontSize: '0.75rem' }}>
           Configure the core pricing logic parameters that affect all network design calculations, including 
           standard service margins and premium protected service margins for redundant connectivity. 
           Changes take effect immediately for new pricing calculations.

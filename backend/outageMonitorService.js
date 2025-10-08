@@ -82,7 +82,7 @@ class OutageMonitorService {
       // Find circuits with live_latency = 0 that don't have active outage records
       const query = `
         SELECT nr.circuit_id, nr.location_a, nr.location_b, nr.bandwidth, 
-               nr.underlying_carrier, nr.live_latency, nr.live_latency_last_updated
+               nr.underlying_carrier, nr.cable_system, nr.live_latency, nr.live_latency_last_updated
         FROM network_routes nr
         LEFT JOIN core_active_outages cao ON nr.circuit_id = cao.circuit_id
         WHERE nr.live_latency = 0 
@@ -148,8 +148,8 @@ class OutageMonitorService {
         const insertQuery = `
           INSERT INTO core_active_outages 
           (circuit_id, location_a, location_b, bandwidth, underlying_carrier, 
-           outage_start_time, live_latency)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+           cable_system, outage_start_time, live_latency)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const values = [
@@ -158,6 +158,7 @@ class OutageMonitorService {
           circuit.location_b,
           circuit.bandwidth,
           circuit.underlying_carrier,
+          circuit.cable_system,
           circuit.live_latency_last_updated,
           circuit.live_latency
         ];
@@ -278,9 +279,9 @@ class OutageMonitorService {
             const historyQuery = `
               INSERT INTO core_outage_history 
               (circuit_id, location_a, location_b, bandwidth, underlying_carrier,
-               outage_start_time, outage_end_time, outage_duration_minutes, detected_by,
+               cable_system, outage_start_time, outage_end_time, outage_duration_minutes, detected_by,
                ticket_number, notes)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const historyValues = [
@@ -289,6 +290,7 @@ class OutageMonitorService {
               outage.location_b,
               outage.bandwidth,
               outage.underlying_carrier,
+              outage.cable_system,
               outage.outage_start_time,
               outage.resolved_at,
               durationMinutes,
@@ -341,7 +343,7 @@ class OutageMonitorService {
     return new Promise((resolve, reject) => {
       let query = `
         SELECT cao.circuit_id, cao.location_a, cao.location_b, cao.bandwidth,
-               cao.underlying_carrier, cao.live_latency, cao.outage_start_time,
+               cao.underlying_carrier, cao.cable_system, cao.live_latency, cao.outage_start_time,
                cao.ticket_number, cao.notes, cao.status,
                nr.live_latency_last_updated
         FROM core_active_outages cao
@@ -357,10 +359,11 @@ class OutageMonitorService {
           cao.circuit_id LIKE ? OR 
           cao.location_a LIKE ? OR 
           cao.location_b LIKE ? OR 
-          cao.underlying_carrier LIKE ?
+          cao.underlying_carrier LIKE ? OR
+          cao.cable_system LIKE ?
         )`;
         const searchPattern = `%${searchTerm.trim()}%`;
-        params.push(searchPattern, searchPattern, searchPattern, searchPattern);
+        params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
       }
       
       query += ` ORDER BY cao.outage_start_time DESC`;
@@ -382,7 +385,7 @@ class OutageMonitorService {
     return new Promise((resolve, reject) => {
       let query = `
         SELECT circuit_id, location_a, location_b, bandwidth, underlying_carrier,
-               outage_start_time, outage_end_time, outage_duration_minutes, detected_by,
+               cable_system, outage_start_time, outage_end_time, outage_duration_minutes, detected_by,
                ticket_number, notes
         FROM core_outage_history
         WHERE 1=1
@@ -396,10 +399,11 @@ class OutageMonitorService {
           circuit_id LIKE ? OR 
           location_a LIKE ? OR 
           location_b LIKE ? OR 
-          underlying_carrier LIKE ?
+          underlying_carrier LIKE ? OR
+          cable_system LIKE ?
         )`;
         const searchPattern = `%${searchTerm.trim()}%`;
-        params.push(searchPattern, searchPattern, searchPattern, searchPattern);
+        params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
       }
       
       // Add date range filter if provided
@@ -440,10 +444,11 @@ class OutageMonitorService {
           circuit_id LIKE ? OR 
           location_a LIKE ? OR 
           location_b LIKE ? OR 
-          underlying_carrier LIKE ?
+          underlying_carrier LIKE ? OR
+          cable_system LIKE ?
         )`;
         const searchPattern = `%${searchTerm.trim()}%`;
-        params.push(searchPattern, searchPattern, searchPattern, searchPattern);
+        params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
       }
       
       // Add date range filter if provided

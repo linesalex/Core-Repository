@@ -617,7 +617,7 @@ const BulkUpload = ({ onDataRefresh }) => {
               </ValidatedSelect>
 
               {selectedModuleInfo && (
-                <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
+                <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
                   {selectedModuleInfo.description}
                 </Typography>
               )}
@@ -708,7 +708,7 @@ const BulkUpload = ({ onDataRefresh }) => {
                     variant={uploadProgress?.progress ? "determinate" : "indeterminate"}
                     value={uploadProgress?.progress || 0}
                   />
-                  <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mt: 1 }}>
+                  <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary" sx={{ mt: 1 }}>
                     {uploadProgress?.stage || 'Processing CSV file and importing data...'}
                   </Typography>
                   {uploadProgress && (
@@ -842,7 +842,7 @@ const BulkUpload = ({ onDataRefresh }) => {
                       </TableCell>
                       <TableCell>
                         {log.new_values && (
-                          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                          <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
                             {JSON.parse(log.new_values).rows_imported && 
                               `${JSON.parse(log.new_values).rows_imported} rows imported`}
                             {JSON.parse(log.new_values).rows_exported && 

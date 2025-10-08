@@ -221,6 +221,108 @@ const getUserPermissionsWithVisibility = (userId, callback) => {
   });
 };
 
+// Get user module permissions (new per-module system)
+const getUserModulePermissions = (userId, callback) => {
+  db.get('SELECT user_role FROM users WHERE id = ?', [userId], (err, user) => {
+    if (err) return callback(err);
+    if (!user) return callback(new Error('User not found'));
+
+    // Administrators get full access implicitly
+    if (user.user_role === 'administrator') {
+      const allModules = [
+        'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
+        'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
+        'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
+      ];
+      
+      const permissionMap = {};
+      allModules.forEach(module => {
+        permissionMap[module] = 'provisioner'; // Admins have full access
+      });
+      
+      return callback(null, permissionMap);
+    }
+
+    // Non-admin users: get per-module permissions
+    db.all(
+      'SELECT module_name, permission_level FROM user_module_permissions WHERE user_id = ?',
+      [userId],
+      (err, permissions) => {
+        if (err) return callback(err);
+        
+        const permissionMap = {};
+        permissions.forEach(perm => {
+          permissionMap[perm.module_name] = perm.permission_level;
+        });
+        
+        callback(null, permissionMap);
+      }
+    );
+  });
+};
+
+// Check if user has required permission level for a module
+const hasModulePermission = (userId, moduleName, requiredLevel, callback) => {
+  db.get('SELECT user_role FROM users WHERE id = ?', [userId], (err, user) => {
+    if (err) return callback(err, false);
+    if (!user) return callback(new Error('User not found'), false);
+
+    // Administrators always have access
+    if (user.user_role === 'administrator') {
+      return callback(null, true);
+    }
+
+    // Check user's permission for this module
+    db.get(
+      'SELECT permission_level FROM user_module_permissions WHERE user_id = ? AND module_name = ?',
+      [userId, moduleName],
+      (err, permission) => {
+        if (err) return callback(err, false);
+        if (!permission) return callback(null, false); // No permission assigned
+        
+        // Check if permission level is sufficient
+        if (requiredLevel === 'read_only') {
+          // Any permission level is sufficient for read-only
+          callback(null, true);
+        } else if (requiredLevel === 'provisioner') {
+          // Only provisioner level is sufficient
+          callback(null, permission.permission_level === 'provisioner');
+        } else {
+          callback(null, false);
+        }
+      }
+    );
+  });
+};
+
+// Module-based authorization middleware
+const authorizeModulePermission = (moduleName, requiredLevel = 'read_only') => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    hasModulePermission(req.user.id, moduleName, requiredLevel, (err, hasPermission) => {
+      if (err) {
+        console.error('Permission check error:', err);
+        return res.status(500).json({ error: 'Permission check failed' });
+      }
+
+      if (!hasPermission) {
+        // Don't return error - frontend will hide features instead
+        // This allows for graceful degradation
+        return res.status(403).json({ 
+          error: 'Insufficient permissions',
+          module: moduleName,
+          required: requiredLevel
+        });
+      }
+
+      next();
+    });
+  };
+};
+
 // Log user activity
 const logUserActivity = (userId, action, details = {}) => {
   const userAgent = details.userAgent || 'Unknown';
@@ -246,5 +348,8 @@ module.exports = {
   authorizePermission,
   getUserPermissions,
   getUserPermissionsWithVisibility,
+  getUserModulePermissions,
+  hasModulePermission,
+  authorizeModulePermission,
   logUserActivity
 }; 

@@ -17,8 +17,9 @@ const {
   authenticateToken, 
   authorizeRole, 
   authorizePermission, 
-  getUserPermissions, 
-  getUserPermissionsWithVisibility,
+  getUserModulePermissions,
+  hasModulePermission,
+  authorizeModulePermission,
   logUserActivity 
 } = require('./auth');
 const { 
@@ -221,59 +222,57 @@ router.post('/login', async (req, res) => {
       // Generate token
       const token = generateToken(user);
       
-      // Get user permissions (fallback to old method for now)
-      getUserPermissions(user.id, (err, permissions) => {
+      // Use new per-module permission system
+      getUserModulePermissions(user.id, (err, modulePermissions) => {
         if (err) {
           console.error('Error getting permissions:', err);
           return res.status(500).json({ error: 'Failed to get permissions' });
         }
         
-        // Use the proper visibility logic that respects role-based defaults
-        getUserPermissionsWithVisibility(user.id, (visErr, visibilityData) => {
-          let moduleVisibility = {};
-          
-          if (!visErr && visibilityData && visibilityData.visibility) {
-            moduleVisibility = visibilityData.visibility;
-          } else {
-            // Fallback logic - use role-based defaults
-            const allModules = [
-              'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
-              'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
-              'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
-            ];
-            
-            if (user.user_role === 'administrator') {
-              // Admin users: all modules visible by default
-              allModules.forEach(module => {
-                moduleVisibility[module] = true;
-              });
-            } else {
-              // Non-admin users: modules hidden by default
-              allModules.forEach(module => {
-                moduleVisibility[module] = false;
-              });
-            }
-          }
-          
-          // Log login activity
-          logUserActivity(user.id, 'LOGIN', {
-            ipAddress: req.ip || req.connection.remoteAddress,
-            userAgent: req.get('User-Agent')
-          });
-          
-          res.json({
-            token,
-            user: {
-              id: user.id,
-              username: user.username,
-              email: user.email,
-              full_name: user.full_name,
-              role: user.user_role
-            },
-            permissions,
-            moduleVisibility,
-            passwordResetRequired
-          });
+        // Derive visibility from permissions (if a user has permission, module is visible)
+        const moduleVisibility = {};
+        const allModules = [
+          'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
+          'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
+          'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
+        ];
+        
+        allModules.forEach(module => {
+          // Module is visible if user has any permission level for it
+          moduleVisibility[module] = !!modulePermissions[module];
+        });
+        
+        // Convert per-module permissions to legacy format for frontend compatibility
+        const legacyPermissions = {};
+        Object.keys(modulePermissions).forEach(module => {
+          const permLevel = modulePermissions[module];
+          legacyPermissions[module] = {
+            can_view: permLevel === 'read_only' || permLevel === 'provisioner',
+            can_create: permLevel === 'provisioner',
+            can_edit: permLevel === 'provisioner',
+            can_delete: permLevel === 'provisioner'
+          };
+        });
+        
+        // Log login activity
+        logUserActivity(user.id, 'LOGIN', {
+          ipAddress: req.ip || req.connection.remoteAddress,
+          userAgent: req.get('User-Agent')
+        });
+        
+        res.json({
+          token,
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            full_name: user.full_name,
+            role: user.user_role
+          },
+          permissions: legacyPermissions,
+          modulePermissions, // New per-module permissions
+          moduleVisibility,
+          passwordResetRequired
         });
       });
     });
@@ -288,48 +287,47 @@ router.get('/me', authenticateToken, (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!user) return res.status(404).json({ error: 'User not found' });
     
-    getUserPermissions(user.id, (err, permissions) => {
+    // Use new per-module permission system
+    getUserModulePermissions(user.id, (err, modulePermissions) => {
       if (err) return res.status(500).json({ error: 'Failed to get permissions' });
       
-      // Use the proper visibility logic that respects role-based defaults
-      getUserPermissionsWithVisibility(user.id, (visErr, visibilityData) => {
-        let moduleVisibility = {};
-        
-        if (!visErr && visibilityData && visibilityData.visibility) {
-          moduleVisibility = visibilityData.visibility;
-        } else {
-          // Fallback logic - use role-based defaults
-          const allModules = [
-            'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
-            'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
-            'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
-          ];
-          
-          if (user.user_role === 'administrator') {
-            // Admin users: all modules visible by default
-            allModules.forEach(module => {
-              moduleVisibility[module] = true;
-            });
-          } else {
-            // Non-admin users: modules hidden by default
-            allModules.forEach(module => {
-              moduleVisibility[module] = false;
-            });
-          }
-        }
-        
-        res.json({
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            full_name: user.full_name,
-            role: user.user_role
-          },
-          permissions,
-          moduleVisibility,
-          passwordResetRequired: user.password_reset_required === 1
-        });
+      // Derive visibility from permissions (if a user has permission, module is visible)
+      const moduleVisibility = {};
+      const allModules = [
+        'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
+        'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
+        'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
+      ];
+      
+      allModules.forEach(module => {
+        // Module is visible if user has any permission level for it
+        moduleVisibility[module] = !!modulePermissions[module];
+      });
+      
+      // Convert per-module permissions to legacy format for frontend compatibility
+      const legacyPermissions = {};
+      Object.keys(modulePermissions).forEach(module => {
+        const permLevel = modulePermissions[module];
+        legacyPermissions[module] = {
+          can_view: permLevel === 'read_only' || permLevel === 'provisioner',
+          can_create: permLevel === 'provisioner',
+          can_edit: permLevel === 'provisioner',
+          can_delete: permLevel === 'provisioner'
+        };
+      });
+      
+      res.json({
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          full_name: user.full_name,
+          role: user.user_role
+        },
+        permissions: legacyPermissions,
+        modulePermissions, // New per-module permissions
+        moduleVisibility,
+        passwordResetRequired: user.password_reset_required === 1
       });
     });
   });
@@ -585,7 +583,7 @@ router.delete('/users/:id/reject', authenticateToken, authorizeRole('administrat
 // ====================================
 
 // Get all users (admin only)
-router.get('/users', authenticateToken, authorizePermission('user_management', 'view'), (req, res) => {
+router.get('/users', authenticateToken, authorizeModulePermission('user_management', 'read_only'), (req, res) => {
   db.all('SELECT id, username, email, full_name, user_role, status, created_at, last_login FROM users ORDER BY username', [], (err, users) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(users);
@@ -593,7 +591,7 @@ router.get('/users', authenticateToken, authorizePermission('user_management', '
 });
 
 // Create user (admin only)
-router.post('/users', authenticateToken, authorizePermission('user_management', 'create'), (req, res) => {
+router.post('/users', authenticateToken, authorizeModulePermission('user_management', 'provisioner'), (req, res) => {
   const { username, email, full_name, user_role, status } = req.body;
 
   if (!username || !user_role) {
@@ -659,7 +657,7 @@ router.post('/users', authenticateToken, authorizePermission('user_management', 
 });
 
 // Update user (admin only)
-router.put('/users/:id', authenticateToken, authorizePermission('user_management', 'edit'), (req, res) => {
+router.put('/users/:id', authenticateToken, authorizeModulePermission('user_management', 'provisioner'), (req, res) => {
   const { email, full_name, user_role, status } = req.body;
   const userId = req.params.id;
   
@@ -684,7 +682,7 @@ router.put('/users/:id', authenticateToken, authorizePermission('user_management
 });
 
 // Delete user (admin only)
-router.delete('/users/:id', authenticateToken, authorizePermission('user_management', 'delete'), (req, res) => {
+router.delete('/users/:id', authenticateToken, authorizeModulePermission('user_management', 'provisioner'), (req, res) => {
   const userId = req.params.id;
   
   // Prevent deleting own account (use strict comparison to prevent type coercion bypass)
@@ -714,7 +712,7 @@ router.delete('/users/:id', authenticateToken, authorizePermission('user_managem
 });
 
 // Reset user password (admin only)
-router.post('/users/:id/reset-password', authenticateToken, authorizePermission('user_management', 'edit'), async (req, res) => {
+router.post('/users/:id/reset-password', authenticateToken, authorizeModulePermission('user_management', 'provisioner'), async (req, res) => {
   const userId = req.params.id;
   
   // Get user data for logging
@@ -757,62 +755,107 @@ router.post('/users/:id/reset-password', authenticateToken, authorizePermission(
 });
 
 // ====================================
-// USER MODULE VISIBILITY ENDPOINTS
+// PER-MODULE PERMISSIONS ENDPOINTS
 // ====================================
 
-// Get user module visibility settings (admin only)
-router.get('/users/:id/module-visibility', authenticateToken, authorizePermission('user_management', 'view'), (req, res) => {
+// Get user module permissions (admin only)
+router.get('/users/:id/module-permissions', authenticateToken, authorizeModulePermission('user_management', 'read_only'), (req, res) => {
   const userId = req.params.id;
   
-  db.all(
-    'SELECT module_name, is_visible FROM user_module_visibility WHERE user_id = ?',
-    [userId],
-    (err, visibility) => {
-      if (err) return res.status(500).json({ error: err.message });
+  // First check if user is administrator
+  db.get('SELECT user_role FROM users WHERE id = ?', [userId], (userErr, user) => {
+    if (userErr) return res.status(500).json({ error: userErr.message });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    // Administrators don't have per-module permissions - they have full access
+    if (user.user_role === 'administrator') {
+      return res.json({
+        isAdmin: true,
+        permissions: {}
+      });
+    }
+    
+    // Non-admin users: get per-module permissions
+    db.all(
+      'SELECT module_name, permission_level FROM user_module_permissions WHERE user_id = ?',
+      [userId],
+      (err, permissions) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        // Convert to object format { module_name: permission_level }
+        const permissionsMap = {};
+        permissions.forEach(p => {
+          permissionsMap[p.module_name] = p.permission_level;
+        });
+        
+        res.json({
+          isAdmin: false,
+          permissions: permissionsMap
+        });
+      }
+    );
+  });
+});
+
+// Update user module permissions (admin only)
+router.put('/users/:id/module-permissions', authenticateToken, authorizeModulePermission('user_management', 'provisioner'), (req, res) => {
+  const userId = req.params.id;
+  const permissionSettings = req.body; // { module_name: permission_level, ... }
+  
+  // First check if user is administrator
+  db.get('SELECT user_role FROM users WHERE id = ?', [userId], (userErr, user) => {
+    if (userErr) return res.status(500).json({ error: userErr.message });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    // Cannot modify permissions for administrators
+    if (user.user_role === 'administrator') {
+      return res.status(400).json({ error: 'Cannot modify permissions for administrators - they have full access to all modules' });
+    }
+    
+    // Delete existing permissions for this user
+    db.run('DELETE FROM user_module_permissions WHERE user_id = ?', [userId], (delErr) => {
+      if (delErr) return res.status(500).json({ error: delErr.message });
       
-      // Convert to object format
-      const visibilityMap = {};
-      visibility.forEach(v => {
-        visibilityMap[v.module_name] = !!v.is_visible;
+      // Insert new permissions
+      const operations = [];
+      
+      Object.entries(permissionSettings).forEach(([moduleName, permissionLevel]) => {
+        // Skip if permission_level is null or empty (means no access)
+        if (!permissionLevel) return;
+        
+        operations.push(new Promise((resolve, reject) => {
+          db.run(
+            `INSERT INTO user_module_permissions 
+             (user_id, module_name, permission_level, created_by, updated_by, created_at, updated_at) 
+             VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [userId, moduleName, permissionLevel, req.user.id, req.user.id],
+            function(err) {
+              if (err) reject(err);
+              else resolve();
+            }
+          );
+        }));
       });
       
-      res.json(visibilityMap);
-    }
-  );
-});
-// Update user module visibility (admin only)
-router.put('/users/:id/module-visibility', authenticateToken, authorizePermission('user_management', 'edit'), (req, res) => {
-  const userId = req.params.id;
-  const visibilitySettings = req.body; // { module_name: boolean, ... }
-  
-  // Start transaction-like behavior by collecting all operations
-  const operations = [];
-  
-  Object.entries(visibilitySettings).forEach(([moduleName, isVisible]) => {
-    operations.push(new Promise((resolve, reject) => {
-      db.run(
-        `INSERT OR REPLACE INTO user_module_visibility 
-         (user_id, module_name, is_visible, updated_by, updated_at) 
-         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-        [userId, moduleName, isVisible ? 1 : 0, req.user.id],
-        function(err) {
-          if (err) reject(err);
-          else resolve();
-        }
-      );
-    }));
-  });
-  
-  Promise.all(operations)
-    .then(() => {
-      // Log the change
-      logChange(req.user.id, 'user_module_visibility', userId, 'UPDATE', null, visibilitySettings, req);
-      res.json({ message: 'Module visibility updated successfully' });
-    })
-    .catch(err => {
-      console.error('Error updating module visibility:', err);
-      res.status(500).json({ error: 'Failed to update module visibility' });
+      Promise.all(operations)
+        .then(() => {
+          // Log each permission change separately
+          Object.entries(permissionSettings).forEach(([moduleName, permissionLevel]) => {
+            logChange(req.user.id, 'user_module_permissions', userId, 'UPDATE', null, {
+              module_name: moduleName,
+              permission_level: permissionLevel,
+              user_id: userId
+            }, req);
+          });
+          
+          res.json({ message: 'Module permissions updated successfully' });
+        })
+        .catch(err => {
+          console.error('Error updating module permissions:', err);
+          res.status(500).json({ error: 'Failed to update module permissions' });
+        });
     });
+  });
 });
 
 // ====================================
@@ -820,7 +863,7 @@ router.put('/users/:id/module-visibility', authenticateToken, authorizePermissio
 // ====================================
 
 // Get change logs (admin, provisioner, and read-only can view with role-based filtering)
-router.get('/change-logs', authenticateToken, authorizePermission('change_logs', 'view'), (req, res) => {
+router.get('/change-logs', authenticateToken, authorizeModulePermission('change_logs', 'read_only'), (req, res) => {
   const { table_name, table_names, user_id, search, limit = 100, offset = 0 } = req.query;
   
   let query = `
@@ -885,7 +928,7 @@ router.get('/change-logs', authenticateToken, authorizePermission('change_logs',
 // ====================================
 
 // Get all carriers
-router.get('/carriers', authenticateToken, authorizePermission('carriers', 'view'), (req, res) => {
+router.get('/carriers', authenticateToken, authorizeModulePermission('carriers', 'read_only'), (req, res) => {
   db.all('SELECT * FROM carriers ORDER BY carrier_name', [], (err, carriers) => {
     if (err) return res.status(500).json({ error: err.message });
     
@@ -937,7 +980,7 @@ router.get('/carriers/search', authenticateToken, (req, res) => {
   );
 });
 // Create carrier
-router.post('/carriers', authenticateToken, authorizePermission('carriers', 'create'), (req, res) => {
+router.post('/carriers', authenticateToken, authorizeModulePermission('carriers', 'provisioner'), (req, res) => {
   const { carrier_name, previously_known_as, status, region } = req.body;
   
   if (!carrier_name) {
@@ -1010,7 +1053,7 @@ router.post('/carriers', authenticateToken, authorizePermission('carriers', 'cre
 });
 
 // Update carrier
-router.put('/carriers/:id', authenticateToken, authorizePermission('carriers', 'edit'), (req, res) => {
+router.put('/carriers/:id', authenticateToken, authorizeModulePermission('carriers', 'provisioner'), (req, res) => {
   const { carrier_name, previously_known_as, status, region } = req.body;
   const carrierId = req.params.id;
   
@@ -1028,6 +1071,9 @@ router.put('/carriers/:id', authenticateToken, authorizePermission('carriers', '
     if (err) return res.status(500).json({ error: err.message });
     if (!oldCarrier) return res.status(404).json({ error: 'Carrier not found' });
     
+    const oldCarrierName = oldCarrier.carrier_name;
+    const carrierNameChanged = oldCarrierName !== carrier_name;
+    
     db.run(
       'UPDATE carriers SET carrier_name = ?, previously_known_as = ?, status = ?, region = ?, updated_by = ? WHERE id = ?',
       [carrier_name, previously_known_as, status, dbRegion, req.user.id, carrierId],
@@ -1040,16 +1086,85 @@ router.put('/carriers/:id', authenticateToken, authorizePermission('carriers', '
         }
         if (this.changes === 0) return res.status(404).json({ error: 'Carrier not found' });
         
+        // If carrier name changed, cascade the update to all dependent tables
+        if (carrierNameChanged) {
+          console.log(`🔄 Cascading carrier name update from "${oldCarrierName}" to "${carrier_name}"`);
+          
+          // Update network_routes.underlying_carrier
+          db.run(
+            'UPDATE network_routes SET underlying_carrier = ? WHERE underlying_carrier = ?',
+            [carrier_name, oldCarrierName],
+            function(err) {
+              if (err) console.error('Failed to update network_routes.underlying_carrier:', err);
+              else if (this.changes > 0) console.log(`✅ Updated ${this.changes} network routes (underlying_carrier)`);
+            }
+          );
+          
+          // Update network_routes.local_loop_carriers_a
+          db.run(
+            'UPDATE network_routes SET local_loop_carriers_a = ? WHERE local_loop_carriers_a = ?',
+            [carrier_name, oldCarrierName],
+            function(err) {
+              if (err) console.error('Failed to update network_routes.local_loop_carriers_a:', err);
+              else if (this.changes > 0) console.log(`✅ Updated ${this.changes} network routes (local_loop_carriers_a)`);
+            }
+          );
+          
+          // Update network_routes.local_loop_carriers_b
+          db.run(
+            'UPDATE network_routes SET local_loop_carriers_b = ? WHERE local_loop_carriers_b = ?',
+            [carrier_name, oldCarrierName],
+            function(err) {
+              if (err) console.error('Failed to update network_routes.local_loop_carriers_b:', err);
+              else if (this.changes > 0) console.log(`✅ Updated ${this.changes} network routes (local_loop_carriers_b)`);
+            }
+          );
+          
+          // Update core_active_outages.underlying_carrier
+          db.run(
+            'UPDATE core_active_outages SET underlying_carrier = ? WHERE underlying_carrier = ?',
+            [carrier_name, oldCarrierName],
+            function(err) {
+              if (err) console.error('Failed to update core_active_outages.underlying_carrier:', err);
+              else if (this.changes > 0) console.log(`✅ Updated ${this.changes} active outages`);
+            }
+          );
+          
+          // Update core_outage_history.underlying_carrier
+          db.run(
+            'UPDATE core_outage_history SET underlying_carrier = ? WHERE underlying_carrier = ?',
+            [carrier_name, oldCarrierName],
+            function(err) {
+              if (err) console.error('Failed to update core_outage_history.underlying_carrier:', err);
+              else if (this.changes > 0) console.log(`✅ Updated ${this.changes} historical outages`);
+            }
+          );
+          
+          // Update latency_warnings_live.underlying_carrier
+          db.run(
+            'UPDATE latency_warnings_live SET underlying_carrier = ? WHERE underlying_carrier = ?',
+            [carrier_name, oldCarrierName],
+            function(err) {
+              if (err) console.error('Failed to update latency_warnings_live.underlying_carrier:', err);
+              else if (this.changes > 0) console.log(`✅ Updated ${this.changes} latency warnings`);
+            }
+          );
+        }
+        
         logChange(req.user.id, 'carriers', oldCarrier.carrier_name, 'UPDATE', oldCarrier, { carrier_name, previously_known_as, status, region }, req);
         
-        res.json({ message: 'Carrier updated successfully' });
+        res.json({ 
+          message: 'Carrier updated successfully',
+          cascaded: carrierNameChanged,
+          oldName: carrierNameChanged ? oldCarrierName : undefined
+        });
       }
     );
   });
 });
 
 // Delete carrier
-router.delete('/carriers/:id', authenticateToken, authorizePermission('carriers', 'delete'), (req, res) => {
+router.delete('/carriers/:id', authenticateToken, authorizeModulePermission('carriers', 'provisioner'), (req, res) => {
   const carrierId = req.params.id;
   
   // First get the carrier name for usage checks
@@ -1125,7 +1240,7 @@ router.delete('/carriers/:id', authenticateToken, authorizePermission('carriers'
 // ====================================
 
 // Get all contacts for a carrier
-router.get('/carriers/:id/contacts', authenticateToken, authorizePermission('carriers', 'view'), (req, res) => {
+router.get('/carriers/:id/contacts', authenticateToken, authorizeModulePermission('carriers', 'read_only'), (req, res) => {
   const carrierId = req.params.id;
   db.all(
     `SELECT cc.*, u.username, u.full_name 
@@ -1142,7 +1257,7 @@ router.get('/carriers/:id/contacts', authenticateToken, authorizePermission('car
 });
 
 // Create carrier contact
-router.post('/carriers/:id/contacts', authenticateToken, authorizePermission('carriers', 'create'), (req, res) => {
+router.post('/carriers/:id/contacts', authenticateToken, authorizeModulePermission('carriers', 'provisioner'), (req, res) => {
   const carrierId = req.params.id;
   const { contact_type, contact_level, contact_name, contact_function, contact_email, contact_phone, notes } = req.body;
   
@@ -1171,7 +1286,7 @@ router.post('/carriers/:id/contacts', authenticateToken, authorizePermission('ca
 });
 
 // Update carrier contact
-router.put('/carriers/:id/contacts/:contactId', authenticateToken, authorizePermission('carriers', 'edit'), (req, res) => {
+router.put('/carriers/:id/contacts/:contactId', authenticateToken, authorizeModulePermission('carriers', 'provisioner'), (req, res) => {
   const carrierId = req.params.id;
   const contactId = req.params.contactId;
   const { contact_type, contact_level, contact_name, contact_function, contact_email, contact_phone, notes } = req.body;
@@ -1197,7 +1312,7 @@ router.put('/carriers/:id/contacts/:contactId', authenticateToken, authorizePerm
 });
 
 // Delete carrier contact
-router.delete('/carriers/:id/contacts/:contactId', authenticateToken, authorizePermission('carriers', 'delete'), (req, res) => {
+router.delete('/carriers/:id/contacts/:contactId', authenticateToken, authorizeModulePermission('carriers', 'provisioner'), (req, res) => {
   const carrierId = req.params.id;
   const contactId = req.params.contactId;
   
@@ -1218,11 +1333,8 @@ router.delete('/carriers/:id/contacts/:contactId', authenticateToken, authorizeP
 });
 
 // Get overdue carrier contacts (365+ days since last update)
-router.get('/carriers/overdue-contacts', authenticateToken, authorizePermission('carriers', 'view'), (req, res) => {
-  // Only admin and provisioner can see overdue contacts
-  if (req.user.role !== 'administrator' && req.user.role !== 'provisioner') {
-    return res.status(403).json({ error: 'Admin or Provisioner access required' });
-  }
+router.get('/carriers/overdue-contacts', authenticateToken, authorizeModulePermission('carriers', 'provisioner'), (req, res) => {
+  // Only provisioners and admins can see overdue contacts (enforced by middleware)
   
   const query = `
     SELECT cc.*, c.carrier_name, c.region,
@@ -1254,11 +1366,8 @@ router.get('/carriers/overdue-contacts', authenticateToken, authorizePermission(
 });
 
 // Approve carrier contact yearly update
-router.post('/carriers/:id/contacts/:contactId/approve', authenticateToken, authorizePermission('carriers', 'edit'), (req, res) => {
-  // Only admin and provisioner can approve updates
-  if (req.user.role !== 'administrator' && req.user.role !== 'provisioner') {
-    return res.status(403).json({ error: 'Admin or Provisioner access required' });
-  }
+router.post('/carriers/:id/contacts/:contactId/approve', authenticateToken, authorizeModulePermission('carriers', 'provisioner'), (req, res) => {
+  // Only provisioners and admins can approve updates (enforced by middleware)
   
   const carrierId = req.params.id;
   const contactId = req.params.contactId;
@@ -1677,7 +1786,7 @@ router.post('/api/external/update-live-latency', (req, res) => {
 });
 
 // Manual refresh endpoint - triggers fetch from external source
-router.post('/api/live-latency/refresh-all', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+router.post('/api/live-latency/refresh-all', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   // TODO: When external API details are available, implement actual API calls here
   // For now, return a clear message that no external source is configured
   
@@ -1692,7 +1801,7 @@ router.post('/api/live-latency/refresh-all', authenticateToken, authorizePermiss
 });
 
 // Get live latency history for a specific circuit
-router.get('/api/live-latency/history/:circuit_id', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+router.get('/api/live-latency/history/:circuit_id', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   const { circuit_id } = req.params;
   const { days = 30 } = req.query; // Default to 30 days
   
@@ -1804,7 +1913,7 @@ router.post('/api/live-latency/create-daily-snapshot', (req, res) => {
 });
 
 // Check live latency data freshness (for frontend error banner)
-router.get('/api/live-latency/status', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+router.get('/api/live-latency/status', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   // Check if any data is older than 24 hours
   db.get(
     `SELECT COUNT(*) as stale_count,
@@ -1835,7 +1944,7 @@ router.get('/api/live-latency/status', authenticateToken, authorizePermission('n
 });
 
 // Get all routes
-router.get('/network_routes', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+router.get('/network_routes', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   const { repository_type_id } = req.query;
   let query = 'SELECT * FROM network_routes';
   let params = [];
@@ -1852,7 +1961,7 @@ router.get('/network_routes', authenticateToken, authorizePermission('network_ro
 });
 
 // Get single route by circuit_id
-router.get('/network_routes/:circuit_id', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+router.get('/network_routes/:circuit_id', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   const { circuit_id } = req.params;
   db.get('SELECT * FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -2065,7 +2174,7 @@ async function validateRowForeignKeys(row, module) {
 }
 
 // Create new route  
-router.post('/network_routes', authenticateToken, authorizePermission('network_routes', 'create'), (req, res) => {
+router.post('/network_routes', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), (req, res) => {
   const data = req.body;
 
   
@@ -2115,7 +2224,7 @@ router.post('/network_routes', authenticateToken, authorizePermission('network_r
   });
 });
 // Update route
-router.put('/network_routes/:circuit_id', authenticateToken, authorizePermission('network_routes', 'edit'), (req, res) => {
+router.put('/network_routes/:circuit_id', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), (req, res) => {
   const { circuit_id } = req.params;
   const data = req.body;
   if (!isValidCircuitId(circuit_id)) {
@@ -2166,7 +2275,7 @@ router.put('/network_routes/:circuit_id', authenticateToken, authorizePermission
 });
 
 // Get route tracking details
-router.get('/network_routes/:circuit_id/tracking', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+router.get('/network_routes/:circuit_id/tracking', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   const { circuit_id } = req.params;
   
   db.get(
@@ -2190,7 +2299,7 @@ router.get('/network_routes/:circuit_id/tracking', authenticateToken, authorizeP
 });
 
 // Delete route
-router.delete('/network_routes/:circuit_id', authenticateToken, authorizePermission('network_routes', 'delete'), (req, res) => {
+router.delete('/network_routes/:circuit_id', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), (req, res) => {
   const { circuit_id } = req.params;
   
   // First check if there are any dark fiber details associated with this circuit
@@ -2225,7 +2334,7 @@ router.delete('/network_routes/:circuit_id', authenticateToken, authorizePermiss
 });
 
 // Upload KMZ file and update kmz_file_path for a circuit_id
-router.post('/network_routes/:circuit_id/upload_kmz', authenticateToken, authorizePermission('network_routes', 'edit'), upload.single('kmz_file'), (req, res) => {
+router.post('/network_routes/:circuit_id/upload_kmz', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), upload.single('kmz_file'), (req, res) => {
   const { circuit_id } = req.params;
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -2257,7 +2366,7 @@ router.post('/network_routes/:circuit_id/upload_kmz', authenticateToken, authori
 });
 
 // Delete KMZ file for a circuit_id
-router.delete('/network_routes/:circuit_id/delete_kmz', authenticateToken, authorizePermission('network_routes', 'edit'), (req, res) => {
+router.delete('/network_routes/:circuit_id/delete_kmz', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), (req, res) => {
   const { circuit_id } = req.params;
   
   // Get current route data for logging and file deletion
@@ -2300,7 +2409,7 @@ router.delete('/network_routes/:circuit_id/delete_kmz', authenticateToken, autho
 });
 
 // Export network_routes as CSV
-router.get('/network_routes_export', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+router.get('/network_routes_export', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   db.all(`SELECT circuit_id, kmz_file_path, live_latency, expected_latency, test_results_link, cable_system, 
           CASE 
             WHEN is_special = 1 THEN 'true'
@@ -2325,7 +2434,7 @@ router.get('/network_routes_export', authenticateToken, authorizePermission('net
 });
 
 // Search/filter network_routes by query params (visible fields only)
-router.get('/network_routes_search', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+router.get('/network_routes_search', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   const allowedFields = ['circuit_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','carrier_protected','carrier_protection_route','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent'];
   const filters = [];
   const values = [];
@@ -2580,7 +2689,7 @@ router.post('/dark_fiber_details/:id/release', authenticateToken, (req, res) => 
 });
 
 // Upload Test Results files (multiple files support)
-router.post('/network_routes/:circuit_id/upload_test_results', authenticateToken, authorizePermission('network_routes', 'edit'), testResultsUpload.array('test_results_files', 10), (req, res) => {
+router.post('/network_routes/:circuit_id/upload_test_results', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), testResultsUpload.array('test_results_files', 10), (req, res) => {
   const { circuit_id } = req.params;
   
   if (!req.files || req.files.length === 0) {
@@ -2645,7 +2754,7 @@ router.post('/network_routes/:circuit_id/upload_test_results', authenticateToken
 });
 
 // Get all test results files for a circuit
-router.get('/network_routes/:circuit_id/test_results_files', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+router.get('/network_routes/:circuit_id/test_results_files', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   const { circuit_id } = req.params;
   db.all('SELECT * FROM test_results_files WHERE circuit_id = ? ORDER BY uploaded_at DESC', [circuit_id], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -2654,7 +2763,7 @@ router.get('/network_routes/:circuit_id/test_results_files', authenticateToken, 
 });
 
 // Download Test Results files as ZIP
-router.get('/network_routes/:circuit_id/download_test_results', authenticateToken, authorizePermission('network_routes', 'view'), (req, res) => {
+router.get('/network_routes/:circuit_id/download_test_results', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   const { circuit_id } = req.params;
   db.all('SELECT * FROM test_results_files WHERE circuit_id = ?', [circuit_id], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -2677,7 +2786,7 @@ router.get('/network_routes/:circuit_id/download_test_results', authenticateToke
 });
 
 // Delete a test results file
-router.delete('/test_results_files/:id', authenticateToken, authorizePermission('network_routes', 'edit'), (req, res) => {
+router.delete('/test_results_files/:id', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), (req, res) => {
   const { id } = req.params;
   db.get('SELECT * FROM test_results_files WHERE id = ?', [id], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -2743,7 +2852,7 @@ router.delete('/test_results_files/:id', authenticateToken, authorizePermission(
 // ====================================
 
 // Get all locations
-router.get('/locations', authenticateToken, authorizePermission('locations', 'view'), (req, res) => {
+router.get('/locations', authenticateToken, authorizeModulePermission('locations', 'read_only'), (req, res) => {
   db.all(
     `SELECT lr.*, u.username, u.full_name 
      FROM location_reference lr 
@@ -2769,7 +2878,7 @@ router.get('/locations', authenticateToken, authorizePermission('locations', 'vi
 });
 
 // Create location
-router.post('/locations', authenticateToken, authorizePermission('locations', 'create'), (req, res) => {
+router.post('/locations', authenticateToken, authorizeModulePermission('locations', 'provisioner'), (req, res) => {
   const { location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info, 
           min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus,
           cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes } = req.body;
@@ -2848,7 +2957,7 @@ router.post('/locations', authenticateToken, authorizePermission('locations', 'c
   );
 });
 // Update location
-router.put('/locations/:id', authenticateToken, authorizePermission('locations', 'edit'), (req, res) => {
+router.put('/locations/:id', authenticateToken, authorizeModulePermission('locations', 'provisioner'), (req, res) => {
   const { region, city, country, datacenter_name, datacenter_address, latitude, longitude, time_zone, pop_type, status, provider, access_info,
           min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus,
           cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes } = req.body;
@@ -2891,7 +3000,7 @@ router.put('/locations/:id', authenticateToken, authorizePermission('locations',
 });
 
 // Get cross connect information for a specific location
-router.get('/locations/:id/cross-connect', authenticateToken, authorizePermission('network_design', 'view'), (req, res) => {
+router.get('/locations/:id/cross-connect', authenticateToken, authorizeModulePermission('network_design', 'read_only'), (req, res) => {
   const locationId = req.params.id;
   
   db.get(
@@ -2919,7 +3028,7 @@ router.get('/locations/:id/cross-connect', authenticateToken, authorizePermissio
 });
 
 // Update cross connect information for a specific location
-router.put('/locations/:id/cross-connect', authenticateToken, authorizePermission('locations', 'edit'), (req, res) => {
+router.put('/locations/:id/cross-connect', authenticateToken, authorizeModulePermission('locations', 'provisioner'), (req, res) => {
   const { cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes } = req.body;
   const locationId = req.params.id;
   
@@ -2965,7 +3074,7 @@ router.put('/locations/:id/cross-connect', authenticateToken, authorizePermissio
 });
 
 // Delete location
-router.delete('/locations/:id', authenticateToken, authorizePermission('locations', 'delete'), (req, res) => {
+router.delete('/locations/:id', authenticateToken, authorizeModulePermission('locations', 'provisioner'), (req, res) => {
   const locationId = req.params.id;
   
   // Get location data for change logging
@@ -2973,24 +3082,47 @@ router.delete('/locations/:id', authenticateToken, authorizePermission('location
     if (err) return res.status(500).json({ error: err.message });
     if (!location) return res.status(404).json({ error: 'Location not found' });
     
-    db.run('DELETE FROM location_reference WHERE id = ?', [locationId], function(err) {
+    // Check if location is used in network routes
+    const popCode = location.location_code;
+    const query = `
+      SELECT circuit_id, point_a, point_b
+      FROM network_routes 
+      WHERE point_a = ? OR point_b = ?
+    `;
+    
+    db.all(query, [popCode, popCode], (err, routes) => {
       if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
       
-      logChange(req.user.id, 'location_reference', location.location_code, 'DELETE', location, null, req);
+      if (routes && routes.length > 0) {
+        // Limit examples to first 5 routes for readability
+        const exampleRoutes = routes.slice(0, 5).map(route => route.circuit_id);
+        const moreCount = routes.length > 5 ? routes.length - 5 : 0;
+        
+        let errorMessage = `Cannot delete location '${popCode}'. It is currently used in ${routes.length} network route${routes.length > 1 ? 's' : ''}.`;
+        errorMessage += `\n\nExample routes: ${exampleRoutes.join(', ')}`;
+        if (moreCount > 0) {
+          errorMessage += `\nand ${moreCount} more...`;
+        }
+        errorMessage += `\n\nPlease update or remove these network routes first.`;
+        
+        return res.status(400).json({ error: errorMessage });
+      }
       
-      res.json({ message: 'Location deleted' });
+      // No dependencies found, proceed with deletion
+      db.run('DELETE FROM location_reference WHERE id = ?', [locationId], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
+        
+        logChange(req.user.id, 'location_reference', location.location_code, 'DELETE', location, null, req);
+        
+        res.json({ message: 'Location deleted' });
+      });
     });
   });
 });
 
 // Update minimum pricing for a location (admin only)
-router.put('/locations/:id/minimum-pricing', authenticateToken, (req, res) => {
-  // Check if user is admin
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
+router.put('/locations/:id/minimum-pricing', authenticateToken, authorizeRole('administrator'), (req, res) => {
   const { min_price_under_100mb, min_price_100_to_999mb, min_price_1000_to_2999mb, min_price_3000mb_plus } = req.body;
   const locationId = req.params.id;
   
@@ -3022,7 +3154,7 @@ router.put('/locations/:id/minimum-pricing', authenticateToken, (req, res) => {
 // ====================================
 
 // Get POP capabilities for a location
-router.get('/locations/:id/capabilities', authenticateToken, authorizePermission('locations', 'view'), (req, res) => {
+router.get('/locations/:id/capabilities', authenticateToken, authorizeModulePermission('locations', 'read_only'), (req, res) => {
   db.get('SELECT * FROM pop_capabilities WHERE location_id = ?', [req.params.id], (err, capabilities) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!capabilities) {
@@ -3050,7 +3182,7 @@ router.get('/locations/:id/capabilities', authenticateToken, authorizePermission
 });
 
 // Create or update POP capabilities
-router.post('/locations/:id/capabilities', authenticateToken, authorizePermission('locations', 'edit'), (req, res) => {
+router.post('/locations/:id/capabilities', authenticateToken, authorizeModulePermission('locations', 'provisioner'), (req, res) => {
   const locationId = req.params.id;
   const capabilities = req.body;
   
@@ -3125,12 +3257,19 @@ router.get('/exchange_rates', (req, res) => {
 
 router.post('/exchange_rates', authenticateToken, (req, res) => {
   const { currency_code, exchange_rate, updated_by } = req.body;
-  const nextUpdate = new Date();
-  nextUpdate.setDate(nextUpdate.getDate() + 30);
+  
+  // USD is the base currency and doesn't require monthly updates
+  // Set next_update_due to NULL for USD, 30 days for other currencies
+  let nextUpdate = null;
+  if (currency_code !== 'USD') {
+    nextUpdate = new Date();
+    nextUpdate.setDate(nextUpdate.getDate() + 30);
+    nextUpdate = nextUpdate.toISOString();
+  }
   
   db.run(
     'INSERT INTO exchange_rates (currency_code, exchange_rate, next_update_due, updated_by) VALUES (?, ?, ?, ?)',
-    [currency_code, exchange_rate, nextUpdate.toISOString(), updated_by || req.user.id],
+    [currency_code, exchange_rate, nextUpdate, updated_by || req.user.id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
@@ -3143,7 +3282,7 @@ router.post('/exchange_rates', authenticateToken, (req, res) => {
       // Log the creation with proper error handling
       try {
         logChange(req.user.id, 'exchange_rates', logRecordId, 'CREATE', null, {
-          currency_code, exchange_rate, next_update_due: nextUpdate.toISOString(), updated_by: updated_by || req.user.id
+          currency_code, exchange_rate, next_update_due: nextUpdate, updated_by: updated_by || req.user.id
         }, req);
       } catch (logError) {
         console.error('Failed to log exchange rate creation:', logError);
@@ -3156,24 +3295,31 @@ router.post('/exchange_rates', authenticateToken, (req, res) => {
 
 router.put('/exchange_rates/:id', authenticateToken, (req, res) => {
   const { exchange_rate, updated_by } = req.body;
-  const nextUpdate = new Date();
-  nextUpdate.setDate(nextUpdate.getDate() + 30);
   
   // Get old values for change logging
   db.get('SELECT * FROM exchange_rates WHERE id = ?', [req.params.id], (err, oldValues) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!oldValues) return res.status(404).json({ error: 'Exchange rate not found' });
     
+    // USD is the base currency and doesn't require monthly updates
+    // Set next_update_due to NULL for USD, 30 days for other currencies
+    let nextUpdate = null;
+    if (oldValues.currency_code !== 'USD') {
+      nextUpdate = new Date();
+      nextUpdate.setDate(nextUpdate.getDate() + 30);
+      nextUpdate = nextUpdate.toISOString();
+    }
+    
     db.run(
       'UPDATE exchange_rates SET exchange_rate = ?, last_updated = CURRENT_TIMESTAMP, next_update_due = ?, updated_by = ? WHERE id = ?',
-      [exchange_rate, nextUpdate.toISOString(), updated_by || req.user.id, req.params.id],
+      [exchange_rate, nextUpdate, updated_by || req.user.id, req.params.id],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Exchange rate not found' });
         
         // Log the update
         logChange(req.user.id, 'exchange_rates', req.params.id, 'UPDATE', oldValues, {
-          exchange_rate, next_update_due: nextUpdate.toISOString(), updated_by: updated_by || req.user.id
+          exchange_rate, next_update_due: nextUpdate, updated_by: updated_by || req.user.id
         }, req);
         
         res.json({ message: 'Exchange rate updated' });
@@ -3182,7 +3328,7 @@ router.put('/exchange_rates/:id', authenticateToken, (req, res) => {
   });
 });
 
-router.delete('/exchange_rates/:id', authenticateToken, authorizePermission('exchange_rates', 'delete'), (req, res) => {
+router.delete('/exchange_rates/:id', authenticateToken, authorizeModulePermission('exchange_rates', 'provisioner'), (req, res) => {
   const rateId = req.params.id;
   
   // Get the exchange rate details for validation and logging
@@ -4385,50 +4531,63 @@ router.delete('/network_design/saved_searches/:id', authenticateToken, (req, res
 });
 
 // Get audit logs for Network Design Tool
-router.get('/network_design/audit_logs', authenticateToken, (req, res) => {
-  // Check if user can view logs (not read-only)
-  if (req.user.role === 'read_only') {
-    return res.status(403).json({ error: 'Access denied. Read-only users cannot view audit logs.' });
-  }
-
+router.get('/network_design/audit_logs', authenticateToken, authorizeModulePermission('network_design', 'read_only'), (req, res) => {
   const { limit = 100, offset = 0, action_type } = req.query;
   
-  let query = 'SELECT * FROM audit_logs';
-  let params = [];
-  
-  if (action_type) {
-    query += ' WHERE action_type = ?';
-    params.push(action_type);
-  }
-  
-  query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
-  params.push(parseInt(limit), parseInt(offset));
-  
-  db.all(query, params, (err, rows) => {
+  // Check user's permission level to determine filtering
+  getUserModulePermissions(req.user.id, (err, permissions) => {
     if (err) {
-      console.error('Error fetching audit logs:', err);
-      return res.status(500).json({ error: err.message });
+      console.error('Error checking permissions:', err);
+      return res.status(500).json({ error: 'Permission check failed' });
     }
     
-    const logs = rows.map(row => ({
-      ...row,
-      parameters: row.parameters ? JSON.parse(row.parameters) : null,
-      results: row.results ? JSON.parse(row.results) : null,
-      pricing_data: row.pricing_data ? JSON.parse(row.pricing_data) : null
-    }));
-    res.json(logs);
+    const userPermission = permissions['network_design'];
+    const isReadOnly = userPermission === 'read_only';
+    
+    let query = 'SELECT * FROM audit_logs';
+    let params = [];
+    let conditions = [];
+    
+    // Read-only users can only see their own logs
+    if (isReadOnly) {
+      conditions.push('user_id = ?');
+      params.push(req.user.id);
+    }
+    
+    // Filter by action type if provided
+    if (action_type) {
+      conditions.push('action_type = ?');
+      params.push(action_type);
+    }
+    
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    
+    query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(limit), parseInt(offset));
+    
+    db.all(query, params, (err, rows) => {
+      if (err) {
+        console.error('Error fetching audit logs:', err);
+        return res.status(500).json({ error: err.message });
+      }
+      
+      const logs = rows.map(row => ({
+        ...row,
+        parameters: row.parameters ? JSON.parse(row.parameters) : null,
+        results: row.results ? JSON.parse(row.results) : null,
+        pricing_data: row.pricing_data ? JSON.parse(row.pricing_data) : null
+      }));
+      res.json(logs);
+    });
   });
 });
 
 
 
 // Clear audit logs (Admin only)
-router.delete('/network_design/audit_logs', authenticateToken, (req, res) => {
-  // Check permissions
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Access denied. Only administrators can clear audit logs.' });
-  }
-
+router.delete('/network_design/audit_logs', authenticateToken, authorizeRole('administrator'), (req, res) => {
   db.run('DELETE FROM audit_logs', [], function(err) {
     if (err) {
       console.error('Error clearing audit logs:', err);
@@ -4449,12 +4608,7 @@ router.delete('/network_design/audit_logs', authenticateToken, (req, res) => {
 });
 
 // Export audit logs to CSV (Admin only)
-router.get('/network_design/audit_logs/export', authenticateToken, (req, res) => {
-  // Check permissions
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Access denied. Only administrators can export audit logs.' });
-  }
-
+router.get('/network_design/audit_logs/export', authenticateToken, authorizeRole('administrator'), (req, res) => {
   db.all('SELECT * FROM audit_logs ORDER BY timestamp DESC', [], (err, rows) => {
     if (err) {
       console.error('Error exporting audit logs:', err);
@@ -4651,7 +4805,7 @@ const colocationUpload = multer({
 });
 
 // Get all locations with CNX Colocation enabled
-router.get('/cnx-colocation/locations', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+router.get('/cnx-colocation/locations', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
   const query = `
     SELECT lr.*, pc.cnx_colocation
     FROM location_reference lr
@@ -4667,7 +4821,7 @@ router.get('/cnx-colocation/locations', authenticateToken, authorizePermission('
 });
 
 // Update CNX Colocation location (design file and more info only)
-router.put('/cnx-colocation/locations/:id', authenticateToken, authorizePermission('cnx_colocation', 'edit'), colocationUpload.single('design_file'), (req, res) => {
+router.put('/cnx-colocation/locations/:id', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('design_file'), (req, res) => {
   const locationId = req.params.id;
   const { more_info } = req.body;
   
@@ -4729,7 +4883,7 @@ router.put('/cnx-colocation/locations/:id', authenticateToken, authorizePermissi
 // ====================================
 
 // Get racks for a location
-router.get('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+router.get('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
   const locationId = req.params.locationId;
   
   const query = `
@@ -4753,7 +4907,7 @@ router.get('/cnx-colocation/locations/:locationId/racks', authenticateToken, aut
 });
 
 // Create rack
-router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizePermission('cnx_colocation', 'create'), colocationUpload.single('pricing_info_file'), (req, res) => {
+router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('pricing_info_file'), (req, res) => {
   const locationId = req.params.locationId;
   const { rack_id, total_power_kva, network_infrastructure, more_info } = req.body;
   
@@ -4795,7 +4949,7 @@ router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, au
 });
 
 // Update rack
-router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizePermission('cnx_colocation', 'edit'), colocationUpload.single('pricing_info_file'), (req, res) => {
+router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('pricing_info_file'), (req, res) => {
   const rackId = req.params.rackId;
   const { rack_id, total_power_kva, network_infrastructure, more_info } = req.body;
   
@@ -4853,7 +5007,7 @@ router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizePermissi
 });
 
 // Delete rack
-router.delete('/cnx-colocation/racks/:rackId', authenticateToken, authorizePermission('cnx_colocation', 'delete'), (req, res) => {
+router.delete('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
   const rackId = req.params.rackId;
   
   // Get rack data before deletion
@@ -4894,7 +5048,7 @@ router.delete('/cnx-colocation/racks/:rackId', authenticateToken, authorizePermi
 // ====================================
 
 // Get clients for a rack
-router.get('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+router.get('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
   const rackId = req.params.rackId;
   
   db.all(
@@ -4912,7 +5066,7 @@ router.get('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorize
 });
 
 // Create client
-router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizePermission('cnx_colocation', 'create'), colocationUpload.single('client_design_file'), (req, res) => {
+router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('client_design_file'), (req, res) => {
   const rackId = req.params.rackId;
   const { client_name, power_purchased, ru_purchased, more_info } = req.body;
   
@@ -4968,7 +5122,7 @@ router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authoriz
 });
 
 // Update client
-router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizePermission('cnx_colocation', 'edit'), colocationUpload.single('client_design_file'), (req, res) => {
+router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('client_design_file'), (req, res) => {
   const clientId = req.params.clientId;
   const { client_name, power_purchased, ru_purchased, more_info } = req.body;
   
@@ -5042,7 +5196,7 @@ router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizePerm
 });
 
 // Delete client
-router.delete('/cnx-colocation/clients/:clientId', authenticateToken, authorizePermission('cnx_colocation', 'delete'), (req, res) => {
+router.delete('/cnx-colocation/clients/:clientId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
   const clientId = req.params.clientId;
   
   // Get client data before deletion
@@ -5074,7 +5228,7 @@ router.delete('/cnx-colocation/clients/:clientId', authenticateToken, authorizeP
 // ====================================
 
 // Download location design file
-router.get('/cnx-colocation/locations/:id/download', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+router.get('/cnx-colocation/locations/:id/download', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
   const locationId = req.params.id;
   
   db.get('SELECT design_file FROM location_reference WHERE id = ?', [locationId], (err, location) => {
@@ -5105,7 +5259,7 @@ router.get('/cnx-colocation/locations/:id/download', authenticateToken, authoriz
 });
 
 // Download rack pricing file
-router.get('/cnx-colocation/racks/:id/download', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+router.get('/cnx-colocation/racks/:id/download', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
   const rackId = req.params.id;
   
   db.get('SELECT pricing_info_file FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
@@ -5136,7 +5290,7 @@ router.get('/cnx-colocation/racks/:id/download', authenticateToken, authorizePer
 });
 
 // Download client design file
-router.get('/cnx-colocation/clients/:id/download', authenticateToken, authorizePermission('cnx_colocation', 'view'), (req, res) => {
+router.get('/cnx-colocation/clients/:id/download', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
   const clientId = req.params.id;
   
   db.get('SELECT design_file FROM cnx_colocation_clients WHERE id = ?', [clientId], (err, client) => {
@@ -5167,7 +5321,7 @@ router.get('/cnx-colocation/clients/:id/download', authenticateToken, authorizeP
 });
 
 // Delete location design file
-router.delete('/cnx-colocation/locations/:id/design-file', authenticateToken, authorizePermission('cnx_colocation', 'edit'), (req, res) => {
+router.delete('/cnx-colocation/locations/:id/design-file', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
   const locationId = req.params.id;
   
   db.get('SELECT design_file FROM location_reference WHERE id = ?', [locationId], (err, location) => {
@@ -5190,7 +5344,7 @@ router.delete('/cnx-colocation/locations/:id/design-file', authenticateToken, au
   });
 });
 // Delete rack pricing file
-router.delete('/cnx-colocation/racks/:id/pricing-file', authenticateToken, authorizePermission('cnx_colocation', 'edit'), (req, res) => {
+router.delete('/cnx-colocation/racks/:id/pricing-file', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
   const rackId = req.params.id;
   
   db.get('SELECT pricing_info_file FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
@@ -5214,7 +5368,7 @@ router.delete('/cnx-colocation/racks/:id/pricing-file', authenticateToken, autho
 });
 
 // Delete client design file
-router.delete('/cnx-colocation/clients/:id/design-file', authenticateToken, authorizePermission('cnx_colocation', 'edit'), (req, res) => {
+router.delete('/cnx-colocation/clients/:id/design-file', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
   const clientId = req.params.id;
   
   db.get('SELECT design_file FROM cnx_colocation_clients WHERE id = ?', [clientId], (err, client) => {
@@ -5269,7 +5423,7 @@ const exchangeUpload = multer({
 });
 
 // Get all exchanges
-router.get('/exchanges', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+router.get('/exchanges', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
   const { search, region, available } = req.query;
   
   let sql = 'SELECT * FROM exchanges WHERE 1=1';
@@ -5299,7 +5453,7 @@ router.get('/exchanges', authenticateToken, authorizePermission('exchange_data',
 });
 
 // Create exchange (admin only)
-router.post('/exchanges', authenticateToken, authorizePermission('exchange_data', 'create'), (req, res) => {
+router.post('/exchanges', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
   const { exchange_name, region, available, salesperson_assigned } = req.body;
   
   if (!exchange_name || !region) {
@@ -5338,7 +5492,7 @@ router.post('/exchanges', authenticateToken, authorizePermission('exchange_data'
 });
 
 // Update exchange (admin only)
-router.put('/exchanges/:id', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+router.put('/exchanges/:id', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
   const { exchange_name, region, available, salesperson_assigned } = req.body;
   const exchangeId = req.params.id;
   
@@ -5377,7 +5531,7 @@ router.put('/exchanges/:id', authenticateToken, authorizePermission('exchange_da
 });
 
 // Delete exchange (admin only, only if no feeds or contacts)
-router.delete('/exchanges/:id', authenticateToken, authorizePermission('exchange_data', 'delete'), (req, res) => {
+router.delete('/exchanges/:id', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
   const exchangeId = req.params.id;
   
   // Check if exchange has feeds or contacts
@@ -5413,7 +5567,7 @@ router.delete('/exchanges/:id', authenticateToken, authorizePermission('exchange
 });
 
 // Get exchange feeds for a specific exchange
-router.get('/exchanges/:id/feeds', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+router.get('/exchanges/:id/feeds', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
   const exchangeId = req.params.id;
   const { search } = req.query;
   
@@ -5433,7 +5587,7 @@ router.get('/exchanges/:id/feeds', authenticateToken, authorizePermission('excha
   });
 });
 // Create exchange feed
-router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exchange_data', 'edit'), exchangeUpload.single('design_file'), (req, res) => {
+router.post('/exchanges/:id/feeds', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), exchangeUpload.single('design_file'), (req, res) => {
   const exchangeId = req.params.id;
   const {
     feed_name, feed_delivery, feed_type, isf_enabled, 
@@ -5548,7 +5702,7 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizePermission('exch
 });
 
 // Update exchange feed
-router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizePermission('exchange_data', 'edit'), exchangeUpload.single('design_file'), (req, res) => {
+router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), exchangeUpload.single('design_file'), (req, res) => {
   const { exchangeId, feedId } = req.params;
   const {
     feed_name, feed_delivery, feed_type, isf_enabled,
@@ -5655,7 +5809,7 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeP
 });
 
 // Get exchange feed tracking details
-router.get('/exchanges/:exchangeId/feeds/:feedId/tracking', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+router.get('/exchanges/:exchangeId/feeds/:feedId/tracking', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
   const { exchangeId, feedId } = req.params;
   
   db.get(
@@ -5679,7 +5833,7 @@ router.get('/exchanges/:exchangeId/feeds/:feedId/tracking', authenticateToken, a
 });
 
 // Delete exchange feed
-router.delete('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+router.delete('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
   const { exchangeId, feedId } = req.params;
   
   // Get current feed data for change logging and file cleanup
@@ -5707,7 +5861,7 @@ router.delete('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authori
 });
 
 // Download exchange design file
-router.get('/exchanges/:exchangeId/feeds/:feedId/download', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+router.get('/exchanges/:exchangeId/feeds/:feedId/download', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
   const { exchangeId, feedId } = req.params;
   
   db.get('SELECT design_file_path FROM exchange_feeds WHERE id = ? AND exchange_id = ?', [feedId, exchangeId], (err, feed) => {
@@ -5726,7 +5880,7 @@ router.get('/exchanges/:exchangeId/feeds/:feedId/download', authenticateToken, a
 });
 
 // Delete exchange feed design file only
-router.delete('/exchanges/:exchangeId/feeds/:feedId/design-file', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+router.delete('/exchanges/:exchangeId/feeds/:feedId/design-file', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
   const { exchangeId, feedId } = req.params;
   
   db.get('SELECT design_file_path FROM exchange_feeds WHERE id = ? AND exchange_id = ?', [feedId, exchangeId], (err, feed) => {
@@ -5755,7 +5909,7 @@ router.delete('/exchanges/:exchangeId/feeds/:feedId/design-file', authenticateTo
 });
 
 // Get exchange contacts for a specific exchange
-router.get('/exchanges/:id/contacts', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+router.get('/exchanges/:id/contacts', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
   const exchangeId = req.params.id;
   
   db.all(
@@ -5773,7 +5927,7 @@ router.get('/exchanges/:id/contacts', authenticateToken, authorizePermission('ex
 });
 
 // Create exchange contact
-router.post('/exchanges/:id/contacts', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+router.post('/exchanges/:id/contacts', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
   const exchangeId = req.params.id;
   const {
     contact_name, job_title, country, phone_number, email,
@@ -5818,7 +5972,7 @@ router.post('/exchanges/:id/contacts', authenticateToken, authorizePermission('e
 });
 
 // Update exchange contact
-router.put('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+router.put('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
   const { exchangeId, contactId } = req.params;
   const {
     contact_name, job_title, country, phone_number, email,
@@ -5855,7 +6009,7 @@ router.put('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, auth
 });
 
 // Delete exchange contact
-router.delete('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+router.delete('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
   const { exchangeId, contactId } = req.params;
   
   // Get current contact data for change logging
@@ -5875,7 +6029,7 @@ router.delete('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, a
 });
 
 // Get overdue exchange contacts (365+ days without update)
-router.get('/exchanges/overdue-contacts', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+router.get('/exchanges/overdue-contacts', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
   const sql = `
     SELECT 
       ec.*,
@@ -5894,7 +6048,7 @@ router.get('/exchanges/overdue-contacts', authenticateToken, authorizePermission
   });
 });
 // Approve exchange contact yearly update
-router.post('/exchanges/:exchangeId/contacts/:contactId/approve', authenticateToken, authorizePermission('exchange_data', 'edit'), (req, res) => {
+router.post('/exchanges/:exchangeId/contacts/:contactId/approve', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
   const { exchangeId, contactId } = req.params;
   
   // Get current contact data for change logging
@@ -5924,7 +6078,7 @@ router.post('/exchanges/:exchangeId/contacts/:contactId/approve', authenticateTo
 });
 
 // Get available currencies from exchange_rates table
-router.get('/exchange-currencies', authenticateToken, authorizePermission('exchange_data', 'view'), (req, res) => {
+router.get('/exchange-currencies', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
   db.all('SELECT currency_code, currency_name FROM exchange_rates ORDER BY currency_code', [], (err, currencies) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(currencies);
@@ -6129,6 +6283,25 @@ const bulkUploadModules = {
       password_reset_required: 'true'
     }
   },
+  live_latency_config: {
+    table: 'live_latency_config',
+    templateFields: [
+      'circuit_id', 'enabled', 'api_base_url', 'api_instance_name', 'api_indicator',
+      'auth_username', 'auth_password', 'update_interval_minutes', 'api_parameters'
+    ],
+    requiredFields: ['circuit_id', 'api_base_url', 'api_instance_name'],
+    sampleData: {
+      circuit_id: 'LONNYC123456',
+      enabled: 'true',
+      api_base_url: 'https://api.example.com/latency',
+      api_instance_name: 'LONNYC_Circuit_1',
+      api_indicator: 'AnyVendor - Response Time (ms) - BPI',
+      auth_username: 'api_user',
+      auth_password: 'your_api_password',
+      update_interval_minutes: '15',
+      api_parameters: ''
+    }
+  },
   // Add missing bulk upload modules
   carrier_contacts: {
     table: 'carrier_contacts',
@@ -6202,6 +6375,23 @@ const bulkUploadModules = {
       region: 'North America',
       salesperson_assigned: 'John Smith',
       available: 'true'
+    }
+  },
+  promo_pricing: {
+    table: 'promo_pricing_rules',
+    templateFields: [
+      'rule_name', 'source_locations', 'destination_locations',
+      'price_under_100mb', 'price_100_to_999mb', 'price_1000_to_2999mb', 'price_3000mb_plus'
+    ],
+    requiredFields: ['rule_name', 'source_locations', 'destination_locations'],
+    sampleData: {
+      rule_name: 'Sample Promo Rule',
+      source_locations: 'LONLON,NYCNYC',
+      destination_locations: 'TOKTOK,HKGHKG',
+      price_under_100mb: '100',
+      price_100_to_999mb: '500',
+      price_1000_to_2999mb: '1500',
+      price_3000mb_plus: '3000'
     }
   },
 };
@@ -6318,6 +6508,34 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
              END as carrier_protected,
              carrier_protection_route
              FROM ${config.table} LIMIT ?`;
+  } else if (module === 'live_latency_config') {
+    // Export configs with password placeholder (never expose actual passwords)
+    query = `SELECT 
+             circuit_id, 
+             CASE WHEN enabled = 1 THEN 'true' ELSE 'false' END as enabled,
+             api_base_url, api_instance_name, api_indicator,
+             auth_username, 
+             CASE 
+               WHEN auth_password_encrypted IS NOT NULL THEN '****ENCRYPTED****'
+               ELSE ''
+             END as auth_password,
+             update_interval_minutes, api_parameters
+             FROM ${config.table} 
+             ORDER BY circuit_id 
+             LIMIT ?`;
+  } else if (module === 'promo_pricing') {
+    // Export promo pricing rules with comma-separated locations
+    query = `SELECT 
+             pr.rule_name,
+             GROUP_CONCAT(CASE WHEN pl.location_type = 'source' THEN pl.location_code END) as source_locations,
+             GROUP_CONCAT(CASE WHEN pl.location_type = 'destination' THEN pl.location_code END) as destination_locations,
+             pr.price_under_100mb, pr.price_100_to_999mb, pr.price_1000_to_2999mb, pr.price_3000mb_plus
+             FROM promo_pricing_rules pr
+             LEFT JOIN promo_pricing_locations pl ON pr.id = pl.promo_rule_id
+             WHERE pr.is_active = 1
+             GROUP BY pr.id
+             ORDER BY pr.rule_name
+             LIMIT ?`;
   }
   
   db.all(query, queryParams, (err, rows) => {
@@ -6909,6 +7127,287 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               insertErrors.push(`Row ${index + 1}: Database error checking for duplicates - ${dbError.message}`);
               continue; // Skip this row and continue with next
             }
+          } else if (module === 'live_latency_config') {
+            try {
+              const LiveLatencyService = require('./liveLatencyService');
+              const latencyService = new LiveLatencyService();
+              
+              // Validate circuit_id format
+              if (!isValidCircuitId(cleanRow.circuit_id)) {
+                insertErrors.push(`Row ${index + 1}: Invalid circuit_id format. Must be 6 uppercase letters followed by 6 digits.`);
+                continue;
+              }
+              
+              // Check if circuit exists in network_routes
+              const routeExists = await new Promise((resolve, reject) => {
+                db.get('SELECT circuit_id FROM network_routes WHERE circuit_id = ?', [cleanRow.circuit_id], (err, row) => {
+                  if (err) reject(err);
+                  else resolve(!!row);
+                });
+              });
+              
+              if (!routeExists) {
+                insertErrors.push(`Row ${index + 1}: Circuit ID "${cleanRow.circuit_id}" not found in network routes database.`);
+                continue;
+              }
+              
+              // Convert enabled string to integer
+              if (cleanRow.enabled === 'true' || cleanRow.enabled === '1' || cleanRow.enabled === 1) {
+                cleanRow.enabled = 1;
+              } else {
+                cleanRow.enabled = 0;
+              }
+              
+              // Set defaults
+              if (!cleanRow.api_indicator) {
+                cleanRow.api_indicator = 'AnyVendor - Response Time (ms) - BPI';
+              }
+              if (!cleanRow.update_interval_minutes) {
+                cleanRow.update_interval_minutes = 15;
+              }
+              
+              // Encrypt password if provided and not already placeholder
+              let encryptedPassword = null;
+              if (cleanRow.auth_password && cleanRow.auth_password !== '****ENCRYPTED****' && cleanRow.auth_password.trim() !== '') {
+                encryptedPassword = latencyService.encryptPassword(cleanRow.auth_password);
+              }
+              
+              // Check for existing configuration
+              const existingConfig = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT id, auth_password_encrypted FROM live_latency_config WHERE circuit_id = ?',
+                  [cleanRow.circuit_id],
+                  (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                  }
+                );
+              });
+              
+              if (existingConfig) {
+                // Update existing configuration
+                const updateFields = [];
+                const updateValues = [];
+                
+                if (cleanRow.enabled !== undefined) {
+                  updateFields.push('enabled = ?');
+                  updateValues.push(cleanRow.enabled);
+                }
+                if (cleanRow.api_base_url) {
+                  updateFields.push('api_base_url = ?');
+                  updateValues.push(cleanRow.api_base_url);
+                }
+                if (cleanRow.api_instance_name) {
+                  updateFields.push('api_instance_name = ?');
+                  updateValues.push(cleanRow.api_instance_name);
+                }
+                if (cleanRow.api_indicator) {
+                  updateFields.push('api_indicator = ?');
+                  updateValues.push(cleanRow.api_indicator);
+                }
+                if (cleanRow.auth_username !== undefined) {
+                  updateFields.push('auth_username = ?');
+                  updateValues.push(cleanRow.auth_username);
+                }
+                if (encryptedPassword) {
+                  updateFields.push('auth_password_encrypted = ?');
+                  updateValues.push(encryptedPassword);
+                } else if (cleanRow.auth_password === '') {
+                  // Clear password if empty string provided
+                  updateFields.push('auth_password_encrypted = ?');
+                  updateValues.push(null);
+                }
+                if (cleanRow.update_interval_minutes) {
+                  updateFields.push('update_interval_minutes = ?');
+                  updateValues.push(cleanRow.update_interval_minutes);
+                }
+                if (cleanRow.api_parameters !== undefined) {
+                  updateFields.push('api_parameters = ?');
+                  updateValues.push(cleanRow.api_parameters);
+                }
+                
+                updateFields.push('updated_by = ?', 'updated_at = CURRENT_TIMESTAMP');
+                updateValues.push(req.user.id);
+                updateValues.push(existingConfig.id);
+                
+                sql = `UPDATE live_latency_config SET ${updateFields.join(', ')} WHERE id = ?`;
+                values = updateValues;
+              } else {
+                // Insert new configuration
+                sql = `INSERT INTO live_latency_config 
+                       (circuit_id, enabled, api_base_url, api_instance_name, api_indicator, 
+                        auth_username, auth_password_encrypted, update_interval_minutes, api_parameters,
+                        created_by, updated_by) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                values = [
+                  cleanRow.circuit_id,
+                  cleanRow.enabled,
+                  cleanRow.api_base_url,
+                  cleanRow.api_instance_name,
+                  cleanRow.api_indicator,
+                  cleanRow.auth_username,
+                  encryptedPassword,
+                  cleanRow.update_interval_minutes,
+                  cleanRow.api_parameters,
+                  req.user.id,
+                  req.user.id
+                ];
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error - ${dbError.message}`);
+              continue; // Skip this row and continue with next
+            }
+          } else if (module === 'promo_pricing') {
+            try {
+              // Validate required fields
+              if (!cleanRow.rule_name || !cleanRow.source_locations || !cleanRow.destination_locations) {
+                insertErrors.push(`Row ${index + 1}: Missing required fields (rule_name, source_locations, destination_locations)`);
+                continue;
+              }
+              
+              // Parse comma-separated locations
+              const sourceLocations = cleanRow.source_locations.split(',').map(loc => loc.trim()).filter(loc => loc);
+              const destinationLocations = cleanRow.destination_locations.split(',').map(loc => loc.trim()).filter(loc => loc);
+              
+              if (sourceLocations.length === 0 || destinationLocations.length === 0) {
+                insertErrors.push(`Row ${index + 1}: Source and destination locations cannot be empty`);
+                continue;
+              }
+              
+              // Parse prices (default to 0 if not provided)
+              const priceUnder100mb = parseFloat(cleanRow.price_under_100mb) || 0;
+              const price100to999mb = parseFloat(cleanRow.price_100_to_999mb) || 0;
+              const price1000to2999mb = parseFloat(cleanRow.price_1000_to_2999mb) || 0;
+              const price3000mbPlus = parseFloat(cleanRow.price_3000mb_plus) || 0;
+              
+              // Check if rule with this name already exists
+              const existingRule = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT id FROM promo_pricing_rules WHERE rule_name = ? AND is_active = 1',
+                  [cleanRow.rule_name],
+                  (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                  }
+                );
+              });
+              
+              if (existingRule) {
+                // Update existing rule
+                await new Promise((resolve, reject) => {
+                  db.run(
+                    `UPDATE promo_pricing_rules 
+                     SET price_under_100mb = ?, price_100_to_999mb = ?, price_1000_to_2999mb = ?, price_3000mb_plus = ?,
+                         updated_by = ?, updated_at = CURRENT_TIMESTAMP
+                     WHERE id = ?`,
+                    [priceUnder100mb, price100to999mb, price1000to2999mb, price3000mbPlus, req.user.id, existingRule.id],
+                    (err) => {
+                      if (err) reject(err);
+                      else resolve();
+                    }
+                  );
+                });
+                
+                // Delete existing location mappings
+                await new Promise((resolve, reject) => {
+                  db.run('DELETE FROM promo_pricing_locations WHERE promo_rule_id = ?', [existingRule.id], (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                  });
+                });
+                
+                // Insert new location mappings
+                for (const location of sourceLocations) {
+                  await new Promise((resolve, reject) => {
+                    db.run(
+                      'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                      [existingRule.id, location, 'source'],
+                      (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                      }
+                    );
+                  });
+                }
+                
+                for (const location of destinationLocations) {
+                  await new Promise((resolve, reject) => {
+                    db.run(
+                      'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                      [existingRule.id, location, 'destination'],
+                      (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                      }
+                    );
+                  });
+                }
+                
+                // Skip INSERT - we updated instead
+                continue;
+              } else {
+                // Insert new rule
+                await new Promise((resolve, reject) => {
+                  db.run(
+                    `INSERT INTO promo_pricing_rules 
+                     (rule_name, price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus, 
+                      is_active, created_by, updated_by) 
+                     VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+                    [cleanRow.rule_name, priceUnder100mb, price100to999mb, price1000to2999mb, price3000mbPlus, req.user.id, req.user.id],
+                    function(err) {
+                      if (err) reject(err);
+                      else resolve();
+                    }
+                  );
+                });
+                
+                // Query back to get the actual inserted ID (this.lastID doesn't work reliably in bulk uploads)
+                const ruleId = await new Promise((resolve, reject) => {
+                  db.get(
+                    'SELECT id FROM promo_pricing_rules WHERE rule_name = ? AND created_by = ? ORDER BY id DESC LIMIT 1',
+                    [cleanRow.rule_name, req.user.id],
+                    (err, result) => {
+                      if (err) reject(err);
+                      else if (!result || !result.id) reject(new Error('Could not retrieve inserted rule ID'));
+                      else resolve(result.id);
+                    }
+                  );
+                });
+                
+                // Insert location mappings
+                for (const location of sourceLocations) {
+                  await new Promise((resolve, reject) => {
+                    db.run(
+                      'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                      [ruleId, location, 'source'],
+                      (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                      }
+                    );
+                  });
+                }
+                
+                for (const location of destinationLocations) {
+                  await new Promise((resolve, reject) => {
+                    db.run(
+                      'INSERT INTO promo_pricing_locations (promo_rule_id, location_code, location_type) VALUES (?, ?, ?)',
+                      [ruleId, location, 'destination'],
+                      (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                      }
+                    );
+                  });
+                }
+                
+                // Skip the default INSERT logic - we've handled it
+                continue;
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error - ${dbError.message}`);
+              continue; // Skip this row and continue with next
+            }
           } else if (module === 'pop_capabilities') {
             try {
               // First, lookup or update the location using location_code
@@ -7414,12 +7913,7 @@ router.get('/pricing_logic/config', authenticateToken, (req, res) => {
 });
 
 // Update pricing logic configuration
-router.put('/pricing_logic/config', authenticateToken, (req, res) => {
-  // Check if user is admin
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
+router.put('/pricing_logic/config', authenticateToken, authorizeRole('administrator'), (req, res) => {
   const { contractTerms, protectedServiceMargins, charges, utilizationFactors, promoPricing, crossConnect } = req.body;
 
   // Validate input
@@ -8245,18 +8739,32 @@ router.get('/exchange-pricing/quotes', authenticateToken, (req, res) => {
 });
 
 // Get exchange pricing audit logs
-router.get('/exchange-pricing/audit_logs', authenticateToken, (req, res) => {
-  // Check if user can view logs (not read-only)
-  if (req.user.role === 'read_only') {
-    return res.status(403).json({ error: 'Access denied. Read-only users cannot view audit logs.' });
-  }
-
+router.get('/exchange-pricing/audit_logs', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
   const { limit = 100, offset = 0 } = req.query;
   
-  db.all(
-    'SELECT * FROM audit_logs WHERE action_type = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',
-    ['EXCHANGE_PRICING_QUOTE', parseInt(limit), parseInt(offset)],
-    (err, rows) => {
+  // Check user's permission level to determine filtering
+  getUserModulePermissions(req.user.id, (err, permissions) => {
+    if (err) {
+      console.error('Error checking permissions:', err);
+      return res.status(500).json({ error: 'Permission check failed' });
+    }
+    
+    const userPermission = permissions['exchange_data'];
+    const isReadOnly = userPermission === 'read_only';
+    
+    let query = 'SELECT * FROM audit_logs WHERE action_type = ?';
+    let params = ['EXCHANGE_PRICING_QUOTE'];
+    
+    // Read-only users can only see their own logs
+    if (isReadOnly) {
+      query += ' AND user_id = ?';
+      params.push(req.user.id);
+    }
+    
+    query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(limit), parseInt(offset));
+    
+    db.all(query, params, (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
       const logs = rows.map(row => ({
         ...row,
@@ -8264,17 +8772,12 @@ router.get('/exchange-pricing/audit_logs', authenticateToken, (req, res) => {
         pricing_data: row.pricing_data ? JSON.parse(row.pricing_data) : null
       }));
       res.json(logs);
-    }
-  );
+    });
+  });
 });
 
 // Clear exchange pricing audit logs (Admin only)
-router.delete('/exchange-pricing/audit_logs', authenticateToken, (req, res) => {
-  // Check permissions
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Access denied. Only administrators can clear audit logs.' });
-  }
-
+router.delete('/exchange-pricing/audit_logs', authenticateToken, authorizeRole('administrator'), (req, res) => {
   db.run('DELETE FROM audit_logs WHERE action_type = ?', ['EXCHANGE_PRICING_QUOTE'], function(err) {
     if (err) {
       console.error('Error clearing exchange pricing audit logs:', err);
@@ -8295,12 +8798,7 @@ router.delete('/exchange-pricing/audit_logs', authenticateToken, (req, res) => {
 });
 
 // Clear exchange pricing quote history (Admin only)
-router.delete('/exchange-pricing/quotes/clear', authenticateToken, (req, res) => {
-  // Check permissions
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Access denied. Only administrators can clear quote history.' });
-  }
-
+router.delete('/exchange-pricing/quotes/clear', authenticateToken, authorizeRole('administrator'), (req, res) => {
   db.run('DELETE FROM quote_requests', [], function(err) {
     if (err) {
       console.error('Error clearing quote history:', err);
@@ -8321,12 +8819,7 @@ router.delete('/exchange-pricing/quotes/clear', authenticateToken, (req, res) =>
 });
 
 // Export exchange pricing audit logs to CSV (Admin only)
-router.get('/exchange-pricing/audit_logs/export', authenticateToken, (req, res) => {
-  // Check permissions
-  if (req.user.role !== 'administrator') {
-    return res.status(403).json({ error: 'Access denied. Only administrators can export audit logs.' });
-  }
-
+router.get('/exchange-pricing/audit_logs/export', authenticateToken, authorizeRole('administrator'), (req, res) => {
   db.all('SELECT * FROM audit_logs WHERE action_type = ? ORDER BY timestamp DESC', ['EXCHANGE_PRICING_QUOTE'], (err, rows) => {
     if (err) {
       console.error('Error exporting exchange pricing audit logs:', err);
@@ -8908,7 +9401,7 @@ router.get('/admin/live-latency/logs/:circuitId', authenticateToken, authorizeRo
 });
 
 // Update existing refresh endpoint to use new service
-router.post('/api/live-latency/refresh-all', authenticateToken, authorizePermission('network_routes', 'view'), async (req, res) => {
+router.post('/api/live-latency/refresh-all', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), async (req, res) => {
   try {
     const latencyService = new LiveLatencyService();
     console.log(`🔄 Manual live latency refresh requested by user: ${req.user?.username}`);

@@ -462,7 +462,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
                       </Box>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold">
+                      <Typography variant="body2" sx={{ fontSize: '0.75rem' }} fontWeight="bold">
                         {config.circuit_id}
                       </Typography>
                       {!config.route_exists && (
@@ -472,12 +472,12 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} noWrap>
+                      <Typography variant="body2" sx={{ fontSize: '0.75rem' }} noWrap>
                         {config.api_instance_name}
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                      <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
                         {formatDate(config.last_test_at)}
                       </Typography>
                       {config.last_test_error && (
@@ -585,7 +585,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
             Are you sure you want to delete the configuration for circuit{' '}
             <strong>{deleteDialog.config?.circuit_id}</strong>?
           </Typography>
-          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="textSecondary" sx={{ mt: 1 }}>
+          <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="textSecondary" sx={{ mt: 1 }}>
             This action cannot be undone.
           </Typography>
         </DialogContent>
@@ -816,18 +816,18 @@ const LogsDialog = ({ open, onClose, circuitId, logs, loading }) => {
                     secondary={
                       <Box sx={{ mt: 1 }}>
                         {log.error_message ? (
-                          <Typography color="error" variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                          <Typography color="error" variant="body2" sx={{ fontSize: '0.75rem' }}>
                             Error: {log.error_message}
                           </Typography>
                         ) : (
                           <Box sx={{ display: 'flex', gap: 2 }}>
-                            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
                               Latency: {log.final_latency_value}ms
                             </Typography>
-                            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
                               Response: {log.response_time_ms}ms
                             </Typography>
-                            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
                               Quality: {log.data_quality_score}%
                             </Typography>
                           </Box>

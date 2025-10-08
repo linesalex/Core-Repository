@@ -277,8 +277,14 @@ const CarriersManager = ({ hasPermission }) => {
         await axios.post(`${API_BASE_URL}/carriers`, carrierFormData, { headers });
         setSuccess('Carrier created successfully');
       } else {
-        await axios.put(`${API_BASE_URL}/carriers/${selectedCarrier.id}`, carrierFormData, { headers });
-        setSuccess('Carrier updated successfully');
+        const response = await axios.put(`${API_BASE_URL}/carriers/${selectedCarrier.id}`, carrierFormData, { headers });
+        
+        // Check if carrier name was changed and cascaded to dependent tables
+        if (response.data.cascaded) {
+          setSuccess(`Carrier updated successfully. Name changed from "${response.data.oldName}" to "${carrierFormData.carrier_name}" - all dependent records have been automatically updated.`);
+        } else {
+          setSuccess('Carrier updated successfully');
+        }
       }
 
       setCarrierDialogOpen(false);
@@ -557,7 +563,7 @@ const CarriersManager = ({ hasPermission }) => {
                         </Typography>
                         {carrier.previously_known_as && (
                           <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6875rem' }}>
-                            Previously: {carrier.previously_known_as}
+                            AKA: {carrier.previously_known_as}
                           </Typography>
                         )}
                       </Box>
@@ -594,7 +600,7 @@ const CarriersManager = ({ hasPermission }) => {
                       </Tooltip>
                     )}
                     {(!hasPermission || (!hasPermission('carriers', 'edit') && !hasPermission('carriers', 'delete'))) && (
-                      <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>-</Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
                     )}
                   </TableCell>
                 </TableRow>
@@ -608,14 +614,16 @@ const CarriersManager = ({ hasPermission }) => {
                           <Typography variant="h6" component="h3">
                             Contact Details
                           </Typography>
-                          <Button
-                            size="small"
-                            variant="contained"
-                            startIcon={<ContactsIcon />}
-                            onClick={() => handleAddContact(carrier)}
-                          >
-                            Add Contact
-                          </Button>
+                          {hasPermission && hasPermission('carriers', 'create') && (
+                            <Button
+                              size="small"
+                              variant="contained"
+                              startIcon={<ContactsIcon />}
+                              onClick={() => handleAddContact(carrier)}
+                            >
+                              Add Contact
+                            </Button>
+                          )}
                         </Box>
                         
                         {contactsLoading[carrier.id] ? (
@@ -647,7 +655,7 @@ const CarriersManager = ({ hasPermission }) => {
                                     <TableCell>{contact.contact_phone}</TableCell>
                                     <TableCell>
                                       <Box>
-                                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                                        <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
                                           {contact.last_updated ? formatTrackingDate(contact.last_updated) : 'Unknown'}
                                         </Typography>
                                         <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6875rem' }}>
@@ -681,7 +689,7 @@ const CarriersManager = ({ hasPermission }) => {
                             </Table>
                           </TableContainer>
                         ) : (
-                          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
+                          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
                             No contacts found for this carrier.
                           </Typography>
                         )}
@@ -701,7 +709,7 @@ const CarriersManager = ({ hasPermission }) => {
       {currentTab === 1 && canViewOverdueContacts() && (
         <Box role="tabpanel" id="carriers-tabpanel-1" aria-labelledby="carriers-tab-1">
           <Box sx={{ mb: 2 }}>
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
               Contacts that haven't been updated in 365+ days. Approve contacts after verifying their information is current.
             </Typography>
           </Box>
@@ -726,7 +734,7 @@ const CarriersManager = ({ hasPermission }) => {
                   {overdueContacts.map((contact) => (
                     <TableRow key={`${contact.carrier_id}-${contact.id}`} hover>
                       <TableCell>
-                        <Typography variant="body2" fontWeight="bold" sx={{ fontSize: '0.8125rem' }}>
+                        <Typography variant="body2" fontWeight="bold" sx={{ fontSize: '0.75rem' }}>
                           {contact.carrier_name}
                         </Typography>
                       </TableCell>
@@ -823,7 +831,7 @@ const CarriersManager = ({ hasPermission }) => {
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
-                label="Previously Known As"
+                label="Also Known As"
                 value={carrierFormData.previously_known_as}
                 onChange={(e) => handleCarrierInputChange('previously_known_as', e.target.value)}
               />
@@ -943,7 +951,7 @@ const CarriersManager = ({ hasPermission }) => {
         <DialogContent>
           Are you sure you want to delete carrier {selectedCarrier?.carrier_name}?
           <br />
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontSize: '0.8125rem' }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontSize: '0.75rem' }}>
             This will also delete all associated contacts.
           </Typography>
         </DialogContent>

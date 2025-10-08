@@ -228,7 +228,9 @@ export const getBulkUploadModules = () => {
     { id: 'carrier_contacts', name: 'Carrier Contacts', description: 'Bulk upload carrier contact information and details' },
     { id: 'pop_capabilities', name: 'POP Capabilities', description: 'Bulk upload location capability matrix and service availability' },
     { id: 'exchanges', name: 'Exchange Providers', description: 'Bulk upload exchange provider information and details' },
-    { id: 'users', name: 'User Management', description: 'Bulk upload user accounts with roles and permissions' }
+    { id: 'users', name: 'User Management', description: 'Bulk upload user accounts with roles and permissions' },
+    { id: 'live_latency_config', name: 'Live Latency Config', description: 'Bulk upload live latency API configurations for circuit monitoring' },
+    { id: 'promo_pricing', name: 'Promo Pricing', description: 'Bulk upload promotional pricing rules with location-based routing' }
   ]);
 };
 
@@ -314,6 +316,10 @@ export const registerUser = (userData) => api.post(`${API_BASE_URL}/register`, u
 export const getPendingUsers = () => api.get(`${API_BASE_URL}/users/pending`).then(res => res.data);
 export const approveUser = (userId, approvalData) => api.post(`${API_BASE_URL}/users/${userId}/approve`, approvalData);
 export const rejectUser = (userId) => api.delete(`${API_BASE_URL}/users/${userId}/reject`);
+
+// Per-Module Permissions (Admin only)
+export const getUserModulePermissions = (userId) => api.get(`${API_BASE_URL}/users/${userId}/module-permissions`).then(res => res.data);
+export const updateUserModulePermissions = (userId, permissions) => api.put(`${API_BASE_URL}/users/${userId}/module-permissions`, permissions);
 
 // Locations
 export const getLocations = () => api.get(`${API_BASE_URL}/locations`).then(res => res.data);

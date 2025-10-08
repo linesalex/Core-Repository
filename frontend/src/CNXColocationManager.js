@@ -798,7 +798,7 @@ const CNXColocationManager = ({ hasPermission }) => {
 
       {/* Info Box */}
       <Box sx={{ mb: 2 }}>
-        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
+        <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
           Showing all locations where CNX Colocation is enabled in POP Capabilities. 
           Click on a POP Code to view rack details.
         </Typography>
@@ -826,7 +826,7 @@ const CNXColocationManager = ({ hasPermission }) => {
             {locations.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={11} align="center">
-                  <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
+                  <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
                     No locations with CNX Colocation enabled found.
                     <br />
                     Enable CNX Colocation in POP Capabilities for locations to appear here.
@@ -883,7 +883,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                           </IconButton>
                         </Tooltip>
                       ) : (
-                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">-</Typography>
+                        <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">-</Typography>
                       )}
                     </TableCell>
                   </TableRow>
@@ -944,7 +944,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                                         </IconButton>
                                       </TableCell>
                                       <TableCell>
-                                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} fontWeight="bold">
+                                        <Typography variant="body2" sx={{ fontSize: '0.75rem' }} fontWeight="bold">
                                           {rack.rack_id}
                                         </Typography>
                                       </TableCell>
@@ -1105,7 +1105,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                                             ) : clientsLoading[rack.id] ? (
                                               <LoadingIndicator message="Loading clients..." size={16} sx={{ p: 1 }} />
                                             ) : (
-                                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem', p: 2 }}>
+                                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', p: 2 }}>
                                                 No clients found for this rack.
                                               </Typography>
                                             )}
@@ -1118,7 +1118,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                               </TableBody>
                             </Table>
                           ) : (
-                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem', p: 2 }}>
+                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', p: 2 }}>
                               No racks found for this location.
                             </Typography>
                           )}
@@ -1160,14 +1160,14 @@ const CNXColocationManager = ({ hasPermission }) => {
                   />
                 </Button>
                 {designFile && (
-                  <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="success.main">
+                  <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="success.main">
                     Selected: {designFile.name}
                   </Typography>
                 )}
               </Box>
               {selectedLocation?.design_file && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
+                  <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
                     Current: Design file exists
                   </Typography>
                   <Button
@@ -1246,7 +1246,7 @@ const CNXColocationManager = ({ hasPermission }) => {
           
           {/* Tracking Information */}
           <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e0e0e0' }}>
-            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
+            <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
               {trackingInfo && trackingInfo.updated_date ? (
                 <>Last Updated: {trackingInfo.username || 'Unknown User'} {formatTrackingDate(trackingInfo.updated_date)}</>
               ) : (
@@ -1325,14 +1325,14 @@ const CNXColocationManager = ({ hasPermission }) => {
                   />
                 </Button>
                 {pricingInfoFile && (
-                  <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="success.main">
+                  <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="success.main">
                     Selected: {pricingInfoFile.name}
                   </Typography>
                 )}
               </Box>
               {selectedRack?.pricing_info_file && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
+                  <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
                     Current: Pricing file exists
                   </Typography>
                   <Button
@@ -1431,14 +1431,14 @@ const CNXColocationManager = ({ hasPermission }) => {
                   />
                 </Button>
                 {clientDesignFile && (
-                  <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="success.main">
+                  <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="success.main">
                     Selected: {clientDesignFile.name}
                   </Typography>
                 )}
               </Box>
               {selectedClient?.design_file && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary">
+                  <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
                     Current: Design file exists
                   </Typography>
                   <Button

@@ -186,6 +186,11 @@ const ExchangeRatesManager = ({ hasPermission }) => {
   };
 
   const getStatusChip = (rate) => {
+    // USD is the base currency and doesn't require updates
+    if (rate.currency_code === 'USD' || !rate.next_update_due) {
+      return <Chip label="Base Currency" color="default" size="small" />;
+    }
+
     const nextUpdate = new Date(rate.next_update_due);
     const now = new Date();
     const daysUntilUpdate = Math.ceil((nextUpdate - now) / (1000 * 60 * 60 * 24));
@@ -268,6 +273,8 @@ const ExchangeRatesManager = ({ hasPermission }) => {
             <CardContent>
               <Typography variant="h6" color="success.main">
                 {exchangeRates.filter(rate => {
+                  // Exclude USD (base currency) from update tracking
+                  if (rate.currency_code === 'USD' || !rate.next_update_due) return false;
                   const nextUpdate = new Date(rate.next_update_due);
                   const now = new Date();
                   return nextUpdate > now;
@@ -285,6 +292,8 @@ const ExchangeRatesManager = ({ hasPermission }) => {
             <CardContent>
               <Typography variant="h6" color="warning.main">
                 {exchangeRates.filter(rate => {
+                  // Exclude USD (base currency) from update tracking
+                  if (rate.currency_code === 'USD' || !rate.next_update_due) return false;
                   const nextUpdate = new Date(rate.next_update_due);
                   const now = new Date();
                   const daysUntilUpdate = Math.ceil((nextUpdate - now) / (1000 * 60 * 60 * 24));
@@ -303,6 +312,8 @@ const ExchangeRatesManager = ({ hasPermission }) => {
             <CardContent>
               <Typography variant="h6" color="error.main">
                 {exchangeRates.filter(rate => {
+                  // Exclude USD (base currency) from update tracking
+                  if (rate.currency_code === 'USD' || !rate.next_update_due) return false;
                   const nextUpdate = new Date(rate.next_update_due);
                   const now = new Date();
                   return nextUpdate < now;
@@ -355,7 +366,7 @@ const ExchangeRatesManager = ({ hasPermission }) => {
                   {formatDate(rate.last_updated)}
                 </TableCell>
                 <TableCell>
-                  {formatDate(rate.next_update_due)}
+                  {rate.currency_code === 'USD' || !rate.next_update_due ? 'N/A' : formatDate(rate.next_update_due)}
                 </TableCell>
                 <TableCell>
                   {rate.updated_by}

@@ -983,7 +983,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                         </Box>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                        <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
                           {exchange.salesperson_assigned || '-'}
                         </Typography>
                       </TableCell>
@@ -1083,7 +1083,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                             </IconButton>
                                           </Tooltip>
                                         ) : (
-                                          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>-</Typography>
+                                          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
                                         )}
                                       </TableCell>
                                       <TableCell>{getStatusChip(feed.dr_available)}</TableCell>
@@ -1093,7 +1093,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                       <TableCell>
                                         {feed.pass_through_fees ? (
                                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
                                               {`${feed.pass_through_fees} ${feed.pass_through_currency}`}
                                             </Typography>
                                             {feed.pass_through_fees_info && (
@@ -1141,7 +1141,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                 </TableBody>
                               </Table>
                             ) : (
-                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
+                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
                                 No feeds found for this exchange.
                               </Typography>
                             )}
@@ -1246,7 +1246,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                           <TableCell>{getStatusChip(contact.daily_contact)}</TableCell>
                                           <TableCell>
                                             <Box>
-                                              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
                                                 {contact.updated_date || contact.last_updated ? 
                                                   formatTrackingDate(contact.updated_date || contact.last_updated) : 
                                                   (contact.created_at ? formatTrackingDate(contact.created_at) : 'Unknown')
@@ -1289,7 +1289,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                     </TableBody>
                                   </Table>
                                 ) : (
-                                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
+                                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
                                     No contacts found for this exchange.
                                   </Typography>
                                 )}
@@ -1324,7 +1324,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                     {overdueContacts.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={8} align="center">
-                          <Typography variant="body2" color="text.secondary" sx={{ py: 4, fontSize: '0.8125rem' }}>
+                          <Typography variant="body2" color="text.secondary" sx={{ py: 4, fontSize: '0.75rem' }}>
                             No overdue contacts found
                           </Typography>
                         </TableCell>
@@ -1739,14 +1739,14 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
             
             <Grid item xs={12} sm={6}>
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
+                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
                   Design File
                 </Typography>
                 
                 {existingDesignFile && !feedFormData.design_file ? (
                   // Show existing file with delete option
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, border: '1px solid #ddd', borderRadius: 1 }}>
-                    <Typography variant="body2" sx={{ flexGrow: 1, fontSize: '0.8125rem' }}>
+                    <Typography variant="body2" sx={{ flexGrow: 1, fontSize: '0.75rem' }}>
                       Current file: {existingDesignFile}
                     </Typography>
                     <Button
@@ -1923,7 +1923,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
           {/* Tracking Information - only show for feeds */}
           {currentFeedForInfo && (
             <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e0e0e0' }}>
-              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
                 {feedTracking && feedTracking.updated_date ? (
                   <>Last Updated: {feedTracking.username || 'Unknown User'} {formatTrackingDate(feedTracking.updated_date)}</>
                 ) : (
@@ -2089,7 +2089,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
              !selectedISFData?.isf_dr_site_code_a && !selectedISFData?.isf_dr_site_code_b && 
              !selectedISFData?.order_entry_isf && !selectedISFData?.dr_order_entry_isf && !selectedISFData?.unicast_isf && (
               <Grid item xs={12}>
-                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', fontSize: '0.8125rem' }}>
+                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', fontSize: '0.75rem' }}>
                   No ISF information available
                 </Typography>
               </Grid>

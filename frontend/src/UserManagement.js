@@ -16,7 +16,7 @@ import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { API_BASE_URL } from './config';
 import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
-import { getPendingUsers, approveUser, rejectUser } from './api';
+import { getPendingUsers, approveUser, rejectUser, getUserModulePermissions, updateUserModulePermissions } from './api';
 
 const UserManagement = () => {
   const [users, setUsers] = useState([]);
@@ -31,30 +31,27 @@ const UserManagement = () => {
   const [dialogMode, setDialogMode] = useState('add'); // 'add' or 'edit'
   const [selectedUser, setSelectedUser] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [visibilityDialogOpen, setVisibilityDialogOpen] = useState(false);
+  const [permissionsDialogOpen, setPermissionsDialogOpen] = useState(false);
   const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
   const [pendingUserForApproval, setPendingUserForApproval] = useState(null);
   const [selectedRole, setSelectedRole] = useState('');
-  const [approvalModuleVisibility, setApprovalModuleVisibility] = useState({});
+  const [approvalModulePermissions, setApprovalModulePermissions] = useState({});
   
-  // Module visibility state
-  const [moduleVisibility, setModuleVisibility] = useState({});
+  // Module permissions state
+  const [modulePermissions, setModulePermissions] = useState({});
+  const [isAdminUser, setIsAdminUser] = useState(false);
   const [availableModules] = useState([
     { key: 'network_routes', label: 'Network Routes Repository' },
     { key: 'network_design', label: 'Network Design & Pricing Tool' },
     { key: 'locations', label: 'Manage Locations' },
     { key: 'carriers', label: 'Manage Carriers' },
     { key: 'cnx_colocation', label: 'CNX Colocation' },
-    { key: 'exchange_rates', label: 'Exchange Rates' },
     { key: 'exchange_data', label: 'Exchange Data' },
     { key: 'change_logs', label: 'Change Logs' },
-    { key: 'user_management', label: 'User Management' },
-    { key: 'bulk_upload', label: 'Bulk Upload' },
-    { key: 'core_outages', label: 'Core Outages' },
-    { key: 'minimum_pricing', label: 'Minimum Pricing' },
-    { key: 'pricing_logic', label: 'Pricing Logic (Admin)' },
-    { key: 'promo_pricing', label: 'Promo Pricing (Admin)' }
+    { key: 'core_outages', label: 'Core Outages' }
+    // Admin-only modules excluded: exchange_rates, user_management, bulk_upload, 
+    // minimum_pricing, pricing_logic, promo_pricing, live_latency_admin
   ]);
   
   // Form data
@@ -237,31 +234,37 @@ const UserManagement = () => {
     }));
   };
 
-  const handleManageVisibility = async (user) => {
+  const handleManagePermissions = async (user) => {
     setSelectedUser(user);
     try {
-      const response = await axios.get(`${API_BASE_URL}/users/${user.id}/module-visibility`);
-      setModuleVisibility(response.data);
-      setVisibilityDialogOpen(true);
+      const response = await getUserModulePermissions(user.id);
+      setIsAdminUser(response.isAdmin);
+      setModulePermissions(response.permissions || {});
+      setPermissionsDialogOpen(true);
     } catch (err) {
-      setError('Failed to load module visibility settings: ' + (err.response?.data?.error || err.message));
+      setError('Failed to load module permissions: ' + (err.response?.data?.error || err.message));
     }
   };
 
-  const handleVisibilityChange = (module, isVisible) => {
-    setModuleVisibility(prev => ({
+  const handlePermissionChange = (module, permissionLevel) => {
+    setModulePermissions(prev => ({
       ...prev,
-      [module]: isVisible
+      [module]: permissionLevel
     }));
   };
 
-  const handleSaveVisibility = async () => {
+  const handleSavePermissions = async () => {
+    if (isAdminUser) {
+      setError('Cannot modify permissions for administrators - they have full access to all modules');
+      return;
+    }
+    
     try {
-      await axios.put(`${API_BASE_URL}/users/${selectedUser.id}/module-visibility`, moduleVisibility);
-      setSuccess('Module visibility updated successfully');
-      setVisibilityDialogOpen(false);
+      await updateUserModulePermissions(selectedUser.id, modulePermissions);
+      setSuccess('Module permissions updated successfully');
+      setPermissionsDialogOpen(false);
     } catch (err) {
-      setError('Failed to update module visibility: ' + (err.response?.data?.error || err.message));
+      setError('Failed to update module permissions: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -288,22 +291,31 @@ const UserManagement = () => {
     setPendingUserForApproval(user);
     setSelectedRole(userRole);
     
-    // Set default module visibility based on role
-    const defaultVisibility = {};
-    availableModules.forEach(module => {
-      // Admin: all modules visible, others: all modules hidden
-      defaultVisibility[module.key] = userRole === 'administrator';
-    });
-    setApprovalModuleVisibility(defaultVisibility);
+    // For administrators: no module permissions needed (full access)
+    // For non-admins: set default permissions to empty (no access)
+    const defaultPermissions = {};
+    if (userRole !== 'administrator') {
+      // Non-admin: default to no access for all modules
+      availableModules.forEach(module => {
+        defaultPermissions[module.key] = ''; // Empty means no access
+      });
+    }
+    setApprovalModulePermissions(defaultPermissions);
     setApprovalDialogOpen(true);
   };
 
   const handleConfirmApproval = async () => {
     try {
+      // Approve the user with their role
       await approveUser(pendingUserForApproval.id, { 
-        user_role: selectedRole,
-        module_visibility: approvalModuleVisibility
+        user_role: selectedRole
       });
+      
+      // If non-admin, set their module permissions
+      if (selectedRole !== 'administrator') {
+        await updateUserModulePermissions(pendingUserForApproval.id, approvalModulePermissions);
+      }
+      
       setSuccess(`User ${pendingUserForApproval.username} approved successfully with role: ${selectedRole}`);
       loadPendingUsers(); // Refresh pending users list
       loadUsers(); // Refresh main users list
@@ -314,10 +326,10 @@ const UserManagement = () => {
     }
   };
 
-  const handleApprovalModuleVisibilityChange = (module, isVisible) => {
-    setApprovalModuleVisibility(prev => ({
+  const handleApprovalModulePermissionChange = (module, permissionLevel) => {
+    setApprovalModulePermissions(prev => ({
       ...prev,
-      [module]: isVisible
+      [module]: permissionLevel
     }));
   };
 
@@ -338,15 +350,13 @@ const UserManagement = () => {
   const getRoleChip = (role) => {
     const colors = {
       'administrator': 'error',
-      'provisioner': 'warning',
-      'read_only': 'info'
+      'user': 'primary'
     };
     const labels = {
-      'administrator': 'Admin',
-      'provisioner': 'Provisioner',
-      'read_only': 'Read Only'
+      'administrator': 'Administrator',
+      'user': 'User'
     };
-    return <Chip label={labels[role]} color={colors[role]} size="small" />;
+    return <Chip label={labels[role] || role} color={colors[role] || 'default'} size="small" />;
   };
 
   const getStatusChip = (status) => {
@@ -451,8 +461,8 @@ const UserManagement = () => {
                         <DeleteIcon />
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="Manage Module Visibility">
-                      <IconButton onClick={() => handleManageVisibility(user)} size="small">
+                    <Tooltip title="Manage Module Permissions">
+                      <IconButton onClick={() => handleManagePermissions(user)} size="small">
                         <VisibilityIcon />
                       </IconButton>
                     </Tooltip>
@@ -477,7 +487,7 @@ const UserManagement = () => {
               <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} color="text.secondary">
                 No pending user registrations
               </Typography>
-              <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mt: 1 }}>
+              <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary" sx={{ mt: 1 }}>
                 New user registration requests will appear here for admin approval
               </Typography>
             </Paper>
@@ -513,21 +523,12 @@ const UserManagement = () => {
                       <TableCell align="center">
                         <Button
                           variant="contained"
-                          color="success"
+                          color="primary"
                           size="small"
-                          onClick={() => handleApproveUser(user, 'read_only')}
+                          onClick={() => handleApproveUser(user, 'user')}
                           sx={{ mr: 1 }}
                         >
-                          Approve as Read-Only
-                        </Button>
-                        <Button
-                          variant="contained"
-                          color="warning"
-                          size="small"
-                          onClick={() => handleApproveUser(user, 'provisioner')}
-                          sx={{ mr: 1 }}
-                        >
-                          Approve as Provisioner
+                          Approve as User
                         </Button>
                         <Button
                           variant="contained"
@@ -536,7 +537,7 @@ const UserManagement = () => {
                           onClick={() => handleApproveUser(user, 'administrator')}
                           sx={{ mr: 1 }}
                         >
-                          Approve as Admin
+                          Approve as Administrator
                         </Button>
                         <Button
                           variant="outlined"
@@ -633,8 +634,7 @@ const UserManagement = () => {
                 field="user_role"
                 errors={formErrors}
               >
-                <MenuItem value="read_only">Read Only</MenuItem>
-                <MenuItem value="provisioner">Provisioner</MenuItem>
+                <MenuItem value="user">User</MenuItem>
                 <MenuItem value="administrator">Administrator</MenuItem>
               </ValidatedSelect>
             </Grid>
@@ -675,7 +675,7 @@ const UserManagement = () => {
           <Typography>
             Are you sure you want to delete user <strong>{selectedUser?.username}</strong>?
           </Typography>
-          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mt: 1 }}>
+          <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary" sx={{ mt: 1 }}>
             This action cannot be undone.
           </Typography>
         </DialogContent>
@@ -687,45 +687,70 @@ const UserManagement = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Module Visibility Dialog */}
+      {/* Module Permissions Dialog */}
       <Dialog 
-        open={visibilityDialogOpen} 
-        onClose={() => setVisibilityDialogOpen(false)} 
+        open={permissionsDialogOpen} 
+        onClose={() => setPermissionsDialogOpen(false)}
         maxWidth="md" 
         fullWidth
         disableRestoreFocus
-        aria-labelledby="visibility-dialog-title"
+        aria-labelledby="permissions-dialog-title"
       >
-        <DialogTitle id="visibility-dialog-title">
-          Manage Module Visibility - {selectedUser?.username}
+        <DialogTitle id="permissions-dialog-title">
+          Manage Module Permissions - {selectedUser?.username}
         </DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mb: 2 }}>
-            Control which modules are visible to this user. This affects UI visibility only and does not change user permissions.
-          </Typography>
-          <Divider sx={{ mb: 2 }} />
-          <Grid container spacing={2}>
-            {availableModules.map((module) => (
-              <Grid item xs={12} sm={6} key={module.key}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={moduleVisibility[module.key] === true}
-                      onChange={(e) => handleVisibilityChange(module.key, e.target.checked)}
-                      color="primary"
-                    />
-                  }
-                  label={module.label}
-                />
+          {isAdminUser ? (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              This user is an administrator and has full access to all modules. 
+              Administrators cannot have custom per-module permissions.
+            </Alert>
+          ) : (
+            <>
+              <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary" sx={{ mb: 2 }}>
+                Configure this user's access level for each module. Modules with no permission will not be visible to the user.
+              </Typography>
+              <Divider sx={{ mb: 2 }} />
+              <Grid container spacing={2}>
+                {availableModules.filter(module => module.key !== 'live_latency_admin').map((module) => (
+                  <Grid item xs={12} sm={6} key={module.key}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel shrink>{module.label}</InputLabel>
+                      <Select
+                        value={modulePermissions[module.key] || ''}
+                        onChange={(e) => handlePermissionChange(module.key, e.target.value)}
+                        label={module.label}
+                        displayEmpty
+                        notched
+                        renderValue={(selected) => {
+                          if (!selected || selected === '') {
+                            return 'No Access';
+                          }
+                          return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                        }}
+                      >
+                        <MenuItem value="">No Access</MenuItem>
+                        <MenuItem value="read_only">Read-Only</MenuItem>
+                        <MenuItem value="provisioner">Provisioner</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                ))}
               </Grid>
-            ))}
-          </Grid>
+              <Alert severity="info" sx={{ mt: 2 }}>
+                <strong>Read-Only:</strong> Can view module data only<br />
+                <strong>Provisioner:</strong> Can view, create, edit, and delete
+              </Alert>
+            </>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setVisibilityDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleSaveVisibility} variant="contained" color="primary">
-            Save Changes
-          </Button>
+          <Button onClick={() => setPermissionsDialogOpen(false)}>Cancel</Button>
+          {!isAdminUser && (
+            <Button onClick={handleSavePermissions} variant="contained" color="primary">
+              Save Changes
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
 
@@ -743,8 +768,7 @@ const UserManagement = () => {
         </DialogTitle>
         <DialogContent>
           <Typography variant="body1" sx={{ fontSize: '0.875rem' }} sx={{ mb: 2 }}>
-            <strong>Role:</strong> {selectedRole === 'administrator' ? 'Administrator' : 
-                                   selectedRole === 'provisioner' ? 'Provisioner' : 'Read-Only'}
+            <strong>Role:</strong> {selectedRole === 'administrator' ? 'Administrator' : 'User'}
           </Typography>
           <Typography variant="body1" sx={{ fontSize: '0.875rem' }} sx={{ mb: 2 }}>
             <strong>Email:</strong> {pendingUserForApproval?.email}
@@ -755,31 +779,51 @@ const UserManagement = () => {
           
           <Divider sx={{ my: 2 }} />
           
-          <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} sx={{ mb: 2 }}>
-            Module Visibility Settings
-          </Typography>
-          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mb: 2 }}>
-            Select which modules this user can see in the navigation menu. 
-            {selectedRole === 'administrator' ? 
-              'Administrators have all modules enabled by default.' : 
-              'Non-admin users have all modules disabled by default.'}
-          </Typography>
-          
-          <Grid container spacing={2}>
-            {availableModules.map((module) => (
-              <Grid item xs={12} sm={6} md={4} key={module.key}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={!!approvalModuleVisibility[module.key]}
-                      onChange={(e) => handleApprovalModuleVisibilityChange(module.key, e.target.checked)}
-                    />
-                  }
-                  label={module.label}
-                />
+          {selectedRole === 'administrator' ? (
+            <Alert severity="info">
+              Administrators have full access to all modules automatically. No additional configuration needed.
+            </Alert>
+          ) : (
+            <>
+              <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} sx={{ mb: 2 }}>
+                Module Permissions
+              </Typography>
+              <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary" sx={{ mb: 2 }}>
+                Configure access levels for each module. Modules with no permission will not be visible to the user.
+              </Typography>
+              
+              <Grid container spacing={2}>
+                {availableModules.filter(module => module.key !== 'live_latency_admin').map((module) => (
+                  <Grid item xs={12} sm={6} key={module.key}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel shrink>{module.label}</InputLabel>
+                      <Select
+                        value={approvalModulePermissions[module.key] || ''}
+                        onChange={(e) => handleApprovalModulePermissionChange(module.key, e.target.value)}
+                        label={module.label}
+                        displayEmpty
+                        notched
+                        renderValue={(selected) => {
+                          if (!selected || selected === '') {
+                            return 'No Access';
+                          }
+                          return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                        }}
+                      >
+                        <MenuItem value="">No Access</MenuItem>
+                        <MenuItem value="read_only">Read-Only</MenuItem>
+                        <MenuItem value="provisioner">Provisioner</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                ))}
               </Grid>
-            ))}
-          </Grid>
+              <Alert severity="info" sx={{ mt: 2 }}>
+                <strong>Read-Only:</strong> Can view module data only<br />
+                <strong>Provisioner:</strong> Can view, create, edit, and delete
+              </Alert>
+            </>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setApprovalDialogOpen(false)}>Cancel</Button>
@@ -801,7 +845,7 @@ const UserManagement = () => {
           <Typography>
             Are you sure you want to reset the password for user <strong>{selectedUser?.username}</strong>?
           </Typography>
-          <Typography variant="body2" sx={{ fontSize: '0.8125rem' }} color="text.secondary" sx={{ mt: 1 }}>
+          <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary" sx={{ mt: 1 }}>
             This will set the password to 'abc123' and the user will be prompted to change it on their next login.
           </Typography>
         </DialogContent>

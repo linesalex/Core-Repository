@@ -425,7 +425,7 @@ const ChangeLogsViewer = () => {
                       value={formatJsonData(selectedLog.old_values)}
                       InputProps={{
                         readOnly: true,
-                        style: { fontFamily: 'monospace', fontSize: '0.8rem' }
+                        style: { fontFamily: 'monospace', fontSize: '0.75rem' }
                       }}
                     />
                   </AccordionDetails>
@@ -445,7 +445,7 @@ const ChangeLogsViewer = () => {
                       value={formatJsonData(selectedLog.new_values)}
                       InputProps={{
                         readOnly: true,
-                        style: { fontFamily: 'monospace', fontSize: '0.8rem' }
+                        style: { fontFamily: 'monospace', fontSize: '0.75rem' }
                       }}
                     />
                   </AccordionDetails>
