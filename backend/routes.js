@@ -3085,9 +3085,9 @@ router.delete('/locations/:id', authenticateToken, authorizeModulePermission('lo
     // Check if location is used in network routes
     const popCode = location.location_code;
     const query = `
-      SELECT circuit_id, point_a, point_b
+      SELECT circuit_id, location_a, location_b
       FROM network_routes 
-      WHERE point_a = ? OR point_b = ?
+      WHERE location_a = ? OR location_b = ?
     `;
     
     db.all(query, [popCode, popCode], (err, routes) => {
