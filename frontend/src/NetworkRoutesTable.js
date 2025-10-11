@@ -26,7 +26,7 @@ const ALL_COLUMNS = [
   { id: 'circuit_id', label: 'UCN', category: 'identity', defaultVisible: true },
   { id: 'expected_latency', label: 'Expected\nLatency\n(ms)', vertical: true, category: 'performance', defaultVisible: true },
   { id: 'live_latency', label: 'Live\nLatency\n(ms)', vertical: true, category: 'performance', defaultVisible: true },
-  { id: 'bandwidth', label: 'Bandwidth', category: 'capacity', defaultVisible: true },
+  { id: 'bandwidth', label: 'Bandwidth\n(Mb)', vertical: true, category: 'capacity', defaultVisible: true },
   { id: 'underlying_carrier', label: 'Underlying\nCarrier', vertical: true, category: 'carrier', defaultVisible: true },
   { id: 'cable_system', label: 'Cable\nSystem', vertical: true, category: 'infrastructure', defaultVisible: true },
   { id: 'carrier_protected', label: 'Protected', vertical: true, category: 'protection', defaultVisible: true },
@@ -43,6 +43,7 @@ const ALL_COLUMNS = [
   { id: 'local_loop_carriers_a', label: 'Local Loop\nCarrier A', vertical: true, category: 'carrier', defaultVisible: false },
   { id: 'local_loop_carriers_b', label: 'Local Loop\nCarrier B', vertical: true, category: 'carrier', defaultVisible: false },
   { id: 'test_results_link', label: 'Test Results\nLink', vertical: true, category: 'files', defaultVisible: false },
+  { id: 'region', label: 'Region', category: 'identity', defaultVisible: false },
   { id: 'more_details', label: 'More\nDetails', vertical: true, align: 'center', category: 'actions', defaultVisible: true },
 ];
 
@@ -571,7 +572,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
       </Menu>
 
       {/* Table */}
-      <TableContainer component={Paper} sx={{ maxHeight: 600, overflow: 'auto' }}>
+      <TableContainer component={Paper} sx={{ maxHeight: 'calc(100vh - 280px)', overflow: 'auto' }}>
         <Table size="small" stickyHeader>
           <TableHead>
             <TableRow>

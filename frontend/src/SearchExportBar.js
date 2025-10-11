@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Box, TextField, Button, Grid, MenuItem, Checkbox, FormControlLabel } from '@mui/material';
+import { Box, TextField, Button, Grid, MenuItem, Checkbox, FormControlLabel, Autocomplete, Chip } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DownloadIcon from '@mui/icons-material/Download';
 import { styled } from '@mui/material/styles';
@@ -10,7 +10,10 @@ const initialFilters = {
   cable_system: '',
   bandwidth: '',
   is_special: false, // Default to "No" (false)
+  regions: [], // Multi-select region filter
 };
+
+const REGION_OPTIONS = ['APAC', 'EMEA', 'AMERs', 'INTER'];
 
 const SmallTextField = styled(TextField)(({ theme }) => ({
   '& .MuiInputBase-input': {
@@ -53,6 +56,14 @@ function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission }) {
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     const newFilters = { ...filters, [name]: type === 'checkbox' ? checked : value };
+    setFilters(newFilters);
+    
+    // Trigger instant search with debounce
+    debouncedSearch(newFilters);
+  };
+
+  const handleRegionChange = (event, newValue) => {
+    const newFilters = { ...filters, regions: newValue };
     setFilters(newFilters);
     
     // Trigger instant search with debounce
@@ -109,6 +120,45 @@ function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission }) {
             value={filters.bandwidth}
             onChange={handleChange}
             variant="outlined"
+          />
+        </Grid>
+        <Grid item>
+          <Autocomplete
+            multiple
+            size="small"
+            options={REGION_OPTIONS}
+            value={filters.regions}
+            onChange={handleRegionChange}
+            renderInput={(params) => (
+              <SmallTextField
+                {...params}
+                label="Region"
+                variant="outlined"
+                placeholder="All Regions"
+              />
+            )}
+            renderTags={(value, getTagProps) =>
+              value.map((option, index) => (
+                <Chip
+                  label={option}
+                  size="small"
+                  {...getTagProps({ index })}
+                  sx={{ fontSize: '0.6875rem' }}
+                />
+              ))
+            }
+            sx={{ 
+              minWidth: 180,
+              '& .MuiAutocomplete-input': {
+                fontSize: '0.6875rem'
+              },
+              '& .MuiChip-label': {
+                fontSize: '0.6875rem'
+              },
+              '& .MuiAutocomplete-option': {
+                fontSize: '0.6875rem'
+              }
+            }}
           />
         </Grid>
         <Grid item>

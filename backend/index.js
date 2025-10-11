@@ -9,6 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const routes = require('./routes');
 const { handleDatabaseError } = require('./dbErrorHandler');
+const { runAllMigrations } = require('./runMigrations');
 const outageMonitor = require('./outageMonitorService');
 const liveLatencyAutoRefresh = require('./liveLatencyAutoRefreshService');
 const outageHistoryCleanup = require('./outageHistoryCleanupService');
@@ -62,26 +63,34 @@ app.use((req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Network Inventory Server running on port ${PORT}`);
-  console.log(`📊 Health check available at: http://localhost:${PORT}/health`);
-  console.log(`🔍 Database health check: http://localhost:${PORT}/health/database`);
-  console.log(`🌐 API Root: http://localhost:${PORT}/`);
+// Run database migrations before starting the server
+runAllMigrations((err) => {
+  if (err) {
+    console.error('❌ Failed to run migrations:', err);
+    console.error('⚠️  Server starting anyway, but some features may not work correctly');
+  }
   
-  // Start the outage monitoring service
-  setTimeout(() => {
-    outageMonitor.start();
-  }, 5000); // Wait 5 seconds for server to fully initialize
-  
-  // Start the automated live latency refresh service
-  setTimeout(() => {
-    liveLatencyAutoRefresh.start();
-  }, 7000); // Wait 7 seconds to avoid conflicts with outage monitor
-  
-  // Start the outage history cleanup service
-  setTimeout(() => {
-    outageHistoryCleanup.start();
-  }, 9000); // Wait 9 seconds to avoid conflicts with other services
+  app.listen(PORT, () => {
+    console.log(`🚀 Network Inventory Server running on port ${PORT}`);
+    console.log(`📊 Health check available at: http://localhost:${PORT}/health`);
+    console.log(`🔍 Database health check: http://localhost:${PORT}/health/database`);
+    console.log(`🌐 API Root: http://localhost:${PORT}/`);
+    
+    // Start the outage monitoring service
+    setTimeout(() => {
+      outageMonitor.start();
+    }, 5000); // Wait 5 seconds for server to fully initialize
+    
+    // Start the automated live latency refresh service
+    setTimeout(() => {
+      liveLatencyAutoRefresh.start();
+    }, 7000); // Wait 7 seconds to avoid conflicts with outage monitor
+    
+    // Start the outage history cleanup service
+    setTimeout(() => {
+      outageHistoryCleanup.start();
+    }, 9000); // Wait 9 seconds to avoid conflicts with other services
+  });
 });
 
 // Graceful shutdown

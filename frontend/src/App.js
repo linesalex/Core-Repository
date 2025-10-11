@@ -103,7 +103,8 @@ function AuthenticatedApp() {
     location: '',
     cable_system: '',
     bandwidth: '',
-    is_special: false
+    is_special: false,
+    regions: []
   });
   const [isServerSideFiltered, setIsServerSideFiltered] = useState(false);
   
@@ -177,7 +178,10 @@ function AuthenticatedApp() {
     const matchesSpecial = !routeFilters.is_special || 
       (route.is_special === 1 || route.is_special === true);
     
-    return matchesCircuitId && matchesLocation && matchesCableSystem && matchesBandwidth && matchesSpecial;
+    const matchesRegion = !routeFilters.regions || routeFilters.regions.length === 0 || 
+      routeFilters.regions.includes(route.region);
+    
+    return matchesCircuitId && matchesLocation && matchesCableSystem && matchesBandwidth && matchesSpecial && matchesRegion;
   });
 
   const handleMoreDetails = async (row) => {
@@ -219,22 +223,24 @@ function AuthenticatedApp() {
     if (!hasPermission('network_routes', 'view')) return;
     
     try {
-      // Use API search when there are filters, especially for circuit_id (UCN search)
-      const hasFilters = Object.values(filters).some(value => value && value !== '');
+      // Use API search when there are filters (excluding regions which is client-side only)
+      const { regions, ...serverFilters } = filters;
+      const hasServerFilters = Object.values(serverFilters).some(value => value && value !== '');
       
-      if (hasFilters) {
-        const data = await searchRoutes(filters);
+      if (hasServerFilters) {
+        const data = await searchRoutes(serverFilters);
         setRows(data);
-        setIsServerSideFiltered(true); // Skip client-side filtering
+        setIsServerSideFiltered(false); // Still need client-side filtering for regions
         setRouteFilters({
           circuit_id: filters.circuit_id || '',
           location: filters.location_a || filters.location_b || filters.location || '',
           cable_system: filters.cable_system || '',
           bandwidth: filters.bandwidth || '',
-          is_special: filters.is_special === '1' || filters.is_special === true
+          is_special: filters.is_special === '1' || filters.is_special === true,
+          regions: filters.regions || []
         });
       } else {
-        // No filters - load all routes
+        // No server-side filters - load all routes and do client-side filtering
         const data = await fetchRoutes();
         setRows(data);
         setIsServerSideFiltered(false); // Use client-side filtering
@@ -243,7 +249,8 @@ function AuthenticatedApp() {
           location: '',
           cable_system: '',
           bandwidth: '',
-          is_special: false
+          is_special: false,
+          regions: filters.regions || []
         });
       }
     } catch (error) {
@@ -1040,6 +1047,15 @@ function AuthenticatedApp() {
               <TextField
                 label="Equipment Type"
                 value={detailsRow ? detailsRow.equipment_type || 'Nokia' : ''}
+                fullWidth
+                InputProps={{ readOnly: true }}
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                label="Region"
+                value={detailsRow ? detailsRow.region || 'APAC' : ''}
                 fullWidth
                 InputProps={{ readOnly: true }}
                 size="small"

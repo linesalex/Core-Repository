@@ -2197,7 +2197,7 @@ router.post('/network_routes', authenticateToken, authorizeModulePermission('net
     }
     
     const fields = [
-      'circuit_id','repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source','updated_by','updated_date'
+      'circuit_id','repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source','updated_by','updated_date','region'
     ];
     const placeholders = fields.map(() => '?').join(',');
     const values = fields.map(f => {
@@ -2248,7 +2248,7 @@ router.put('/network_routes/:circuit_id', authenticateToken, authorizeModulePerm
         if (!oldRoute) return res.status(404).json({ error: 'Route not found' });
         
         const fields = [
-          'repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source','updated_by','updated_date'
+          'repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source','updated_by','updated_date','region'
         ];
         const setClause = fields.map(f => `${f} = ?`).join(', ');
         const values = fields.map(f => {
@@ -2421,10 +2421,10 @@ router.get('/network_routes_export', authenticateToken, authorizeModulePermissio
             WHEN carrier_protected = 0 THEN 'No'
             ELSE 'No'
           END as carrier_protected,
-          underlying_carrier, location_a, location_b, bandwidth, more_details, mtu, sla_latency, capacity_usage_percent, carrier_protection_route 
+          underlying_carrier, location_a, location_b, bandwidth, more_details, mtu, sla_latency, capacity_usage_percent, carrier_protection_route, region 
           FROM network_routes`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    const fields = ['circuit_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','carrier_protected','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','carrier_protection_route'];
+    const fields = ['circuit_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','carrier_protected','underlying_carrier','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','carrier_protection_route','region'];
     const parser = new Parser({ fields });
     const csv = parser.parse(rows);
     res.header('Content-Type', 'text/csv');
@@ -6125,9 +6125,9 @@ const bulkUploadModules = {
       'kmz_file_path', 'mtu', 'sla_latency', 'live_latency', 'expected_latency', 'test_results_link',
       'cable_system', 'is_special', 'underlying_carrier', 'cost', 'currency',
       'location_a', 'location_b', 'bandwidth', 'more_details', 'capacity_usage_percent',
-      'local_loop_carriers_a', 'local_loop_carriers_b', 'equipment_type', 'carrier_protected', 'carrier_protection_route'
+      'local_loop_carriers_a', 'local_loop_carriers_b', 'equipment_type', 'carrier_protected', 'carrier_protection_route', 'region'
     ],
-    requiredFields: ['circuit_id', 'location_a', 'location_b', 'underlying_carrier', 'carrier_protected'],
+    requiredFields: ['circuit_id', 'location_a', 'location_b', 'underlying_carrier', 'carrier_protected', 'region'],
     sampleData: {
       circuit_id: 'SAMPLE123456',
       repository_type_id: '1',
@@ -6151,7 +6151,8 @@ const bulkUploadModules = {
       local_loop_carriers_b: 'Carrier B',
       equipment_type: 'Optical',
       carrier_protected: '0',
-      carrier_protection_route: ''
+      carrier_protection_route: '',
+      region: 'APAC'
     }
   },
   exchange_feeds: {
@@ -6506,7 +6507,7 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
                WHEN carrier_protected = 0 THEN 'No'
                ELSE 'No'
              END as carrier_protected,
-             carrier_protection_route
+             carrier_protection_route, region
              FROM ${config.table} LIMIT ?`;
   } else if (module === 'live_latency_config') {
     // Export configs with password placeholder (never expose actual passwords)
@@ -6747,6 +6748,16 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               cleanedRow.carrier_protected = (value === 'yes' || value === 'true' || value === '1') ? 1 : 0;
             } else {
               cleanedRow.carrier_protected = 0; // Default to not protected when null/empty
+            }
+            
+            // Validate region field (required)
+            if (!cleanedRow.region || cleanedRow.region.trim() === '') {
+              moduleValidationErrors.push('Region is required. Must be one of: APAC, EMEA, AMERs, INTER');
+            } else {
+              const validRegions = ['APAC', 'EMEA', 'AMERs', 'INTER'];
+              if (!validRegions.includes(cleanedRow.region)) {
+                moduleValidationErrors.push(`Invalid region: '${cleanedRow.region}'. Must be one of: APAC, EMEA, AMERs, INTER`);
+              }
             }
           } else if (module === 'users') {
             if (cleanedRow.user_role && !['administrator', 'provisioner', 'read_only'].includes(cleanedRow.user_role)) {
@@ -7011,6 +7022,10 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               }
               if (!cleanRow.live_latency_source) {
                 cleanRow.live_latency_source = 'manual';
+              }
+              // Region is required - no default value
+              if (!cleanRow.region || cleanRow.region.trim() === '') {
+                throw new Error('Region is required');
               }
               
               // Check for existing route with same circuit_id

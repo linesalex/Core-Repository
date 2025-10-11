@@ -31,7 +31,8 @@ const defaultValues = {
   local_loop_carriers_b: '',
   equipment_type: '',
   carrier_protected: 0,
-  carrier_protection_route: ''
+  carrier_protection_route: '',
+  region: ''
 };
 
 function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit = false, onFileDeleted }) {
@@ -59,6 +60,7 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
     equipment_type: { type: 'required', message: 'Equipment Type is required' },
     bandwidth: { type: 'required', message: 'Bandwidth is required' },
     carrier_protected: { type: 'required', message: 'Protected field is required' },
+    region: { type: 'required', message: 'Region is required' },
     carrier_protection_route: {
       type: 'custom',
       validate: (value, formData) => {
@@ -419,7 +421,8 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
           cost: { type: 'required', message: 'Cost is required' },
           underlying_carrier: { type: 'required', message: 'Underlying Carrier is required' },
           equipment_type: { type: 'required', message: 'Equipment Type is required' },
-          bandwidth: { type: 'required', message: 'Bandwidth is required' }
+          bandwidth: { type: 'required', message: 'Bandwidth is required' },
+          region: { type: 'required', message: 'Region is required' }
         };
         const editValidate = createValidator(editValidationRules);
         validationErrors = editValidate(values);
@@ -787,6 +790,33 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
               <MenuItem value="Nokia">Nokia</MenuItem>
               <MenuItem value="Cisco">Cisco</MenuItem>
               <MenuItem value="Mixed">Mixed</MenuItem>
+            </ValidatedSelect>
+          </Grid>
+          <Grid item xs={12}>
+            <ValidatedSelect
+              fullWidth
+              label="Region *"
+              value={values.region}
+              onChange={(e) => handleChange(e)}
+              name="region"
+              required
+              field="region"
+              errors={formErrors}
+              displayEmpty
+              renderValue={(selected) => {
+                if (!selected) {
+                  return <em style={{ color: '#9e9e9e' }}>Select a region</em>;
+                }
+                return selected;
+              }}
+            >
+              <MenuItem value="" disabled>
+                <em>Select a region</em>
+              </MenuItem>
+              <MenuItem value="APAC">APAC</MenuItem>
+              <MenuItem value="EMEA">EMEA</MenuItem>
+              <MenuItem value="AMERs">AMERs</MenuItem>
+              <MenuItem value="INTER">INTER</MenuItem>
             </ValidatedSelect>
           </Grid>
           <Grid item xs={12}>
