@@ -190,6 +190,9 @@ rm network_routes.db
 # Copy existing Database to new directory
 cp network_routes.db /root/Core-Repository/network_routes.db
 
+Copy Existing PM2 startup to new directory
+cp ecosystem.config.js /root/Core-Repository/network_routes.db
+
 # Verify files are present
 ls -la  # Should show backend/, frontend/, README.md, etc.
 ```
