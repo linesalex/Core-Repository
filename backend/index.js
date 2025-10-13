@@ -10,9 +10,11 @@ const PORT = process.env.PORT || 4000;
 const routes = require('./routes');
 const { handleDatabaseError } = require('./dbErrorHandler');
 const { runAllMigrations } = require('./runMigrations');
+const db = require('./db');
 const outageMonitor = require('./outageMonitorService');
 const liveLatencyAutoRefresh = require('./liveLatencyAutoRefreshService');
 const outageHistoryCleanup = require('./outageHistoryCleanupService');
+const walCheckpoint = require('./walCheckpointService');
 
 app.use(cors());
 app.use(express.json());
@@ -90,22 +92,53 @@ runAllMigrations((err) => {
     setTimeout(() => {
       outageHistoryCleanup.start();
     }, 9000); // Wait 9 seconds to avoid conflicts with other services
+    
+    // Start the WAL checkpoint service
+    setTimeout(() => {
+      walCheckpoint.start();
+    }, 11000); // Wait 11 seconds to avoid conflicts with other services
   });
 });
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n🛑 Received SIGINT, shutting down gracefully...');
+// Graceful shutdown handler
+function gracefulShutdown(signal) {
+  console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
+  
+  // Stop all background services
+  console.log('⏸️  Stopping background services...');
   outageMonitor.stop();
   liveLatencyAutoRefresh.stop();
   outageHistoryCleanup.stop();
-  process.exit(0);
-});
+  walCheckpoint.stop();
+  
+  // Perform final WAL checkpoint
+  console.log('💾 Performing final database checkpoint...');
+  walCheckpoint.performFinalCheckpoint((err) => {
+    if (err) {
+      console.error('❌ Final checkpoint failed:', err.message);
+    }
+    
+    // Close database connection
+    console.log('🔌 Closing database connection...');
+    db.close((err) => {
+      if (err) {
+        console.error('❌ Error closing database:', err.message);
+      } else {
+        console.log('✓ Database closed successfully');
+      }
+      
+      console.log('👋 Server shutdown complete');
+      process.exit(err ? 1 : 0);
+    });
+  });
+  
+  // Force exit after 10 seconds if graceful shutdown hangs
+  setTimeout(() => {
+    console.error('⚠️  Graceful shutdown timeout - forcing exit');
+    process.exit(1);
+  }, 10000);
+}
 
-process.on('SIGTERM', () => {
-  console.log('\n🛑 Received SIGTERM, shutting down gracefully...');
-  outageMonitor.stop();
-  liveLatencyAutoRefresh.stop();
-  outageHistoryCleanup.stop();
-  process.exit(0);
-}); 
+// Register shutdown handlers
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM')); 
