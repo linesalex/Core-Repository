@@ -6431,7 +6431,7 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
   }
   
   const config = bulkUploadModules[module];
-  const limit = parseInt(req.query.limit) || 100;
+  const limit = parseInt(req.query.limit) || 10000; // Default to 10,000 records (effectively all for most tables)
   
   let query = `SELECT * FROM ${config.table} LIMIT ?`;
   let queryParams = [limit];

@@ -251,7 +251,7 @@ export const downloadBulkUploadTemplate = (module) => {
 };
 
 // Download database export for a module
-export const downloadBulkUploadDatabase = (module, limit = 100) => {
+export const downloadBulkUploadDatabase = (module, limit = 10000) => {
   return api.get(`${API_BASE_URL}/bulk-upload/database/${module}?limit=${limit}`, {
     responseType: 'blob'
   }).then(response => {
