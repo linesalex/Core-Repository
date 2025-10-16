@@ -1549,8 +1549,8 @@ router.put('/core_outages/current/:circuitId/ticket', authenticateToken, async (
     if (ticket_number && ticket_number.length > 32) {
       return res.status(400).json({ error: 'Ticket number cannot exceed 32 characters' });
     }
-    if (notes && notes.length > 256) {
-      return res.status(400).json({ error: 'Notes cannot exceed 256 characters' });
+    if (notes && notes.length > 1024) {
+      return res.status(400).json({ error: 'Notes cannot exceed 1024 characters' });
     }
 
     await new Promise((resolve, reject) => {
@@ -1591,8 +1591,8 @@ router.put('/core_outages/latency-warnings/:circuitId/ticket', authenticateToken
     if (ticket_number && ticket_number.length > 32) {
       return res.status(400).json({ error: 'Ticket number cannot exceed 32 characters' });
     }
-    if (notes && notes.length > 256) {
-      return res.status(400).json({ error: 'Notes cannot exceed 256 characters' });
+    if (notes && notes.length > 1024) {
+      return res.status(400).json({ error: 'Notes cannot exceed 1024 characters' });
     }
 
     const result = await outageMonitor.updateLatencyWarningTicket(circuitId, ticket_number, notes);

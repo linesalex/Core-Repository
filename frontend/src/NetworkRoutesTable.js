@@ -16,6 +16,8 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import HistoryIcon from '@mui/icons-material/History';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import { downloadTestResults, refreshAllLiveLatency, getLiveLatencyHistory, getLatestApiCallDetails } from './api';
 import { API_BASE_URL } from './config';
 
@@ -143,6 +145,9 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
   const [visibleColumns, setVisibleColumns] = useState(getDefaultColumns(userRole));
   const [columnMenuAnchor, setColumnMenuAnchor] = useState(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  
+  // Sorting state
+  const [sortConfig, setSortConfig] = useState({ column: null, direction: null }); // direction: 'asc', 'desc', or null
   
   // Live latency state
   const [refreshing, setRefreshing] = useState(false);
@@ -293,6 +298,53 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
     });
     setHasUnsavedChanges(true);
   };
+
+  // Sorting functions
+  const handleSort = (columnId) => {
+    setSortConfig(prev => {
+      // Only allow sorting on specific columns
+      if (!['circuit_id', 'location_a', 'location_b'].includes(columnId)) {
+        return prev;
+      }
+      
+      // Cycle through: null -> asc -> desc -> null
+      if (prev.column !== columnId) {
+        return { column: columnId, direction: 'asc' };
+      } else if (prev.direction === 'asc') {
+        return { column: columnId, direction: 'desc' };
+      } else if (prev.direction === 'desc') {
+        return { column: null, direction: null };
+      } else {
+        return { column: columnId, direction: 'asc' };
+      }
+    });
+  };
+
+  const getSortedRows = (rowsToSort) => {
+    if (!sortConfig.column || !sortConfig.direction) {
+      return rowsToSort;
+    }
+
+    return [...rowsToSort].sort((a, b) => {
+      const aValue = a[sortConfig.column] || '';
+      const bValue = b[sortConfig.column] || '';
+      
+      // Case-insensitive comparison for strings
+      const aStr = aValue.toString().toLowerCase();
+      const bStr = bValue.toString().toLowerCase();
+      
+      if (aStr < bStr) {
+        return sortConfig.direction === 'asc' ? -1 : 1;
+      }
+      if (aStr > bStr) {
+        return sortConfig.direction === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+  };
+
+  // Apply sorting to rows
+  const sortedRows = getSortedRows(rows);
 
   // Live latency functions
   const handleRefreshLiveLatency = async () => {
@@ -578,23 +630,38 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
             <TableRow>
               {visibleColumns.map(col => {
                 const HeaderCell = col.vertical ? VerticalHeaderCell : SmallTableHeaderCell;
+                const isSortable = ['circuit_id', 'location_a', 'location_b'].includes(col.id);
+                const isSorted = sortConfig.column === col.id;
+                
                 return (
                   <HeaderCell 
                     key={col.id} 
                     align={col.align || 'left'}
+                    onClick={() => isSortable && handleSort(col.id)}
                     sx={{ 
                       backgroundColor: 'background.paper',
-                      zIndex: 1
+                      zIndex: 1,
+                      cursor: isSortable ? 'pointer' : 'default',
+                      userSelect: 'none',
+                      '&:hover': isSortable ? { backgroundColor: 'action.hover' } : {}
                     }}
                   >
-                    {col.label}
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: col.align === 'center' ? 'center' : 'flex-start', gap: 0.5 }}>
+                      {col.label}
+                      {isSortable && isSorted && sortConfig.direction === 'asc' && (
+                        <ArrowUpwardIcon sx={{ fontSize: '0.875rem' }} />
+                      )}
+                      {isSortable && isSorted && sortConfig.direction === 'desc' && (
+                        <ArrowDownwardIcon sx={{ fontSize: '0.875rem' }} />
+                      )}
+                    </Box>
                   </HeaderCell>
                 );
               })}
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map((row) => (
+            {sortedRows.map((row) => (
               <TableRow
                 key={row.circuit_id}
                 hover

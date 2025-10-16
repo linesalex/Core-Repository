@@ -1050,8 +1050,8 @@ const CoreOutagesTable = () => {
               label="Notes"
               value={ticketDialog.currentNotes}
               onChange={(e) => handleTicketInputChange('currentNotes', e.target.value)}
-              placeholder="Enter notes (max 256 characters)"
-              inputProps={{ maxLength: 256 }}
+              placeholder="Enter notes (max 1024 characters)"
+              inputProps={{ maxLength: 1024 }}
               fullWidth
               multiline
               rows={3}

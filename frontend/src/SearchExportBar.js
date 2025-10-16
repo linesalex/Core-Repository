@@ -24,9 +24,29 @@ const SmallTextField = styled(TextField)(({ theme }) => ({
   },
 }));
 
-function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission }) {
+function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission, resetFilters }) {
   const [filters, setFilters] = useState(initialFilters);
   const debounceRef = useRef();
+  const prevResetFilters = useRef(resetFilters);
+
+  // Reset filters when resetFilters prop changes
+  useEffect(() => {
+    // Only trigger if resetFilters actually changed (not on initial mount)
+    if (resetFilters !== prevResetFilters.current && resetFilters > 0) {
+      setFilters(initialFilters);
+      // Also trigger search with empty filters to show all data
+      onSearch({
+        circuit_id: '',
+        location_a: '',
+        location_b: '',
+        cable_system: '',
+        bandwidth: '',
+        is_special: '0',
+        regions: []
+      });
+    }
+    prevResetFilters.current = resetFilters;
+  }, [resetFilters, onSearch]);
 
   // Debounced search function
   const debouncedSearch = useCallback((filtersToSearch) => {

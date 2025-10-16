@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box, CssBaseline, Drawer, List, ListItem, ListItemIcon, ListItemText, AppBar, Toolbar, Typography, Button, Container, Paper, 
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse, Menu, MenuItem, IconButton, Chip, CircularProgress,
@@ -107,6 +107,7 @@ function AuthenticatedApp() {
     regions: []
   });
   const [isServerSideFiltered, setIsServerSideFiltered] = useState(false);
+  const [filterResetTrigger, setFilterResetTrigger] = useState(0); // Used to trigger SearchExportBar reset
   
   // Load network routes data - moved before early returns to follow Rules of Hooks
   useEffect(() => {
@@ -137,6 +138,44 @@ function AuthenticatedApp() {
       
       return () => clearInterval(interval);
     }
+  }, [currentTab, hasModuleAccess]);
+
+  // Clear filters and reload data when navigating away from or back to network routes
+  const prevTabRef = useRef(currentTab);
+  useEffect(() => {
+    const prevTab = prevTabRef.current;
+    
+    // When navigating away from network routes, clear filters
+    if (prevTab === 'network-routes' && currentTab !== 'network-routes') {
+      setRouteFilters({
+        circuit_id: '',
+        location: '',
+        cable_system: '',
+        bandwidth: '',
+        is_special: false,
+        regions: []
+      });
+      setIsServerSideFiltered(false);
+      // Trigger SearchExportBar reset by incrementing the trigger
+      setFilterResetTrigger(prev => prev + 1);
+    }
+    
+    // When navigating back to network routes, reload all data
+    if (prevTab !== 'network-routes' && currentTab === 'network-routes' && hasModuleAccess('network_routes')) {
+      const token = localStorage.getItem('authToken');
+      if (token) {
+        fetchRoutes()
+          .then(data => {
+            setRows(data);
+            setIsServerSideFiltered(false);
+          })
+          .catch(err => {
+            console.error('Failed to reload network routes:', err);
+          });
+      }
+    }
+    
+    prevTabRef.current = currentTab;
   }, [currentTab, hasModuleAccess]);
 
   // Keep users on welcome page - let them choose where to go
@@ -359,6 +398,19 @@ function AuthenticatedApp() {
       const data = await fetchRoutes();
       setRows(data);
       setIsServerSideFiltered(false); // Reset to client-side filtering
+      
+      // Clear all filters
+      setRouteFilters({
+        circuit_id: '',
+        location: '',
+        cable_system: '',
+        bandwidth: '',
+        is_special: false,
+        regions: []
+      });
+      
+      // Trigger SearchExportBar reset by incrementing the trigger
+      setFilterResetTrigger(prev => prev + 1);
       
       // Also refresh live latency status if on network routes tab
       if (currentTab === 'network-routes') {
@@ -1001,6 +1053,7 @@ function AuthenticatedApp() {
               onExport={handleExport}
               onRefresh={refreshData}
               hasPermission={hasPermission}
+              resetFilters={filterResetTrigger}
             />
           </Box>
         )}
