@@ -54,6 +54,8 @@ pids
 !/backend/test_results_files/.gitkeep
 /backend/colocation_files/*
 !/backend/colocation_files/.gitkeep
+/backend/feedback_files/*
+!/backend/feedback_files/.gitkeep
 
 # IDE and editor files
 .vscode/

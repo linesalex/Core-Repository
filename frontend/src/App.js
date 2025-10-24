@@ -30,6 +30,7 @@ import CalculateIcon from '@mui/icons-material/Calculate';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import ApiIcon from '@mui/icons-material/Api';
 import TextFormatIcon from '@mui/icons-material/TextFormat';
+import FeedbackIcon from '@mui/icons-material/Feedback';
 import { AuthProvider, useAuth } from './AuthContext';
 import { TextSizeProvider, useTextSize } from './TextSizeContext';
 import LoginForm from './LoginForm';
@@ -48,6 +49,7 @@ import ChangeLogsViewer from './ChangeLogsViewer';
 import CoreOutagesTable from './CoreOutagesTable';
 import CarriersManager from './CarriersManager';
 import ExchangeDataManager from './ExchangeDataManager';
+import FeedbackManager from './FeedbackManager';
 import BulkUpload from './BulkUpload';
 import LiveLatencyAdminManager from './LiveLatencyAdminManager';
 
@@ -631,6 +633,9 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'feedback':
+        return <FeedbackManager />;
+      
       case 'welcome':
       default:
         return (
@@ -655,6 +660,9 @@ function AuthenticatedApp() {
         <Toolbar>
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
+            <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
+              v3.3
+            </Typography>
           </Typography>
           
           {/* User Info */}
@@ -1030,6 +1038,17 @@ function AuthenticatedApp() {
                 </Collapse>
               </>
             )}
+
+            {/* Feedback Module - Available to all users */}
+            <Divider sx={{ my: 1 }} />
+            <ListItem 
+              button 
+              onClick={() => setCurrentTab('feedback')} 
+              sx={{ backgroundColor: currentTab === 'feedback' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+            >
+              <ListItemIcon><FeedbackIcon /></ListItemIcon>
+              <ListItemText primary="Feedback" />
+            </ListItem>
           </List>
         </Box>
       </Drawer>

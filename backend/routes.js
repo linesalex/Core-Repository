@@ -4786,13 +4786,13 @@ const colocationUpload = multer({
   storage: colocationStorage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
   fileFilter: function (req, file, cb) {
-    if (file.fieldname === 'design_file' && file.mimetype === 'application/pdf') {
+    if ((file.fieldname === 'design_file' || file.fieldname === 'rack_design_file') && file.mimetype === 'application/pdf') {
       cb(null, true);
     } else if (file.fieldname === 'pricing_info_file' && file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
       cb(null, true);
     } else if (file.fieldname === 'client_design_file' && file.mimetype === 'application/pdf') {
       cb(null, true);
-    } else if (file.fieldname === 'design_file') {
+    } else if (file.fieldname === 'design_file' || file.fieldname === 'rack_design_file') {
       cb(new Error('Design file must be a PDF'), false);
     } else if (file.fieldname === 'pricing_info_file') {
       cb(new Error('Pricing info file must be an Excel file (.xlsx)'), false);
@@ -4803,6 +4803,49 @@ const colocationUpload = multer({
     }
   }
 });
+
+// ===========================
+// Feedback Module File Upload Configuration
+// ===========================
+const feedbackStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const feedbackDir = path.join(__dirname, 'feedback_files');
+    if (!fs.existsSync(feedbackDir)) {
+      fs.mkdirSync(feedbackDir, { recursive: true });
+    }
+    cb(null, feedbackDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'feedback-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const feedbackUpload = multer({ 
+  storage: feedbackStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit per file
+  fileFilter: function (req, file, cb) {
+    // Allow images, PDFs, and common document formats
+    const allowedMimes = [
+      'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+      'application/pdf',
+      'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ];
+    
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Allowed: images, PDF, Excel, Word'), false);
+    }
+  }
+});
+
+// Ensure feedback_files directory exists
+const feedbackDir = path.join(__dirname, 'feedback_files');
+if (!fs.existsSync(feedbackDir)) {
+  fs.mkdirSync(feedbackDir, { recursive: true });
+}
 
 // Get all locations with CNX Colocation enabled
 router.get('/cnx-colocation/locations', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
@@ -4890,7 +4933,6 @@ router.get('/cnx-colocation/locations/:locationId/racks', authenticateToken, aut
     SELECT r.*, 
            COUNT(c.id) as client_count,
            COALESCE(SUM(c.power_purchased), 0) as allocated_power,
-           COALESCE(SUM(c.ru_purchased), 0) as ru_allocated,
            u.username, u.full_name
     FROM cnx_colocation_racks r
     LEFT JOIN cnx_colocation_clients c ON r.id = c.rack_id
@@ -4902,17 +4944,82 @@ router.get('/cnx-colocation/locations/:locationId/racks', authenticateToken, aut
   
   db.all(query, [locationId], (err, racks) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(racks);
+    
+    // Calculate RU allocated from client ru_ranges for each rack
+    const racksWithRU = racks.map(rack => {
+      return new Promise((resolve) => {
+        db.all('SELECT ru_ranges FROM cnx_colocation_clients WHERE rack_id = ?', [rack.id], (err, clients) => {
+          if (err) {
+            console.error('Error calculating RU:', err);
+            resolve({ ...rack, ru_allocated: 0 });
+            return;
+          }
+          
+          let totalRU = 0;
+          clients.forEach(client => {
+            if (client.ru_ranges) {
+              try {
+                const ranges = JSON.parse(client.ru_ranges);
+                ranges.forEach(range => {
+                  totalRU += (range.end - range.start + 1);
+                });
+              } catch (e) {
+                console.error('Error parsing RU ranges:', e);
+              }
+            }
+          });
+          
+          resolve({ ...rack, ru_allocated: totalRU });
+        });
+      });
+    });
+    
+    Promise.all(racksWithRU).then(results => {
+      res.json(results);
+    });
   });
 });
 
-// Create rack
-router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('pricing_info_file'), (req, res) => {
+// Create rack (supports shared/dedicated types)
+router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), 
+  colocationUpload.fields([
+    { name: 'pricing_info_file', maxCount: 1 },
+    { name: 'rack_design_file', maxCount: 1 }
+  ]), (req, res) => {
   const locationId = req.params.locationId;
-  const { rack_id, total_power_kva, network_infrastructure, more_info } = req.body;
+  console.log('🔧 POST /cnx-colocation/locations/:locationId/racks');
+  console.log('📥 req.body:', req.body);
+  console.log('📥 req.files:', req.files);
   
-  if (!rack_id || !total_power_kva || !network_infrastructure) {
-    return res.status(400).json({ error: 'Rack ID, Total Power, and Network Infrastructure are required' });
+  const {
+    rack_id, rack_type, total_power_kva, total_ru, ipc_reserved_ru_ranges,
+    tor_network_infrastructure, exchange_facing_infrastructure, network_infrastructure, more_info,
+    // Dedicated rack fields
+    client_name, space_power_ucn, design_sharepoint_link
+  } = req.body;
+  
+  console.log('📝 Extracted values:');
+  console.log('  rack_id:', rack_id);
+  console.log('  rack_type:', rack_type);
+  console.log('  total_ru:', total_ru);
+  console.log('  tor_network_infrastructure:', tor_network_infrastructure, 'Type:', typeof tor_network_infrastructure);
+  console.log('  exchange_facing_infrastructure:', exchange_facing_infrastructure, 'Type:', typeof exchange_facing_infrastructure);
+  
+  // Validation
+  if (!rack_id || !total_power_kva || !rack_type) {
+    console.log('❌ Validation failed: Missing required fields');
+    return res.status(400).json({ error: 'Rack ID, Total Power, and Rack Type are required' });
+  }
+  
+  if (!['shared', 'dedicated'].includes(rack_type)) {
+    return res.status(400).json({ error: 'Rack Type must be either "shared" or "dedicated"' });
+  }
+  
+  // No longer require network_infrastructure - TOR Network Infrastructure replaces it
+  
+  // Dedicated rack requirements
+  if (rack_type === 'dedicated' && (!client_name || !space_power_ucn)) {
+    return res.status(400).json({ error: 'Client Name and Space & Power UCN are required for dedicated racks' });
   }
   
   // Check if rack_id already exists for this location
@@ -4920,41 +5027,104 @@ router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, au
     if (err) return res.status(500).json({ error: err.message });
     if (existing) return res.status(400).json({ error: 'Rack ID already exists for this location' });
     
-    const pricingInfoFile = req.file ? req.file.filename : null;
+    const pricingInfoFile = req.files && req.files['pricing_info_file'] ? req.files['pricing_info_file'][0].filename : null;
+    const rackDesignFile = req.files && req.files['rack_design_file'] ? req.files['rack_design_file'][0].filename : null;
+    
+    const totalRU = total_ru ? parseInt(total_ru) : 42;
+    
+    const insertValues = [
+      locationId, rack_id, rack_type, parseFloat(total_power_kva), totalRU, ipc_reserved_ru_ranges || null,
+      tor_network_infrastructure || 'No', exchange_facing_infrastructure || 'No', 'N/A', rackDesignFile, pricingInfoFile, more_info || null,
+      req.user.id, req.user.id, new Date().toISOString()
+    ];
+    
+    console.log('💾 Inserting rack into database:');
+    console.log('  Values:', insertValues);
+    console.log('  tor_network_infrastructure value:', tor_network_infrastructure || 'No');
+    console.log('  exchange_facing_infrastructure value:', exchange_facing_infrastructure || 'No');
     
     db.run(
-      'INSERT OR REPLACE INTO cnx_colocation_racks (location_id, rack_id, total_power_kva, network_infrastructure, pricing_info_file, more_info, created_by, updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [locationId, rack_id, parseFloat(total_power_kva), network_infrastructure, pricingInfoFile, more_info || null, req.user.id, req.user.id, new Date().toISOString()],
-      function(err) {
-        if (err) return res.status(500).json({ error: err.message });
+      `INSERT INTO cnx_colocation_racks 
+       (location_id, rack_id, rack_type, total_power_kva, total_ru, ipc_reserved_ru_ranges,
+        tor_network_infrastructure, exchange_facing_infrastructure, network_infrastructure, rack_design_file, pricing_info_file, more_info, 
+        created_by, updated_by, updated_date) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      insertValues,
+      function(err, statement) {
+        if (err) {
+          console.log('❌ Database INSERT error:', err);
+          return res.status(500).json({ error: err.message });
+        }
         
-        // Capture lastID to avoid context issues
-        const recordId = this.lastID;
+        const rackRecordId = statement?.lastID;
+        console.log('✅ Rack inserted successfully, ID:', rackRecordId);
         
-        // Use rack_id as record ID if lastID is not available
-        const logRecordId = recordId || rack_id;
-        
-        // Log the creation with proper error handling
+        // Log rack creation
         try {
-          logChange(req.user.id, 'cnx_colocation_racks', logRecordId, 'CREATE', null, 
-            { locationId, rack_id, total_power_kva, network_infrastructure, pricing_info_file: pricingInfoFile, more_info }, req);
+          logChange(req.user.id, 'cnx_colocation_racks', rackRecordId || rack_id, 'CREATE', null, 
+            { locationId, rack_id, rack_type, total_power_kva, total_ru: totalRU, ipc_reserved_ru_ranges,
+              tor_network_infrastructure: torNetwork, network_infrastructure, more_info }, req);
         } catch (logError) {
           console.error('Failed to log CNX colocation rack creation:', logError);
         }
         
-        res.status(201).json({ id: recordId, rack_id, message: 'Rack created successfully' });
+        // For dedicated racks, auto-create the client
+        if (rack_type === 'dedicated' && client_name && rackRecordId) {
+          const ruRanges = JSON.stringify([{ start: 1, end: totalRU }]);
+          
+          db.run(
+            `INSERT INTO cnx_colocation_clients 
+             (rack_id, client_name, power_purchased, ru_purchased, space_power_ucn, design_sharepoint_link, 
+              ru_ranges, more_info, created_by, updated_by, updated_date) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              rackRecordId, client_name, parseFloat(total_power_kva), totalRU, space_power_ucn, 
+              design_sharepoint_link || null, ruRanges, more_info || null,
+              req.user.id, req.user.id, new Date().toISOString()
+            ],
+            function(clientErr, clientStatement) {
+              if (clientErr) {
+                console.error('Failed to auto-create dedicated rack client:', clientErr);
+                return res.status(500).json({ error: 'Rack created but failed to create client: ' + clientErr.message });
+              }
+              
+              try {
+                logChange(req.user.id, 'cnx_colocation_clients', clientStatement?.lastID || client_name, 'CREATE', null,
+                  { rack_id: rackRecordId, client_name, space_power_ucn, ru_ranges: ruRanges }, req);
+              } catch (logError) {
+                console.error('Failed to log dedicated client creation:', logError);
+              }
+              
+              res.status(201).json({ 
+                id: rackRecordId, 
+                rack_id, 
+                client_id: clientStatement?.lastID,
+                message: 'Dedicated rack and client created successfully' 
+              });
+            }
+          );
+        } else {
+          res.status(201).json({ id: rackRecordId, rack_id, message: 'Rack created successfully' });
+        }
       }
     );
   });
 });
 
 // Update rack
-router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('pricing_info_file'), (req, res) => {
+router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), 
+  colocationUpload.fields([
+    { name: 'pricing_info_file', maxCount: 1 },
+    { name: 'rack_design_file', maxCount: 1 }
+  ]), (req, res) => {
   const rackId = req.params.rackId;
-  const { rack_id, total_power_kva, network_infrastructure, more_info } = req.body;
+  const { 
+    rack_id, rack_type, total_power_kva, total_ru, ipc_reserved_ru_ranges,
+    tor_network_infrastructure, exchange_facing_infrastructure, network_infrastructure, more_info
+  } = req.body;
   
-  if (!rack_id || !total_power_kva || !network_infrastructure) {
-    return res.status(400).json({ error: 'Rack ID, Total Power, and Network Infrastructure are required' });
+  if (!rack_id || !total_power_kva) {
+    return res.status(400).json({ error: 'Rack ID and Total Power are required' });
   }
   
   // Get current rack data
@@ -4962,47 +5132,83 @@ router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModulePe
     if (err) return res.status(500).json({ error: err.message });
     if (!rack) return res.status(404).json({ error: 'Rack not found' });
     
-    // Check if rack_id conflicts with other racks (excluding current)
-    db.get('SELECT id FROM cnx_colocation_racks WHERE location_id = ? AND rack_id = ? AND id != ?', 
-      [rack.location_id, rack_id, rackId], (conflictErr, conflict) => {
-      if (conflictErr) return res.status(500).json({ error: conflictErr.message });
-      if (conflict) return res.status(400).json({ error: 'Rack ID already exists for this location' });
-      
-      let updateData = {
-        rack_id,
-        total_power_kva: parseFloat(total_power_kva),
-        network_infrastructure,
-        more_info: more_info || null
-      };
-      
-      // Handle pricing info file
-      if (req.file) {
-        if (rack.pricing_info_file) {
-          const oldFilePath = path.join(__dirname, 'colocation_files', rack.pricing_info_file);
-          fs.unlink(oldFilePath, (unlinkErr) => {
-            if (unlinkErr) console.error('Failed to delete old pricing file:', unlinkErr);
-          });
+    // Validate rack type change
+    if (rack_type && rack_type !== rack.rack_type) {
+      // Check if rack has multiple clients (prevents dedicated→shared with multiple clients)
+      db.get('SELECT COUNT(*) as client_count FROM cnx_colocation_clients WHERE rack_id = ?', [rackId], (countErr, result) => {
+        if (countErr) return res.status(500).json({ error: countErr.message });
+        
+        if (rack_type === 'dedicated' && result.client_count > 1) {
+          return res.status(400).json({ error: 'Cannot change to dedicated rack: multiple clients exist' });
         }
-        updateData.pricing_info_file = req.file.filename;
-      }
-      
-      const updateFields = Object.keys(updateData);
-      const updateValues = Object.values(updateData);
-      const setClause = updateFields.map(field => `${field} = ?`).join(', ');
-      
-      db.run(
-        `UPDATE cnx_colocation_racks SET ${setClause}, updated_by = ?, updated_date = ? WHERE id = ?`,
-        [...updateValues, req.user.id, new Date().toISOString(), rackId],
-        function(updateErr) {
-          if (updateErr) return res.status(500).json({ error: updateErr.message });
-          if (this.changes === 0) return res.status(404).json({ error: 'Rack not found' });
+        
+        proceedWithUpdate();
+      });
+    } else {
+      proceedWithUpdate();
+    }
+    
+    function proceedWithUpdate() {
+      // Check if rack_id conflicts with other racks (excluding current)
+      db.get('SELECT id FROM cnx_colocation_racks WHERE location_id = ? AND rack_id = ? AND id != ?', 
+        [rack.location_id, rack_id, rackId], (conflictErr, conflict) => {
+        if (conflictErr) return res.status(500).json({ error: conflictErr.message });
+        if (conflict) return res.status(400).json({ error: 'Rack ID already exists for this location' });
+        
+        let updateData = {
+          rack_id,
+          total_power_kva: parseFloat(total_power_kva),
+          more_info: more_info || null
+        };
+        
+        if (rack_type) updateData.rack_type = rack_type;
+        if (total_ru) updateData.total_ru = parseInt(total_ru);
+        if (ipc_reserved_ru_ranges !== undefined) updateData.ipc_reserved_ru_ranges = ipc_reserved_ru_ranges;
+        if (tor_network_infrastructure !== undefined) updateData.tor_network_infrastructure = tor_network_infrastructure;
+        if (exchange_facing_infrastructure !== undefined) updateData.exchange_facing_infrastructure = exchange_facing_infrastructure;
+        // network_infrastructure removed - TOR Network Infrastructure replaces it
+        
+        // Handle file uploads
+        if (req.files) {
+          if (req.files['pricing_info_file']) {
+            if (rack.pricing_info_file) {
+              const oldFilePath = path.join(__dirname, 'colocation_files', rack.pricing_info_file);
+              fs.unlink(oldFilePath, (unlinkErr) => {
+                if (unlinkErr) console.error('Failed to delete old pricing file:', unlinkErr);
+              });
+            }
+            updateData.pricing_info_file = req.files['pricing_info_file'][0].filename;
+          }
           
-          logChange(req.user.id, 'cnx_colocation_racks', rack.rack_id, 'UPDATE', rack, updateData, req);
-          
-          res.json({ message: 'Rack updated successfully' });
+          if (req.files['rack_design_file']) {
+            if (rack.rack_design_file) {
+              const oldFilePath = path.join(__dirname, 'colocation_files', rack.rack_design_file);
+              fs.unlink(oldFilePath, (unlinkErr) => {
+                if (unlinkErr) console.error('Failed to delete old rack design file:', unlinkErr);
+              });
+            }
+            updateData.rack_design_file = req.files['rack_design_file'][0].filename;
+          }
         }
-      );
-    });
+        
+        const updateFields = Object.keys(updateData);
+        const updateValues = Object.values(updateData);
+        const setClause = updateFields.map(field => `${field} = ?`).join(', ');
+        
+        db.run(
+          `UPDATE cnx_colocation_racks SET ${setClause}, updated_by = ?, updated_date = ? WHERE id = ?`,
+          [...updateValues, req.user.id, new Date().toISOString(), rackId],
+          function(updateErr, statement) {
+            if (updateErr) return res.status(500).json({ error: updateErr.message });
+            if (statement?.changes === 0) return res.status(404).json({ error: 'Rack not found' });
+            
+            logChange(req.user.id, 'cnx_colocation_racks', rack.rack_id, 'UPDATE', rack, updateData, req);
+            
+            res.json({ message: 'Rack updated successfully' });
+          }
+        );
+      });
+    }
   });
 });
 
@@ -5018,27 +5224,48 @@ router.delete('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModul
     // Check if rack has clients
     db.get('SELECT COUNT(*) as client_count FROM cnx_colocation_clients WHERE rack_id = ?', [rackId], (clientErr, clientCount) => {
       if (clientErr) return res.status(500).json({ error: clientErr.message });
-      if (clientCount.client_count > 0) {
+      
+      // For dedicated racks, auto-delete the associated client
+      if (rack.rack_type === 'dedicated' && clientCount.client_count > 0) {
+        db.run('DELETE FROM cnx_colocation_clients WHERE rack_id = ?', [rackId], function(deleteClientErr, clientStatement) {
+          if (deleteClientErr) {
+            console.error('Failed to delete client:', deleteClientErr);
+            return res.status(500).json({ error: 'Failed to delete associated client: ' + deleteClientErr.message });
+          }
+          proceedWithRackDeletion();
+        });
+      } else if (clientCount.client_count > 0) {
         return res.status(400).json({ error: `Cannot delete rack. It has ${clientCount.client_count} clients. Delete clients first.` });
+      } else {
+        proceedWithRackDeletion();
       }
       
-      // Delete rack
-      db.run('DELETE FROM cnx_colocation_racks WHERE id = ?', [rackId], function(deleteErr) {
-        if (deleteErr) return res.status(500).json({ error: deleteErr.message });
-        if (this.changes === 0) return res.status(404).json({ error: 'Rack not found' });
-        
-        // Delete associated files
-        if (rack.pricing_info_file) {
-          const filePath = path.join(__dirname, 'colocation_files', rack.pricing_info_file);
-          fs.unlink(filePath, (unlinkErr) => {
-            if (unlinkErr) console.error('Failed to delete pricing file:', unlinkErr);
-          });
-        }
-        
-        logChange(req.user.id, 'cnx_colocation_racks', rack.rack_id, 'DELETE', rack, null, req);
-        
-        res.json({ message: 'Rack deleted successfully' });
-      });
+      function proceedWithRackDeletion() {
+        // Delete rack
+        db.run('DELETE FROM cnx_colocation_racks WHERE id = ?', [rackId], function(deleteErr, statement) {
+          if (deleteErr) return res.status(500).json({ error: deleteErr.message });
+          if (statement?.changes === 0) return res.status(404).json({ error: 'Rack not found' });
+          
+          // Delete associated files
+          if (rack.pricing_info_file) {
+            const filePath = path.join(__dirname, 'colocation_files', rack.pricing_info_file);
+            fs.unlink(filePath, (unlinkErr) => {
+              if (unlinkErr) console.error('Failed to delete pricing file:', unlinkErr);
+            });
+          }
+          
+          if (rack.rack_design_file) {
+            const filePath = path.join(__dirname, 'colocation_files', rack.rack_design_file);
+            fs.unlink(filePath, (unlinkErr) => {
+              if (unlinkErr) console.error('Failed to delete rack design file:', unlinkErr);
+            });
+          }
+          
+          logChange(req.user.id, 'cnx_colocation_racks', rack.rack_id, 'DELETE', rack, null, req);
+          
+          res.json({ message: 'Rack deleted successfully' });
+        });
+      }
     });
   });
 });
@@ -5065,133 +5292,244 @@ router.get('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorize
   );
 });
 
-// Create client
+// Create client (supports RU ranges and Space & Power UCN)
 router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('client_design_file'), (req, res) => {
   const rackId = req.params.rackId;
-  const { client_name, power_purchased, ru_purchased, more_info } = req.body;
+  const { client_name, power_purchased, space_power_ucn, design_sharepoint_link, ru_ranges, more_info } = req.body;
   
-  if (!client_name || power_purchased === undefined || ru_purchased === undefined) {
-    return res.status(400).json({ error: 'Client Name, Power Purchased, and RU Purchased are required' });
+  if (!client_name || power_purchased === undefined || !space_power_ucn) {
+    return res.status(400).json({ error: 'Client Name, Power Purchased, and Space & Power UCN are required' });
   }
   
-  // Validate RU allocation doesn't exceed 30
-  const ruPurchasedInt = parseInt(ru_purchased);
-  if (ruPurchasedInt <= 0) {
-    return res.status(400).json({ error: 'RU Purchased must be greater than 0' });
-  }
-  
-  // Check current RU allocation for this rack
-  db.get('SELECT COALESCE(SUM(ru_purchased), 0) as current_ru FROM cnx_colocation_clients WHERE rack_id = ?', [rackId], (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
+  // Get rack info
+  db.get('SELECT rack_type, total_ru, ipc_reserved_ru_ranges FROM cnx_colocation_racks WHERE id = ?', [rackId], (rackErr, rack) => {
+    if (rackErr) return res.status(500).json({ error: rackErr.message });
+    if (!rack) return res.status(404).json({ error: 'Rack not found' });
     
-    const currentRU = result.current_ru;
-    const totalRU = currentRU + ruPurchasedInt;
-    
-    if (totalRU > 30) {
-      return res.status(400).json({ 
-        error: `Cannot add client: Total RU would exceed 30 (currently ${currentRU}/30 allocated, trying to add ${ruPurchasedInt} RU)` 
+    // Dedicated racks can only have one client
+    if (rack.rack_type === 'dedicated') {
+      db.get('SELECT COUNT(*) as count FROM cnx_colocation_clients WHERE rack_id = ?', [rackId], (countErr, countResult) => {
+        if (countErr) return res.status(500).json({ error: countErr.message });
+        if (countResult.count > 0) {
+          return res.status(400).json({ error: 'Dedicated racks can only have one client' });
+        }
+        proceedWithValidation();
       });
+    } else {
+      proceedWithValidation();
     }
     
-    const clientDesignFile = req.file ? req.file.filename : null;
-  
-    db.run(
-      'INSERT OR REPLACE INTO cnx_colocation_clients (rack_id, client_name, power_purchased, ru_purchased, more_info, design_file, created_by, updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [rackId, client_name, parseFloat(power_purchased), parseInt(ru_purchased), more_info || null, clientDesignFile, req.user.id, req.user.id, new Date().toISOString()],
-      function(err) {
+    function proceedWithValidation() {
+      // Parse and validate RU ranges
+      let ruRangesArray;
+      try {
+        ruRangesArray = ru_ranges ? JSON.parse(ru_ranges) : [];
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid RU ranges format' });
+      }
+      
+      if (!Array.isArray(ruRangesArray) || ruRangesArray.length === 0) {
+        return res.status(400).json({ error: 'At least one RU range is required' });
+      }
+      
+      // Validate RU ranges are within rack bounds
+      const totalRU = rack.total_ru || 42;
+      for (const range of ruRangesArray) {
+        if (!range.start || !range.end || range.start < 1 || range.end > totalRU || range.start > range.end) {
+          return res.status(400).json({ error: `Invalid RU range: ${range.start}-${range.end}. Must be within 1-${totalRU}` });
+        }
+      }
+      
+      // Check for overlaps with IPC reserved ranges
+      let ipcReservedRanges = [];
+      if (rack.ipc_reserved_ru_ranges) {
+        try {
+          ipcReservedRanges = JSON.parse(rack.ipc_reserved_ru_ranges);
+        } catch (e) {
+          console.error('Error parsing IPC reserved ranges:', e);
+        }
+      }
+      
+      for (const clientRange of ruRangesArray) {
+        for (const ipcRange of ipcReservedRanges) {
+          if (!(clientRange.end < ipcRange.start || clientRange.start > ipcRange.end)) {
+            return res.status(400).json({ error: `RU range ${clientRange.start}-${clientRange.end} overlaps with IPC reserved range ${ipcRange.start}-${ipcRange.end}` });
+          }
+        }
+      }
+      
+      // Check for overlaps with existing clients
+      db.all('SELECT ru_ranges FROM cnx_colocation_clients WHERE rack_id = ?', [rackId], (err, existingClients) => {
         if (err) return res.status(500).json({ error: err.message });
         
-        // Capture lastID to avoid context issues
-        const recordId = this.lastID;
-        
-        // Use client_name as record ID if lastID is not available
-        const logRecordId = recordId || client_name;
-        
-        // Log the creation with proper error handling
-        try {
-          logChange(req.user.id, 'cnx_colocation_clients', logRecordId, 'CREATE', null, 
-            { rackId, client_name, power_purchased, ru_purchased, more_info, design_file: clientDesignFile }, req);
-        } catch (logError) {
-          console.error('Failed to log CNX colocation client creation:', logError);
+        for (const client of existingClients) {
+          if (!client.ru_ranges) continue;
+          
+          let existingRanges;
+          try {
+            existingRanges = JSON.parse(client.ru_ranges);
+          } catch (e) {
+            continue;
+          }
+          
+          for (const newRange of ruRangesArray) {
+            for (const existingRange of existingRanges) {
+              if (!(newRange.end < existingRange.start || newRange.start > existingRange.end)) {
+                return res.status(400).json({ 
+                  error: `RU range ${newRange.start}-${newRange.end} overlaps with existing client allocation ${existingRange.start}-${existingRange.end}` 
+                });
+              }
+            }
+          }
         }
         
-        res.status(201).json({ id: recordId, client_name, message: 'Client created successfully' });
-      }
-    );
+        // All validations passed, create client
+        const clientDesignFile = req.file ? req.file.filename : null;
+        
+        // Calculate total RU purchased from ranges
+        const ruPurchased = ruRangesArray.reduce((total, range) => {
+          return total + (range.end - range.start + 1);
+        }, 0);
+        
+        db.run(
+          `INSERT INTO cnx_colocation_clients 
+           (rack_id, client_name, power_purchased, ru_purchased, space_power_ucn, design_sharepoint_link, ru_ranges, more_info, design_file, created_by, updated_by, updated_date) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [rackId, client_name, parseFloat(power_purchased), ruPurchased, space_power_ucn, design_sharepoint_link || null, JSON.stringify(ruRangesArray), more_info || null, clientDesignFile, req.user.id, req.user.id, new Date().toISOString()],
+          function(err, statement) {
+            if (err) return res.status(500).json({ error: err.message });
+            
+            const recordId = statement?.lastID;
+            
+            try {
+              logChange(req.user.id, 'cnx_colocation_clients', recordId || client_name, 'CREATE', null, 
+                { rackId, client_name, power_purchased, space_power_ucn, ru_ranges: ruRangesArray, more_info, design_file: clientDesignFile }, req);
+            } catch (logError) {
+              console.error('Failed to log CNX colocation client creation:', logError);
+            }
+            
+            res.status(201).json({ id: recordId, client_name, message: 'Client created successfully' });
+          }
+        );
+      });
+    }
   });
 });
 
-// Update client
+// Update client (supports RU ranges and Space & Power UCN)
 router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('client_design_file'), (req, res) => {
   const clientId = req.params.clientId;
-  const { client_name, power_purchased, ru_purchased, more_info } = req.body;
+  const { client_name, power_purchased, space_power_ucn, design_sharepoint_link, ru_ranges, more_info } = req.body;
   
-  if (!client_name || power_purchased === undefined || ru_purchased === undefined) {
-    return res.status(400).json({ error: 'Client Name, Power Purchased, and RU Purchased are required' });
+  if (!client_name || power_purchased === undefined) {
+    return res.status(400).json({ error: 'Client Name and Power Purchased are required' });
   }
   
-  // Get current client data
-  db.get('SELECT * FROM cnx_colocation_clients WHERE id = ?', [clientId], (err, client) => {
+  // Get current client and rack data
+  db.get('SELECT c.*, r.rack_type, r.total_ru, r.ipc_reserved_ru_ranges FROM cnx_colocation_clients c JOIN cnx_colocation_racks r ON c.rack_id = r.rack_id WHERE c.id = ?', [clientId], (err, client) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!client) return res.status(404).json({ error: 'Client not found' });
     
-    // Validate RU allocation doesn't exceed 30
-    const ruPurchasedInt = parseInt(ru_purchased);
-    if (ruPurchasedInt <= 0) {
-      return res.status(400).json({ error: 'RU Purchased must be greater than 0' });
+    // Parse and validate RU ranges
+    let ruRangesArray;
+    try {
+      ruRangesArray = ru_ranges ? JSON.parse(ru_ranges) : JSON.parse(client.ru_ranges || '[]');
+      if (!Array.isArray(ruRangesArray)) {
+        return res.status(400).json({ error: 'RU ranges must be an array' });
+      }
+    } catch (parseErr) {
+      return res.status(400).json({ error: 'Invalid RU ranges format' });
     }
     
-    // Check current RU allocation for this rack (excluding current client)
-    db.get('SELECT COALESCE(SUM(ru_purchased), 0) as current_ru FROM cnx_colocation_clients WHERE rack_id = ? AND id != ?', 
-      [client.rack_id, clientId], (err, result) => {
-      if (err) return res.status(500).json({ error: err.message });
-      
-      const currentRU = result.current_ru;
-      const totalRU = currentRU + ruPurchasedInt;
-      
-      if (totalRU > 30) {
-        return res.status(400).json({ 
-          error: `Cannot update client: Total RU would exceed 30 (currently ${currentRU + client.ru_purchased}/30 allocated, trying to change to ${ruPurchasedInt} RU)` 
-        });
-      }
+    // For shared racks, validate RU ranges
+    if (client.rack_type === 'shared' && ruRangesArray.length > 0) {
+      // Get existing clients (excluding current) to check for overlaps
+      db.all('SELECT id, ru_ranges FROM cnx_colocation_clients WHERE rack_id = ? AND id != ?', 
+        [client.rack_id, clientId], (err, existingClients) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        // Check for overlaps with other clients
+        for (const existingClient of existingClients) {
+          const existingRanges = JSON.parse(existingClient.ru_ranges || '[]');
+          for (const newRange of ruRangesArray) {
+            for (const existingRange of existingRanges) {
+              if (!(newRange.end < existingRange.start || newRange.start > existingRange.end)) {
+                return res.status(400).json({ error: `RU range ${newRange.start}-${newRange.end} overlaps with existing client allocation` });
+              }
+            }
+          }
+        }
+        
+        // Check for overlaps with IPC reserved RU
+        if (client.ipc_reserved_ru_ranges) {
+          const ipcRanges = JSON.parse(client.ipc_reserved_ru_ranges);
+          for (const newRange of ruRangesArray) {
+            for (const ipcRange of ipcRanges) {
+              if (!(newRange.end < ipcRange.start || newRange.start > ipcRange.end)) {
+                return res.status(400).json({ error: `RU range ${newRange.start}-${newRange.end} overlaps with IPC reserved RU` });
+              }
+            }
+          }
+        }
+        
+        proceedWithUpdate();
+      });
+    } else {
+      proceedWithUpdate();
+    }
+    
+    function proceedWithUpdate() {
+      // Calculate total RU purchased from ranges
+      const ruPurchased = ruRangesArray.reduce((total, range) => {
+        return total + (range.end - range.start + 1);
+      }, 0);
       
       // Prepare update data
       let updateData = {
         client_name,
         power_purchased: parseFloat(power_purchased),
-        ru_purchased: ruPurchasedInt,
+        ru_purchased: ruPurchased,
+        ru_ranges: JSON.stringify(ruRangesArray),
         more_info: more_info || null
       };
-    
-    // Handle design file upload
-    if (req.file) {
-      // Delete old design file if it exists
-      if (client.design_file) {
-        const oldFilePath = path.join(__dirname, 'colocation_files', client.design_file);
-        fs.unlink(oldFilePath, (unlinkErr) => {
-          if (unlinkErr) console.error('Failed to delete old client design file:', unlinkErr);
-        });
+      
+      // Add optional fields
+      if (space_power_ucn !== undefined) updateData.space_power_ucn = space_power_ucn;
+      if (design_sharepoint_link !== undefined) updateData.design_sharepoint_link = design_sharepoint_link || null;
+      
+      // Handle design file upload
+      if (req.file) {
+        // Delete old design file if it exists
+        if (client.design_file) {
+          const oldFilePath = path.join(__dirname, 'colocation_files', client.design_file);
+          fs.unlink(oldFilePath, (unlinkErr) => {
+            if (unlinkErr) console.error('Failed to delete old client design file:', unlinkErr);
+          });
+        }
+        updateData.design_file = req.file.filename;
       }
-      updateData.design_file = req.file.filename;
-    }
-    
-    const updateFields = Object.keys(updateData);
-    const updateValues = Object.values(updateData);
-    const setClause = updateFields.map(field => `${field} = ?`).join(', ');
-    
+      
+      const updateFields = Object.keys(updateData);
+      const updateValues = Object.values(updateData);
+      const setClause = updateFields.map(field => `${field} = ?`).join(', ');
+      
       db.run(
         `UPDATE cnx_colocation_clients SET ${setClause}, updated_by = ?, updated_date = ? WHERE id = ?`,
         [...updateValues, req.user.id, new Date().toISOString(), clientId],
-        function(updateErr) {
+        function(updateErr, statement) {
           if (updateErr) return res.status(500).json({ error: updateErr.message });
-          if (this.changes === 0) return res.status(404).json({ error: 'Client not found' });
+          if (statement?.changes === 0) return res.status(404).json({ error: 'Client not found' });
           
-          logChange(req.user.id, 'cnx_colocation_clients', client.client_name, 'UPDATE', client, updateData, req);
+          try {
+            logChange(req.user.id, 'cnx_colocation_clients', client.client_name, 'UPDATE', client, updateData, req);
+          } catch (logError) {
+            console.error('Failed to log CNX colocation client update:', logError);
+          }
           
           res.json({ message: 'Client updated successfully' });
         }
       );
-    });
+    }
   });
 });
 
@@ -5204,9 +5542,9 @@ router.delete('/cnx-colocation/clients/:clientId', authenticateToken, authorizeM
     if (err) return res.status(500).json({ error: err.message });
     if (!client) return res.status(404).json({ error: 'Client not found' });
     
-    db.run('DELETE FROM cnx_colocation_clients WHERE id = ?', [clientId], function(deleteErr) {
+    db.run('DELETE FROM cnx_colocation_clients WHERE id = ?', [clientId], function(deleteErr, statement) {
       if (deleteErr) return res.status(500).json({ error: deleteErr.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Client not found' });
+      if (statement?.changes === 0) return res.status(404).json({ error: 'Client not found' });
       
       // Delete associated design file
       if (client.design_file) {
@@ -5219,6 +5557,241 @@ router.delete('/cnx-colocation/clients/:clientId', authenticateToken, authorizeM
       logChange(req.user.id, 'cnx_colocation_clients', client.client_name, 'DELETE', client, null, req);
       
       res.json({ message: 'Client deleted successfully' });
+    });
+  });
+});
+
+// Get rack elevation data
+router.get('/cnx-colocation/racks/:rackId/elevation', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
+  const rackId = req.params.rackId;
+  
+  // Get rack details
+  db.get('SELECT * FROM cnx_colocation_racks WHERE id = ?', [rackId], (rackErr, rack) => {
+    if (rackErr) return res.status(500).json({ error: rackErr.message });
+    if (!rack) return res.status(404).json({ error: 'Rack not found' });
+    
+    // Get clients with their RU ranges
+    db.all('SELECT * FROM cnx_colocation_clients WHERE rack_id = ? ORDER BY client_name', [rackId], (clientErr, clients) => {
+      if (clientErr) return res.status(500).json({ error: clientErr.message });
+      
+      // Get devices
+      db.all('SELECT * FROM cnx_rack_devices WHERE rack_id = ? ORDER BY start_ru', [rackId], (devErr, devices) => {
+        if (devErr) return res.status(500).json({ error: devErr.message });
+        
+        // Parse RU ranges
+        const clientsWithRanges = clients.map(client => ({
+          ...client,
+          ru_ranges: client.ru_ranges ? JSON.parse(client.ru_ranges) : []
+        }));
+        
+        const ipcReservedRanges = rack.ipc_reserved_ru_ranges ? JSON.parse(rack.ipc_reserved_ru_ranges) : [];
+        
+        res.json({
+          rack: {
+            ...rack,
+            ipc_reserved_ru_ranges: ipcReservedRanges
+          },
+          clients: clientsWithRanges,
+          devices
+        });
+      });
+    });
+  });
+});
+
+// ====================================
+// CNX RACK DEVICES ENDPOINTS
+// ====================================
+
+// Get devices for a rack
+router.get('/cnx-colocation/racks/:rackId/devices', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
+  const rackId = req.params.rackId;
+  
+  db.all(
+    `SELECT d.*, c.client_name, u.username, u.full_name
+     FROM cnx_rack_devices d
+     LEFT JOIN cnx_colocation_clients c ON d.client_id = c.id
+     LEFT JOIN users u ON d.updated_by = u.id
+     WHERE d.rack_id = ?
+     ORDER BY d.start_ru`,
+    [rackId],
+    (err, devices) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(devices);
+    }
+  );
+});
+
+// Create device
+router.post('/cnx-colocation/racks/:rackId/devices', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+  const rackId = req.params.rackId;
+  const { client_id, name, model, serial, start_ru, height_ru, position, power_kw, notes } = req.body;
+  
+  if (!name || !start_ru || !height_ru) {
+    return res.status(400).json({ error: 'Name, Start RU, and Height RU are required' });
+  }
+  
+  const startRU = parseInt(start_ru);
+  const heightRU = parseInt(height_ru);
+  const endRU = startRU + heightRU - 1;
+  
+  // Get rack to validate
+  db.get('SELECT total_ru FROM cnx_colocation_racks WHERE id = ?', [rackId], (rackErr, rack) => {
+    if (rackErr) return res.status(500).json({ error: rackErr.message });
+    if (!rack) return res.status(404).json({ error: 'Rack not found' });
+    
+    const totalRU = rack.total_ru || 30;
+    if (startRU < 1 || endRU > totalRU) {
+      return res.status(400).json({ error: `Device must be within rack bounds (1-${totalRU})` });
+    }
+    
+    // Check for overlaps with other devices
+    db.all('SELECT * FROM cnx_rack_devices WHERE rack_id = ?', [rackId], (err, existingDevices) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      for (const device of existingDevices) {
+        const deviceEndRU = device.start_ru + device.height_ru - 1;
+        if (!(endRU < device.start_ru || startRU > deviceEndRU)) {
+          return res.status(400).json({ 
+            error: `Device overlaps with existing device "${device.name}" at RU ${device.start_ru}-${deviceEndRU}` 
+          });
+        }
+      }
+      
+      // If client_id provided, validate device is within client's RU allocation
+      if (client_id) {
+        db.get('SELECT ru_ranges FROM cnx_colocation_clients WHERE id = ? AND rack_id = ?', [client_id, rackId], (clientErr, client) => {
+          if (clientErr) return res.status(500).json({ error: clientErr.message });
+          if (!client) return res.status(400).json({ error: 'Client not found for this rack' });
+          
+          const clientRanges = client.ru_ranges ? JSON.parse(client.ru_ranges) : [];
+          let withinClientRange = false;
+          
+          for (const range of clientRanges) {
+            if (startRU >= range.start && endRU <= range.end) {
+              withinClientRange = true;
+              break;
+            }
+          }
+          
+          if (!withinClientRange) {
+            return res.status(400).json({ error: 'Device must be within client RU allocation' });
+          }
+          
+          proceedWithInsert();
+        });
+      } else {
+        proceedWithInsert();
+      }
+      
+      function proceedWithInsert() {
+        db.run(
+          `INSERT INTO cnx_rack_devices 
+           (rack_id, client_id, name, model, serial, start_ru, height_ru, position, power_kw, notes, created_by, updated_by, updated_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [rackId, client_id || null, name, model || null, serial || null, startRU, heightRU, position || 'front', power_kw ? parseFloat(power_kw) : null, notes || null, req.user.id, req.user.id, new Date().toISOString()],
+          function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            
+            try {
+              logChange(req.user.id, 'cnx_rack_devices', this.lastID || name, 'CREATE', null,
+                { rack_id: rackId, client_id, name, model, start_ru: startRU, height_ru: heightRU }, req);
+            } catch (logError) {
+              console.error('Failed to log device creation:', logError);
+            }
+            
+            res.status(201).json({ id: this.lastID, name, message: 'Device created successfully' });
+          }
+        );
+      }
+    });
+  });
+});
+
+// Update device
+router.put('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+  const deviceId = req.params.deviceId;
+  const { client_id, name, model, serial, start_ru, height_ru, position, power_kw, notes } = req.body;
+  
+  // Get current device
+  db.get('SELECT * FROM cnx_rack_devices WHERE id = ?', [deviceId], (err, device) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!device) return res.status(404).json({ error: 'Device not found' });
+    
+    const startRU = start_ru ? parseInt(start_ru) : device.start_ru;
+    const heightRU = height_ru ? parseInt(height_ru) : device.height_ru;
+    const endRU = startRU + heightRU - 1;
+    
+    // Validate within rack bounds
+    db.get('SELECT total_ru FROM cnx_colocation_racks WHERE id = ?', [device.rack_id], (rackErr, rack) => {
+      if (rackErr) return res.status(500).json({ error: rackErr.message });
+      
+      const totalRU = rack ? (rack.total_ru || 42) : 42;
+      if (startRU < 1 || endRU > totalRU) {
+        return res.status(400).json({ error: `Device must be within rack bounds (1-${totalRU})` });
+      }
+      
+      // Check for overlaps with other devices (excluding current)
+      db.all('SELECT * FROM cnx_rack_devices WHERE rack_id = ? AND id != ?', [device.rack_id, deviceId], (overlapErr, existingDevices) => {
+        if (overlapErr) return res.status(500).json({ error: overlapErr.message });
+        
+        for (const otherDevice of existingDevices) {
+          const otherEndRU = otherDevice.start_ru + otherDevice.height_ru - 1;
+          if (!(endRU < otherDevice.start_ru || startRU > otherEndRU)) {
+            return res.status(400).json({ 
+              error: `Device overlaps with existing device "${otherDevice.name}" at RU ${otherDevice.start_ru}-${otherEndRU}` 
+            });
+          }
+        }
+        
+        // Build update data
+        let updateData = {};
+        if (client_id !== undefined) updateData.client_id = client_id || null;
+        if (name) updateData.name = name;
+        if (model !== undefined) updateData.model = model;
+        if (serial !== undefined) updateData.serial = serial;
+        if (start_ru) updateData.start_ru = startRU;
+        if (height_ru) updateData.height_ru = heightRU;
+        if (position) updateData.position = position;
+        if (power_kw !== undefined) updateData.power_kw = power_kw ? parseFloat(power_kw) : null;
+        if (notes !== undefined) updateData.notes = notes;
+        
+        const updateFields = Object.keys(updateData);
+        const updateValues = Object.values(updateData);
+        const setClause = updateFields.map(field => `${field} = ?`).join(', ');
+        
+        db.run(
+          `UPDATE cnx_rack_devices SET ${setClause}, updated_by = ?, updated_date = ? WHERE id = ?`,
+          [...updateValues, req.user.id, new Date().toISOString(), deviceId],
+          function(updateErr) {
+            if (updateErr) return res.status(500).json({ error: updateErr.message });
+            if (this.changes === 0) return res.status(404).json({ error: 'Device not found' });
+            
+            logChange(req.user.id, 'cnx_rack_devices', device.name, 'UPDATE', device, updateData, req);
+            
+            res.json({ message: 'Device updated successfully' });
+          }
+        );
+      });
+    });
+  });
+});
+
+// Delete device
+router.delete('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+  const deviceId = req.params.deviceId;
+  
+  db.get('SELECT * FROM cnx_rack_devices WHERE id = ?', [deviceId], (err, device) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!device) return res.status(404).json({ error: 'Device not found' });
+    
+    db.run('DELETE FROM cnx_rack_devices WHERE id = ?', [deviceId], function(deleteErr) {
+      if (deleteErr) return res.status(500).json({ error: deleteErr.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Device not found' });
+      
+      logChange(req.user.id, 'cnx_rack_devices', device.name, 'DELETE', device, null, req);
+      
+      res.json({ message: 'Device deleted successfully' });
     });
   });
 });
@@ -5343,6 +5916,34 @@ router.delete('/cnx-colocation/locations/:id/design-file', authenticateToken, au
     });
   });
 });
+// Download rack design file
+router.get('/cnx-colocation/racks/:id/design-download', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
+  const rackId = req.params.id;
+  
+  db.get('SELECT rack_design_file FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rack) return res.status(404).json({ error: 'Rack not found' });
+    if (!rack.rack_design_file) return res.status(404).json({ error: 'No design file found for this rack' });
+    
+    const filePath = path.join(__dirname, 'colocation_files', rack.rack_design_file);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Design file not found on server' });
+    }
+    
+    res.setHeader('Content-Disposition', `attachment; filename="${rack.rack_design_file}"`);
+    res.setHeader('Content-Type', 'application/pdf');
+    
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+    
+    fileStream.on('error', (err) => {
+      console.error('Error streaming rack design file:', err);
+      res.status(500).json({ error: 'Failed to download file' });
+    });
+  });
+});
+
 // Delete rack pricing file
 router.delete('/cnx-colocation/racks/:id/pricing-file', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
   const rackId = req.params.id;
@@ -5363,6 +5964,28 @@ router.delete('/cnx-colocation/racks/:id/pricing-file', authenticateToken, autho
       if (err) return res.status(500).json({ error: err.message });
       
       res.json({ message: 'Pricing file deleted successfully' });
+    });
+  });
+});
+
+// Delete rack design file
+router.delete('/cnx-colocation/racks/:id/design-file', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+  const rackId = req.params.id;
+  
+  db.get('SELECT rack_design_file FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rack) return res.status(404).json({ error: 'Rack not found' });
+    if (!rack.rack_design_file) return res.status(404).json({ error: 'No design file to delete' });
+    
+    const filePath = path.join(__dirname, 'colocation_files', rack.rack_design_file);
+    fs.unlink(filePath, (unlinkErr) => {
+      if (unlinkErr) console.error('Failed to delete rack design file:', unlinkErr);
+    });
+    
+    db.run('UPDATE cnx_colocation_racks SET rack_design_file = NULL WHERE id = ?', [rackId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      res.json({ message: 'Design file deleted successfully' });
     });
   });
 });
@@ -6669,7 +7292,12 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
         
         try {
           // Step 1: Required fields validation
-          const missingFields = config.requiredFields.filter(field => !row[field] || row[field].trim() === '');
+          const missingFields = config.requiredFields.filter(field => {
+            if (!row[field]) return true;
+            // Handle both strings and non-strings for validation
+            const value = typeof row[field] === 'string' ? row[field].trim() : String(row[field]);
+            return value === '';
+          });
           if (missingFields.length > 0) {
             allRowErrors.push(`Missing required fields: ${missingFields.join(', ')}`);
           }
@@ -6677,8 +7305,14 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
           // Step 2: Clean and prepare data
           const cleanedRow = {};
           config.templateFields.forEach(field => {
-            if (row[field] !== undefined) {
-              cleanedRow[field] = row[field].trim();
+            if (row[field] !== undefined && row[field] !== null) {
+              // Handle both string and non-string values (e.g., Excel booleans)
+              if (typeof row[field] === 'string') {
+                cleanedRow[field] = row[field].trim();
+              } else {
+                // Convert non-strings to strings (handles Excel TRUE/FALSE booleans)
+                cleanedRow[field] = String(row[field]);
+              }
             }
           });
           cleanedRow._originalRowNumber = originalRowNumber;
@@ -7166,11 +7800,26 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                 continue;
               }
               
-              // Convert enabled string to integer
-              if (cleanRow.enabled === 'true' || cleanRow.enabled === '1' || cleanRow.enabled === 1) {
+              // Convert enabled string to integer (case-insensitive)
+              console.log(`[BULK UPLOAD - ROW ${index + 1}] Raw enabled value:`, cleanRow.enabled, `(type: ${typeof cleanRow.enabled})`);
+              const enabledStr = String(cleanRow.enabled || '').toLowerCase().trim();
+              console.log(`[BULK UPLOAD - ROW ${index + 1}] Converted enabled string:`, enabledStr);
+              
+              if (enabledStr === 'true' || enabledStr === '1' || enabledStr === 'yes' || cleanRow.enabled === 1 || cleanRow.enabled === true) {
                 cleanRow.enabled = 1;
-              } else {
+                console.log(`[BULK UPLOAD - ROW ${index + 1}] Setting enabled = 1 (TRUE)`);
+              } else if (enabledStr === 'false' || enabledStr === '0' || enabledStr === 'no' || cleanRow.enabled === 0 || cleanRow.enabled === false) {
                 cleanRow.enabled = 0;
+                console.log(`[BULK UPLOAD - ROW ${index + 1}] Setting enabled = 0 (FALSE)`);
+              } else if (enabledStr === '' || cleanRow.enabled === undefined || cleanRow.enabled === null) {
+                // Default to enabled if not specified, per user requirement
+                cleanRow.enabled = 1;
+                console.log(`[BULK UPLOAD - ROW ${index + 1}] Setting enabled = 1 (DEFAULT - empty/null)`);
+              } else {
+                // Invalid value - report error
+                console.log(`[BULK UPLOAD - ROW ${index + 1}] INVALID enabled value: "${cleanRow.enabled}"`);
+                insertErrors.push(`Row ${index + 1}: Invalid 'enabled' value "${cleanRow.enabled}". Must be true/false, 1/0, or yes/no (case-insensitive).`);
+                continue;
               }
               
               // Set defaults
@@ -8902,17 +9551,17 @@ router.get('/admin/live-latency/overview', authenticateToken, authorizeRole(['ad
         });
       }),
       
-      // Active configurations
+      // Active configurations (enabled AND not failing)
       new Promise((resolve, reject) => {
-        db.get('SELECT COUNT(*) as active FROM live_latency_config WHERE enabled = 1 AND (disabled_until IS NULL OR disabled_until < CURRENT_TIMESTAMP)', [], (err, row) => {
+        db.get('SELECT COUNT(*) as active FROM live_latency_config WHERE enabled = 1 AND (disabled_until IS NULL OR disabled_until < CURRENT_TIMESTAMP) AND (failure_count < 3 OR failure_count IS NULL)', [], (err, row) => {
           if (err) reject(err);
           else resolve(row.active);
         });
       }),
       
-      // Failed configurations
+      // Failed configurations (enabled AND failing)
       new Promise((resolve, reject) => {
-        db.get('SELECT COUNT(*) as failed FROM live_latency_config WHERE failure_count >= 3', [], (err, row) => {
+        db.get('SELECT COUNT(*) as failed FROM live_latency_config WHERE enabled = 1 AND failure_count >= 3', [], (err, row) => {
           if (err) reject(err);
           else resolve(row.failed);
         });
@@ -9445,6 +10094,452 @@ router.post('/api/live-latency/refresh-all', authenticateToken, authorizeModuleP
       timestamp: new Date().toISOString()
     });
   }
+});
+
+// ===========================
+// FEEDBACK MODULE ROUTES
+// ===========================
+
+// Submit new feedback (available to all authenticated users)
+router.post('/feedback', authenticateToken, feedbackUpload.array('attachments', 3), (req, res) => {
+  const { type, priority, description } = req.body;
+  const userId = req.user.id;
+  
+  // Validation
+  if (!type || !priority || !description) {
+    return res.status(400).json({ error: 'Type, priority, and description are required' });
+  }
+  
+  if (!['Bug', 'Feature Request'].includes(type)) {
+    return res.status(400).json({ error: 'Type must be either "Bug" or "Feature Request"' });
+  }
+  
+  if (![1, 2, 3].includes(parseInt(priority))) {
+    return res.status(400).json({ error: 'Priority must be 1, 2, or 3' });
+  }
+  
+  // Insert feedback submission
+  db.run(
+    `INSERT INTO feedback_submissions (user_id, type, priority, description, status) 
+     VALUES (?, ?, ?, ?, 'New')`,
+    [userId, type, parseInt(priority), description],
+    function(err, statement) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      const feedbackId = statement?.lastID;
+      
+      // Insert attachments if any
+      if (req.files && req.files.length > 0) {
+        const attachmentPromises = req.files.map(file => {
+          return new Promise((resolve, reject) => {
+            db.run(
+              `INSERT INTO feedback_attachments 
+               (feedback_id, filename, original_filename, file_path, file_size) 
+               VALUES (?, ?, ?, ?, ?)`,
+              [feedbackId, file.filename, file.originalname, file.path, file.size],
+              (attachErr) => {
+                if (attachErr) reject(attachErr);
+                else resolve();
+              }
+            );
+          });
+        });
+        
+        Promise.all(attachmentPromises)
+          .then(() => {
+            // Log the submission
+            try {
+              logChange(userId, 'feedback_submissions', feedbackId, 'CREATE', null, 
+                { type, priority, description, attachments: req.files.length }, req);
+            } catch (logErr) {
+              console.error('Error logging feedback submission:', logErr);
+            }
+            
+            res.status(201).json({ 
+              id: feedbackId, 
+              message: 'Feedback submitted successfully',
+              feedback_id: feedbackId
+            });
+          })
+          .catch(attachErr => {
+            res.status(500).json({ error: 'Failed to save attachments: ' + attachErr.message });
+          });
+      } else {
+        // Log the submission
+        try {
+          logChange(userId, 'feedback_submissions', feedbackId, 'CREATE', null, 
+            { type, priority, description }, req);
+        } catch (logErr) {
+          console.error('Error logging feedback submission:', logErr);
+        }
+        
+        res.status(201).json({ 
+          id: feedbackId, 
+          message: 'Feedback submitted successfully',
+          feedback_id: feedbackId
+        });
+      }
+    }
+  );
+});
+
+// Get user's own submissions with filters
+router.get('/feedback/my-submissions', authenticateToken, (req, res) => {
+  const userId = req.user.id;
+  const { status, type } = req.query;
+  
+  let query = `
+    SELECT 
+      fs.*,
+      u.username, u.full_name,
+      (SELECT COUNT(*) FROM feedback_comments WHERE feedback_id = fs.id) as comment_count,
+      (SELECT COUNT(*) FROM feedback_attachments WHERE feedback_id = fs.id) as attachment_count
+    FROM feedback_submissions fs
+    JOIN users u ON fs.user_id = u.id
+    WHERE fs.user_id = ?
+  `;
+  
+  const params = [userId];
+  
+  if (status) {
+    query += ` AND fs.status = ?`;
+    params.push(status);
+  }
+  
+  if (type) {
+    query += ` AND fs.type = ?`;
+    params.push(type);
+  }
+  
+  query += ` ORDER BY fs.created_at DESC`;
+  
+  db.all(query, params, (err, submissions) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(submissions);
+  });
+});
+
+// Get all submissions (Admin only)
+router.get('/feedback/all', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const { status, type, priority, search } = req.query;
+  
+  let query = `
+    SELECT 
+      fs.*,
+      u.username, u.full_name,
+      (SELECT COUNT(*) FROM feedback_comments WHERE feedback_id = fs.id) as comment_count,
+      (SELECT COUNT(*) FROM feedback_attachments WHERE feedback_id = fs.id) as attachment_count
+    FROM feedback_submissions fs
+    JOIN users u ON fs.user_id = u.id
+    WHERE 1=1
+  `;
+  
+  const params = [];
+  
+  if (status) {
+    query += ` AND fs.status = ?`;
+    params.push(status);
+  }
+  
+  if (type) {
+    query += ` AND fs.type = ?`;
+    params.push(type);
+  }
+  
+  if (priority) {
+    query += ` AND fs.priority = ?`;
+    params.push(parseInt(priority));
+  }
+  
+  if (search) {
+    query += ` AND (fs.description LIKE ? OR u.username LIKE ? OR u.full_name LIKE ?)`;
+    const searchPattern = `%${search}%`;
+    params.push(searchPattern, searchPattern, searchPattern);
+  }
+  
+  query += ` ORDER BY fs.priority ASC, fs.created_at DESC`;
+  
+  db.all(query, params, (err, submissions) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(submissions);
+  });
+});
+
+// Get statistics (Admin only)
+router.get('/feedback/statistics', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const statsQueries = {
+    total: `SELECT COUNT(*) as count FROM feedback_submissions`,
+    byStatus: `SELECT status, COUNT(*) as count FROM feedback_submissions GROUP BY status`,
+    byType: `SELECT type, COUNT(*) as count FROM feedback_submissions GROUP BY type`,
+    byPriority: `SELECT priority, COUNT(*) as count FROM feedback_submissions GROUP BY priority`,
+    urgentBugs: `SELECT COUNT(*) as count FROM feedback_submissions WHERE type = 'Bug' AND priority = 1 AND status NOT IN ('Complete', 'Closed/Won''t Fix')`,
+    urgentFeatures: `SELECT COUNT(*) as count FROM feedback_submissions WHERE type = 'Feature Request' AND priority = 1 AND status NOT IN ('Complete', 'Closed/Won''t Fix')`
+  };
+  
+  const stats = {};
+  let completed = 0;
+  const totalQueries = Object.keys(statsQueries).length;
+  
+  Object.keys(statsQueries).forEach(key => {
+    db.all(statsQueries[key], [], (err, results) => {
+      if (err) {
+        console.error(`Error getting ${key} stats:`, err);
+        stats[key] = key.startsWith('by') ? [] : 0;
+      } else {
+        if (key.startsWith('by')) {
+          stats[key] = results;
+        } else {
+          stats[key] = results[0]?.count || 0;
+        }
+      }
+      
+      completed++;
+      if (completed === totalQueries) {
+        res.json(stats);
+      }
+    });
+  });
+});
+
+// Get single feedback with full details
+router.get('/feedback/:id', authenticateToken, (req, res) => {
+  const feedbackId = req.params.id;
+  const isAdmin = req.user.role === 'administrator';
+  
+  // Get feedback submission
+  db.get(
+    `SELECT fs.*, u.username, u.full_name 
+     FROM feedback_submissions fs
+     JOIN users u ON fs.user_id = u.id
+     WHERE fs.id = ?`,
+    [feedbackId],
+    (err, feedback) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!feedback) return res.status(404).json({ error: 'Feedback not found' });
+      
+      // Check access - users can only view their own, admins can view all
+      if (!isAdmin && feedback.user_id !== req.user.id) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      
+      // Get attachments
+      db.all(
+        'SELECT id, original_filename, file_size, uploaded_at FROM feedback_attachments WHERE feedback_id = ?',
+        [feedbackId],
+        (attachErr, attachments) => {
+          if (attachErr) return res.status(500).json({ error: attachErr.message });
+          
+          // Get comments
+          db.all(
+            `SELECT fc.*, u.username, u.full_name 
+             FROM feedback_comments fc
+             JOIN users u ON fc.user_id = u.id
+             WHERE fc.feedback_id = ?
+             ORDER BY fc.created_at ASC`,
+            [feedbackId],
+            (commErr, comments) => {
+              if (commErr) return res.status(500).json({ error: commErr.message });
+              
+              // Get status history
+              db.all(
+                `SELECT fsh.*, u.username, u.full_name 
+                 FROM feedback_status_history fsh
+                 JOIN users u ON fsh.changed_by = u.id
+                 WHERE fsh.feedback_id = ?
+                 ORDER BY fsh.changed_at DESC`,
+                [feedbackId],
+                (histErr, history) => {
+                  if (histErr) return res.status(500).json({ error: histErr.message });
+                  
+                  res.json({
+                    ...feedback,
+                    attachments,
+                    comments,
+                    history
+                  });
+                }
+              );
+            }
+          );
+        }
+      );
+    }
+  );
+});
+
+// Update feedback status (Admin only)
+router.put('/feedback/:id/status', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const feedbackId = req.params.id;
+  const { status, admin_notes, version_completed } = req.body;
+  const adminId = req.user.id;
+  
+  // Validation
+  if (!status) {
+    return res.status(400).json({ error: 'Status is required' });
+  }
+  
+  const validStatuses = ['New', 'In Progress', 'Complete', 'Closed/Won\'t Fix'];
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+  
+  // Get current status
+  db.get('SELECT status FROM feedback_submissions WHERE id = ?', [feedbackId], (err, feedback) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!feedback) return res.status(404).json({ error: 'Feedback not found' });
+    
+    const oldStatus = feedback.status;
+    
+    // Update feedback
+    db.run(
+      `UPDATE feedback_submissions 
+       SET status = ?, version_completed = ?, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = ?`,
+      [status, status === 'Complete' ? version_completed : null, feedbackId],
+      function(updateErr, statement) {
+        if (updateErr) return res.status(500).json({ error: updateErr.message });
+        if (statement?.changes === 0) return res.status(404).json({ error: 'Feedback not found' });
+        
+        // Record status history
+        db.run(
+          `INSERT INTO feedback_status_history 
+           (feedback_id, old_status, new_status, admin_notes, changed_by) 
+           VALUES (?, ?, ?, ?, ?)`,
+          [feedbackId, oldStatus, status, admin_notes || null, adminId],
+          (histErr) => {
+            if (histErr) console.error('Error recording status history:', histErr);
+            
+            // Log the change
+            try {
+              logChange(adminId, 'feedback_submissions', feedbackId, 'UPDATE', 
+                { status: oldStatus }, 
+                { status, admin_notes, version_completed }, 
+                req);
+            } catch (logErr) {
+              console.error('Error logging status change:', logErr);
+            }
+            
+            res.json({ message: 'Status updated successfully' });
+          }
+        );
+      }
+    );
+  });
+});
+
+// Add comment to feedback
+router.post('/feedback/:id/comment', authenticateToken, (req, res) => {
+  const feedbackId = req.params.id;
+  const { comment } = req.body;
+  const userId = req.user.id;
+  const isAdmin = req.user.role === 'administrator';
+  
+  if (!comment || !comment.trim()) {
+    return res.status(400).json({ error: 'Comment is required' });
+  }
+  
+  // Check if feedback exists and user has access
+  db.get('SELECT user_id FROM feedback_submissions WHERE id = ?', [feedbackId], (err, feedback) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!feedback) return res.status(404).json({ error: 'Feedback not found' });
+    
+    // Users can only comment on their own, admins can comment on all
+    if (!isAdmin && feedback.user_id !== userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    // Insert comment
+    db.run(
+      `INSERT INTO feedback_comments (feedback_id, user_id, comment, is_admin_note) 
+       VALUES (?, ?, ?, ?)`,
+      [feedbackId, userId, comment.trim(), isAdmin ? 1 : 0],
+      function(insertErr, statement) {
+        if (insertErr) return res.status(500).json({ error: insertErr.message });
+        
+        // Update feedback updated_at timestamp
+        db.run('UPDATE feedback_submissions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [feedbackId]);
+        
+        res.status(201).json({ 
+          id: statement?.lastID, 
+          message: 'Comment added successfully' 
+        });
+      }
+    );
+  });
+});
+
+// Download attachment
+router.get('/feedback/:id/attachments/:filename', authenticateToken, (req, res) => {
+  const { id, filename } = req.params;
+  const isAdmin = req.user.role === 'administrator';
+  
+  // Get attachment details
+  db.get(
+    `SELECT fa.*, fs.user_id 
+     FROM feedback_attachments fa
+     JOIN feedback_submissions fs ON fa.feedback_id = fs.id
+     WHERE fa.feedback_id = ? AND fa.filename = ?`,
+    [id, filename],
+    (err, attachment) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!attachment) return res.status(404).json({ error: 'Attachment not found' });
+      
+      // Check access
+      if (!isAdmin && attachment.user_id !== req.user.id) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      
+      const filePath = path.join(__dirname, 'feedback_files', attachment.filename);
+      
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'File not found on server' });
+      }
+      
+      res.download(filePath, attachment.original_filename);
+    }
+  );
+});
+
+// Delete attachment (Admin only, or user can delete before admin reviews)
+router.delete('/feedback/:id/attachments/:attachmentId', authenticateToken, (req, res) => {
+  const { id, attachmentId } = req.params;
+  const isAdmin = req.user.role === 'administrator';
+  
+  // Get attachment and feedback details
+  db.get(
+    `SELECT fa.*, fs.user_id, fs.status 
+     FROM feedback_attachments fa
+     JOIN feedback_submissions fs ON fa.feedback_id = fs.id
+     WHERE fa.id = ? AND fa.feedback_id = ?`,
+    [attachmentId, id],
+    (err, attachment) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!attachment) return res.status(404).json({ error: 'Attachment not found' });
+      
+      // Check access - admin or user can delete their own if status is still 'New'
+      if (!isAdmin && (attachment.user_id !== req.user.id || attachment.status !== 'New')) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      
+      // Delete file from filesystem
+      const filePath = path.join(__dirname, 'feedback_files', attachment.filename);
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (fsErr) {
+          console.error('Error deleting file:', fsErr);
+        }
+      }
+      
+      // Delete from database
+      db.run('DELETE FROM feedback_attachments WHERE id = ?', [attachmentId], function(delErr, statement) {
+        if (delErr) return res.status(500).json({ error: delErr.message });
+        if (statement?.changes === 0) return res.status(404).json({ error: 'Attachment not found' });
+        
+        res.json({ message: 'Attachment deleted successfully' });
+      });
+    }
+  );
 });
 
 module.exports = router; 

@@ -329,6 +329,30 @@ export const getCrossConnectInfo = (locationId) => api.get(`${API_BASE_URL}/loca
 export const updateCrossConnectInfo = (locationId, data) => api.put(`${API_BASE_URL}/locations/${locationId}/cross-connect`, data);
 
 // ====================================
+// CNX COLOCATION ELEVATION & DEVICES
+// ====================================
+
+// Rack Elevation
+export const getRackElevation = (rackId) => api.get(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/elevation`).then(res => res.data);
+
+// Rack Design File
+export const downloadRackDesign = (rackId) => {
+  return api.get(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/design-download`, {
+    responseType: 'blob',
+    headers: {
+      'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+    }
+  });
+};
+export const deleteRackDesign = (rackId) => api.delete(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/design-file`);
+
+// Devices
+export const getRackDevices = (rackId) => api.get(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/devices`).then(res => res.data);
+export const createDevice = (rackId, deviceData) => api.post(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/devices`, deviceData);
+export const updateDevice = (deviceId, deviceData) => api.put(`${API_BASE_URL}/cnx-colocation/devices/${deviceId}`, deviceData);
+export const deleteDevice = (deviceId) => api.delete(`${API_BASE_URL}/cnx-colocation/devices/${deviceId}`);
+
+// ====================================
 // ADMIN: LIVE LATENCY API MANAGEMENT
 // ====================================
 
@@ -348,6 +372,73 @@ export const liveLatencyAdminApi = {
   testConnection: (circuitId) => api.post(`${API_BASE_URL}/admin/live-latency/test/${circuitId}`).then(res => res.data),
   getApiLogs: (circuitId, limit = 50) => api.get(`${API_BASE_URL}/admin/live-latency/logs/${circuitId}?limit=${limit}`).then(res => res.data)
 };
+
+// ===========================
+// Feedback Module API Functions
+// ===========================
+
+// Submit new feedback with attachments
+export const submitFeedback = (formData) => {
+  return api.post(`${API_BASE_URL}/feedback`, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  });
+};
+
+// Get user's own submissions
+export const getMyFeedback = (filters = {}) => {
+  const params = new URLSearchParams();
+  if (filters.status) params.append('status', filters.status);
+  if (filters.type) params.append('type', filters.type);
+  
+  const queryString = params.toString();
+  return api.get(`${API_BASE_URL}/feedback/my-submissions${queryString ? '?' + queryString : ''}`).then(res => res.data);
+};
+
+// Get all feedback (Admin only)
+export const getAllFeedback = (filters = {}) => {
+  const params = new URLSearchParams();
+  if (filters.status) params.append('status', filters.status);
+  if (filters.type) params.append('type', filters.type);
+  if (filters.priority) params.append('priority', filters.priority);
+  if (filters.search) params.append('search', filters.search);
+  
+  const queryString = params.toString();
+  return api.get(`${API_BASE_URL}/feedback/all${queryString ? '?' + queryString : ''}`).then(res => res.data);
+};
+
+// Get feedback statistics (Admin only)
+export const getFeedbackStatistics = () => api.get(`${API_BASE_URL}/feedback/statistics`).then(res => res.data);
+
+// Get single feedback with full details
+export const getFeedbackDetails = (id) => api.get(`${API_BASE_URL}/feedback/${id}`).then(res => res.data);
+
+// Update feedback status (Admin only)
+export const updateFeedbackStatus = (id, statusData) => api.put(`${API_BASE_URL}/feedback/${id}/status`, statusData);
+
+// Add comment to feedback
+export const addFeedbackComment = (id, comment) => api.post(`${API_BASE_URL}/feedback/${id}/comment`, { comment });
+
+// Download attachment
+export const downloadFeedbackAttachment = (feedbackId, filename) => {
+  return api.get(`${API_BASE_URL}/feedback/${feedbackId}/attachments/${filename}`, {
+    responseType: 'blob'
+  }).then(response => {
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  });
+};
+
+// Delete attachment
+export const deleteFeedbackAttachment = (feedbackId, attachmentId) => 
+  api.delete(`${API_BASE_URL}/feedback/${feedbackId}/attachments/${attachmentId}`);
 
 // Export the base api object for direct use
 export { api }; 

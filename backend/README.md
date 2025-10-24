@@ -530,10 +530,13 @@ node -e "const db = require('./db'); console.log('Database connected');"
 
 ## 📄 License & Version
 
-- **Version**: 2.1
+- **Version**: 3.3.0
 - **Node.js Compatibility**: v16+
 - **Database**: SQLite 3
-- **Latest Features**: CNX Colocation Management with client design file uploads
+- **Latest Features**: 
+  - Feedback Module (bug reports & feature requests)
+  - CNX Colocation fixes and improvements
+  - Enhanced validation and error handling
 - **Last Updated**: January 2025
 
 ---
