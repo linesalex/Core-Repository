@@ -14,7 +14,7 @@ Complete bug reporting and feature request system for all users.
 
 **Features:**
 - User submission form with priority levels (Urgent, ASAP, Informational)
-- File attachment support (3 files, 5MB each)
+- File attachment support (3 files, 5MB each) with multi-select capability
 - Sequential feedback ID tracking (#1, #2, #3...)
 - "My Submissions" dashboard with filters
 - Admin dashboard with statistics
@@ -23,15 +23,41 @@ Complete bug reporting and feature request system for all users.
 - Version tracking for completed features
 - Status history audit trail
 - Red highlighting for Priority 1 (Urgent) submissions
+- **Unread comment tracking** - Visual indicators for new activity:
+  - Light blue highlight for items with unread comments
+  - Blue left border accent
+  - "NEW" badge on submission ID
+  - Red badge on View button showing unread count
+  - Auto-mark as read when viewing details
+- **Admin deletion** - Admins can permanently delete feedback:
+  - Delete button in admin dashboard
+  - Confirmation dialog with warning
+  - Cascading deletion (comments, attachments, status history)
+  - Automatic file cleanup
+  - Audit logging
+- **Notification bell** - Top toolbar notification indicator:
+  - Bell icon with badge showing unread count
+  - For users: Shows count of feedback with unread admin comments **OR status updates**
+  - For admins: Shows count of **new unviewed submissions** OR feedback with unread user comments
+  - Auto-refreshes every 30 seconds (only when authenticated)
+  - **Smart navigation**: Click to navigate directly to relevant tab:
+    - Users → "My Submissions" tab (view their feedback with updates)
+    - Admins → "Admin Dashboard" tab (view all unread submissions)
+  - Tooltip shows context ("X unread feedback items" or "No new notifications")
+  - Prevents 401/403 errors on page load with authentication check
 
 **Technical Details:**
-- 4 new database tables (feedback_submissions, feedback_attachments, feedback_comments, feedback_status_history)
-- 9 API endpoints
+- 5 new database tables (feedback_submissions, feedback_attachments, feedback_comments, feedback_status_history, feedback_views)
+- 12 API endpoints (including DELETE /feedback/:id, GET /feedback/notifications/count)
 - Bypasses permission system (available to all authenticated users)
+- Read tracking per user per feedback item
 - Files stored in `backend/feedback_files/`
+- CASCADE DELETE constraints for data integrity
+- Real-time notification polling (30-second interval)
 
 **Files Added:**
 - `backend/migrations/005_create_feedback_module.js`
+- `backend/migrations/006_add_feedback_read_tracking.js`
 - `backend/feedback_files/` directory
 - `frontend/src/FeedbackManager.js`
 - API functions in `frontend/src/api.js`
@@ -39,9 +65,129 @@ Complete bug reporting and feature request system for all users.
 
 ---
 
+#### 2. **Allocated Cost Calculator** ✅
+Manual route selection tool for internal pricing teams with allocated cost calculations.
+
+**Features:**
+- **Manual Route Input**: Enter specific circuit IDs (comma-separated) instead of automatic path finding
+- **Real-time Circuit Validation**: Instant feedback if circuit IDs don't exist in database
+- **End-to-End Route Validation**: Validates that selected routes form complete path from source to destination
+- **Pricing Type Options**:
+  - Primary Path Only
+  - Primary & Secondary Paths
+  - Protected Service (with 70% secondary path pricing)
+- **Enhanced Pricing Display**:
+  - Allocated Cost (based on actual route costs)
+  - Minimum Price (40% margin)
+  - Suggested Price (60% margin)
+  - NRC charges
+- **Route Details Table**: Shows Circuit ID, Segment, Latency, Carrier, and **Cable System** for each hop
+- **Cross-Connect Integration**: Optional cross-connect pricing for source/destination
+- **Export Functionality**:
+  - Copy to clipboard
+  - Download as text file
+  - Same format as Network Design Tool
+- **Pricing Logs**: 
+  - Read-Only users: View their own calculation logs
+  - Provisioner users: View all user logs from this module
+  - Admin users: Full access including log deletion
+- **Permission System**:
+  - Admins: Full access by default
+  - Other users: No access by default (admin must grant)
+  - Separate from Network Design Tool permissions
+
+**Technical Details:**
+- Reuses Network Design Tool pricing engine
+- Separate pricing logs table: `allocated_cost_pricing_logs`
+- Manual route entry replaces automatic pathfinding algorithm
+- Validates circuit existence before calculation
+- Checks route connectivity (no gaps in path)
+- Error messages: "Circuit ID not found" or "Routes don't create end-to-end path"
+- Protected path validation (separate input for secondary routes)
+- Same pricing rules and location minimums as Design Tool
+
+**Database Changes:**
+- New table: `allocated_cost_pricing_logs` (same schema as pricing_logs)
+- New module: `allocated_cost_calculator` in role_permissions
+- Permission levels: read_only, provisioner (no delete for either)
+
+**User Interface:**
+- Located under "Network Design & Pricing Tool" in menu
+- Three tabs: Input Form, Pricing Logs (if authorized)
+- Accordion-style sections for input, route results, and pricing results
+- Real-time validation messages with color coding:
+  - ⏳ Yellow: Validating...
+  - ❌ Red: Invalid routes
+  - ✓ Green: Routes validated successfully
+- Dynamic form fields (Secondary Path shows only when needed)
+- Export dialog with checkbox options for pricing types
+
+**Files Added:**
+- `backend/migrations/007_add_allocated_cost_calculator.js`
+- `frontend/src/AllocatedCostCalculator.js` (725 lines)
+- Permission entries in database for all roles
+
+**Files Modified:**
+- `frontend/src/NetworkDesignTool.js` - Added Cable System to route tables and email export
+- `frontend/src/App.js` - Menu integration and routing
+- `frontend/src/api.js` - API functions for allocated cost calculator
+- `backend/routes.js` - Uses existing Network Design pricing endpoints
+
+**Use Case:**
+Internal pricing teams can manually specify exact routes for quotes where:
+- Customer has specific route requirements
+- Routes are pre-determined by sales team
+- Need to calculate allocated cost for existing customer connections
+- Require pricing for non-standard or custom paths
+
+---
+
 ### 🐛 Bug Fixes & Improvements
 
-#### 2. **CNX Colocation Module Fixes** ✅
+#### 3. **Feedback Module Notification Enhancements** ✅
+
+**Issues Fixed:**
+1. **401/403 Authentication Errors** - Notification API called before authentication complete
+   - Added authentication check before loading notification count
+   - Silently ignore auth errors to prevent console spam
+   - Made notification polling dependent on `isAuthenticated` state
+   
+2. **DOM Nesting Warning** - Invalid `<p>` inside `<p>` in feedback details
+   - Changed Typography components to use `component="span"` in ListItemText
+   - Added `display: 'block'` styling where needed
+   - Fixed both Status History and Comments sections
+
+3. **Status Change Notifications** - Users now get notified of status updates
+   - Updated notification count query to include status history changes
+   - Users see notifications when admins change feedback status (not just comments)
+   - Unread count includes both admin comments AND status changes
+   - Consistent notification behavior across all endpoints
+
+4. **Admin New Submission Notifications** - Admins now notified of new feedback
+   - Updated admin notification query to include new submissions they haven't viewed
+   - Admins see notifications for both new submissions AND new user comments
+   - Unread count in admin dashboard shows "1" for never-viewed items
+   - New feedback submissions are highlighted as unread until admin views them
+
+5. **Smart Notification Navigation** - Bell click takes users directly to unread items
+   - For regular users: Clicking bell navigates to "My Submissions" tab
+   - For admin users: Clicking bell navigates to "Admin Dashboard" tab
+   - Manual menu navigation defaults to "New Submission" tab
+   - Tab selection resets to default when navigating away from Feedback
+
+6. **Menu Restructuring - CNX Colocation** - Improved navigation organization
+   - Created new top-level "CNX Colocation" menu section
+   - Moved from "Network Data" to its own dedicated section
+   - Renamed module from "CNX Colocation" to "Colocation Inventory"
+   - Uses BusinessCenterIcon for section header, LocationOnIcon for inventory
+   - Prepares for future colocation-related modules to be added under same section
+
+**Files Modified:**
+- `frontend/src/App.js` - Authentication check, notification polling, smart tab navigation, menu restructuring
+- `frontend/src/FeedbackManager.js` - Fixed DOM nesting, added initialTab prop support
+- `backend/routes.js` - Enhanced notification queries for status tracking and new submissions
+
+#### 4. **CNX Colocation Module Fixes** ✅
 
 **Issues Fixed:**
 1. **Validation Error** - Removed obsolete `network_infrastructure` field requirement
@@ -69,7 +215,7 @@ Complete bug reporting and feature request system for all users.
 
 ### 📝 Documentation Updates
 
-#### 3. **Module Documentation** ✅
+#### 5. **Module Documentation** ✅
 
 **New Documentation:**
 - `FEEDBACK_MODULE_DOCUMENTATION.md` - Complete feedback module guide
@@ -89,22 +235,25 @@ Complete bug reporting and feature request system for all users.
 
 ### 🔧 Technical Changes
 
-#### 4. **Database Schema**
+#### 6. **Database Schema**
 
 **New Tables:**
 - `feedback_submissions` - Main feedback tracking
 - `feedback_attachments` - File uploads for feedback
 - `feedback_comments` - Comment/reply system
 - `feedback_status_history` - Status change audit trail
+- `allocated_cost_pricing_logs` - Pricing calculations for allocated cost calculator
 
 **Modified Tables:**
 - `cnx_colocation_racks` - Data conversion for `tor_network_infrastructure` field
+- `role_permissions` - Added allocated_cost_calculator module permissions
 
-#### 5. **Backend Enhancements**
+#### 7. **Backend Enhancements**
 
 **New Features:**
 - File upload handling for feedback (multer configuration)
 - 9 new API endpoints for feedback management
+- Allocated cost calculator uses existing Network Design pricing endpoints
 - Enhanced error handling and validation
 - Automatic file cleanup on deletion
 - Status history tracking
@@ -113,28 +262,37 @@ Complete bug reporting and feature request system for all users.
 - Batch processing for file uploads
 - Optimized queries with joins for comment/attachment counts
 - Proper indexing via foreign keys
+- Reuse of pricing calculation logic (no duplication)
 
-#### 6. **Frontend Enhancements**
+#### 8. **Frontend Enhancements**
 
 **New Components:**
 - `FeedbackManager.js` - Complete feedback management interface (1,057 lines)
-- Tab-based interface (New Submission, My Submissions, Admin Dashboard)
-- Statistics cards for admin dashboard
-- Advanced filtering and search
-- Real-time comment system
+  - Tab-based interface (New Submission, My Submissions, Admin Dashboard)
+  - Statistics cards for admin dashboard
+  - Advanced filtering and search
+  - Real-time comment system
+- `AllocatedCostCalculator.js` - Manual route pricing calculator (725 lines)
+  - Real-time route validation with visual feedback
+  - Accordion-style interface for input/results/pricing
+  - Export dialog with multiple format options
+  - Route details tables with Cable System column
+  - Permission-aware pricing log viewer
 
 **UI Improvements:**
 - Red highlighting for urgent items
 - Color-coded status and priority chips
 - Badge notifications for comment counts
+- Real-time validation feedback (⏳/❌/✓)
 - Professional Material-UI design
 - Responsive layout
+- Cable System column added to Network Design Tool route tables
 
 ---
 
 ### 🔐 Security Enhancements
 
-#### 7. **Access Control**
+#### 9. **Access Control**
 
 **Feedback Module:**
 - Authentication required for all operations
@@ -144,8 +302,17 @@ Complete bug reporting and feature request system for all users.
 - File type whitelist validation
 - File size limits enforced (5MB per file)
 
+**Allocated Cost Calculator:**
+- Permission-based access (default: none for non-admin users)
+- Separate from Network Design Tool permissions
+- Read-only users: Can calculate and view own logs
+- Provisioner users: Can calculate and view all logs
+- Admin users: Full access including log deletion
+- Circuit validation prevents invalid route calculations
+
 **Audit Trail:**
 - All feedback submissions logged
+- All pricing calculations logged (separate table)
 - Status changes recorded with admin notes
 - Comment history maintained
 - Integration with existing change_logs system
@@ -167,6 +334,8 @@ Complete bug reporting and feature request system for all users.
 #### Database Migrations
 Run automatically on backend restart:
 - `005_create_feedback_module.js` - Creates 4 feedback tables
+- `006_add_feedback_read_tracking.js` - Adds feedback_views table
+- `007_add_allocated_cost_calculator.js` - Creates allocated_cost_pricing_logs table and permissions
 - `004_convert_tor_network_to_text.js` - Updates CNX Colocation data
 
 #### File System
@@ -176,22 +345,23 @@ New directories created automatically:
 #### No Breaking Changes
 - All changes are backward compatible
 - Existing features unmodified
-- New module bypasses permission system (available to all)
+- Feedback module bypasses permission system (available to all)
+- Allocated Cost Calculator requires permission grant from admin
 
 ---
 
 ### 📊 Statistics
 
 **Lines of Code Added:**
-- Backend: ~650 lines (routes.js feedback endpoints)
-- Frontend: ~1,057 lines (FeedbackManager.js)
+- Backend: ~800 lines (feedback endpoints + allocated cost migration)
+- Frontend: ~1,782 lines (FeedbackManager.js 1,057 + AllocatedCostCalculator.js 725)
 - API Functions: ~70 lines
-- Migrations: ~120 lines
-- Documentation: ~390 lines
+- Migrations: ~250 lines (feedback + allocated cost + CNX fixes)
+- Documentation: ~450 lines (VERSION_HISTORY updates)
 
-**Total New Files:** 8
-**Modified Files:** 5
-**Database Tables Added:** 4
+**Total New Files:** 10 (including migrations)
+**Modified Files:** 7 (App.js, NetworkDesignTool.js, CNXColocationManager.js, routes.js, api.js, VERSION_HISTORY.md)
+**Database Tables Added:** 5 (feedback_submissions, feedback_attachments, feedback_comments, feedback_status_history, allocated_cost_pricing_logs)
 
 ---
 
@@ -209,6 +379,22 @@ New directories created automatically:
 - [x] Admin update status with notes
 - [x] Admin mark complete with version
 - [x] Statistics dashboard display
+
+#### Allocated Cost Calculator
+- [ ] Enter valid circuit IDs (comma-separated)
+- [ ] Real-time validation displays correctly
+- [ ] Invalid circuit ID shows error message
+- [ ] Route connectivity validation works
+- [ ] Calculate primary path pricing
+- [ ] Calculate primary + secondary path pricing
+- [ ] Calculate protected service pricing
+- [ ] Cross-connect pricing optional addition
+- [ ] Export to clipboard
+- [ ] Export to text file
+- [ ] View pricing logs (provisioner/admin)
+- [ ] Clear logs (admin only)
+- [ ] Cable System displays in route tables
+- [ ] Permission system enforced correctly
 
 #### CNX Colocation Fixes
 - [x] Create new shared rack
@@ -235,6 +421,15 @@ New directories created automatically:
 - ✅ Statistics overview
 - ✅ Ability to update statuses and add notes
 - ✅ Track completion with version numbers
+
+**Pricing Team Users:**
+- ✅ New "Allocated Cost Calculator" under Network Design & Pricing
+- ✅ Manual route entry instead of automatic pathfinding
+- ✅ Real-time circuit validation with clear error messages
+- ✅ See allocated cost alongside minimum/suggested pricing
+- ✅ Cable System information in route tables
+- ✅ Export pricing results to text or clipboard
+- ✅ View pricing calculation history (if authorized)
 
 **CNX Colocation Users:**
 - ✅ Fixed validation errors when saving racks

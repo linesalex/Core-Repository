@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Box, CssBaseline, Drawer, List, ListItem, ListItemIcon, ListItemText, AppBar, Toolbar, Typography, Button, Container, Paper, 
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse, Menu, MenuItem, IconButton, Chip, CircularProgress,
-  Alert, Divider, Avatar, Grid, Snackbar, Slider
+  Alert, Divider, Avatar, Grid, Snackbar, Slider, Badge, Tooltip
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -31,12 +31,15 @@ import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import ApiIcon from '@mui/icons-material/Api';
 import TextFormatIcon from '@mui/icons-material/TextFormat';
 import FeedbackIcon from '@mui/icons-material/Feedback';
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import BusinessCenterIcon from '@mui/icons-material/BusinessCenter';
 import { AuthProvider, useAuth } from './AuthContext';
 import { TextSizeProvider, useTextSize } from './TextSizeContext';
 import LoginForm from './LoginForm';
 import UserRegistration from './UserRegistration';
 import NetworkRoutesTable from './NetworkRoutesTable';
 import NetworkDesignTool from './NetworkDesignTool';
+import AllocatedCostCalculator from './AllocatedCostCalculator';
 import ExchangeRatesManager from './ExchangeRatesManager';
 import ExchangePricingTool from './ExchangePricingTool';
 import LocationDataManager from './LocationDataManager';
@@ -53,7 +56,7 @@ import FeedbackManager from './FeedbackManager';
 import BulkUpload from './BulkUpload';
 import LiveLatencyAdminManager from './LiveLatencyAdminManager';
 
-import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking } from './api';
+import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking, getFeedbackNotificationCount } from './api';
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
 import DarkFiberModal from './DarkFiberModal';
@@ -90,10 +93,15 @@ function AuthenticatedApp() {
   const [exchangeDataOpen, setExchangeDataOpen] = useState(false);
   const [exchangeRatesOpen, setExchangeRatesOpen] = useState(false);
   const [networkDataOpen, setNetworkDataOpen] = useState(false);
+  const [cnxColocationOpen, setCnxColocationOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   
   // User menu state
   const [userMenuAnchor, setUserMenuAnchor] = useState(null);
+  
+  // Feedback notification count
+  const [notificationCount, setNotificationCount] = useState(0);
+  const [feedbackInitialTab, setFeedbackInitialTab] = useState(0);
   
   // Live latency status
   const [liveLatencyStatus, setLiveLatencyStatus] = useState(null);
@@ -179,6 +187,40 @@ function AuthenticatedApp() {
     
     prevTabRef.current = currentTab;
   }, [currentTab, hasModuleAccess]);
+
+  // Poll feedback notification count every 30 seconds (only when authenticated)
+  useEffect(() => {
+    const loadNotificationCount = async () => {
+      // Only load if authenticated and has token
+      const token = localStorage.getItem('authToken');
+      if (!isAuthenticated || !token) {
+        return;
+      }
+
+      try {
+        const data = await getFeedbackNotificationCount();
+        setNotificationCount(data.count || 0);
+      } catch (error) {
+        // Silently fail if not authenticated - don't spam console
+        if (error.response?.status !== 401 && error.response?.status !== 403) {
+          console.error('Failed to load notification count:', error);
+        }
+      }
+    };
+
+    if (isAuthenticated) {
+      loadNotificationCount(); // Initial load
+      const interval = setInterval(loadNotificationCount, 30000); // Poll every 30 seconds
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated]);
+
+  // Reset feedback initial tab when navigating away from feedback
+  useEffect(() => {
+    if (currentTab !== 'feedback') {
+      setFeedbackInitialTab(0);
+    }
+  }, [currentTab]);
 
   // Keep users on welcome page - let them choose where to go
   // Removed auto-selection logic to prevent permission errors
@@ -470,6 +512,16 @@ function AuthenticatedApp() {
     setUserMenuAnchor(null);
   };
 
+  const handleNotificationClick = () => {
+    // Set initial tab based on user role
+    // Tab 0: New Submission
+    // Tab 1: My Submissions (for regular users)
+    // Tab 2: Admin Dashboard (for admins)
+    const targetTab = user?.role === 'administrator' ? 2 : 1;
+    setFeedbackInitialTab(targetTab);
+    setCurrentTab('feedback');
+  };
+
   const handleLogout = () => {
     logout();
     setUserMenuAnchor(null);
@@ -526,7 +578,12 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
-
+      case 'allocated-cost-calculator':
+        return hasModuleAccess('allocated_cost_calculator') ? (
+          <AllocatedCostCalculator />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
       
       case 'minimum-pricing':
         return hasModuleAccess('locations') ? (
@@ -634,7 +691,7 @@ function AuthenticatedApp() {
         );
       
       case 'feedback':
-        return <FeedbackManager />;
+        return <FeedbackManager initialTab={feedbackInitialTab} />;
       
       case 'welcome':
       default:
@@ -674,6 +731,24 @@ function AuthenticatedApp() {
               color="primary"
               size="small"
             />
+            
+            {/* Feedback Notifications */}
+            <Tooltip title={notificationCount > 0 ? `${notificationCount} unread feedback item${notificationCount > 1 ? 's' : ''}` : 'No new notifications'}>
+              <IconButton
+                color="inherit"
+                onClick={handleNotificationClick}
+                aria-label="feedback notifications"
+              >
+                <Badge 
+                  badgeContent={notificationCount} 
+                  color="error"
+                  max={99}
+                >
+                  <NotificationsIcon />
+                </Badge>
+              </IconButton>
+            </Tooltip>
+            
             <IconButton
               color="inherit"
               onClick={handleUserMenuClick}
@@ -846,6 +921,16 @@ function AuthenticatedApp() {
                       <ListItemIcon><DesignServicesIcon /></ListItemIcon>
                       <ListItemText primary="Design & Pricing" />
                     </ListItem>
+                    {hasModuleAccess('allocated_cost_calculator') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('allocated-cost-calculator')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'allocated-cost-calculator' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><CalculateIcon /></ListItemIcon>
+                        <ListItemText primary="Allocated Cost Calculator" />
+                      </ListItem>
+                    )}
                     {(isModuleVisible('minimum_pricing') && hasModuleAccess('locations')) && (
                       <ListItem 
                         button 
@@ -921,7 +1006,7 @@ function AuthenticatedApp() {
             )}
 
             {/* Network Data */}
-            {(hasModuleAccess('locations') || hasModuleAccess('carriers') || hasModuleAccess('cnx_colocation')) && (
+            {(hasModuleAccess('locations') || hasModuleAccess('carriers')) && (
               <>
                 <ListItem button onClick={() => setNetworkDataOpen(!networkDataOpen)}>
                   <ListItemIcon><DataObjectIcon /></ListItemIcon>
@@ -950,16 +1035,29 @@ function AuthenticatedApp() {
                         <ListItemText primary="Manage Carriers" />
                       </ListItem>
                     )}
-                    {hasModuleAccess('cnx_colocation') && (
-                      <ListItem 
-                        button 
-                        onClick={() => setCurrentTab('cnx-colocation')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                      >
-                        <ListItemIcon><LocationOnIcon /></ListItemIcon>
-                        <ListItemText primary="CNX Colocation" />
-                      </ListItem>
-                    )}
+                  </List>
+                </Collapse>
+              </>
+            )}
+
+            {/* CNX Colocation */}
+            {hasModuleAccess('cnx_colocation') && (
+              <>
+                <ListItem button onClick={() => setCnxColocationOpen(!cnxColocationOpen)}>
+                  <ListItemIcon><BusinessCenterIcon /></ListItemIcon>
+                  <ListItemText primary="CNX Colocation" />
+                  {cnxColocationOpen ? <ExpandLess /> : <ExpandMore />}
+                </ListItem>
+                <Collapse in={cnxColocationOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('cnx-colocation')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><LocationOnIcon /></ListItemIcon>
+                      <ListItemText primary="Colocation Inventory" />
+                    </ListItem>
                   </List>
                 </Collapse>
               </>
@@ -1043,7 +1141,10 @@ function AuthenticatedApp() {
             <Divider sx={{ my: 1 }} />
             <ListItem 
               button 
-              onClick={() => setCurrentTab('feedback')} 
+              onClick={() => {
+                setFeedbackInitialTab(0); // Default to "New Submission" tab when clicking menu
+                setCurrentTab('feedback');
+              }} 
               sx={{ backgroundColor: currentTab === 'feedback' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
             >
               <ListItemIcon><FeedbackIcon /></ListItemIcon>

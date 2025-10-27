@@ -631,14 +631,14 @@ const NetworkDesignTool = () => {
       if (!pathData || !pathData.route) return '';
       
       let table = `${pathType} Route:\n`;
-      table += `Circuit ID\tRoute Segment\tLatency\n`;
-      table += `${'='.repeat(50)}\n`;
+      table += `Circuit ID\tRoute Segment\tLatency\tCarrier\tCable System\n`;
+      table += `${'='.repeat(70)}\n`;
       
       pathData.route.forEach(segment => {
-        table += `${segment.circuit_id || 'N/A'}\t${segment.from} → ${segment.to}\t${formatLatency(segment.latency)}ms\n`;
+        table += `${segment.circuit_id || 'N/A'}\t${segment.from} → ${segment.to}\t${formatLatency(segment.latency)}ms\t${segment.carrier || 'N/A'}\t${segment.cable_system || 'N/A'}\n`;
       });
       
-      table += `${'='.repeat(50)}\n`;
+      table += `${'='.repeat(70)}\n`;
       table += `Total Latency: ${formatLatency(pathData.totalLatency)}ms\n\n`;
       
       return table;
@@ -952,18 +952,20 @@ const NetworkDesignTool = () => {
         if (pathData?.hops && Array.isArray(pathData.hops)) {
           const routes = pathData.hops;
           let table = `${pathType} Route:\n`;
-          table += `Circuit ID\tRoute Segment\tLatency\n`;
-          table += `${'='.repeat(50)}\n`;
+          table += `Circuit ID\tRoute Segment\tLatency\tCarrier\tCable System\n`;
+          table += `${'='.repeat(70)}\n`;
           
           routes.forEach(segment => {
             const circuitId = segment.circuit_id || segment.circuitId || 'N/A';
             const from = segment.from || segment.location_a || segment.source || 'N/A';
             const to = segment.to || segment.location_b || segment.destination || 'N/A';
             const latency = segment.latency || 0;
-            table += `${circuitId}\t${from} → ${to}\t${formatLatency(latency)}ms\n`;
+            const carrier = segment.carrier || segment.underlying_carrier || 'N/A';
+            const cableSystem = segment.cable_system || segment.cableSystem || 'N/A';
+            table += `${circuitId}\t${from} → ${to}\t${formatLatency(latency)}ms\t${carrier}\t${cableSystem}\n`;
           });
           
-          table += `${'='.repeat(50)}\n`;
+          table += `${'='.repeat(70)}\n`;
           table += `Total Latency: ${formatLatency(pathData.totalLatency || pathData.total_latency || 0)}ms\n\n`;
           return table;
         }
@@ -971,8 +973,8 @@ const NetworkDesignTool = () => {
       }
       
       let table = `${pathType} Route:\n`;
-      table += `Circuit ID\tRoute Segment\tLatency\n`;
-      table += `${'='.repeat(50)}\n`;
+      table += `Circuit ID\tRoute Segment\tLatency\tCarrier\tCable System\n`;
+      table += `${'='.repeat(70)}\n`;
       
       const routes = Array.isArray(routeData) ? routeData : [routeData];
       routes.forEach(segment => {
@@ -980,10 +982,12 @@ const NetworkDesignTool = () => {
         const from = segment.from || segment.location_a || segment.source || 'N/A';
         const to = segment.to || segment.location_b || segment.destination || 'N/A';
         const latency = segment.latency || 0;
-        table += `${circuitId}\t${from} → ${to}\t${formatLatency(latency)}ms\n`;
+        const carrier = segment.carrier || segment.underlying_carrier || 'N/A';
+        const cableSystem = segment.cable_system || segment.cableSystem || 'N/A';
+        table += `${circuitId}\t${from} → ${to}\t${formatLatency(latency)}ms\t${carrier}\t${cableSystem}\n`;
       });
       
-      table += `${'='.repeat(50)}\n`;
+      table += `${'='.repeat(70)}\n`;
       table += `Total Latency: ${formatLatency(pathData.totalLatency || pathData.total_latency || 0)}ms\n\n`;
       
       return table;
@@ -1042,17 +1046,17 @@ const NetworkDesignTool = () => {
         // Generate route table from path array
         if (result.path && Array.isArray(result.path)) {
           let table = `${pathType} Route:\n`;
-          table += `Circuit ID\tRoute Segment\tLatency\n`;
-          table += `${'='.repeat(50)}\n`;
+          table += `Circuit ID\tRoute Segment\tLatency\tCarrier\tCable System\n`;
+          table += `${'='.repeat(70)}\n`;
           
           // Convert path array to route segments
           for (let i = 0; i < result.path.length - 1; i++) {
             const from = result.path[i];
             const to = result.path[i + 1];
-            table += `Direct Route\t${from} → ${to}\t${formatLatency(result.totalLatency || 0)}ms\n`;
+            table += `Direct Route\t${from} → ${to}\t${formatLatency(result.totalLatency || 0)}ms\tN/A\tN/A\n`;
           }
           
-          table += `${'='.repeat(50)}\n`;
+          table += `${'='.repeat(70)}\n`;
           table += `Total Latency: ${formatLatency(result.totalLatency || 0)}ms\n`;
           table += `Hops: ${result.hops || 'N/A'}\n\n`;
           
@@ -1598,6 +1602,7 @@ const NetworkDesignTool = () => {
                               <TableCell>Segment</TableCell>
                               <TableCell>Latency</TableCell>
                               <TableCell>Carrier</TableCell>
+                              <TableCell>Cable System</TableCell>
                             </TableRow>
                           </TableHead>
                           <TableBody>
@@ -1607,6 +1612,7 @@ const NetworkDesignTool = () => {
                                 <TableCell>{segment.from} → {segment.to}</TableCell>
                                 <TableCell>{formatLatency(segment.latency)}ms</TableCell>
                                 <TableCell>{segment.carrier || 'N/A'}</TableCell>
+                                <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                               </TableRow>
                             ))}
                           </TableBody>
@@ -1641,6 +1647,7 @@ const NetworkDesignTool = () => {
                                 <TableCell>Segment</TableCell>
                                 <TableCell>Latency</TableCell>
                                 <TableCell>Carrier</TableCell>
+                                <TableCell>Cable System</TableCell>
                               </TableRow>
                             </TableHead>
                             <TableBody>
@@ -1650,6 +1657,7 @@ const NetworkDesignTool = () => {
                                   <TableCell>{segment.from} → {segment.to}</TableCell>
                                   <TableCell>{formatLatency(segment.latency)}ms</TableCell>
                                   <TableCell>{segment.carrier || 'N/A'}</TableCell>
+                                  <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                                 </TableRow>
                               ))}
                             </TableBody>

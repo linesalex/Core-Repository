@@ -26,7 +26,9 @@ import {
   updateFeedbackStatus,
   addFeedbackComment,
   downloadFeedbackAttachment,
-  deleteFeedbackAttachment
+  deleteFeedbackAttachment,
+  markFeedbackAsViewed,
+  deleteFeedback
 } from './api';
 import { useAuth } from './AuthContext';
 
@@ -39,12 +41,12 @@ function TabPanel(props) {
   );
 }
 
-const FeedbackManager = () => {
+const FeedbackManager = ({ initialTab = 0 }) => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'administrator';
   
   // State
-  const [currentTab, setCurrentTab] = useState(0);
+  const [currentTab, setCurrentTab] = useState(initialTab);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -78,6 +80,13 @@ const FeedbackManager = () => {
     newStatus: '',
     adminNotes: '',
     versionCompleted: ''
+  });
+  
+  // Delete confirmation dialog state
+  const [deleteDialog, setDeleteDialog] = useState({ 
+    open: false, 
+    feedbackId: null,
+    feedbackDescription: ''
   });
   
   useEffect(() => {
@@ -134,9 +143,13 @@ const FeedbackManager = () => {
   const handleFileChange = (event) => {
     const files = Array.from(event.target.files);
     
-    // Check max 3 files
-    if (files.length > 3) {
-      setError('Maximum 3 files allowed');
+    if (files.length === 0) return;
+    
+    // Check total count (existing + new)
+    const totalCount = attachments.length + files.length;
+    if (totalCount > 3) {
+      setError(`Maximum 3 files allowed. You already have ${attachments.length} file(s) selected. Remove some before adding more.`);
+      event.target.value = ''; // Reset input
       return;
     }
     
@@ -144,11 +157,23 @@ const FeedbackManager = () => {
     const oversized = files.filter(file => file.size > 5 * 1024 * 1024);
     if (oversized.length > 0) {
       setError(`File(s) too large: ${oversized.map(f => f.name).join(', ')}. Maximum 5MB per file.`);
+      event.target.value = ''; // Reset input
       return;
     }
     
-    setAttachments(files);
+    // Check for duplicate filenames
+    const existingNames = attachments.map(f => f.name);
+    const duplicates = files.filter(file => existingNames.includes(file.name));
+    if (duplicates.length > 0) {
+      setError(`File(s) already selected: ${duplicates.map(f => f.name).join(', ')}`);
+      event.target.value = ''; // Reset input
+      return;
+    }
+    
+    // Add new files to existing attachments
+    setAttachments(prev => [...prev, ...files]);
     setError('');
+    event.target.value = ''; // Reset input so same file can be selected again if removed
   };
   
   // Remove attachment
@@ -201,6 +226,18 @@ const FeedbackManager = () => {
     try {
       const details = await getFeedbackDetails(feedbackId);
       setDetailsDialog({ open: true, feedback: details });
+      
+      // Mark as viewed (async, don't wait for response)
+      markFeedbackAsViewed(feedbackId).then(() => {
+        // Refresh lists to update unread counts
+        if (user.role === 'administrator') {
+          loadAllSubmissions();
+        } else {
+          loadMySubmissions();
+        }
+      }).catch(err => {
+        console.error('Failed to mark as viewed:', err);
+      });
     } catch (err) {
       setError(`Failed to load details: ${err.response?.data?.error || err.message}`);
     } finally {
@@ -281,6 +318,43 @@ const FeedbackManager = () => {
       loadStatistics();
     } catch (err) {
       setError(`Failed to update status: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Open delete confirmation dialog
+  const handleDeleteClick = (feedback) => {
+    setDeleteDialog({
+      open: true,
+      feedbackId: feedback.id,
+      feedbackDescription: feedback.description
+    });
+  };
+  
+  // Close delete dialog
+  const handleCloseDeleteDialog = () => {
+    setDeleteDialog({ open: false, feedbackId: null, feedbackDescription: '' });
+  };
+  
+  // Confirm and execute delete
+  const handleConfirmDelete = async () => {
+    setLoading(true);
+    try {
+      await deleteFeedback(deleteDialog.feedbackId);
+      setSuccess('Feedback deleted successfully');
+      handleCloseDeleteDialog();
+      
+      // Close details dialog if it's open for this feedback
+      if (detailsDialog.open && detailsDialog.feedback?.id === deleteDialog.feedbackId) {
+        handleCloseDetails();
+      }
+      
+      // Reload data
+      loadAllSubmissions();
+      loadStatistics();
+    } catch (err) {
+      setError(`Failed to delete feedback: ${err.response?.data?.error || err.message}`);
     } finally {
       setLoading(false);
     }
@@ -429,8 +503,13 @@ const FeedbackManager = () => {
                   component="label"
                   startIcon={<AttachIcon />}
                   sx={{ mb: 2 }}
+                  disabled={attachments.length >= 3}
                 >
-                  Upload Files (Max 3, 5MB each)
+                  {attachments.length === 0 
+                    ? 'Add Files (Max 3, 5MB each)' 
+                    : attachments.length < 3 
+                      ? `Add More Files (${attachments.length}/3 selected)` 
+                      : 'Maximum Files Selected (3/3)'}
                   <input
                     type="file"
                     hidden
@@ -552,10 +631,27 @@ const FeedbackManager = () => {
                     <TableRow 
                       key={submission.id}
                       sx={{ 
-                        backgroundColor: submission.priority === 1 ? 'rgba(211, 47, 47, 0.08)' : 'inherit'
+                        backgroundColor: submission.unread_count > 0 
+                          ? 'rgba(25, 118, 210, 0.08)' // Light blue for unread
+                          : submission.priority === 1 
+                            ? 'rgba(211, 47, 47, 0.08)' // Light red for priority 1
+                            : 'inherit',
+                        borderLeft: submission.unread_count > 0 ? '3px solid #1976d2' : 'none'
                       }}
                     >
-                      <TableCell>#{submission.id}</TableCell>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          #{submission.id}
+                          {submission.unread_count > 0 && (
+                            <Chip
+                              label="NEW"
+                              size="small"
+                              color="primary"
+                              sx={{ height: 20, fontSize: '0.7rem' }}
+                            />
+                          )}
+                        </Box>
+                      </TableCell>
                       <TableCell>
                         <Chip
                           icon={submission.type === 'Bug' ? <BugIcon /> : <FeatureIcon />}
@@ -588,16 +684,22 @@ const FeedbackManager = () => {
                         {submission.version_completed || '-'}
                       </TableCell>
                       <TableCell>
-                        <Tooltip title="View Details">
-                          <IconButton onClick={() => handleViewDetails(submission.id)} size="small">
-                            <ViewIcon />
-                          </IconButton>
-                        </Tooltip>
-                        {submission.comment_count > 0 && (
-                          <Badge badgeContent={submission.comment_count} color="primary">
-                            <CommentIcon fontSize="small" />
-                          </Badge>
-                        )}
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Tooltip title="View Details">
+                            <IconButton onClick={() => handleViewDetails(submission.id)} size="small">
+                              <Badge badgeContent={submission.unread_count} color="error">
+                                <ViewIcon />
+                              </Badge>
+                            </IconButton>
+                          </Tooltip>
+                          {submission.comment_count > 0 && (
+                            <Tooltip title={`${submission.comment_count} total comments`}>
+                              <Badge badgeContent={submission.comment_count} color="primary">
+                                <CommentIcon fontSize="small" />
+                              </Badge>
+                            </Tooltip>
+                          )}
+                        </Box>
                       </TableCell>
                     </TableRow>
                   ))
@@ -768,10 +870,27 @@ const FeedbackManager = () => {
                       <TableRow 
                         key={submission.id}
                         sx={{ 
-                          backgroundColor: submission.priority === 1 ? 'rgba(211, 47, 47, 0.08)' : 'inherit'
+                          backgroundColor: submission.unread_count > 0 
+                            ? 'rgba(25, 118, 210, 0.08)' // Light blue for unread
+                            : submission.priority === 1 
+                              ? 'rgba(211, 47, 47, 0.08)' // Light red for priority 1
+                              : 'inherit',
+                          borderLeft: submission.unread_count > 0 ? '3px solid #1976d2' : 'none'
                         }}
                       >
-                        <TableCell>#{submission.id}</TableCell>
+                        <TableCell>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            #{submission.id}
+                            {submission.unread_count > 0 && (
+                              <Chip
+                                label="NEW"
+                                size="small"
+                                color="primary"
+                                sx={{ height: 20, fontSize: '0.7rem' }}
+                              />
+                            )}
+                          </Box>
+                        </TableCell>
                         <TableCell>{submission.full_name || submission.username}</TableCell>
                         <TableCell>
                           <Chip
@@ -802,16 +921,25 @@ const FeedbackManager = () => {
                         </TableCell>
                         <TableCell>{formatDate(submission.created_at)}</TableCell>
                         <TableCell>
-                          <Tooltip title="View Details">
-                            <IconButton onClick={() => handleViewDetails(submission.id)} size="small">
-                              <ViewIcon />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Update Status">
-                            <IconButton onClick={() => handleOpenStatusDialog(submission)} size="small" color="primary">
-                              <CommentIcon />
-                            </IconButton>
-                          </Tooltip>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Tooltip title="View Details">
+                              <IconButton onClick={() => handleViewDetails(submission.id)} size="small">
+                                <Badge badgeContent={submission.unread_count} color="error">
+                                  <ViewIcon />
+                                </Badge>
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Update Status">
+                              <IconButton onClick={() => handleOpenStatusDialog(submission)} size="small" color="primary">
+                                <CommentIcon />
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Delete Feedback">
+                              <IconButton onClick={() => handleDeleteClick(submission)} size="small" color="error">
+                                <DeleteIcon />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
                         </TableCell>
                       </TableRow>
                     ))
@@ -908,7 +1036,7 @@ const FeedbackManager = () => {
                                   By {entry.full_name || entry.username} on {formatDate(entry.changed_at)}
                                 </Typography>
                                 {entry.admin_notes && (
-                                  <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                  <Typography variant="body2" component="span" sx={{ display: 'block', mt: 0.5 }}>
                                     Note: {entry.admin_notes}
                                   </Typography>
                                 )}
@@ -933,7 +1061,7 @@ const FeedbackManager = () => {
                             <ListItemText
                               primary={
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                  <Typography variant="body2" fontWeight="bold">
+                                  <Typography variant="body2" component="span" fontWeight="bold">
                                     {comment.full_name || comment.username}
                                   </Typography>
                                   {comment.is_admin_note === 1 && (
@@ -943,8 +1071,10 @@ const FeedbackManager = () => {
                               }
                               secondary={
                                 <>
-                                  <Typography variant="body2">{comment.comment}</Typography>
-                                  <Typography variant="caption" color="textSecondary">
+                                  <Typography variant="body2" component="span" sx={{ display: 'block' }}>
+                                    {comment.comment}
+                                  </Typography>
+                                  <Typography variant="caption" component="span" color="textSecondary" sx={{ display: 'block' }}>
                                     {formatDate(comment.created_at)}
                                   </Typography>
                                 </>
@@ -1046,6 +1176,54 @@ const FeedbackManager = () => {
             disabled={loading}
           >
             {loading ? <CircularProgress size={24} /> : 'Update Status'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* Delete Confirmation Dialog (Admin only) */}
+      <Dialog open={deleteDialog.open} onClose={handleCloseDeleteDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'error.main' }}>
+            <DeleteIcon />
+            <Typography variant="h6">Confirm Delete</Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            <strong>Warning:</strong> This action cannot be undone!
+          </Alert>
+          <Typography variant="body1" gutterBottom>
+            Are you sure you want to delete this feedback submission?
+          </Typography>
+          <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              <strong>Feedback ID:</strong> #{deleteDialog.feedbackId}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              <strong>Description:</strong> {deleteDialog.feedbackDescription?.substring(0, 100)}
+              {deleteDialog.feedbackDescription?.length > 100 ? '...' : ''}
+            </Typography>
+          </Box>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            This will permanently delete:
+          </Typography>
+          <ul style={{ marginTop: 8, color: 'rgba(0, 0, 0, 0.6)' }}>
+            <li>The feedback submission</li>
+            <li>All comments and admin notes</li>
+            <li>All file attachments</li>
+            <li>Status history</li>
+          </ul>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDeleteDialog}>Cancel</Button>
+          <Button 
+            onClick={handleConfirmDelete} 
+            variant="contained" 
+            color="error"
+            disabled={loading}
+            startIcon={loading ? <CircularProgress size={20} /> : <DeleteIcon />}
+          >
+            {loading ? 'Deleting...' : 'Delete Permanently'}
           </Button>
         </DialogActions>
       </Dialog>

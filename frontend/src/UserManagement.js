@@ -44,6 +44,7 @@ const UserManagement = () => {
   const [availableModules] = useState([
     { key: 'network_routes', label: 'Network Routes Repository' },
     { key: 'network_design', label: 'Network Design & Pricing Tool' },
+    { key: 'allocated_cost_calculator', label: 'Allocated Cost Calculator' },
     { key: 'locations', label: 'Manage Locations' },
     { key: 'carriers', label: 'Manage Carriers' },
     { key: 'cnx_colocation', label: 'CNX Colocation' },

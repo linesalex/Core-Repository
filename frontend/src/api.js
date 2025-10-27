@@ -209,7 +209,14 @@ export const networkDesignApi = {
   
   // Convenience methods for accessing location and exchange rate data
   getLocations: () => locationDataApi.getLocations(),
-  getExchangeRates: () => exchangeRatesApi.getExchangeRates()
+  getExchangeRates: () => exchangeRatesApi.getExchangeRates(),
+  
+  // Change logs (for allocated cost calculator)
+  getAllChangeLogs: (params = {}) => api.get(`${API_BASE_URL}/change-logs`, { params }).then(res => res.data),
+  clearChangeLogs: (tableName) => api.delete(`${API_BASE_URL}/change-logs/${tableName}`).then(res => res.data),
+  
+  // Fetch route by circuit ID
+  fetchRoute: (circuitId) => api.get(`${API_BASE_URL}/network_routes/${circuitId}`).then(res => res.data)
 };
 
 // ====================================
@@ -439,6 +446,18 @@ export const downloadFeedbackAttachment = (feedbackId, filename) => {
 // Delete attachment
 export const deleteFeedbackAttachment = (feedbackId, attachmentId) => 
   api.delete(`${API_BASE_URL}/feedback/${feedbackId}/attachments/${attachmentId}`);
+
+// Mark feedback as viewed
+export const markFeedbackAsViewed = (feedbackId) => 
+  api.post(`${API_BASE_URL}/feedback/${feedbackId}/mark-viewed`);
+
+// Delete feedback (Admin only)
+export const deleteFeedback = (feedbackId) => 
+  api.delete(`${API_BASE_URL}/feedback/${feedbackId}`);
+
+// Get feedback notification count (unread items)
+export const getFeedbackNotificationCount = () => 
+  api.get(`${API_BASE_URL}/feedback/notifications/count`).then(res => res.data);
 
 // Export the base api object for direct use
 export { api }; 

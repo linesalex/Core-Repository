@@ -16,7 +16,6 @@ const {
   generateToken, 
   authenticateToken, 
   authorizeRole, 
-  authorizePermission, 
   getUserModulePermissions,
   hasModulePermission,
   authorizeModulePermission,
@@ -234,7 +233,8 @@ router.post('/login', async (req, res) => {
         const allModules = [
           'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
           'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
-          'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
+          'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
+          'allocated_cost_calculator'
         ];
         
         allModules.forEach(module => {
@@ -296,7 +296,8 @@ router.get('/me', authenticateToken, (req, res) => {
       const allModules = [
         'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
         'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
-        'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
+        'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
+        'allocated_cost_calculator'
       ];
       
       allModules.forEach(module => {
@@ -920,6 +921,35 @@ router.get('/change-logs', authenticateToken, authorizeModulePermission('change_
   db.all(query, params, (err, logs) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(logs);
+  });
+});
+
+// Clear change logs for a specific table (Admin only)
+router.delete('/change-logs/:tableName', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const tableName = req.params.tableName;
+  
+  db.run('DELETE FROM change_logs WHERE table_name = ?', [tableName], function(err, statement) {
+    if (err) {
+      console.error('Error clearing change logs:', err);
+      return res.status(500).json({ error: 'Failed to clear change logs' });
+    }
+    
+    const deletedCount = statement?.changes || 0;
+    
+    // Log the clearing action
+    try {
+      logChange(req.user.id, 'change_logs', tableName, 'DELETE', 
+        { deleted_count: deletedCount, table_name: tableName }, 
+        null, 
+        req);
+    } catch (logErr) {
+      console.error('Error logging change logs clear:', logErr);
+    }
+    
+    res.json({ 
+      message: 'Change logs cleared successfully',
+      deleted: deletedCount
+    });
   });
 });
 
@@ -3454,7 +3484,7 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
     let routesSkipped = 0;
     
     routes.forEach(route => {
-      const { location_a, location_b, expected_latency, cost, currency, bandwidth: routeBandwidth, underlying_carrier, circuit_id } = route;
+      const { location_a, location_b, expected_latency, cost, currency, bandwidth: routeBandwidth, underlying_carrier, circuit_id, cable_system } = route;
       
       allLocations.add(location_a);
       allLocations.add(location_b);
@@ -3633,7 +3663,6 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
       }
       
       routesProcessed++;
-      if (isRelevant) console.log(`  PROCESSED: Added to graph`);
       
       // Initialize graph nodes
       if (!graph[location_a]) graph[location_a] = {};
@@ -3643,23 +3672,39 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
       const weight = parseFloat(expected_latency) || 100; // Default to 100ms if no latency
       const routeCost = parseFloat(cost) || 0;
       
-      graph[location_a][location_b] = {
-        weight,
-        cost: routeCost,
-        currency,
-        bandwidth: routeBandwidthMbps + ' Mbps',
-        carrier: underlying_carrier,
-        circuit_id: route.circuit_id
-      };
+      // Check if a route already exists between these locations
+      const existingRoute = graph[location_a][location_b];
       
-      graph[location_b][location_a] = {
-        weight,
-        cost: routeCost,
-        currency,
-        bandwidth: routeBandwidthMbps + ' Mbps',
-        carrier: underlying_carrier,
-        circuit_id: route.circuit_id
-      };
+      // Only add/replace if this route has lower latency than existing route
+      if (!existingRoute || weight < existingRoute.weight) {
+        if (existingRoute) {
+          if (isRelevant) console.log(`  REPLACED: Lower latency route (${weight}ms vs ${existingRoute.weight}ms, circuit: ${route.circuit_id})`);
+        } else {
+          if (isRelevant) console.log(`  PROCESSED: Added to graph`);
+        }
+        
+        graph[location_a][location_b] = {
+          weight,
+          cost: routeCost,
+          currency,
+          bandwidth: routeBandwidthMbps + ' Mbps',
+          carrier: underlying_carrier,
+          circuit_id: route.circuit_id,
+          cable_system: cable_system || null
+        };
+        
+        graph[location_b][location_a] = {
+          weight,
+          cost: routeCost,
+          currency,
+          bandwidth: routeBandwidthMbps + ' Mbps',
+          carrier: underlying_carrier,
+          circuit_id: route.circuit_id,
+          cable_system: cable_system || null
+        };
+      } else {
+        if (isRelevant) console.log(`  SKIPPED: Higher latency route exists (${existingRoute.weight}ms < ${weight}ms)`);
+      }
     });
     
     exclusionReasons.total_routes_excluded = routesSkipped;
@@ -3798,7 +3843,8 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
         currency: edge.currency,
         bandwidth: edge.bandwidth,
         carrier: edge.carrier,
-        circuit_id: edge.circuit_id
+        circuit_id: edge.circuit_id,
+        cable_system: edge.cable_system
       });
       
       totalCost += edge.cost;
@@ -3889,7 +3935,8 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
               currency: edge.currency,
               bandwidth: edge.bandwidth,
               carrier: edge.carrier,
-              circuit_id: edge.circuit_id
+              circuit_id: edge.circuit_id,
+              cable_system: edge.cable_system
             });
             
             diverseTotalCost += edge.cost;
@@ -10193,13 +10240,32 @@ router.get('/feedback/my-submissions', authenticateToken, (req, res) => {
       fs.*,
       u.username, u.full_name,
       (SELECT COUNT(*) FROM feedback_comments WHERE feedback_id = fs.id) as comment_count,
-      (SELECT COUNT(*) FROM feedback_attachments WHERE feedback_id = fs.id) as attachment_count
+      (SELECT COUNT(*) FROM feedback_attachments WHERE feedback_id = fs.id) as attachment_count,
+      (
+        (SELECT COUNT(*) 
+         FROM feedback_comments fc
+         WHERE fc.feedback_id = fs.id 
+           AND fc.is_admin_note = 1
+           AND fc.created_at > COALESCE(
+             (SELECT last_viewed_at FROM feedback_views WHERE feedback_id = fs.id AND user_id = ?),
+             '1970-01-01'
+           )
+        ) +
+        (SELECT COUNT(*)
+         FROM feedback_status_history fsh
+         WHERE fsh.feedback_id = fs.id
+           AND fsh.changed_at > COALESCE(
+             (SELECT last_viewed_at FROM feedback_views WHERE feedback_id = fs.id AND user_id = ?),
+             '1970-01-01'
+           )
+        )
+      ) as unread_count
     FROM feedback_submissions fs
     JOIN users u ON fs.user_id = u.id
     WHERE fs.user_id = ?
   `;
   
-  const params = [userId];
+  const params = [userId, userId, userId];
   
   if (status) {
     query += ` AND fs.status = ?`;
@@ -10222,19 +10288,38 @@ router.get('/feedback/my-submissions', authenticateToken, (req, res) => {
 // Get all submissions (Admin only)
 router.get('/feedback/all', authenticateToken, authorizeRole('administrator'), (req, res) => {
   const { status, type, priority, search } = req.query;
+  const userId = req.user.id;
   
   let query = `
     SELECT 
       fs.*,
       u.username, u.full_name,
       (SELECT COUNT(*) FROM feedback_comments WHERE feedback_id = fs.id) as comment_count,
-      (SELECT COUNT(*) FROM feedback_attachments WHERE feedback_id = fs.id) as attachment_count
+      (SELECT COUNT(*) FROM feedback_attachments WHERE feedback_id = fs.id) as attachment_count,
+      (
+        -- Count as unread if admin never viewed it OR has unread user comments
+        CASE 
+          WHEN NOT EXISTS (SELECT 1 FROM feedback_views WHERE feedback_id = fs.id AND user_id = ?) 
+          THEN 1
+          ELSE 0
+        END
+        +
+        (SELECT COUNT(*) 
+         FROM feedback_comments fc
+         WHERE fc.feedback_id = fs.id 
+           AND fc.is_admin_note = 0
+           AND fc.created_at > COALESCE(
+             (SELECT last_viewed_at FROM feedback_views WHERE feedback_id = fs.id AND user_id = ?),
+             '1970-01-01'
+           )
+        )
+      ) as unread_count
     FROM feedback_submissions fs
     JOIN users u ON fs.user_id = u.id
     WHERE 1=1
   `;
   
-  const params = [];
+  const params = [userId, userId];
   
   if (status) {
     query += ` AND fs.status = ?`;
@@ -10301,6 +10386,74 @@ router.get('/feedback/statistics', authenticateToken, authorizeRole('administrat
   });
 });
 
+// Get notification count (unread feedback items for current user)
+router.get('/feedback/notifications/count', authenticateToken, (req, res) => {
+  const userId = req.user.id;
+  const isAdmin = req.user.role === 'administrator';
+  
+  if (isAdmin) {
+    // For admins: Count NEW submissions they haven't viewed OR submissions with unread user comments
+    const query = `
+      SELECT COUNT(*) as count
+      FROM feedback_submissions fs
+      WHERE 
+        -- New submissions the admin has never viewed
+        NOT EXISTS (
+          SELECT 1 FROM feedback_views WHERE feedback_id = fs.id AND user_id = ?
+        )
+        -- OR submissions with new user comments since admin last viewed
+        OR EXISTS (
+          SELECT 1 
+          FROM feedback_comments fc
+          WHERE fc.feedback_id = fs.id 
+            AND fc.is_admin_note = 0
+            AND fc.created_at > COALESCE(
+              (SELECT last_viewed_at FROM feedback_views WHERE feedback_id = fs.id AND user_id = ?),
+              '1970-01-01'
+            )
+        )
+    `;
+    
+    db.get(query, [userId, userId], (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ count: result.count || 0 });
+    });
+  } else {
+    // For regular users: Count their submissions with unread admin comments OR status updates
+    const query = `
+      SELECT COUNT(*) as count
+      FROM feedback_submissions fs
+      WHERE fs.user_id = ?
+        AND (
+          EXISTS (
+            SELECT 1 
+            FROM feedback_comments fc
+            WHERE fc.feedback_id = fs.id 
+              AND fc.is_admin_note = 1
+              AND fc.created_at > COALESCE(
+                (SELECT last_viewed_at FROM feedback_views WHERE feedback_id = fs.id AND user_id = ?),
+                '1970-01-01'
+              )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM feedback_status_history fsh
+            WHERE fsh.feedback_id = fs.id
+              AND fsh.changed_at > COALESCE(
+                (SELECT last_viewed_at FROM feedback_views WHERE feedback_id = fs.id AND user_id = ?),
+                '1970-01-01'
+              )
+          )
+        )
+    `;
+    
+    db.get(query, [userId, userId, userId], (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ count: result.count || 0 });
+    });
+  }
+});
+
 // Get single feedback with full details
 router.get('/feedback/:id', authenticateToken, (req, res) => {
   const feedbackId = req.params.id;
@@ -10324,7 +10477,7 @@ router.get('/feedback/:id', authenticateToken, (req, res) => {
       
       // Get attachments
       db.all(
-        'SELECT id, original_filename, file_size, uploaded_at FROM feedback_attachments WHERE feedback_id = ?',
+        'SELECT id, filename, original_filename, file_size, uploaded_at FROM feedback_attachments WHERE feedback_id = ?',
         [feedbackId],
         (attachErr, attachments) => {
           if (attachErr) return res.status(500).json({ error: attachErr.message });
@@ -10538,8 +10691,98 @@ router.delete('/feedback/:id/attachments/:attachmentId', authenticateToken, (req
         
         res.json({ message: 'Attachment deleted successfully' });
       });
-    }
-  );
+  }
+);
 });
 
-module.exports = router; 
+// Mark feedback as viewed (updates last viewed timestamp)
+router.post('/feedback/:id/mark-viewed', authenticateToken, (req, res) => {
+  const feedbackId = req.params.id;
+  const userId = req.user.id;
+  const isAdmin = req.user.role === 'administrator';
+  
+  // Check if user has access to this feedback
+  db.get('SELECT user_id FROM feedback_submissions WHERE id = ?', [feedbackId], (err, feedback) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!feedback) return res.status(404).json({ error: 'Feedback not found' });
+    
+    // Users can only view their own, admins can view all
+    if (!isAdmin && feedback.user_id !== userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    // Insert or update last viewed timestamp
+    db.run(
+      `INSERT INTO feedback_views (feedback_id, user_id, last_viewed_at) 
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(feedback_id, user_id) 
+       DO UPDATE SET last_viewed_at = CURRENT_TIMESTAMP`,
+      [feedbackId, userId],
+      function(insertErr) {
+        if (insertErr) return res.status(500).json({ error: insertErr.message });
+        res.json({ message: 'Marked as viewed' });
+      }
+    );
+  });
+});
+
+// Delete feedback (Admin only)
+router.delete('/feedback/:id', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const feedbackId = req.params.id;
+  
+  // Get feedback details to log the deletion
+  db.get('SELECT * FROM feedback_submissions WHERE id = ?', [feedbackId], (err, feedback) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!feedback) return res.status(404).json({ error: 'Feedback not found' });
+    
+    // Get all attachments to delete files
+    db.all('SELECT filename FROM feedback_attachments WHERE feedback_id = ?', [feedbackId], (attachErr, attachments) => {
+      if (attachErr) return res.status(500).json({ error: attachErr.message });
+      
+      // Delete attachment files from filesystem
+      attachments.forEach(attachment => {
+        const filePath = path.join(__dirname, 'feedback_files', attachment.filename);
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+            console.log(`Deleted feedback attachment file: ${attachment.filename}`);
+          } catch (fsErr) {
+            console.error('Error deleting feedback attachment file:', fsErr);
+          }
+        }
+      });
+      
+      // Delete feedback (CASCADE will handle attachments, comments, status_history, views)
+      db.run('DELETE FROM feedback_submissions WHERE id = ?', [feedbackId], function(delErr, statement) {
+        if (delErr) return res.status(500).json({ error: delErr.message });
+        if (statement?.changes === 0) return res.status(404).json({ error: 'Feedback not found' });
+        
+        // Log the deletion
+        try {
+          logChange(req.user.id, 'feedback_submissions', feedbackId, 'DELETE', 
+            { 
+              id: feedback.id, 
+              user_id: feedback.user_id, 
+              type: feedback.type, 
+              priority: feedback.priority,
+              description: feedback.description,
+              status: feedback.status,
+              attachments_count: attachments.length
+            }, 
+            null, 
+            req
+          );
+        } catch (logErr) {
+          console.error('Error logging feedback deletion:', logErr);
+        }
+        
+        res.json({ 
+          message: 'Feedback deleted successfully',
+          deleted_attachments: attachments.length
+        });
+      });
+    });
+  });
+});
+
+module.exports = router;

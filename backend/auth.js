@@ -77,151 +77,7 @@ const authorizeRole = (requiredRoles) => {
   };
 };
 
-// Permission-based authorization middleware
-const authorizePermission = (moduleName, action) => {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    // Check if user has permission for this module and action
-    db.get(
-      'SELECT * FROM role_permissions WHERE role_name = ? AND module_name = ?',
-      [req.user.role, moduleName],
-      (err, permission) => {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-
-        if (!permission) {
-          return res.status(403).json({ error: 'No permissions found for this module' });
-        }
-
-        let hasPermission = false;
-        switch (action) {
-          case 'view':
-            hasPermission = permission.can_view;
-            break;
-          case 'create':
-            hasPermission = permission.can_create;
-            break;
-          case 'edit':
-            hasPermission = permission.can_edit;
-            break;
-          case 'delete':
-            hasPermission = permission.can_delete;
-            break;
-          default:
-            hasPermission = false;
-        }
-
-        if (!hasPermission) {
-          return res.status(403).json({ error: `Insufficient permissions for ${action} on ${moduleName}` });
-        }
-
-        next();
-      }
-    );
-  };
-};
-
-// Get user permissions
-const getUserPermissions = (userId, callback) => {
-  db.get('SELECT user_role FROM users WHERE id = ?', [userId], (err, user) => {
-    if (err) return callback(err);
-    if (!user) return callback(new Error('User not found'));
-
-    db.all(
-      'SELECT module_name, can_view, can_create, can_edit, can_delete FROM role_permissions WHERE role_name = ?',
-      [user.user_role],
-      (err, permissions) => {
-        if (err) return callback(err);
-        
-        const permissionMap = {};
-        permissions.forEach(perm => {
-          permissionMap[perm.module_name] = {
-            can_view: perm.can_view,
-            can_create: perm.can_create,
-            can_edit: perm.can_edit,
-            can_delete: perm.can_delete
-          };
-        });
-        
-        callback(null, permissionMap);
-      }
-    );
-  });
-};
-
-// Get user permissions with module visibility
-const getUserPermissionsWithVisibility = (userId, callback) => {
-  db.get('SELECT user_role FROM users WHERE id = ?', [userId], (err, user) => {
-    if (err) return callback(err);
-    if (!user) return callback(new Error('User not found'));
-
-    // Get role-based permissions
-    db.all(
-      'SELECT module_name, can_view, can_create, can_edit, can_delete FROM role_permissions WHERE role_name = ?',
-      [user.user_role],
-      (err, permissions) => {
-        if (err) return callback(err);
-        
-        // Get user-specific module visibility settings
-        db.all(
-          'SELECT module_name, is_visible FROM user_module_visibility WHERE user_id = ?',
-          [userId],
-          (err, visibilitySettings) => {
-            if (err) return callback(err);
-            
-            const permissionMap = {};
-            const visibilityMap = {};
-            
-            // Build permission map
-            permissions.forEach(perm => {
-              permissionMap[perm.module_name] = {
-                can_view: perm.can_view,
-                can_create: perm.can_create,
-                can_edit: perm.can_edit,
-                can_delete: perm.can_delete
-              };
-            });
-            
-            // Build visibility map with new requirements:
-            // - Admin users: all modules visible by default
-            // - Provisioner/Read-Only users: respect visibility settings (default off for new users)
-            const allModules = [
-              'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
-              'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
-              'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
-            ];
-            
-            // Default visibility based on user role
-            if (user.user_role === 'administrator') {
-              // Admin users: all modules visible by default
-              allModules.forEach(module => {
-                visibilityMap[module] = true;
-              });
-            } else {
-              // Provisioner/Read-Only users: default to hidden, respect visibility settings
-              allModules.forEach(module => {
-                visibilityMap[module] = false; // Default to hidden
-              });
-              
-              // Override with user-specific visibility settings
-              visibilitySettings.forEach(vis => {
-                visibilityMap[vis.module_name] = !!vis.is_visible;
-              });
-            }
-            
-            callback(null, { permissions: permissionMap, visibility: visibilityMap });
-          }
-        );
-      }
-    );
-  });
-};
-
-// Get user module permissions (new per-module system)
+// Get user module permissions (per-module system)
 const getUserModulePermissions = (userId, callback) => {
   db.get('SELECT user_role FROM users WHERE id = ?', [userId], (err, user) => {
     if (err) return callback(err);
@@ -232,7 +88,8 @@ const getUserModulePermissions = (userId, callback) => {
       const allModules = [
         'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
         'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
-        'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing'
+        'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
+        'allocated_cost_calculator'
       ];
       
       const permissionMap = {};
@@ -345,9 +202,6 @@ module.exports = {
   generateToken,
   authenticateToken,
   authorizeRole,
-  authorizePermission,
-  getUserPermissions,
-  getUserPermissionsWithVisibility,
   getUserModulePermissions,
   hasModulePermission,
   authorizeModulePermission,
