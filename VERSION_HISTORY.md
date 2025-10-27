@@ -182,10 +182,44 @@ Internal pricing teams can manually specify exact routes for quotes where:
    - Uses BusinessCenterIcon for section header, LocationOnIcon for inventory
    - Prepares for future colocation-related modules to be added under same section
 
+7. **Allocated Cost Calculator Route Validation** - Fixed bidirectional route validation
+   - Routes can now be entered in any order
+   - Source and destination are fully interchangeable
+   - Uses BFS (Breadth-First Search) for path validation
+   - Properly handles bidirectional network routes
+   - Example: IPCLON7↔IPCNWK1 works same as IPCNWK1↔IPCLON7
+
+8. **Permission System Cleanup** - Removed legacy dual permission system
+   - Dropped `role_permissions` table (migration 008)
+   - Removed 3 unused legacy functions (~150 lines of code)
+   - Simplified to single permission system:
+     - Administrators: Automatic full access (hardcoded)
+     - Regular users: `user_module_permissions` table only
+   - Improved performance (fewer database queries)
+   - Easier maintenance and module addition
+
+9. **Network Design Tool Route Selection** - Fixed multi-route prioritization
+   - When multiple routes exist between same locations, prefer lowest latency
+   - Previous behavior: Random (last processed route)
+   - New behavior: Always select route with lowest expected_latency
+   - Applies AFTER all exclusion filters (bandwidth, carrier avoidance, etc.)
+   - Example: Between two routes (50ms vs 200ms), always picks 50ms route
+
+10. **Cable System Backend Fix** - Fixed cable_system not appearing in route results
+    - Added `cable_system` to route destructuring in path-finding algorithm
+    - Added `cable_system` to graph edge data structure
+    - Added `cable_system` to primary and protection path route details
+    - Cable System now displays correctly in both Network Design Tool and Allocated Cost Calculator
+
 **Files Modified:**
 - `frontend/src/App.js` - Authentication check, notification polling, smart tab navigation, menu restructuring
 - `frontend/src/FeedbackManager.js` - Fixed DOM nesting, added initialTab prop support
-- `backend/routes.js` - Enhanced notification queries for status tracking and new submissions
+- `frontend/src/AllocatedCostCalculator.js` - Bidirectional route validation using BFS
+- `backend/routes.js` - Enhanced notification queries, lowest-latency selection, cable_system inclusion
+- `backend/auth.js` - Removed legacy permission functions
+- `backend/migrations/007_add_allocated_cost_calculator.js` - Removed role_permissions logic
+- `backend/migrations/008_remove_role_permissions.js` - New migration to drop legacy table
+- `PERMISSION_SYSTEM_CLEANUP.md` - Complete documentation of permission cleanup
 
 #### 4. **CNX Colocation Module Fixes** ✅
 
@@ -246,7 +280,9 @@ Internal pricing teams can manually specify exact routes for quotes where:
 
 **Modified Tables:**
 - `cnx_colocation_racks` - Data conversion for `tor_network_infrastructure` field
-- `role_permissions` - Added allocated_cost_calculator module permissions
+
+**Removed Tables:**
+- `role_permissions` - Dropped legacy table (migration 008), now uses simplified permission system
 
 #### 7. **Backend Enhancements**
 
@@ -333,10 +369,11 @@ Internal pricing teams can manually specify exact routes for quotes where:
 
 #### Database Migrations
 Run automatically on backend restart:
+- `004_convert_tor_network_to_text.js` - Updates CNX Colocation data (0→'No', 1→'Yes - Cisco 3548')
 - `005_create_feedback_module.js` - Creates 4 feedback tables
-- `006_add_feedback_read_tracking.js` - Adds feedback_views table
-- `007_add_allocated_cost_calculator.js` - Creates allocated_cost_pricing_logs table and permissions
-- `004_convert_tor_network_to_text.js` - Updates CNX Colocation data
+- `006_add_feedback_read_tracking.js` - Adds feedback_views table for unread tracking
+- `007_add_allocated_cost_calculator.js` - Creates allocated_cost_pricing_logs table
+- `008_remove_role_permissions.js` - Drops legacy role_permissions table (permission system cleanup)
 
 #### File System
 New directories created automatically:
@@ -356,12 +393,16 @@ New directories created automatically:
 - Backend: ~800 lines (feedback endpoints + allocated cost migration)
 - Frontend: ~1,782 lines (FeedbackManager.js 1,057 + AllocatedCostCalculator.js 725)
 - API Functions: ~70 lines
-- Migrations: ~250 lines (feedback + allocated cost + CNX fixes)
-- Documentation: ~450 lines (VERSION_HISTORY updates)
+- Migrations: ~320 lines (feedback + allocated cost + CNX fixes + permission cleanup)
+- Documentation: ~550 lines (VERSION_HISTORY + PERMISSION_SYSTEM_CLEANUP)
 
-**Total New Files:** 10 (including migrations)
-**Modified Files:** 7 (App.js, NetworkDesignTool.js, CNXColocationManager.js, routes.js, api.js, VERSION_HISTORY.md)
-**Database Tables Added:** 5 (feedback_submissions, feedback_attachments, feedback_comments, feedback_status_history, allocated_cost_pricing_logs)
+**Lines of Code Removed:**
+- Backend: ~150 lines (removed legacy permission functions)
+
+**Total New Files:** 13 (including migrations and documentation)
+**Modified Files:** 10 (App.js, NetworkDesignTool.js, CNXColocationManager.js, routes.js, api.js, auth.js, AllocatedCostCalculator.js, UserManagement.js, VERSION_HISTORY.md, 007 migration)
+**Database Tables Added:** 5 (feedback_submissions, feedback_attachments, feedback_comments, feedback_status_history, feedback_views, allocated_cost_pricing_logs)
+**Database Tables Removed:** 1 (role_permissions)
 
 ---
 
@@ -384,7 +425,9 @@ New directories created automatically:
 - [ ] Enter valid circuit IDs (comma-separated)
 - [ ] Real-time validation displays correctly
 - [ ] Invalid circuit ID shows error message
-- [ ] Route connectivity validation works
+- [x] Route connectivity validation works (bidirectional)
+- [x] Routes can be entered in any order
+- [x] Source and destination are interchangeable
 - [ ] Calculate primary path pricing
 - [ ] Calculate primary + secondary path pricing
 - [ ] Calculate protected service pricing
@@ -393,8 +436,16 @@ New directories created automatically:
 - [ ] Export to text file
 - [ ] View pricing logs (provisioner/admin)
 - [ ] Clear logs (admin only)
-- [ ] Cable System displays in route tables
+- [x] Cable System displays in route tables
 - [ ] Permission system enforced correctly
+
+#### Network Design Tool Route Selection
+- [x] Multiple routes between same locations handled correctly
+- [x] Lowest latency route selected when multiple options exist
+- [x] Route prioritization applies after exclusion filters
+- [x] Cable System data flows from database to frontend
+- [x] Cable System displays in route tables (both tools)
+- [x] Cable System included in email exports
 
 #### CNX Colocation Fixes
 - [x] Create new shared rack
@@ -405,6 +456,15 @@ New directories created automatically:
 - [x] Default values correct (42 RU, 'No' for infrastructure)
 - [x] Data migration successful
 - [x] No console warnings
+
+#### Permission System Cleanup
+- [x] Migration 008 runs successfully
+- [x] role_permissions table removed
+- [x] Legacy functions removed from auth.js
+- [x] Admin users still have full access
+- [x] Regular users use user_module_permissions only
+- [x] No errors or broken functionality
+- [x] Performance improvement verified
 
 ---
 

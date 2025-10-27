@@ -5339,10 +5339,10 @@ router.get('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorize
   );
 });
 
-// Create client (supports RU ranges and Space & Power UCN)
-router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('client_design_file'), (req, res) => {
+// Create client (with RU purchased tracking)
+router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
   const rackId = req.params.rackId;
-  const { client_name, power_purchased, space_power_ucn, design_sharepoint_link, ru_ranges, more_info } = req.body;
+  const { client_name, power_purchased, space_power_ucn, design_sharepoint_link, ru_purchased, more_info } = req.body;
   
   if (!client_name || power_purchased === undefined || !space_power_ucn) {
     return res.status(400).json({ error: 'Client Name, Power Purchased, and Space & Power UCN are required' });
@@ -5367,216 +5367,109 @@ router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authoriz
     }
     
     function proceedWithValidation() {
-      // Parse and validate RU ranges
-      let ruRangesArray;
-      try {
-        ruRangesArray = ru_ranges ? JSON.parse(ru_ranges) : [];
-      } catch (e) {
-        return res.status(400).json({ error: 'Invalid RU ranges format' });
-      }
-      
-      if (!Array.isArray(ruRangesArray) || ruRangesArray.length === 0) {
-        return res.status(400).json({ error: 'At least one RU range is required' });
-      }
-      
-      // Validate RU ranges are within rack bounds
-      const totalRU = rack.total_ru || 42;
-      for (const range of ruRangesArray) {
-        if (!range.start || !range.end || range.start < 1 || range.end > totalRU || range.start > range.end) {
-          return res.status(400).json({ error: `Invalid RU range: ${range.start}-${range.end}. Must be within 1-${totalRU}` });
+      // For shared racks, validate RU purchased is provided
+      let finalRuPurchased = 0;
+      if (rack.rack_type === 'shared') {
+        if (!ru_purchased || isNaN(ru_purchased) || parseInt(ru_purchased) < 1) {
+          return res.status(400).json({ error: 'RU Purchased must be a positive number for shared racks' });
         }
-      }
-      
-      // Check for overlaps with IPC reserved ranges
-      let ipcReservedRanges = [];
-      if (rack.ipc_reserved_ru_ranges) {
-        try {
-          ipcReservedRanges = JSON.parse(rack.ipc_reserved_ru_ranges);
-        } catch (e) {
-          console.error('Error parsing IPC reserved ranges:', e);
-        }
-      }
-      
-      for (const clientRange of ruRangesArray) {
-        for (const ipcRange of ipcReservedRanges) {
-          if (!(clientRange.end < ipcRange.start || clientRange.start > ipcRange.end)) {
-            return res.status(400).json({ error: `RU range ${clientRange.start}-${clientRange.end} overlaps with IPC reserved range ${ipcRange.start}-${ipcRange.end}` });
-          }
-        }
-      }
-      
-      // Check for overlaps with existing clients
-      db.all('SELECT ru_ranges FROM cnx_colocation_clients WHERE rack_id = ?', [rackId], (err, existingClients) => {
-        if (err) return res.status(500).json({ error: err.message });
+        finalRuPurchased = parseInt(ru_purchased);
         
-        for (const client of existingClients) {
-          if (!client.ru_ranges) continue;
+        // Validate RU purchased doesn't exceed rack capacity
+        const totalRU = rack.total_ru || 42;
+        if (finalRuPurchased > totalRU) {
+          return res.status(400).json({ error: `RU Purchased (${finalRuPurchased}) exceeds rack capacity (${totalRU})` });
+        }
+      } else {
+        // For dedicated racks, use total RU
+        finalRuPurchased = rack.total_ru || 42;
+      }
+      
+      // Create client without design file
+      // RU ranges will be managed via Rack Elevation dialog when devices are added
+      db.run(
+        `INSERT INTO cnx_colocation_clients 
+         (rack_id, client_name, power_purchased, ru_purchased, space_power_ucn, design_sharepoint_link, more_info, created_by, updated_by, updated_date) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [rackId, client_name, parseFloat(power_purchased), finalRuPurchased, space_power_ucn, design_sharepoint_link || null, more_info || null, req.user.id, req.user.id, new Date().toISOString()],
+        function(err, statement) {
+          if (err) return res.status(500).json({ error: err.message });
           
-          let existingRanges;
+          const recordId = statement?.lastID;
+          
           try {
-            existingRanges = JSON.parse(client.ru_ranges);
-          } catch (e) {
-            continue;
+            logChange(req.user.id, 'cnx_colocation_clients', recordId || client_name, 'CREATE', null, 
+              { rackId, client_name, power_purchased, ru_purchased: finalRuPurchased, space_power_ucn, design_sharepoint_link, more_info }, req);
+          } catch (logError) {
+            console.error('Failed to log CNX colocation client creation:', logError);
           }
           
-          for (const newRange of ruRangesArray) {
-            for (const existingRange of existingRanges) {
-              if (!(newRange.end < existingRange.start || newRange.start > existingRange.end)) {
-                return res.status(400).json({ 
-                  error: `RU range ${newRange.start}-${newRange.end} overlaps with existing client allocation ${existingRange.start}-${existingRange.end}` 
-                });
-              }
-            }
-          }
+          res.status(201).json({ id: recordId, client_name, message: 'Client created successfully' });
         }
-        
-        // All validations passed, create client
-        const clientDesignFile = req.file ? req.file.filename : null;
-        
-        // Calculate total RU purchased from ranges
-        const ruPurchased = ruRangesArray.reduce((total, range) => {
-          return total + (range.end - range.start + 1);
-        }, 0);
-        
-        db.run(
-          `INSERT INTO cnx_colocation_clients 
-           (rack_id, client_name, power_purchased, ru_purchased, space_power_ucn, design_sharepoint_link, ru_ranges, more_info, design_file, created_by, updated_by, updated_date) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [rackId, client_name, parseFloat(power_purchased), ruPurchased, space_power_ucn, design_sharepoint_link || null, JSON.stringify(ruRangesArray), more_info || null, clientDesignFile, req.user.id, req.user.id, new Date().toISOString()],
-          function(err, statement) {
-            if (err) return res.status(500).json({ error: err.message });
-            
-            const recordId = statement?.lastID;
-            
-            try {
-              logChange(req.user.id, 'cnx_colocation_clients', recordId || client_name, 'CREATE', null, 
-                { rackId, client_name, power_purchased, space_power_ucn, ru_ranges: ruRangesArray, more_info, design_file: clientDesignFile }, req);
-            } catch (logError) {
-              console.error('Failed to log CNX colocation client creation:', logError);
-            }
-            
-            res.status(201).json({ id: recordId, client_name, message: 'Client created successfully' });
-          }
-        );
-      });
+      );
     }
   });
 });
 
-// Update client (supports RU ranges and Space & Power UCN)
-router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('client_design_file'), (req, res) => {
+// Update client (with RU purchased tracking)
+router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
   const clientId = req.params.clientId;
-  const { client_name, power_purchased, space_power_ucn, design_sharepoint_link, ru_ranges, more_info } = req.body;
+  const { client_name, power_purchased, space_power_ucn, design_sharepoint_link, ru_purchased, more_info } = req.body;
   
-  if (!client_name || power_purchased === undefined) {
-    return res.status(400).json({ error: 'Client Name and Power Purchased are required' });
+  if (!client_name || power_purchased === undefined || !space_power_ucn) {
+    return res.status(400).json({ error: 'Client Name, Power Purchased, and Space & Power UCN are required' });
   }
   
   // Get current client and rack data
-  db.get('SELECT c.*, r.rack_type, r.total_ru, r.ipc_reserved_ru_ranges FROM cnx_colocation_clients c JOIN cnx_colocation_racks r ON c.rack_id = r.rack_id WHERE c.id = ?', [clientId], (err, client) => {
+  db.get('SELECT c.*, r.rack_type, r.total_ru FROM cnx_colocation_clients c JOIN cnx_colocation_racks r ON c.rack_id = r.id WHERE c.id = ?', [clientId], (err, client) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!client) return res.status(404).json({ error: 'Client not found' });
     
-    // Parse and validate RU ranges
-    let ruRangesArray;
-    try {
-      ruRangesArray = ru_ranges ? JSON.parse(ru_ranges) : JSON.parse(client.ru_ranges || '[]');
-      if (!Array.isArray(ruRangesArray)) {
-        return res.status(400).json({ error: 'RU ranges must be an array' });
+    // Validate RU purchased for shared racks
+    let finalRuPurchased = client.ru_purchased || 0;
+    if (client.rack_type === 'shared' && ru_purchased !== undefined) {
+      if (isNaN(ru_purchased) || parseInt(ru_purchased) < 1) {
+        return res.status(400).json({ error: 'RU Purchased must be a positive number for shared racks' });
       }
-    } catch (parseErr) {
-      return res.status(400).json({ error: 'Invalid RU ranges format' });
+      finalRuPurchased = parseInt(ru_purchased);
+      
+      // Validate RU purchased doesn't exceed rack capacity
+      const totalRU = client.total_ru || 42;
+      if (finalRuPurchased > totalRU) {
+        return res.status(400).json({ error: `RU Purchased (${finalRuPurchased}) exceeds rack capacity (${totalRU})` });
+      }
     }
     
-    // For shared racks, validate RU ranges
-    if (client.rack_type === 'shared' && ruRangesArray.length > 0) {
-      // Get existing clients (excluding current) to check for overlaps
-      db.all('SELECT id, ru_ranges FROM cnx_colocation_clients WHERE rack_id = ? AND id != ?', 
-        [client.rack_id, clientId], (err, existingClients) => {
-        if (err) return res.status(500).json({ error: err.message });
-        
-        // Check for overlaps with other clients
-        for (const existingClient of existingClients) {
-          const existingRanges = JSON.parse(existingClient.ru_ranges || '[]');
-          for (const newRange of ruRangesArray) {
-            for (const existingRange of existingRanges) {
-              if (!(newRange.end < existingRange.start || newRange.start > existingRange.end)) {
-                return res.status(400).json({ error: `RU range ${newRange.start}-${newRange.end} overlaps with existing client allocation` });
-              }
-            }
-          }
-        }
-        
-        // Check for overlaps with IPC reserved RU
-        if (client.ipc_reserved_ru_ranges) {
-          const ipcRanges = JSON.parse(client.ipc_reserved_ru_ranges);
-          for (const newRange of ruRangesArray) {
-            for (const ipcRange of ipcRanges) {
-              if (!(newRange.end < ipcRange.start || newRange.start > ipcRange.end)) {
-                return res.status(400).json({ error: `RU range ${newRange.start}-${newRange.end} overlaps with IPC reserved RU` });
-              }
-            }
-          }
-        }
-        
-        proceedWithUpdate();
-      });
-    } else {
-      proceedWithUpdate();
-    }
+    // Prepare update data
+    let updateData = {
+      client_name,
+      power_purchased: parseFloat(power_purchased),
+      ru_purchased: finalRuPurchased,
+      space_power_ucn: space_power_ucn,
+      design_sharepoint_link: design_sharepoint_link || null,
+      more_info: more_info || null
+    };
     
-    function proceedWithUpdate() {
-      // Calculate total RU purchased from ranges
-      const ruPurchased = ruRangesArray.reduce((total, range) => {
-        return total + (range.end - range.start + 1);
-      }, 0);
-      
-      // Prepare update data
-      let updateData = {
-        client_name,
-        power_purchased: parseFloat(power_purchased),
-        ru_purchased: ruPurchased,
-        ru_ranges: JSON.stringify(ruRangesArray),
-        more_info: more_info || null
-      };
-      
-      // Add optional fields
-      if (space_power_ucn !== undefined) updateData.space_power_ucn = space_power_ucn;
-      if (design_sharepoint_link !== undefined) updateData.design_sharepoint_link = design_sharepoint_link || null;
-      
-      // Handle design file upload
-      if (req.file) {
-        // Delete old design file if it exists
-        if (client.design_file) {
-          const oldFilePath = path.join(__dirname, 'colocation_files', client.design_file);
-          fs.unlink(oldFilePath, (unlinkErr) => {
-            if (unlinkErr) console.error('Failed to delete old client design file:', unlinkErr);
-          });
+    const updateFields = Object.keys(updateData);
+    const updateValues = Object.values(updateData);
+    const setClause = updateFields.map(field => `${field} = ?`).join(', ');
+    
+    db.run(
+      `UPDATE cnx_colocation_clients SET ${setClause}, updated_by = ?, updated_date = ? WHERE id = ?`,
+      [...updateValues, req.user.id, new Date().toISOString(), clientId],
+      function(updateErr, statement) {
+        if (updateErr) return res.status(500).json({ error: updateErr.message });
+        if (statement?.changes === 0) return res.status(404).json({ error: 'Client not found' });
+        
+        try {
+          logChange(req.user.id, 'cnx_colocation_clients', client.client_name, 'UPDATE', client, updateData, req);
+        } catch (logError) {
+          console.error('Failed to log CNX colocation client update:', logError);
         }
-        updateData.design_file = req.file.filename;
+        
+        res.json({ message: 'Client updated successfully' });
       }
-      
-      const updateFields = Object.keys(updateData);
-      const updateValues = Object.values(updateData);
-      const setClause = updateFields.map(field => `${field} = ?`).join(', ');
-      
-      db.run(
-        `UPDATE cnx_colocation_clients SET ${setClause}, updated_by = ?, updated_date = ? WHERE id = ?`,
-        [...updateValues, req.user.id, new Date().toISOString(), clientId],
-        function(updateErr, statement) {
-          if (updateErr) return res.status(500).json({ error: updateErr.message });
-          if (statement?.changes === 0) return res.status(404).json({ error: 'Client not found' });
-          
-          try {
-            logChange(req.user.id, 'cnx_colocation_clients', client.client_name, 'UPDATE', client, updateData, req);
-          } catch (logError) {
-            console.error('Failed to log CNX colocation client update:', logError);
-          }
-          
-          res.json({ message: 'Client updated successfully' });
-        }
-      );
-    }
+    );
   });
 });
 
@@ -5592,14 +5485,6 @@ router.delete('/cnx-colocation/clients/:clientId', authenticateToken, authorizeM
     db.run('DELETE FROM cnx_colocation_clients WHERE id = ?', [clientId], function(deleteErr, statement) {
       if (deleteErr) return res.status(500).json({ error: deleteErr.message });
       if (statement?.changes === 0) return res.status(404).json({ error: 'Client not found' });
-      
-      // Delete associated design file
-      if (client.design_file) {
-        const filePath = path.join(__dirname, 'colocation_files', client.design_file);
-        fs.unlink(filePath, (unlinkErr) => {
-          if (unlinkErr) console.error('Failed to delete client design file:', unlinkErr);
-        });
-      }
       
       logChange(req.user.id, 'cnx_colocation_clients', client.client_name, 'DELETE', client, null, req);
       
@@ -5909,36 +5794,6 @@ router.get('/cnx-colocation/racks/:id/download', authenticateToken, authorizeMod
   });
 });
 
-// Download client design file
-router.get('/cnx-colocation/clients/:id/download', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
-  const clientId = req.params.id;
-  
-  db.get('SELECT design_file FROM cnx_colocation_clients WHERE id = ?', [clientId], (err, client) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!client) return res.status(404).json({ error: 'Client not found' });
-    if (!client.design_file) return res.status(404).json({ error: 'No design file found for this client' });
-    
-    const filePath = path.join(__dirname, 'colocation_files', client.design_file);
-    
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'Design file not found on server' });
-    }
-    
-    // Set headers for file download
-    res.setHeader('Content-Disposition', `attachment; filename="${client.design_file}"`);
-    res.setHeader('Content-Type', 'application/pdf');
-    
-    // Stream the file
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
-    
-    fileStream.on('error', (err) => {
-      console.error('Error streaming client design file:', err);
-      res.status(500).json({ error: 'Failed to download file' });
-    });
-  });
-});
 
 // Delete location design file
 router.delete('/cnx-colocation/locations/:id/design-file', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
@@ -6037,29 +5892,6 @@ router.delete('/cnx-colocation/racks/:id/design-file', authenticateToken, author
   });
 });
 
-// Delete client design file
-router.delete('/cnx-colocation/clients/:id/design-file', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
-  const clientId = req.params.id;
-  
-  db.get('SELECT design_file FROM cnx_colocation_clients WHERE id = ?', [clientId], (err, client) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!client) return res.status(404).json({ error: 'Client not found' });
-    if (!client.design_file) return res.status(404).json({ error: 'No design file to delete' });
-    
-    // Delete the file from filesystem
-    const filePath = path.join(__dirname, 'colocation_files', client.design_file);
-    fs.unlink(filePath, (unlinkErr) => {
-      if (unlinkErr) console.error('Failed to delete client design file:', unlinkErr);
-    });
-    
-    // Remove file reference from database
-    db.run('UPDATE cnx_colocation_clients SET design_file = NULL WHERE id = ?', [clientId], function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      
-      res.json({ message: 'Design file deleted successfully' });
-    });
-  });
-});
 
 // ====================================
 // EXCHANGE DATA ENDPOINTS

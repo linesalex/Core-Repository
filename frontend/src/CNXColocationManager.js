@@ -18,6 +18,7 @@ import DownloadIcon from '@mui/icons-material/Download';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import CloseIcon from '@mui/icons-material/Close';
 import ViewModuleIcon from '@mui/icons-material/ViewModule';
+import LinkIcon from '@mui/icons-material/Link';
 import { API_BASE_URL } from './config';
 import axios from 'axios';
 import LoadingIndicator from './components/LoadingIndicator';
@@ -78,12 +79,11 @@ const CNXColocationManager = ({ hasPermission }) => {
   const [clientFormData, setClientFormData] = useState({
     client_name: '',
     power_purchased: '',
-    ru_ranges: '', // JSON string for RU ranges
+    ru_purchased: '',
     space_power_ucn: '',
     design_sharepoint_link: '',
     more_info: ''
   });
-  const [clientDesignFile, setClientDesignFile] = useState(null);
 
   // Validation states
   const [clientErrors, setClientErrors] = useState({});
@@ -97,11 +97,16 @@ const CNXColocationManager = ({ hasPermission }) => {
         { type: 'required', message: 'Power Purchased is required' },
         { type: 'number', message: 'Power Purchased must be a valid number' },
         { type: 'min', min: 0, message: 'Power Purchased must be greater than or equal to 0' }
-      ]
+      ],
+      space_power_ucn: { type: 'required', message: 'Space & Power UCN is required' }
     };
     
     if (rackType === 'shared') {
-      baseRules.ru_ranges = { type: 'required', message: 'RU Ranges are required for shared racks' };
+      baseRules.ru_purchased = [
+        { type: 'required', message: 'RU Purchased is required for shared racks' },
+        { type: 'number', message: 'RU Purchased must be a valid number' },
+        { type: 'min', min: 1, message: 'RU Purchased must be at least 1' }
+      ];
     }
     
     return baseRules;
@@ -636,12 +641,11 @@ const CNXColocationManager = ({ hasPermission }) => {
     setClientFormData({
       client_name: '',
       power_purchased: '',
-      ru_ranges: '',
+      ru_purchased: '',
       space_power_ucn: '',
       design_sharepoint_link: '',
       more_info: ''
     });
-    setClientDesignFile(null);
     setClientErrors({}); // Clear validation errors
     setClientDialogOpen(true);
   };
@@ -658,12 +662,11 @@ const CNXColocationManager = ({ hasPermission }) => {
     setClientFormData({
       client_name: client.client_name,
       power_purchased: client.power_purchased,
-      ru_ranges: client.ru_ranges || '',
+      ru_purchased: client.ru_purchased || '',
       space_power_ucn: client.space_power_ucn || '',
       design_sharepoint_link: client.design_sharepoint_link || '',
       more_info: client.more_info || ''
     });
-    setClientDesignFile(null);
     setClientErrors({}); // Clear validation errors
     setClientDialogOpen(true);
   };
@@ -688,24 +691,22 @@ const CNXColocationManager = ({ hasPermission }) => {
       // Skip RU validation for now - will be handled by backend
       const rackId = clientDialogMode === 'add' ? selectedRack.id : selectedClient.rack_id;
 
-      const formData = new FormData();
+      // Prepare JSON data (no file upload needed)
+      const clientData = {};
       Object.keys(clientFormData).forEach(key => {
         if (clientFormData[key] !== null && clientFormData[key] !== '') {
-          formData.append(key, clientFormData[key]);
+          clientData[key] = clientFormData[key];
         }
       });
-      if (clientDesignFile) {
-        formData.append('client_design_file', clientDesignFile);
-      }
 
       if (clientDialogMode === 'add') {
         await axios.post(
           `${API_BASE_URL}/cnx-colocation/racks/${selectedRack.id}/clients`,
-          formData,
+          clientData,
           {
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-              'Content-Type': 'multipart/form-data'
+              'Content-Type': 'application/json'
             }
           }
         );
@@ -713,11 +714,11 @@ const CNXColocationManager = ({ hasPermission }) => {
       } else {
         await axios.put(
           `${API_BASE_URL}/cnx-colocation/clients/${selectedClient.id}`,
-          formData,
+          clientData,
           {
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-              'Content-Type': 'multipart/form-data'
+              'Content-Type': 'application/json'
             }
           }
         );
@@ -828,27 +829,6 @@ const CNXColocationManager = ({ hasPermission }) => {
     }
   };
 
-  const handleDownloadClientDesign = async (clientId) => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/cnx-colocation/clients/${clientId}/download`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
-        responseType: 'blob'
-      });
-
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `client_design_${clientId}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      setError('Failed to download design file: ' + err.message);
-    }
-  };
 
   // Delete file handlers
   const handleDeleteLocationDesign = async (locationId) => {
@@ -889,42 +869,7 @@ const CNXColocationManager = ({ hasPermission }) => {
     }
   };
 
-  const handleDeleteClientDesign = async (clientId) => {
-    if (!window.confirm('Are you sure you want to delete this design file?')) return;
-    
-    try {
-      await axios.delete(`${API_BASE_URL}/cnx-colocation/clients/${clientId}/design-file`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        }
-      });
-      setSuccess('Design file deleted successfully');
-      // Reload the specific rack's clients
-      const client = clientData[Object.keys(clientData).find(rackId => 
-        clientData[rackId]?.find(c => c.id === clientId)
-      )]?.find(c => c.id === clientId);
-      if (client) {
-        await loadClients(client.rack_id);
-      }
-    } catch (err) {
-      setError('Failed to delete design file: ' + err.message);
-    }
-  };
 
-  const handleClientDesignFileChange = (event) => {
-    const file = event.target.files[0];
-    if (file) {
-      if (file.type !== 'application/pdf') {
-        setError('Client design file must be a PDF');
-        return;
-      }
-      if (file.size > 10 * 1024 * 1024) { // 10MB limit
-        setError('Client design file must be smaller than 10MB');
-        return;
-      }
-      setClientDesignFile(file);
-    }
-  };
 
   const getStatusChip = (status) => {
     const colors = {
@@ -1196,7 +1141,8 @@ const CNXColocationManager = ({ hasPermission }) => {
                                                     <TableCell><strong>Client Name</strong></TableCell>
                                                     <TableCell><strong>Power Purchased (kVA)</strong></TableCell>
                                                     <TableCell><strong>RU Purchased</strong></TableCell>
-                                                    <TableCell><strong>Design</strong></TableCell>
+                                                    <TableCell><strong>Space & Power UCN</strong></TableCell>
+                                                    <TableCell><strong>Design Link</strong></TableCell>
                                                     <TableCell><strong>More Info</strong></TableCell>
                                                     <TableCell align="center"><strong>Actions</strong></TableCell>
                                                   </TableRow>
@@ -1207,22 +1153,27 @@ const CNXColocationManager = ({ hasPermission }) => {
                                                       <TableCell>{client.client_name}</TableCell>
                                                       <TableCell>{client.power_purchased}</TableCell>
                                                       <TableCell>{client.ru_purchased}</TableCell>
+                                                      <TableCell>{client.space_power_ucn}</TableCell>
                                                       <TableCell align="center">
-                                                        {client.design_file ? (
-                                                          <Button
-                                                            onClick={(e) => {
-                                                              e.stopPropagation();
-                                                              handleDownloadClientDesign(client.id);
-                                                            }}
-                                                            color="success"
-                                                            size="small"
-                                                            startIcon={<CheckCircleIcon color="success" />}
-                                                          >
-                                                            <CloudDownloadIcon fontSize="small" />
-                                                          </Button>
+                                                        {client.design_sharepoint_link ? (
+                                                          <Tooltip title="Open SharePoint Design">
+                                                            <IconButton
+                                                              size="small"
+                                                              color="primary"
+                                                              component="a"
+                                                              href={client.design_sharepoint_link.startsWith('http://') || client.design_sharepoint_link.startsWith('https://') 
+                                                                ? client.design_sharepoint_link 
+                                                                : `https://${client.design_sharepoint_link}`}
+                                                              target="_blank"
+                                                              rel="noopener noreferrer"
+                                                              onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                              <LinkIcon />
+                                                            </IconButton>
+                                                          </Tooltip>
                                                         ) : (
-                                                          <Tooltip title="No design file">
-                                                            <CancelIcon color="error" />
+                                                          <Tooltip title="No design link">
+                                                            <CancelIcon color="disabled" fontSize="small" />
                                                           </Tooltip>
                                                         )}
                                                       </TableCell>
@@ -1699,37 +1650,34 @@ const CNXColocationManager = ({ hasPermission }) => {
               />
             </Grid>
             
-            {/* For Shared racks: RU Ranges */}
+            {/* RU Purchased for Shared racks */}
             {selectedRack?.rack_type === 'shared' && (
               <Grid item xs={12} sm={6}>
                 <ValidatedTextField
                   fullWidth
-                  label="RU Ranges *"
-                  value={clientFormData.ru_ranges}
-                  onChange={(e) => setClientFormData(prev => ({...prev, ru_ranges: e.target.value}))}
+                  label="RU Purchased *"
+                  type="number"
+                  value={clientFormData.ru_purchased}
+                  onChange={(e) => setClientFormData(prev => ({...prev, ru_purchased: e.target.value}))}
                   required
-                  placeholder='[{"start": 1, "end": 10}]'
-                  helperText="JSON format: array of {start, end} objects"
-                  field="ru_ranges"
+                  field="ru_purchased"
                   errors={clientErrors}
                 />
               </Grid>
             )}
             
-            {/* For Dedicated racks or cross-rack clients: Space & Power UCN */}
-            {(selectedRack?.rack_type === 'dedicated' || clientFormData.space_power_ucn) && (
-              <Grid item xs={12}>
-                <ValidatedTextField
-                  fullWidth
-                  label="Space & Power UCN"
-                  value={clientFormData.space_power_ucn}
-                  onChange={(e) => setClientFormData(prev => ({...prev, space_power_ucn: e.target.value}))}
-                  field="space_power_ucn"
-                  errors={clientErrors}
-                  helperText="Unique identifier for tracking clients across multiple racks"
-                />
-              </Grid>
-            )}
+            {/* Space & Power UCN - Required for all clients */}
+            <Grid item xs={12}>
+              <ValidatedTextField
+                fullWidth
+                label="Space & Power UCN *"
+                value={clientFormData.space_power_ucn}
+                onChange={(e) => setClientFormData(prev => ({...prev, space_power_ucn: e.target.value}))}
+                required
+                field="space_power_ucn"
+                errors={clientErrors}
+              />
+            </Grid>
             
             {/* SharePoint Link for Design */}
             <Grid item xs={12}>
@@ -1743,46 +1691,6 @@ const CNXColocationManager = ({ hasPermission }) => {
               />
             </Grid>
             
-            <Grid item xs={12}>
-              <Typography variant="subtitle1" gutterBottom>
-                Design File (PDF Only)
-              </Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
-                <Button
-                  variant="outlined"
-                  component="label"
-                  startIcon={<CloudUploadIcon />}
-                >
-                  Upload PDF
-                  <input
-                    type="file"
-                    hidden
-                    accept=".pdf"
-                    onChange={handleClientDesignFileChange}
-                  />
-                </Button>
-                {clientDesignFile && (
-                  <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="success.main">
-                    Selected: {clientDesignFile.name}
-                  </Typography>
-                )}
-              </Box>
-              {selectedClient?.design_file && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
-                    Current: Design file exists
-                  </Typography>
-                  <Button
-                    size="small"
-                    color="error"
-                    startIcon={<CloseIcon />}
-                    onClick={() => handleDeleteClientDesign(selectedClient.id)}
-                  >
-                    Remove
-                  </Button>
-                </Box>
-              )}
-            </Grid>
             <Grid item xs={12}>
               <ValidatedTextField
                 fullWidth
