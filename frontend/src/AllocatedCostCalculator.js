@@ -358,7 +358,9 @@ const AllocatedCostCalculator = () => {
         quoteRequestId: formData.quoteRequestId,
         customerName: formData.customerName,
         crossConnectA: crossConnectEnabled.source ? crossConnectResults.source : null,
-        crossConnectB: crossConnectEnabled.destination ? crossConnectResults.destination : null
+        crossConnectB: crossConnectEnabled.destination ? crossConnectResults.destination : null,
+        calling_module: 'allocated_cost_calculator',
+        protection_required: formData.pricingType === 'protected'
       };
       
       console.log('Calculating pricing with params:', pricingParams);
@@ -680,7 +682,7 @@ const AllocatedCostCalculator = () => {
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
               <SearchIcon sx={{ mr: 1 }} />
-              <Typography variant="h6">Design Parameters</Typography>
+              <Typography variant="subtitle1" fontWeight="bold">Design Parameters</Typography>
             </Box>
           </AccordionSummary>
           <AccordionDetails>
@@ -914,13 +916,13 @@ const AllocatedCostCalculator = () => {
           <Accordion expanded={expandedAccordion === 'results'} onChange={() => setExpandedAccordion(expandedAccordion === 'results' ? '' : 'results')} sx={{ mt: 2 }}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                <Typography variant="h6">Route Details</Typography>
+                <Typography variant="subtitle1" fontWeight="bold">Route Details</Typography>
               </Box>
             </AccordionSummary>
             <AccordionDetails>
               <Grid container spacing={3}>
-                {/* Primary Path */}
-                <Grid item xs={12} md={searchResults.diversePath ? 6 : 12}>
+                {/* Primary Path - Full Width */}
+                <Grid item xs={12}>
                   <Card>
                     <CardHeader 
                       title="Primary Path" 
@@ -934,6 +936,7 @@ const AllocatedCostCalculator = () => {
                               <TableCell>Circuit ID</TableCell>
                               <TableCell>Segment</TableCell>
                               <TableCell>Latency</TableCell>
+                              <TableCell>Bandwidth</TableCell>
                               <TableCell>Carrier</TableCell>
                               <TableCell>Cable System</TableCell>
                             </TableRow>
@@ -944,6 +947,7 @@ const AllocatedCostCalculator = () => {
                                 <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                 <TableCell>{segment.from} → {segment.to}</TableCell>
                                 <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                                <TableCell>{segment.bandwidth || 'N/A'}</TableCell>
                                 <TableCell>{segment.carrier || 'N/A'}</TableCell>
                                 <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                               </TableRow>
@@ -963,9 +967,9 @@ const AllocatedCostCalculator = () => {
                   </Card>
                 </Grid>
                 
-                {/* Secondary Path */}
+                {/* Secondary Path - Full Width */}
                 {searchResults.diversePath && (
-                  <Grid item xs={12} md={6}>
+                  <Grid item xs={12}>
                     <Card>
                       <CardHeader 
                         title="Secondary Path" 
@@ -979,6 +983,7 @@ const AllocatedCostCalculator = () => {
                                 <TableCell>Circuit ID</TableCell>
                                 <TableCell>Segment</TableCell>
                                 <TableCell>Latency</TableCell>
+                                <TableCell>Bandwidth</TableCell>
                                 <TableCell>Carrier</TableCell>
                                 <TableCell>Cable System</TableCell>
                               </TableRow>
@@ -989,6 +994,7 @@ const AllocatedCostCalculator = () => {
                                   <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                   <TableCell>{segment.from} → {segment.to}</TableCell>
                                   <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                                  <TableCell>{segment.bandwidth || 'N/A'}</TableCell>
                                   <TableCell>{segment.carrier || 'N/A'}</TableCell>
                                   <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                                 </TableRow>
@@ -1019,7 +1025,7 @@ const AllocatedCostCalculator = () => {
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <AttachMoneyIcon sx={{ mr: 1 }} />
-                <Typography variant="h6">Pricing Results</Typography>
+                <Typography variant="subtitle1" fontWeight="bold">Detailed Pricing Results</Typography>
               </Box>
             </AccordionSummary>
             <AccordionDetails>
@@ -1035,53 +1041,506 @@ const AllocatedCostCalculator = () => {
                 </Button>
               </Box>
               
-              <Grid container spacing={3}>
-                {pricingResults.results.map((result, index) => (
-                  <Grid item xs={12} key={index}>
-                    <Card>
+              {/* Summary Cards */}
+              <Grid container spacing={3} sx={{ mb: 3 }}>
+                {/* Show Primary and Secondary paths */}
+                {pricingResults.results.filter(result => {
+                  if (formData.pricingType === 'primary') {
+                    return result.pathType === 'primary';
+                  } else {
+                    return result.pathType === 'primary' || result.pathType === 'protection';
+                  }
+                }).map((result, index) => (
+                  <Grid item xs={12} md={formData.pricingType === 'primary' ? 6 : (formData.pricingType === 'protected' && pricingResults.protectionPricing ? 4 : 6)} key={`summary-${index}`}>
+                    <Card sx={{ height: '100%', border: '2px solid', borderColor: 'primary.main' }}>
                       <CardHeader 
-                        title={`${result.pathType === 'primary' ? 'Primary' : result.pathType === 'protection' ? 'Secondary' : 'Protected'} Path Pricing`}
-                        subheader={`${formData.contractTerm} Month Contract`}
+                        title={`${result.pathType === 'primary' ? 'Primary' : 'Secondary'} Path`}
+                        subheader={`${formData.contractTerm}-Month Contract`}
+                        sx={{ bgcolor: 'primary.50' }}
                       />
                       <CardContent>
-                        <Grid container spacing={2}>
-                          <Grid item xs={12} md={6}>
-                            <Paper sx={{ p: 2, bgcolor: 'grey.50' }}>
-                              <Typography variant="subtitle2" gutterBottom>NRC Charges</Typography>
-                              <Typography variant="h5" color="primary">
-                                {result.pricing.nrcCharge > 0 ? formatCurrency(result.pricing.nrcCharge, result.pricing.currency) : 'FREE'}
-                              </Typography>
-                            </Paper>
-                          </Grid>
-                          <Grid item xs={12} md={6}>
-                            <Paper sx={{ p: 2, bgcolor: 'grey.50' }}>
-                              <Typography variant="subtitle2" gutterBottom>Price Range (MRC)</Typography>
-                              <Typography variant="body2" color="text.secondary">Minimum:</Typography>
-                              <Typography variant="h6" color="error.main">
+                        <Box sx={{ mb: 2 }}>
+                          <Typography variant="caption" color="text.secondary">Minimum Price ({result.pricing.minimumMargin}% margin)</Typography>
+                          <Typography variant="h5" color="error.main">
                                 {formatCurrency(result.pricing.minimumPrice, result.pricing.currency)}
                               </Typography>
-                              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Suggested:</Typography>
-                              <Typography variant="h6" color="success.main">
+                        </Box>
+                        <Divider sx={{ my: 2 }} />
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">Suggested Price ({result.pricing.suggestedMargin}% margin)</Typography>
+                          <Typography variant="h5" color="success.main">
                                 {formatCurrency(result.pricing.suggestedPrice, result.pricing.currency)}
                               </Typography>
-                            </Paper>
+                        </Box>
+                      </CardContent>
+                    </Card>
                           </Grid>
-                          <Grid item xs={12}>
-                            <Paper sx={{ p: 2, bgcolor: 'primary.50', border: '2px solid', borderColor: 'primary.main' }}>
-                              <Typography variant="subtitle2" gutterBottom color="primary">Allocated Cost</Typography>
-                              <Typography variant="h5" color="primary">
-                                {formatCurrency(result.pricing.allocatedCost, result.pricing.currency)}
+                ))}
+                
+                {/* Show Protected Service Pricing when available */}
+                {formData.pricingType === 'protected' && pricingResults.protectionPricing && (
+                  <Grid item xs={12} md={4} key="summary-protected">
+                    <Card sx={{ height: '100%', border: '2px solid', borderColor: 'success.main' }}>
+                      <CardHeader 
+                        title="Protected Service"
+                        subheader={`${formData.contractTerm}-Month Contract`}
+                        sx={{ bgcolor: 'success.50' }}
+                      />
+                      <CardContent>
+                        <Box sx={{ mb: 2 }}>
+                          <Typography variant="caption" color="text.secondary">Minimum Price ({pricingResults.protectionPricing.minimumMargin}% margin)</Typography>
+                          <Typography variant="h5" color="error.main">
+                            {formatCurrency(pricingResults.protectionPricing.minimumPrice, pricingResults.protectionPricing.currency)}
                               </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                Based on actual route costs and bandwidth allocation
+                        </Box>
+                        <Divider sx={{ my: 2 }} />
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">Suggested Price ({pricingResults.protectionPricing.suggestedMargin}% margin)</Typography>
+                          <Typography variant="h5" color="success.main">
+                            {formatCurrency(pricingResults.protectionPricing.suggestedPrice, pricingResults.protectionPricing.currency)}
                               </Typography>
-                            </Paper>
-                          </Grid>
-                        </Grid>
+                        </Box>
                       </CardContent>
                     </Card>
                   </Grid>
-                ))}
+                )}
+              </Grid>
+              
+              {/* Detailed Breakdowns */}
+              <Grid container spacing={3}>
+                {pricingResults.results.map((result, index) => {
+                  const detailedCalcs = result.pricing.detailedCalculations;
+                  if (!detailedCalcs) return null;
+                  
+                  return (
+                    <Grid item xs={12} key={`details-${index}`}>
+                    <Accordion defaultExpanded>
+                      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                        <Typography variant="subtitle1" fontWeight="bold">
+                          📊 {result.pathType === 'primary' ? 'Primary' : result.pathType === 'protection' ? 'Secondary' : 'Protected'} Path - Complete Calculation Breakdown
+                        </Typography>
+                      </AccordionSummary>
+                        <AccordionDetails>
+                          {/* Segment-by-Segment Breakdown */}
+                          {detailedCalcs.allocatedCostBreakdown && (
+                            <Paper sx={{ p: 3, mb: 3, bgcolor: 'grey.50' }}>
+                              <Typography variant="subtitle1" gutterBottom color="primary" fontWeight="bold">
+                                1️⃣ Allocated Cost Calculation (Segment-by-Segment)
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                Customer Bandwidth: <strong>{formData.bandwidth} Mbps</strong>
+                              </Typography>
+                              
+                              <TableContainer component={Paper} sx={{ mb: 2 }}>
+                                <Table size="small">
+                                  <TableHead>
+                                    <TableRow sx={{ bgcolor: 'primary.main' }}>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Circuit</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Route</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Carrier</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Segment BW</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Original Cost</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Utilization Factor</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Allocation Ratio</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Allocated Cost</TableCell>
+                                    </TableRow>
+                                  </TableHead>
+                                  <TableBody>
+                                    {detailedCalcs.allocatedCostBreakdown.segments.map((segment, idx) => (
+                                      <TableRow key={idx} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                        <TableCell sx={{ fontWeight: 'bold' }}>{segment.circuit}</TableCell>
+                                        <TableCell sx={{ fontSize: '0.75rem' }}>{segment.location}</TableCell>
+                                        <TableCell sx={{ fontSize: '0.75rem' }}>{segment.carrier}</TableCell>
+                                        <TableCell>{segment.segmentBandwidth} Mbps</TableCell>
+                                        <TableCell>
+                                          {segment.originalCost.toFixed(2)} {segment.originalCurrency}
+                                          {segment.originalCurrency !== formData.outputCurrency && (
+                                            <Typography variant="caption" display="block" color="text.secondary">
+                                              = {segment.convertedCost.toFixed(2)} {formData.outputCurrency}
+                                            </Typography>
+                                          )}
+                                        </TableCell>
+                                        <TableCell>
+                                          {segment.utilizationFactor}
+                                          <Typography variant="caption" display="block" color="text.secondary">
+                                            ({segment.utilizationFactorType})
+                                          </Typography>
+                                        </TableCell>
+                                        <TableCell>
+                                          <Box sx={{ bgcolor: 'info.50', p: 1, borderRadius: 1 }}>
+                                            <Typography variant="caption" display="block" sx={{ fontFamily: 'monospace' }}>
+                                              {segment.calculation}
+                                            </Typography>
+                                            <Typography variant="body2" fontWeight="bold">
+                                              = {segment.allocationRatio.toFixed(6)}
+                                            </Typography>
+                                          </Box>
+                                        </TableCell>
+                                        <TableCell>
+                                          <Box sx={{ bgcolor: 'success.50', p: 1, borderRadius: 1 }}>
+                                            <Typography variant="caption" display="block" sx={{ fontFamily: 'monospace' }}>
+                                              {segment.allocatedCostCalculation}
+                                            </Typography>
+                                            <Typography variant="body2" fontWeight="bold" color="success.main">
+                                              = {segment.allocatedCost.toFixed(2)} {formData.outputCurrency}
+                                            </Typography>
+                                          </Box>
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                    <TableRow sx={{ bgcolor: 'primary.light' }}>
+                                      <TableCell colSpan={7} sx={{ fontWeight: 'bold', fontSize: '1rem' }}>
+                                        Total Allocated Cost:
+                                      </TableCell>
+                                      <TableCell sx={{ fontWeight: 'bold', fontSize: '1.1rem', color: 'primary.main' }}>
+                                        {(() => {
+                                          const total = detailedCalcs.allocatedCostBreakdown.segments.reduce((sum, segment) => {
+                                            return sum + (parseFloat(segment.allocatedCost) || 0);
+                                          }, 0);
+                                          return formatCurrency(total, formData.outputCurrency);
+                                        })()}
+                                      </TableCell>
+                                    </TableRow>
+                                  </TableBody>
+                                </Table>
+                              </TableContainer>
+                              
+                              {/* Allocation Without Utilization Factor */}
+                              <Typography variant="subtitle1" gutterBottom color="secondary" fontWeight="bold" sx={{ mt: 3 }}>
+                                Allocated Cost WITHOUT Utilization Factor (100% Utilization)
+                              </Typography>
+                              <TableContainer component={Paper} sx={{ mb: 2 }}>
+                                <Table size="small">
+                                  <TableHead>
+                                    <TableRow sx={{ bgcolor: 'secondary.main' }}>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Circuit</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Route</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Carrier</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Segment BW</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Original Cost</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Allocation Ratio (No Factor)</TableCell>
+                                      <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Allocated Cost</TableCell>
+                                    </TableRow>
+                                  </TableHead>
+                                  <TableBody>
+                                    {detailedCalcs.allocatedCostBreakdown.segments.map((segment, idx) => {
+                                      const noFactorRatio = parseFloat(formData.bandwidth) / segment.segmentBandwidth;
+                                      const noFactorCost = segment.convertedCost * noFactorRatio;
+                                      return (
+                                        <TableRow key={idx} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                          <TableCell sx={{ fontWeight: 'bold' }}>{segment.circuit}</TableCell>
+                                          <TableCell sx={{ fontSize: '0.75rem' }}>{segment.location}</TableCell>
+                                          <TableCell sx={{ fontSize: '0.75rem' }}>{segment.carrier}</TableCell>
+                                          <TableCell>{segment.segmentBandwidth} Mbps</TableCell>
+                                          <TableCell>
+                                            {segment.convertedCost.toFixed(2)} {formData.outputCurrency}
+                                          </TableCell>
+                                          <TableCell>
+                                            <Box sx={{ bgcolor: 'info.50', p: 1, borderRadius: 1 }}>
+                                              <Typography variant="caption" display="block" sx={{ fontFamily: 'monospace' }}>
+                                                {formData.bandwidth} / {segment.segmentBandwidth}
+                                              </Typography>
+                                              <Typography variant="body2" fontWeight="bold">
+                                                = {noFactorRatio.toFixed(6)}
+                                              </Typography>
+                                            </Box>
+                                          </TableCell>
+                                          <TableCell>
+                                            <Box sx={{ bgcolor: 'warning.50', p: 1, borderRadius: 1 }}>
+                                              <Typography variant="caption" display="block" sx={{ fontFamily: 'monospace' }}>
+                                                {segment.convertedCost.toFixed(2)} × {noFactorRatio.toFixed(6)}
+                                              </Typography>
+                                              <Typography variant="body2" fontWeight="bold" color="warning.dark">
+                                                = {noFactorCost.toFixed(2)} {formData.outputCurrency}
+                                              </Typography>
+                                            </Box>
+                                          </TableCell>
+                                        </TableRow>
+                                      );
+                                    })}
+                                    <TableRow sx={{ bgcolor: 'secondary.light' }}>
+                                      <TableCell colSpan={6} sx={{ fontWeight: 'bold', fontSize: '1rem' }}>
+                                        Total Allocated Cost (No Utilization Factor):
+                                      </TableCell>
+                                      <TableCell sx={{ fontWeight: 'bold', fontSize: '1.1rem', color: 'secondary.main' }}>
+                                        {(() => {
+                                          const bandwidth = parseFloat(formData.bandwidth);
+                                          const total = detailedCalcs.allocatedCostBreakdown.segments.reduce((sum, segment) => {
+                                            const segmentBw = parseFloat(segment.segmentBandwidth);
+                                            const convertedCost = parseFloat(segment.convertedCost);
+                                            if (isNaN(bandwidth) || isNaN(segmentBw) || isNaN(convertedCost)) {
+                                              console.error('NaN detected:', { bandwidth, segmentBw, convertedCost });
+                                              return sum;
+                                            }
+                                            return sum + (convertedCost * (bandwidth / segmentBw));
+                                          }, 0);
+                                          return formatCurrency(total, formData.outputCurrency);
+                                        })()}
+                                      </TableCell>
+                                    </TableRow>
+                                  </TableBody>
+                                </Table>
+                              </TableContainer>
+                            </Paper>
+                          )}
+                          
+                          {/* Minimum Price Calculation */}
+                          {detailedCalcs.minimumPriceBreakdown && (
+                            <Paper sx={{ p: 3, mb: 3, bgcolor: 'error.50' }}>
+                              <Typography variant="subtitle1" gutterBottom color="error.main" fontWeight="bold">
+                                2️⃣ Minimum Price Calculation
+                              </Typography>
+                              
+                              <Box sx={{ mb: 2 }}>
+                                <Typography variant="subtitle2" gutterBottom>Contract Term Rules:</Typography>
+                                <Typography variant="body2">
+                                  <strong>{formData.contractTerm}-Month Contract:</strong> {detailedCalcs.minimumPriceBreakdown.contractTermRule}
+                                </Typography>
+                              </Box>
+                              
+                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
+                                <Typography variant="subtitle2" color="error.main" gutterBottom>Formula:</Typography>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace', mb: 1 }}>
+                                  Minimum Price = Allocated Cost / (1 - Minimum Margin / 100)
+                                </Typography>
+                                <Divider sx={{ my: 1 }} />
+                                <Typography variant="subtitle2" color="error.main" gutterBottom>Calculation:</Typography>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                  {detailedCalcs.minimumPriceBreakdown.calculation}
+                                </Typography>
+                                <Typography variant="body1" color="error.main" fontWeight="bold" sx={{ mt: 1 }}>
+                                  = {formatCurrency(detailedCalcs.minimumPriceBreakdown.calculatedPrice, formData.outputCurrency)}
+                                </Typography>
+                              </Box>
+                              
+                              {detailedCalcs.minimumPriceBreakdown.locationMinimumCheck && (
+                                <Alert severity="warning">
+                                  <Typography variant="body2">
+                                    <strong>Location Minimum Price Check:</strong><br/>
+                                    {detailedCalcs.minimumPriceBreakdown.locationMinimumCheck.explanation}<br/>
+                                    Location Minimum: {formatCurrency(detailedCalcs.minimumPriceBreakdown.locationMinimumCheck.locationMinimum, formData.outputCurrency)}<br/>
+                                    {detailedCalcs.minimumPriceBreakdown.locationMinimumCheck.used ? 
+                                      '✅ Location minimum enforced' : 
+                                      '❌ Calculated price already exceeds location minimum'}
+                                  </Typography>
+                                </Alert>
+                              )}
+                              
+                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mt: 2, border: '2px solid', borderColor: 'error.main' }}>
+                                <Typography variant="subtitle2" color="error.main" gutterBottom>Final Minimum Price (Rounded to nearest $10):</Typography>
+                                <Typography variant="h5" color="error.main">
+                                  {formatCurrency(result.pricing.minimumPrice, formData.outputCurrency)}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  Minimum Margin: {result.pricing.minimumMargin}%
+                                </Typography>
+                              </Box>
+                            </Paper>
+                          )}
+                          
+                          {/* Suggested Price Calculation */}
+                          {detailedCalcs.suggestedPriceBreakdown && (
+                            <Paper sx={{ p: 3, mb: 3, bgcolor: 'success.50' }}>
+                              <Typography variant="subtitle1" gutterBottom color="success.main" fontWeight="bold">
+                                3️⃣ Suggested Price Calculation
+                              </Typography>
+                              
+                              <Box sx={{ mb: 2 }}>
+                                <Typography variant="subtitle2" gutterBottom>Contract Term Rules:</Typography>
+                                <Typography variant="body2">
+                                  <strong>{formData.contractTerm}-Month Contract:</strong> {detailedCalcs.suggestedPriceBreakdown.contractTermRule}
+                                </Typography>
+                              </Box>
+                              
+                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
+                                <Typography variant="subtitle2" color="success.main" gutterBottom>Formula:</Typography>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace', mb: 1 }}>
+                                  Suggested Price = Allocated Cost / (1 - Suggested Margin / 100)
+                                </Typography>
+                                <Divider sx={{ my: 1 }} />
+                                <Typography variant="subtitle2" color="success.main" gutterBottom>Calculation:</Typography>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                  {detailedCalcs.suggestedPriceBreakdown.calculation}
+                                </Typography>
+                                <Typography variant="body1" color="success.main" fontWeight="bold" sx={{ mt: 1 }}>
+                                  = {formatCurrency(detailedCalcs.suggestedPriceBreakdown.calculatedPrice, formData.outputCurrency)}
+                                </Typography>
+                              </Box>
+                              
+                              {detailedCalcs.suggestedPriceBreakdown.locationMinimumCheck && (
+                                <Alert severity="info">
+                                  <Typography variant="body2">
+                                    <strong>Location Minimum Price Check:</strong><br/>
+                                    {detailedCalcs.suggestedPriceBreakdown.locationMinimumCheck.explanation}<br/>
+                                    Location Minimum: {formatCurrency(detailedCalcs.suggestedPriceBreakdown.locationMinimumCheck.locationMinimum, formData.outputCurrency)}<br/>
+                                    {detailedCalcs.suggestedPriceBreakdown.locationMinimumCheck.used ? 
+                                      '✅ Location minimum enforced' : 
+                                      '❌ Calculated price already exceeds location minimum'}
+                                  </Typography>
+                                </Alert>
+                              )}
+                              
+                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mt: 2, border: '2px solid', borderColor: 'success.main' }}>
+                                <Typography variant="subtitle2" color="success.main" gutterBottom>Final Suggested Price (Rounded to nearest $10):</Typography>
+                                <Typography variant="h5" color="success.main">
+                                  {formatCurrency(result.pricing.suggestedPrice, formData.outputCurrency)}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  Suggested Margin: {result.pricing.suggestedMargin}%
+                                </Typography>
+                              </Box>
+                            </Paper>
+                          )}
+                          
+                          {/* Protected Service Special Calculation */}
+                          {result.pathType === 'protected' && detailedCalcs.protectionBreakdown && (
+                            <Paper sx={{ p: 3, mb: 3, bgcolor: 'warning.50', border: '3px solid', borderColor: 'warning.main' }}>
+                              <Typography variant="subtitle1" gutterBottom color="warning.main" fontWeight="bold">
+                                🛡️ Protected Service Calculation
+                              </Typography>
+                              
+                              <Alert severity="info" sx={{ mb: 2 }}>
+                                Protected service pricing uses a 70% weight for the secondary path, reflecting its standby nature.
+                              </Alert>
+                              
+                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
+                                <Typography variant="subtitle2" gutterBottom>Allocated Cost Formula:</Typography>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                  {detailedCalcs.protectionBreakdown.allocatedCostFormula}
+                                </Typography>
+                                <Typography variant="body1" color="primary" fontWeight="bold" sx={{ mt: 1 }}>
+                                  = {formatCurrency(detailedCalcs.protectionBreakdown.allocatedCostCalculation, formData.outputCurrency)}
+                                </Typography>
+                              </Box>
+                              
+                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
+                                <Typography variant="subtitle2" gutterBottom>Minimum Price Formula:</Typography>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                  {detailedCalcs.protectionBreakdown.minimumPriceFormula}
+                                </Typography>
+                                <Typography variant="body1" color="error.main" fontWeight="bold" sx={{ mt: 1 }}>
+                                  = {formatCurrency(detailedCalcs.protectionBreakdown.minimumPriceCalculation, formData.outputCurrency)}
+                                </Typography>
+                              </Box>
+                              
+                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
+                                <Typography variant="subtitle2" gutterBottom>Suggested Price Formula:</Typography>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                  {detailedCalcs.protectionBreakdown.suggestedPriceFormula}
+                                </Typography>
+                                <Typography variant="body1" color="success.main" fontWeight="bold" sx={{ mt: 1 }}>
+                                  = {formatCurrency(detailedCalcs.protectionBreakdown.suggestedPriceCalculation, formData.outputCurrency)}
+                                </Typography>
+                              </Box>
+                              
+                              {detailedCalcs.protectionBreakdown.nrcCharge && (
+                                <Alert severity="warning" sx={{ mt: 2 }}>
+                                  <Typography variant="body2">
+                                    <strong>NRC Charge:</strong> {detailedCalcs.protectionBreakdown.nrcCharge.description}<br/>
+                                    Amount: {detailedCalcs.protectionBreakdown.nrcCharge.calculation}
+                                  </Typography>
+                                </Alert>
+                              )}
+                            </Paper>
+                          )}
+                        </AccordionDetails>
+                      </Accordion>
+                          </Grid>
+                  );
+                })}
+                
+                {/* Protected Service Detailed Breakdown */}
+                {formData.pricingType === 'protected' && pricingResults.protectionPricing && pricingResults.protectionPricing.detailedCalculations && (
+                  <Grid item xs={12} key="details-protected">
+                    <Accordion defaultExpanded>
+                      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                        <Typography variant="subtitle1" fontWeight="bold">
+                          📊 🛡️ Protected Service - Complete Calculation Breakdown
+                        </Typography>
+                      </AccordionSummary>
+                      <AccordionDetails>
+                        {pricingResults.protectionPricing.detailedCalculations && (
+                          <Paper sx={{ p: 3, mb: 3, bgcolor: 'warning.50', border: '3px solid', borderColor: 'warning.main' }}>
+                            <Typography variant="subtitle1" gutterBottom color="warning.main" fontWeight="bold">
+                              🛡️ Protected Service Calculation
+                            </Typography>
+                            
+                            <Alert severity="info" sx={{ mb: 2 }}>
+                              Protected service pricing uses a 70% weight for the secondary path, reflecting its standby nature.
+                            </Alert>
+                            
+                            {/* Allocated Cost Breakdown */}
+                            {pricingResults.protectionPricing.detailedCalculations.allocatedCostBreakdown && (
+                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
+                                <Typography variant="subtitle2" gutterBottom>Allocated Cost Formula:</Typography>
+                                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                  {pricingResults.protectionPricing.detailedCalculations.allocatedCostBreakdown.formula}
+                                </Typography>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                  {pricingResults.protectionPricing.detailedCalculations.allocatedCostBreakdown.calculation}
+                                </Typography>
+                                <Typography variant="body1" color="primary" fontWeight="bold" sx={{ mt: 1 }}>
+                                  Final: {formatCurrency(pricingResults.protectionPricing.allocatedCost, formData.outputCurrency)}
+                                </Typography>
+                              </Box>
+                            )}
+                            
+                            {/* Minimum Price Breakdown */}
+                            {pricingResults.protectionPricing.detailedCalculations.minimumPriceBreakdown && (
+                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
+                                <Typography variant="subtitle2" gutterBottom>Minimum Price Formula:</Typography>
+                                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                  {pricingResults.protectionPricing.detailedCalculations.minimumPriceBreakdown.formula}
+                                </Typography>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                  {pricingResults.protectionPricing.detailedCalculations.minimumPriceBreakdown.calculation}
+                                </Typography>
+                                <Typography variant="body1" color="error.main" fontWeight="bold" sx={{ mt: 1 }}>
+                                  Final: {formatCurrency(pricingResults.protectionPricing.minimumPrice, formData.outputCurrency)}
+                                </Typography>
+                              </Box>
+                            )}
+                            
+                            {/* Suggested Price Breakdown */}
+                            {pricingResults.protectionPricing.detailedCalculations.suggestedPriceBreakdown && (
+                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
+                                <Typography variant="subtitle2" gutterBottom>Suggested Price Formula:</Typography>
+                                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                  {pricingResults.protectionPricing.detailedCalculations.suggestedPriceBreakdown.formula}
+                                </Typography>
+                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                  {pricingResults.protectionPricing.detailedCalculations.suggestedPriceBreakdown.calculation}
+                                </Typography>
+                                <Typography variant="body1" color="success.main" fontWeight="bold" sx={{ mt: 1 }}>
+                                  Final: {formatCurrency(pricingResults.protectionPricing.suggestedPrice, formData.outputCurrency)}
+                                </Typography>
+                              </Box>
+                            )}
+                            
+                            {/* Margin Verification */}
+                            {pricingResults.protectionPricing.detailedCalculations.marginVerification && (
+                              <Box sx={{ bgcolor: 'info.50', p: 2, borderRadius: 1, mt: 2 }}>
+                                <Typography variant="subtitle2" gutterBottom>Margin Verification:</Typography>
+                                <Typography variant="body2" sx={{ mb: 1 }}>
+                                  <strong>Minimum Margin:</strong> {pricingResults.protectionPricing.minimumMargin}%
+                                </Typography>
+                                <Typography variant="caption" display="block" sx={{ fontFamily: 'monospace', mb: 2 }}>
+                                  {pricingResults.protectionPricing.detailedCalculations.marginVerification.actualMinMarginFormula}
+                                </Typography>
+                                <Typography variant="body2" sx={{ mb: 1 }}>
+                                  <strong>Suggested Margin:</strong> {pricingResults.protectionPricing.suggestedMargin}%
+                                </Typography>
+                                <Typography variant="caption" display="block" sx={{ fontFamily: 'monospace' }}>
+                                  {pricingResults.protectionPricing.detailedCalculations.marginVerification.actualSuggestedMarginFormula}
+                                </Typography>
+                              </Box>
+                            )}
+                          </Paper>
+                        )}
+                      </AccordionDetails>
+                    </Accordion>
+                  </Grid>
+                )}
               </Grid>
             </AccordionDetails>
           </Accordion>
@@ -1093,7 +1552,7 @@ const AllocatedCostCalculator = () => {
         <TabPanel value={currentTab} index={1}>
           <Paper sx={{ p: 2 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">Allocated Cost Pricing Logs</Typography>
+              <Typography variant="subtitle1" fontWeight="bold">Allocated Cost Pricing Logs</Typography>
               {canManageLogs && (
                 <Button
                   variant="outlined"

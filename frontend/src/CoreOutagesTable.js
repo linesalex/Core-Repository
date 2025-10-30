@@ -108,6 +108,7 @@ const CoreOutagesTable = () => {
   useEffect(() => {
     loadCurrentOutages();
     loadStats();
+    loadLatencyWarnings();
   }, []);
 
   useEffect(() => {

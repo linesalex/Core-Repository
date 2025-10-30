@@ -560,14 +560,21 @@ const NetworkDesignTool = () => {
 
       console.log('Complete request data:', JSON.stringify(requestData, null, 2));
 
+      // Add timeout to prevent hanging
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
       const response = await fetch(`${API_BASE_URL}/network_design/suggest_routes`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(requestData)
+        body: JSON.stringify(requestData),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -586,23 +593,24 @@ const NetworkDesignTool = () => {
       
       setRouteSuggestions(data.suggestions || []);
       
-      // Show message if no suggestions available
-      if (data.suggestions.length === 0) {
-        setError('No route suggestions available. Try using Auto Design mode.');
-      }
+      // No need to set error here - the dialog will show the alert message
+      // when routeSuggestions is empty
     } catch (error) {
+      console.error('Route suggestions error:', error);
       const errorMessage = error.message || 'Failed to get route suggestions';
       
       // Check for specific error responses
       if (error.message && error.message.includes('No routes available')) {
         setError('No routes available from current location. Try using Auto Design mode.');
+      } else if (error.name === 'AbortError') {
+        setError('Request timed out - the search took too long. Try using Auto Design mode.');
       } else {
         setError('Failed to get route suggestions: ' + errorMessage);
       }
       
       setRouteSuggestions([]);
     } finally {
-      setSuggestionsLoading(false);
+      setSuggestionsLoading(false); // Always stop loading
     }
   };
 
@@ -908,7 +916,14 @@ const NetworkDesignTool = () => {
         destination: formData.destination,
         protection_required: formData.protectionRequired,
         quoteRequestId: formData.quoteRequestId,
-        customerName: formData.customerName
+        customerName: formData.customerName,
+        // Add design mode and manual route information
+        design_mode: designMode,
+        manual_primary_routes: designMode === 'manual' ? manualPrimaryRoutes : null,
+        manual_secondary_routes: designMode === 'manual' ? manualSecondaryRoutes : null,
+        mtu_required: formData.mtuRequired,
+        carrier_avoidance: formData.carrierAvoidance,
+        circuit_exclusion: formData.circuitExclusion
       };
 
       const pricing = await networkDesignApi.calculatePricing(pricingParams);
@@ -1547,15 +1562,34 @@ const NetworkDesignTool = () => {
         customerName: params.customerName || params.customer_name || ''
       }));
 
-      // Check if this was a manual mode search by looking at the log data
-      // (Future enhancement: store design_mode in the log parameters)
-      setDesignMode('auto'); // Default to auto for now
+      // Restore design mode and manual routes if available
+      const mode = params.design_mode || 'auto';
+      setDesignMode(mode);
+      
+      if (mode === 'manual') {
+        setManualPrimaryRoutes(params.manual_primary_routes || '');
+        setManualSecondaryRoutes(params.manual_secondary_routes || '');
+        
+        // Validate manual routes if they exist
+        if (params.manual_primary_routes) {
+          validateManualRoutes(params.manual_primary_routes, params.source, params.destination, 'primary');
+        }
+        if (params.manual_secondary_routes) {
+          validateManualRoutes(params.manual_secondary_routes, params.source, params.destination, 'secondary');
+        }
+      } else {
+        // Clear manual routes for auto mode
+        setManualPrimaryRoutes('');
+        setManualSecondaryRoutes('');
+        setPrimaryRouteValidation({ valid: false, message: '', routes: [] });
+        setSecondaryRouteValidation({ valid: false, message: '', routes: [] });
+      }
 
       // Switch to the Network Design tab
       setCurrentTab(0);
       setExpandedAccordion('search');
       
-      setSuccess('Search parameters loaded from pricing log. You can modify and re-run the search.');
+      setSuccess(`Search parameters loaded from pricing log (${mode} mode). You can modify and re-run the search.`);
       
     } catch (error) {
       console.error('Reload from log error:', error);
@@ -2349,8 +2383,8 @@ const NetworkDesignTool = () => {
             </AccordionSummary>
             <AccordionDetails>
               <Grid container spacing={3}>
-                {/* Primary Path */}
-                <Grid item xs={12} md={searchResults.diversePath ? 6 : 12}>
+                {/* Primary Path - Full Width */}
+                <Grid item xs={12}>
                   <Card>
                     <CardHeader 
                       title="Primary Path" 
@@ -2364,6 +2398,7 @@ const NetworkDesignTool = () => {
                               <TableCell>Circuit ID</TableCell>
                               <TableCell>Segment</TableCell>
                               <TableCell>Latency</TableCell>
+                              <TableCell>Bandwidth</TableCell>
                               <TableCell>Carrier</TableCell>
                               <TableCell>Cable System</TableCell>
                             </TableRow>
@@ -2374,6 +2409,7 @@ const NetworkDesignTool = () => {
                                 <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                 <TableCell>{segment.from} → {segment.to}</TableCell>
                                 <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                                <TableCell>{segment.bandwidth || 'N/A'}</TableCell>
                                 <TableCell>{segment.carrier || 'N/A'}</TableCell>
                                 <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                               </TableRow>
@@ -2393,9 +2429,9 @@ const NetworkDesignTool = () => {
                   </Card>
                 </Grid>
 
-                {/* Diverse Path */}
+                {/* Secondary Path - Full Width */}
                 {searchResults.diversePath && (
-                  <Grid item xs={12} md={6}>
+                  <Grid item xs={12}>
                     <Card>
                       <CardHeader 
                         title="Secondary Path" 
@@ -2409,6 +2445,7 @@ const NetworkDesignTool = () => {
                                 <TableCell>Circuit ID</TableCell>
                                 <TableCell>Segment</TableCell>
                                 <TableCell>Latency</TableCell>
+                                <TableCell>Bandwidth</TableCell>
                                 <TableCell>Carrier</TableCell>
                                 <TableCell>Cable System</TableCell>
                               </TableRow>
@@ -2419,6 +2456,7 @@ const NetworkDesignTool = () => {
                                   <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                   <TableCell>{segment.from} → {segment.to}</TableCell>
                                   <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                                  <TableCell>{segment.bandwidth || 'N/A'}</TableCell>
                                   <TableCell>{segment.carrier || 'N/A'}</TableCell>
                                   <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                                 </TableRow>
@@ -3422,8 +3460,15 @@ const NetworkDesignTool = () => {
               </TableContainer>
             </>
           ) : (
-            <Alert severity="info">
-              No route suggestions available. Try using Auto Design mode.
+            <Alert severity="warning" sx={{ mt: 2 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                No {suggestionTarget === 'secondary' ? 'Secondary' : 'Primary'} Route Suggestions Available
+              </Typography>
+              <Typography variant="body2">
+                {suggestionTarget === 'secondary' 
+                  ? 'No suitable secondary paths found that meet the requirements and avoid the primary path locations. Consider using Auto Design mode or adjusting your route parameters.'
+                  : 'No suitable routes found from the current location. Try using Auto Design mode or check your source and destination locations.'}
+              </Typography>
             </Alert>
           )}
         </DialogContent>

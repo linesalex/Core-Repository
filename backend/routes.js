@@ -867,6 +867,53 @@ router.put('/users/:id/module-permissions', authenticateToken, authorizeModulePe
 router.get('/change-logs', authenticateToken, authorizeModulePermission('change_logs', 'read_only'), (req, res) => {
   const { table_name, table_names, user_id, search, limit = 100, offset = 0 } = req.query;
   
+  // Special handling for allocated_cost_calculator - query from allocated_cost_pricing_logs table
+  if (table_name === 'allocated_cost_calculator') {
+    let query = `
+      SELECT cl.*, u.username, u.full_name 
+      FROM allocated_cost_pricing_logs cl 
+      LEFT JOIN users u ON cl.user_id = u.id
+    `;
+    let params = [];
+    let conditions = [];
+    
+    // Role-based filtering: non-admin users can only see their own logs
+    if (req.user.role !== 'administrator') {
+      conditions.push('cl.user_id = ?');
+      params.push(req.user.id);
+    } else if (user_id) {
+      // Admin users can filter by specific user_id if provided
+      conditions.push('cl.user_id = ?');
+      params.push(user_id);
+    }
+    
+    if (search) {
+      conditions.push(`(
+        cl.record_id LIKE ? OR 
+        cl.changes_summary LIKE ? OR 
+        u.username LIKE ? OR 
+        u.full_name LIKE ? OR
+        cl.action LIKE ?
+      )`);
+      const searchPattern = `%${search}%`;
+      params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
+    }
+    
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    
+    query += ' ORDER BY cl.timestamp DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+    
+    db.all(query, params, (err, logs) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(logs);
+    });
+    return;
+  }
+  
+  // Default behavior for other tables - query from change_logs table
   let query = `
     SELECT cl.*, u.username, u.full_name 
     FROM change_logs cl 
@@ -928,13 +975,42 @@ router.get('/change-logs', authenticateToken, authorizeModulePermission('change_
 router.delete('/change-logs/:tableName', authenticateToken, authorizeRole('administrator'), (req, res) => {
   const tableName = req.params.tableName;
   
-  db.run('DELETE FROM change_logs WHERE table_name = ?', [tableName], function(err, statement) {
+  // Special handling for allocated_cost_calculator - delete from allocated_cost_pricing_logs table
+  if (tableName === 'allocated_cost_calculator') {
+    db.run('DELETE FROM allocated_cost_pricing_logs WHERE table_name = ?', [tableName], function(err) {
+      if (err) {
+        console.error('Error clearing allocated cost pricing logs:', err);
+        return res.status(500).json({ error: 'Failed to clear allocated cost pricing logs' });
+      }
+      
+      const deletedCount = this.changes || 0;
+      
+      // Log the clearing action
+      try {
+        logChange(req.user.id, 'allocated_cost_pricing_logs', tableName, 'DELETE', 
+          { deleted_count: deletedCount, table_name: tableName }, 
+          null, 
+          req);
+      } catch (logErr) {
+        console.error('Error logging allocated cost pricing logs clear:', logErr);
+      }
+      
+      res.json({ 
+        message: 'Allocated cost pricing logs cleared successfully',
+        deleted: deletedCount
+      });
+    });
+    return;
+  }
+  
+  // Default behavior for other tables - delete from change_logs table
+  db.run('DELETE FROM change_logs WHERE table_name = ?', [tableName], function(err) {
     if (err) {
       console.error('Error clearing change logs:', err);
       return res.status(500).json({ error: 'Failed to clear change logs' });
     }
     
-    const deletedCount = statement?.changes || 0;
+    const deletedCount = this.changes || 0;
     
     // Log the clearing action
     try {
@@ -3525,15 +3601,17 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
         routeBandwidthMbps = '200000'; // Dark fiber = 200 Gbps = 200,000 Mbps
       }
       
-      // Skip routes that don't meet bandwidth requirements (now all in Mbps)
-      if (bandwidth && routeBandwidthMbps && parseFloat(routeBandwidthMbps) < parseFloat(bandwidth)) {
-        if (isRelevant) console.log(`  SKIPPED: Bandwidth too low (${routeBandwidthMbps} Mbps < ${bandwidth} Mbps)`);
+      // Skip routes that don't meet bandwidth requirements (requires 2x requested bandwidth)
+      const requiredBandwidth = parseFloat(bandwidth) * 2;
+      if (bandwidth && routeBandwidthMbps && parseFloat(routeBandwidthMbps) < requiredBandwidth) {
+        if (isRelevant) console.log(`  SKIPPED: Bandwidth too low (${routeBandwidthMbps} Mbps < ${requiredBandwidth} Mbps [2x ${bandwidth} Mbps requested])`);
         exclusionReasons.bandwidth.count++;
         exclusionReasons.bandwidth.routes.push({
           circuit_id,
           route: `${location_a} <-> ${location_b}`,
           available_bandwidth: routeBandwidthMbps,
-          required_bandwidth: bandwidth
+          required_bandwidth: requiredBandwidth,
+          requested_bandwidth: bandwidth
         });
         routesSkipped++;
         return;
@@ -4133,6 +4211,9 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
 
 // Network Design Route Suggestions - Find next best hops from current location
 router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
+  const startTime = Date.now();
+  const MAX_PROCESSING_TIME = 8000; // 8 seconds max to stay under frontend's 10s timeout
+  
   const { 
     currentLocation, 
     destination, 
@@ -4218,8 +4299,20 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
           }
         }
       }
+      
+      // Handle Dark Fiber bandwidth
+      if (routeBandwidth && routeBandwidth.toLowerCase().includes('dark fiber')) {
+        routeBandwidthMbps = 200000; // Dark fiber = 200 Gbps = 200,000 Mbps
+      }
 
       // Apply Auto Design filtering rules
+      
+      // Skip routes that don't meet bandwidth requirements (requires 2x requested bandwidth)
+      const requiredBandwidth = parseFloat(bandwidthMbps) * 2;
+      if (bandwidthMbps && routeBandwidthMbps < requiredBandwidth) {
+        console.log(`  Skipping ${circuit_id}: Bandwidth too low (${routeBandwidthMbps} Mbps < ${requiredBandwidth} Mbps [2x ${bandwidthMbps} Mbps requested])`);
+        return;
+      }
       
       // Skip Special/ULL routes if not including ULL
       if (!include_ull && is_special) {
@@ -4306,8 +4399,16 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
     const suggestions = [];
     let skippedCount = 0;
     let totalRoutesEvaluated = 0;
+    let timedOut = false;
 
     for (const [nextLoc, edgeDataArray] of Object.entries(directConnections)) {
+      // Check timeout before processing each location
+      if (Date.now() - startTime > MAX_PROCESSING_TIME) {
+        console.log(`\n⏱️ TIMEOUT: Processing time exceeded ${MAX_PROCESSING_TIME}ms, stopping evaluation`);
+        timedOut = true;
+        break;
+      }
+      
       // Skip if next location is in excluded list (already visited)
       if (excludedLocations.includes(nextLoc) && nextLoc !== destination) {
         console.log(`\n  ❌ SKIPPED Location ${nextLoc}: Already visited`);
@@ -4318,7 +4419,16 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
       console.log(`\n  📍 Location: ${nextLoc} (${edgeDataArray.length} route(s) available)`);
       
       // Evaluate ALL routes to this location
-      edgeDataArray.forEach(edgeData => {
+      for (let i = 0; i < edgeDataArray.length; i++) {
+        // Check timeout before evaluating each route
+        if (Date.now() - startTime > MAX_PROCESSING_TIME) {
+          console.log(`\n⏱️ TIMEOUT: Processing time exceeded ${MAX_PROCESSING_TIME}ms, stopping evaluation`);
+          timedOut = true;
+          break;
+        }
+        
+        const edgeData = edgeDataArray[i];
+        
         totalRoutesEvaluated++;
         console.log(`\n  → Evaluating route to ${nextLoc} (Circuit: ${edgeData.circuit_id}):`);
         
@@ -4326,9 +4436,6 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
         if (edgeData.bandwidth < bandwidthMbps) {
           console.log(`    ⚠️ INSUFFICIENT BANDWIDTH: ${edgeData.bandwidth} Mbps < ${bandwidthMbps} Mbps required`);
         }
-      
-      // Create a modified graph that excludes already-visited locations for remaining path calculation
-      const modifiedGraph = JSON.parse(JSON.stringify(graph));
       
         // Build list of all locations to exclude from remaining path
         // This includes: currentLocation (where we're leaving from) + all excludedLocations
@@ -4341,12 +4448,27 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
         
         console.log(`    Locations to exclude from remaining path:`, locationsToExclude);
         
-        // Convert array-based graph to single-edge graph for Dijkstra (use best route for remaining path)
+        // Build simplified graph directly (avoid expensive JSON.parse/stringify)
+        // Convert array-based graph to single-edge graph for Dijkstra and exclude locations in one pass
         const simplifiedGraph = {};
-        Object.keys(modifiedGraph).forEach(from => {
+        let removedCount = 0;
+        
+        Object.keys(graph).forEach(from => {
+          // Skip excluded locations (except destination and nextLoc)
+          if (locationsToExclude.includes(from) && from !== destination && from !== nextLoc) {
+            return;
+          }
+          
           simplifiedGraph[from] = {};
-          Object.keys(modifiedGraph[from]).forEach(to => {
-            const routesArray = modifiedGraph[from][to];
+          
+          Object.keys(graph[from]).forEach(to => {
+            // Skip edges to excluded locations (except destination and nextLoc)
+            if (locationsToExclude.includes(to) && to !== destination && to !== nextLoc) {
+              removedCount++;
+              return;
+            }
+            
+            const routesArray = graph[from][to];
             if (Array.isArray(routesArray) && routesArray.length > 0) {
               // Pick the route with lowest latency for remaining path calculation
               const bestRoute = routesArray.reduce((best, current) => 
@@ -4357,20 +4479,6 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
           });
         });
         
-        // Remove all excluded locations from simplified graph (except destination and nextLoc)
-        let removedCount = 0;
-        locationsToExclude.forEach(loc => {
-          if (loc !== destination && loc !== nextLoc) {
-            delete simplifiedGraph[loc];
-            // Remove references from all other nodes
-            Object.keys(simplifiedGraph).forEach(node => {
-              if (simplifiedGraph[node] && simplifiedGraph[node][loc]) {
-                delete simplifiedGraph[node][loc];
-                removedCount++;
-              }
-            });
-          }
-        });
         console.log(`    Modified graph: removed ${removedCount} edges to excluded locations (including currentLocation: ${currentLocation})`);
       
         // Calculate best remaining path from nextLoc to destination (without revisiting excluded locations)
@@ -4410,14 +4518,33 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
         } else {
           console.log(`    ❌ No valid remaining path from ${nextLoc} to ${destination} (would require revisiting excluded locations)`);
         }
-      }); // Close edgeDataArray.forEach
+      } // Close for loop for edgeDataArray
+      
+      // If timed out in inner loop, break outer loop too
+      if (timedOut) break;
     }
     
+    const processingTime = Date.now() - startTime;
     console.log(`\n📊 SUGGESTION SUMMARY:`);
     console.log(`  Total next locations available: ${Object.keys(directConnections).length}`);
     console.log(`  Total routes evaluated: ${totalRoutesEvaluated}`);
     console.log(`  Locations skipped (already visited): ${skippedCount}`);
     console.log(`  Valid suggestions found: ${suggestions.length}`);
+    console.log(`  Processing time: ${processingTime}ms`);
+    console.log(`  Timed out: ${timedOut ? 'YES' : 'NO'}`);
+
+    // If we timed out and have no suggestions, return early with message
+    if (timedOut && suggestions.length === 0) {
+      console.log(`\n⚠️ REQUEST TIMED OUT - No suggestions found within time limit`);
+      return res.json({
+        currentLocation,
+        destination,
+        suggestions: [],
+        totalAvailable: 0,
+        pathComplete: false,
+        message: 'Search timed out - no suitable routes found within time limit. Try Auto Design mode.'
+      });
+    }
 
     // Sort by estimated end-to-end latency
     suggestions.sort((a, b) => a.estimatedEndToEndLatency - b.estimatedEndToEndLatency);
@@ -4426,11 +4553,15 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
     const topSuggestions = suggestions.slice(0, 3);
 
     console.log(`\n🎯 FINAL SUGGESTIONS (Top 3 by latency):`);
-    topSuggestions.forEach((sug, index) => {
-      console.log(`  ${index + 1}. ${sug.circuit_id}: ${sug.location_a} → ${sug.location_b}`);
-      console.log(`     Latency: ${sug.latency}ms, Est. End-to-End: ${sug.estimatedEndToEndLatency}ms`);
-      console.log(`     Bandwidth: ${sug.bandwidthDisplay} (${sug.sufficientBandwidth ? 'Sufficient' : 'Insufficient'})`);
-    });
+    if (topSuggestions.length > 0) {
+      topSuggestions.forEach((sug, index) => {
+        console.log(`  ${index + 1}. ${sug.circuit_id}: ${sug.location_a} → ${sug.location_b}`);
+        console.log(`     Latency: ${sug.latency}ms, Est. End-to-End: ${sug.estimatedEndToEndLatency}ms`);
+        console.log(`     Bandwidth: ${sug.bandwidthDisplay} (${sug.sufficientBandwidth ? 'Sufficient' : 'Insufficient'})`);
+      });
+    } else {
+      console.log(`  No valid suggestions found`);
+    }
 
     res.json({
       currentLocation,
@@ -4440,7 +4571,7 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
       pathComplete: false
     });
 
-    // Dijkstra algorithm (same as find_path)
+    // Dijkstra algorithm with safety limits to prevent hanging
     function dijkstra(graph, start, end) {
       const distances = {};
       const previous = {};
@@ -4453,7 +4584,24 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
       }
       distances[start] = 0;
 
+      // Safety limits to prevent infinite loops
+      const MAX_ITERATIONS = 1000;
+      let iterations = 0;
+
       while (unvisited.size > 0) {
+        // Check iteration limit
+        iterations++;
+        if (iterations > MAX_ITERATIONS) {
+          console.log(`    ⚠️ Dijkstra: Max iterations (${MAX_ITERATIONS}) reached, aborting path calculation`);
+          return null;
+        }
+
+        // Check timeout
+        if (Date.now() - startTime > MAX_PROCESSING_TIME) {
+          console.log(`    ⚠️ Dijkstra: Timeout reached, aborting path calculation`);
+          return null;
+        }
+
         let currentNode = null;
         let minDistance = Infinity;
 
@@ -4486,7 +4634,15 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
 
       const path = [];
       let current = end;
+      let pathIterations = 0;
+      const MAX_PATH_LENGTH = 20;
+      
       while (current !== null) {
+        pathIterations++;
+        if (pathIterations > MAX_PATH_LENGTH) {
+          console.log(`    ⚠️ Dijkstra: Max path length (${MAX_PATH_LENGTH}) reached, possible cycle detected`);
+          return null;
+        }
         path.unshift(current);
         current = previous[current];
       }
@@ -4506,7 +4662,7 @@ const roundUpToNearest10 = (amount) => {
 
 // Network Design with Enhanced Pricing
 router.post('/network_design/calculate_pricing', authenticateToken, async (req, res) => {
-  const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, use_100gb_and_df_only = false, bandwidth, source, destination, protection_required = false, customerName, quoteRequestId } = req.body;
+  const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, use_cisco_only_routes = false, use_100gb_and_df_only = false, bandwidth, source, destination, protection_required = false, customerName, quoteRequestId, design_mode = 'auto', manual_primary_routes = null, manual_secondary_routes = null, mtu_required = null, carrier_avoidance = [], circuit_exclusion = [], calling_module = 'network_design' } = req.body;
   
   if (!paths || !Array.isArray(paths)) {
     return res.status(400).json({ error: 'Paths array is required' });
@@ -4635,6 +4791,8 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
 
 
       // Check for promo pricing first (applies to both primary and secondary paths)
+      // Skip promo pricing for allocated_cost_calculator module
+      if (calling_module !== 'allocated_cost_calculator') {
         try {
           const promoPrice = await findPromoPrice(source, destination, bandwidth);
           if (promoPrice) {
@@ -4661,6 +4819,15 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
               const termConfig = pricingConfig.contractTerms[contract_term] || pricingConfig.contractTerms[12];
               const promoNrcCharge = convertCurrency(termConfig.nrcCharge, 'USD', output_currency);
               
+              // Calculate non-promo prices for comparison
+              const nonPromoMinMarginPercent = termConfig.minMargin;
+              const nonPromoSuggestedMarginPercent = termConfig.suggestedMargin;
+              const nonPromoMinPriceByMargin = totalAllocatedCost / (1 - nonPromoMinMarginPercent / 100);
+              const nonPromoSuggestedPriceByMargin = totalAllocatedCost / (1 - nonPromoSuggestedMarginPercent / 100);
+              const locationMinPrice = getMinimumPrice(bandwidth, locations);
+              const nonPromoFinalMinPrice = Math.max(nonPromoMinPriceByMargin, locationMinPrice);
+              const nonPromoFinalSuggestedPrice = Math.max(nonPromoSuggestedPriceByMargin, locationMinPrice);
+              
               // Detailed promo pricing calculation breakdown
               const promoCalculations = {
                 allocatedCostBreakdown: {
@@ -4669,6 +4836,28 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
                   totalAllocatedCostFormula: segmentCalculations.map(s => s.allocatedCost.toFixed(2)).join(' + '),
                   totalCalculation: `Sum of all segments = ${totalAllocatedCost.toFixed(2)} ${output_currency}`,
                   roundedToNearest10: roundUpToNearest10(totalAllocatedCost)
+                },
+                minimumPriceBreakdown: {
+                  promoUsed: true,
+                  promoPrice: discountedPromoPrice,
+                  nonPromoPrice: roundUpToNearest10(nonPromoFinalMinPrice),
+                  contractTermRule: contract_term === 12 ? '40% min margin, 60% suggested margin, $1000 NRC' :
+                                   contract_term === 24 ? '37.5% min margin, 55% suggested margin, $500 NRC' :
+                                   contract_term === 36 ? '35% min margin, 50% suggested margin, $0 NRC' :
+                                   contract_term === 60 ? '30% min margin, 45% suggested margin, $0 NRC' : 'Standard contract term rules',
+                  calculatedPrice: discountedPromoPrice,
+                  calculation: `Promo price ${promoPriceConverted.toFixed(2)} with contract term discount = ${discountedPromoPrice.toFixed(2)} ${output_currency}`
+                },
+                suggestedPriceBreakdown: {
+                  promoUsed: true,
+                  promoPrice: discountedPromoPrice,
+                  nonPromoPrice: roundUpToNearest10(nonPromoFinalSuggestedPrice),
+                  contractTermRule: contract_term === 12 ? '40% min margin, 60% suggested margin, $1000 NRC' :
+                                   contract_term === 24 ? '37.5% min margin, 55% suggested margin, $500 NRC' :
+                                   contract_term === 36 ? '35% min margin, 50% suggested margin, $0 NRC' :
+                                   contract_term === 60 ? '30% min margin, 45% suggested margin, $0 NRC' : 'Standard contract term rules',
+                  calculatedPrice: discountedPromoPrice,
+                  calculation: `Promo price ${promoPriceConverted.toFixed(2)} with contract term discount = ${discountedPromoPrice.toFixed(2)} ${output_currency}`
                 },
                 promoPriceBreakdown: {
                   originalPromoPrice: promoPrice.price,
@@ -4691,10 +4880,14 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
                   marginRequirementMet: totalAllocatedCost <= requiredAllocatedCost,
                   requiredAllocatedCostCalculation: `${discountedPromoPrice.toFixed(2)} × (1 - ${promoMinMargin}/100) = ${requiredAllocatedCost.toFixed(2)} ${output_currency}`
                 },
-                nrcCharge: {
+                nrcChargeBreakdown: {
                   baseChargeUSD: termConfig.nrcCharge,
                   convertedCharge: promoNrcCharge,
-                  calculation: `${termConfig.nrcCharge} USD → ${promoNrcCharge.toFixed(2)} ${output_currency}`
+                  calculation: `${termConfig.nrcCharge} USD → ${promoNrcCharge.toFixed(2)} ${output_currency}`,
+                  rule: contract_term === 12 ? '$1000 NRC for 12-month contract' :
+                        contract_term === 24 ? '$500 NRC for 24-month contract' :
+                        contract_term === 36 ? '$0 NRC for 36-month contract' :
+                        contract_term === 60 ? '$0 NRC for 60-month contract' : 'Standard NRC rules'
                 }
               };
               
@@ -4725,6 +4918,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           console.error('Error checking promo pricing:', err);
           // Continue with regular pricing if promo pricing fails
         }
+      }
 
       // Fall back to regular contract term-based pricing model
       let minMarginPercent, suggestedMarginPercent, nrcCharge;
@@ -4732,7 +4926,8 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       const termConfig = pricingConfig.contractTerms[contract_term] || pricingConfig.contractTerms[12];
       minMarginPercent = termConfig.minMargin;
       suggestedMarginPercent = termConfig.suggestedMargin;
-      nrcCharge = convertCurrency(termConfig.nrcCharge, 'USD', output_currency);
+      // Set NRC to $0 for allocated_cost_calculator module
+      nrcCharge = calling_module === 'allocated_cost_calculator' ? 0 : convertCurrency(termConfig.nrcCharge, 'USD', output_currency);
 
       // Calculate pricing with contract term-based margins
       const minPriceByMargin = totalAllocatedCost / (1 - minMarginPercent / 100);
@@ -4767,7 +4962,12 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           finalPriceFormula: `MAX(${minPriceByMargin.toFixed(2)}, ${locationMinPrice.toFixed(2)})`,
           finalPriceBeforeRounding: finalMinPrice,
           roundedToNearest10: roundUpToNearest10(finalMinPrice),
-          wasLocationMinimumEnforced: finalMinPrice === locationMinPrice
+          wasLocationMinimumEnforced: finalMinPrice === locationMinPrice,
+          calculatedPrice: finalMinPrice,
+          contractTermRule: contract_term === 12 ? '40% min margin, 60% suggested margin, $1000 NRC' :
+                           contract_term === 24 ? '37.5% min margin, 55% suggested margin, $500 NRC' :
+                           contract_term === 36 ? '35% min margin, 50% suggested margin, $0 NRC' :
+                           contract_term === 60 ? '30% min margin, 45% suggested margin, $0 NRC' : 'Standard contract term rules'
         },
         suggestedPriceBreakdown: {
           targetMargin: suggestedMarginPercent,
@@ -4778,7 +4978,12 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           finalPriceFormula: `MAX(${suggestedPriceByMargin.toFixed(2)}, ${locationMinPrice.toFixed(2)})`,
           finalPriceBeforeRounding: finalSuggestedPrice,
           roundedToNearest10: roundUpToNearest10(finalSuggestedPrice),
-          wasLocationMinimumEnforced: finalSuggestedPrice === locationMinPrice
+          wasLocationMinimumEnforced: finalSuggestedPrice === locationMinPrice,
+          calculatedPrice: finalSuggestedPrice,
+          contractTermRule: contract_term === 12 ? '40% min margin, 60% suggested margin, $1000 NRC' :
+                           contract_term === 24 ? '37.5% min margin, 55% suggested margin, $500 NRC' :
+                           contract_term === 36 ? '35% min margin, 50% suggested margin, $0 NRC' :
+                           contract_term === 60 ? '30% min margin, 45% suggested margin, $0 NRC' : 'Standard contract term rules'
         },
         marginVerification: {
           actualMinMargin: actualMinMargin,
@@ -4786,10 +4991,15 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           actualSuggestedMargin: actualSuggestedMargin,
           actualSuggestedMarginFormula: `((Final Suggested Price - Allocated Cost) / Final Suggested Price) × 100 = ((${finalSuggestedPrice.toFixed(2)} - ${totalAllocatedCost.toFixed(2)}) / ${finalSuggestedPrice.toFixed(2)}) × 100 = ${actualSuggestedMargin.toFixed(2)}%`
         },
-        nrcCharge: {
-          baseChargeUSD: termConfig.nrcCharge,
+        nrcChargeBreakdown: {
+          baseChargeUSD: calling_module === 'allocated_cost_calculator' ? 0 : termConfig.nrcCharge,
           convertedCharge: nrcCharge,
-          calculation: `${termConfig.nrcCharge} USD → ${nrcCharge.toFixed(2)} ${output_currency}`
+          calculation: calling_module === 'allocated_cost_calculator' ? '$0 NRC for allocated cost calculations' : `${termConfig.nrcCharge} USD → ${nrcCharge.toFixed(2)} ${output_currency}`,
+          rule: calling_module === 'allocated_cost_calculator' ? 'No NRC charges for allocated cost calculations' : 
+                (contract_term === 12 ? '$1000 NRC for 12-month contract' :
+                 contract_term === 24 ? '$500 NRC for 24-month contract' :
+                 contract_term === 36 ? '$0 NRC for 36-month contract' :
+                 contract_term === 60 ? '$0 NRC for 60-month contract' : 'Standard NRC rules')
         }
       };
 
@@ -4930,35 +5140,98 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
     }
     
     // Log pricing calculation with enhanced details
-    db.run(
-      'INSERT INTO audit_logs (action_type, user_id, user_name, parameters, pricing_data, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [
-        'CONTRACT_TERM_PRICING_CALCULATION',
-        req.user?.id || null,
-        req.user?.username || 'Unknown User',
-        JSON.stringify({ 
-          contract_term, 
-          output_currency, 
-          include_ull, 
-          bandwidth, 
-          source, 
-          destination, 
-          protection_required,
-          customerName: customerName || '',
-          quoteRequestId: quoteRequestId || '',
-          timestamp: new Date().toISOString()
-        }),
+    // Save to different tables based on calling module
+    if (calling_module === 'allocated_cost_calculator') {
+      // Save to allocated_cost_pricing_logs table with complete pricing data
+      db.run(
+        'INSERT INTO allocated_cost_pricing_logs (user_id, table_name, record_id, action, old_values, new_values, changes_summary, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          req.user?.id || null,
+          'allocated_cost_calculator',
+          quoteRequestId || `${source}-${destination}-${Date.now()}`,
+          'CALCULATE',
+          null,
+          JSON.stringify({ 
+            inputParameters: {
+              contract_term,
+              output_currency,
+              bandwidth,
+              source,
+              destination,
+              protection_required,
+              customerName: customerName || '',
+              quoteRequestId: quoteRequestId || '',
+              timestamp: new Date().toISOString()
+            },
+            calculationResults: {
+              individual: pricingResults,
+              protection: protectionPricing
+            },
+            detailedCalculationBreakdowns: {
+              primaryPath: pricingResults[0]?.pricing?.detailedCalculations || null,
+              secondaryPath: pricingResults[1]?.pricing?.detailedCalculations || null,
+              protectionPricing: protectionPricing?.detailedCalculations || null,
+              description: 'Step-by-step calculation formulas showing how allocated cost, minimum price, suggested price, and protection pricing are derived'
+            },
+            exchangeRates: exchangeRates
+          }),
+          `Allocated Cost Calculation: ${source} to ${destination}, ${bandwidth} Mbps`,
+          req.ip,
+          req.headers['user-agent']
+        ],
+        function (err) {
+          if (err) {
+            console.error('Failed to log allocated cost calculation:', err);
+          }
+        }
+      );
+    } else {
+      // Default: Save to audit_logs table (for Network Design Tool)
+      db.run(
+        'INSERT INTO audit_logs (action_type, user_id, user_name, parameters, pricing_data, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [
+          'CONTRACT_TERM_PRICING_CALCULATION',
+          req.user?.id || null,
+          req.user?.username || 'Unknown User',
+          JSON.stringify({ 
+            contract_term, 
+            output_currency, 
+            include_ull,
+            use_cisco_only_routes,
+            use_100gb_and_df_only,
+            bandwidth, 
+            source, 
+            destination, 
+            protection_required,
+            customerName: customerName || '',
+            quoteRequestId: quoteRequestId || '',
+            design_mode,
+            manual_primary_routes,
+            manual_secondary_routes,
+            mtu_required,
+            carrier_avoidance,
+            circuit_exclusion,
+            timestamp: new Date().toISOString()
+          }),
         JSON.stringify({ 
           inputParameters: {
             contract_term,
             output_currency,
             include_ull,
+            use_cisco_only_routes,
+            use_100gb_and_df_only,
             bandwidth,
             source,
             destination,
             protection_required,
             customerName: customerName || '',
-            quoteRequestId: quoteRequestId || ''
+            quoteRequestId: quoteRequestId || '',
+            design_mode,
+            manual_primary_routes,
+            manual_secondary_routes,
+            mtu_required,
+            carrier_avoidance,
+            circuit_exclusion
           },
           calculationResults: {
             individual: pricingResults,
@@ -4985,15 +5258,16 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           },
           exchangeRates: exchangeRates
         }),
-        req.ip || req.connection?.remoteAddress || 'unknown',
-        req.get('User-Agent') || 'unknown'
-      ],
-      function(err) {
-        if (err) {
-          console.error('Failed to log CONTRACT_TERM_PRICING_CALCULATION to audit_logs:', err);
+          req.ip || req.connection?.remoteAddress || 'unknown',
+          req.get('User-Agent') || 'unknown'
+        ],
+        function(err) {
+          if (err) {
+            console.error('Failed to log CONTRACT_TERM_PRICING_CALCULATION to audit_logs:', err);
+          }
         }
-      }
-    );
+      );
+    }
     
     res.json({
       results: pricingResults,
