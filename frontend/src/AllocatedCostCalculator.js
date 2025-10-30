@@ -817,7 +817,7 @@ const AllocatedCostCalculator = () => {
                   label="Primary Path Routes *"
                   value={formData.primaryPathRoutes}
                   onChange={(e) => handleInputChange('primaryPathRoutes', e.target.value)}
-                  helperText={primaryPathValidation.message || "Enter comma-separated circuit IDs (e.g., LONNYCABC123456, NYCTORABC789012)"}
+                  helperText={primaryPathValidation.message || "Enter comma-separated circuit IDs (e.g., LONLON123456, LONSNG159222)"}
                   error={primaryPathValidation.message.includes('❌')}
                   multiline
                   rows={2}

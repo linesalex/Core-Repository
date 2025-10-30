@@ -346,13 +346,15 @@ const ChangeLogsViewer = () => {
                   </Typography>
                 </TableCell>
                 <TableCell>
-                  <Button
-                    size="small"
-                    onClick={() => handleDetailsOpen(log)}
-                    disabled={!log.old_values && !log.new_values}
-                  >
-                    View
-                  </Button>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Button
+                      size="small"
+                      onClick={() => handleDetailsOpen(log)}
+                      disabled={!log.old_values && !log.new_values}
+                    >
+                      View
+                    </Button>
+                  </Box>
                 </TableCell>
               </TableRow>
             ))}

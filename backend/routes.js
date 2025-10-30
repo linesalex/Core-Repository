@@ -3415,8 +3415,21 @@ router.get('/exchange-currencies', (req, res) => {
 });
 // Network Design Path Finding with Dijkstra Algorithm
 router.post('/network_design/find_path', authenticateToken, (req, res) => {
-  const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false, use_cisco_only_routes = false, use_100gb_and_df_only = false, customerName, quoteRequestId } = req.body;
+  const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false, use_cisco_only_routes = false, use_100gb_and_df_only = false, customerName, quoteRequestId, manualPrimaryPath = null } = req.body;
   const startTime = Date.now();
+  
+  console.log(`\n========================================`);
+  console.log(`FIND_PATH REQUEST - ${new Date().toISOString()}`);
+  console.log(`========================================`);
+  console.log(`Source: ${source} → Destination: ${destination}`);
+  console.log(`Bandwidth: ${bandwidth} ${bandwidth_unit || 'Mbps'}`);
+  console.log(`Protection Required: ${constraints.protection_required ? 'YES' : 'NO'}`);
+  console.log(`Manual Primary Path Provided: ${manualPrimaryPath ? 'YES' : 'NO'}`);
+  if (manualPrimaryPath) {
+    console.log(`  Manual Primary Path: ${manualPrimaryPath.path.join(' → ')}`);
+    console.log(`  Manual Primary Circuits: ${manualPrimaryPath.route.map(r => r.circuit_id).join(', ')}`);
+  }
+  console.log(`Customer: ${customerName || 'N/A'}, Quote ID: ${quoteRequestId || 'N/A'}`);
   
   // Validate inputs
   if (!source || !destination) {
@@ -3425,6 +3438,13 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
 
   if (source === destination) {
     return res.status(400).json({ error: 'Source and destination cannot be the same' });
+  }
+
+  // Log circuit exclusion constraints if provided
+  if (constraints.circuit_exclusion && constraints.circuit_exclusion.length > 0) {
+    console.log(`\n🚫 CIRCUIT EXCLUSION CONSTRAINT ACTIVE:`);
+    console.log(`  Excluding ${constraints.circuit_exclusion.length} circuit(s): ${constraints.circuit_exclusion.join(', ')}`);
+    console.log(`  These circuits will NOT be used in primary OR protection paths`);
   }
 
   // Track exclusion reasons
@@ -3856,14 +3876,22 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
     let protectionFailureReasons = null;
 
     if (constraints.protection_required) {
+      // Use manual primary path if provided, otherwise use auto-calculated primary path
+      const pathForProtection = manualPrimaryPath || primaryPath;
+      
+      console.log(`\n🛡️ PROTECTION PATH CALCULATION:`);
+      console.log(`  Using ${manualPrimaryPath ? 'MANUAL' : 'AUTO'} primary path as baseline`);
+      console.log(`  Primary path to protect: ${pathForProtection.path.join(' → ')}`);
+      if (pathForProtection.route) {
+        console.log(`  Primary circuits: ${pathForProtection.route.map(r => r.circuit_id).join(', ')}`);
+      }
+      
       // Create modified graph ensuring complete POP and Circuit ID diversity
       const modifiedGraph = JSON.parse(JSON.stringify(graph));
       
       // Step 1: Remove all intermediate POPs from primary path (keep source and destination)
-      const intermediatePOPs = primaryPath.path.slice(1, -1); // Exclude source and destination
-      console.log(`Protection route analysis:`);
-      console.log(`  Primary path POPs: ${primaryPath.path.join(' → ')}`);
-      console.log(`  Removing intermediate POPs for diversity: ${intermediatePOPs.join(', ')}`);
+      const intermediatePOPs = pathForProtection.path.slice(1, -1); // Exclude source and destination
+      console.log(`  Removing intermediate POPs for diversity: ${intermediatePOPs.length > 0 ? intermediatePOPs.join(', ') : '(none - direct path)'}`);
       
       // Remove intermediate POPs entirely from the graph
       intermediatePOPs.forEach(pop => {
@@ -3881,25 +3909,43 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
       
       // Step 2: Collect all Circuit IDs used in primary path for exclusion
       const primaryCircuitIds = new Set();
-      for (let i = 0; i < primaryPath.path.length - 1; i++) {
-        const from = primaryPath.path[i];
-        const to = primaryPath.path[i + 1];
-        const edge = graph[from] && graph[from][to];
-        if (edge && edge.circuit_id) {
-          primaryCircuitIds.add(edge.circuit_id);
+      console.log(`  Extracting circuit IDs from ${manualPrimaryPath ? 'MANUAL' : 'AUTO'} primary path...`);
+      
+      // If manual primary path provided, use its circuit IDs directly
+      if (manualPrimaryPath && manualPrimaryPath.route) {
+        manualPrimaryPath.route.forEach(segment => {
+          if (segment.circuit_id) {
+            primaryCircuitIds.add(segment.circuit_id);
+            console.log(`    Primary path circuit: ${segment.circuit_id} (${segment.from} → ${segment.to})`);
+          }
+        });
+      } else {
+        // Otherwise extract from auto-calculated primary path
+        for (let i = 0; i < pathForProtection.path.length - 1; i++) {
+          const from = pathForProtection.path[i];
+          const to = pathForProtection.path[i + 1];
+          const edge = graph[from] && graph[from][to];
+          if (edge && edge.circuit_id) {
+            primaryCircuitIds.add(edge.circuit_id);
+            console.log(`    Primary path circuit: ${edge.circuit_id} (${from} → ${to})`);
+          }
         }
       }
+      console.log(`  Total primary circuits to exclude: ${primaryCircuitIds.size} - [${Array.from(primaryCircuitIds).join(', ')}]`);
       
       // Step 3: Remove any remaining edges that use the same Circuit IDs as primary path
+      let removedEdgeCount = 0;
       Object.keys(modifiedGraph).forEach(fromNode => {
         Object.keys(modifiedGraph[fromNode]).forEach(toNode => {
           const edge = modifiedGraph[fromNode][toNode];
           if (edge && edge.circuit_id && primaryCircuitIds.has(edge.circuit_id)) {
             console.log(`  Removing edge ${fromNode}-${toNode} (Circuit ID: ${edge.circuit_id}) - shared with primary path`);
             delete modifiedGraph[fromNode][toNode];
+            removedEdgeCount++;
           }
         });
       });
+      console.log(`  Removed ${removedEdgeCount} edges that use primary circuits`);
       
       // Check if source and destination still exist and are connected in modified graph
       const sourceStillConnected = modifiedGraph[source] && Object.keys(modifiedGraph[source]).length > 0;
@@ -3964,7 +4010,8 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
       } else {
         // Analyze why protection route failed with enhanced diversity requirements
         protectionFailureReasons = {
-          primary_path_used: primaryPath.path.join(' → '),
+          primary_path_used: pathForProtection.path.join(' → '),
+          primary_path_source: manualPrimaryPath ? 'MANUAL (user entered)' : 'AUTO (calculated)',
           diversity_enforcement: {
             excluded_intermediate_pops: intermediatePOPs,
             excluded_circuit_ids: Array.from(primaryCircuitIds),
@@ -4083,6 +4130,375 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
     });
   });
 });
+
+// Network Design Route Suggestions - Find next best hops from current location
+router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
+  const { 
+    currentLocation, 
+    destination, 
+    bandwidth, 
+    bandwidth_unit = 'Mbps', 
+    excludedCircuits = [], 
+    excludedLocations = [],
+    enteredCircuits = [],
+    enteredCircuitsLatency = 0, // Pre-calculated by frontend
+    source,
+    constraints = {},
+    include_ull = false,
+    use_cisco_only_routes = false,
+    mtu_required = 1500
+  } = req.body;
+
+  if (!currentLocation || !destination || !bandwidth) {
+    return res.status(400).json({ error: 'Current location, destination, and bandwidth are required' });
+  }
+
+  // Convert bandwidth to Mbps if needed
+  let bandwidthMbps = parseFloat(bandwidth);
+  if (bandwidth_unit === 'Gbps') {
+    bandwidthMbps *= 1000;
+  }
+
+  console.log(`\n=== ROUTE SUGGESTIONS REQUEST ===`);
+  console.log(`Source: ${source}`);
+  console.log(`Current Location: ${currentLocation}`);
+  console.log(`Destination: ${destination}`);
+  console.log(`Bandwidth Required: ${bandwidthMbps} Mbps`);
+  console.log(`Entered Circuits (${enteredCircuits.length}):`, enteredCircuits);
+  console.log(`Entered Circuits Total Latency (pre-calculated): ${enteredCircuitsLatency}ms`);
+  console.log(`Excluded Circuits (${excludedCircuits.length}):`, excludedCircuits);
+  console.log(`Excluded Locations (${excludedLocations.length}):`, excludedLocations);
+  console.log(`Include ULL: ${include_ull}`);
+  console.log(`Include Cisco Only Routes: ${use_cisco_only_routes}`);
+  console.log(`MTU Required: ${mtu_required}`);
+
+  // Get all routes for graph building
+  db.all(`SELECT nr.* FROM network_routes nr
+          LEFT JOIN location_reference lr_a ON nr.location_a = lr_a.location_code
+          LEFT JOIN location_reference lr_b ON nr.location_b = lr_b.location_code
+          WHERE nr.location_a IS NOT NULL AND nr.location_b IS NOT NULL
+          AND (lr_a.status IS NULL OR lr_a.status != 'Under Decommission')
+          AND (lr_b.status IS NULL OR lr_b.status != 'Under Decommission')`, [], (err, routes) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    // Build graph and exclude specified circuits/locations
+    const graph = {};
+    const routeDetails = {}; // Store full route details
+    
+    // FIRST: Store ALL route details (needed for latency calculations of entered circuits)
+    routes.forEach(route => {
+      routeDetails[route.circuit_id] = route;
+    });
+    console.log(`\n📚 Built routeDetails dictionary with ${Object.keys(routeDetails).length} circuits`);
+
+    // THEN: Build graph excluding specified circuits/locations
+    // Changed to store ARRAYS of routes to allow multiple routes between same locations
+    routes.forEach(route => {
+      const { location_a, location_b, expected_latency, cost, currency, bandwidth: routeBandwidth, 
+              underlying_carrier, circuit_id, cable_system, is_special, equipment_type, mtu } = route;
+
+      // Skip excluded circuits (but keep in routeDetails for latency lookup)
+      if (excludedCircuits.includes(circuit_id)) {
+        return;
+      }
+
+      // Skip excluded locations (but keep in routeDetails for latency lookup)
+      if (excludedLocations.includes(location_a) || excludedLocations.includes(location_b)) {
+        return;
+      }
+
+      // Parse route bandwidth
+      let routeBandwidthMbps = 1000; // default
+      if (routeBandwidth) {
+        const bwMatch = routeBandwidth.toString().match(/(\d+\.?\d*)\s*(Mbps|Gbps)?/i);
+        if (bwMatch) {
+          routeBandwidthMbps = parseFloat(bwMatch[1]);
+          if (bwMatch[2] && bwMatch[2].toLowerCase() === 'gbps') {
+            routeBandwidthMbps *= 1000;
+          }
+        }
+      }
+
+      // Apply Auto Design filtering rules
+      
+      // Skip Special/ULL routes if not including ULL
+      if (!include_ull && is_special) {
+        console.log(`  Skipping ${circuit_id}: ULL route excluded (Include ULL: ${include_ull})`);
+        return;
+      }
+      
+      // Skip based on equipment type filtering
+      const equipmentType = equipment_type || 'Nokia'; // Default to Nokia for null values
+      if (!use_cisco_only_routes) {
+        // Default: Only use Nokia and Mixed routes
+        if (equipmentType === 'Cisco') {
+          console.log(`  Skipping ${circuit_id}: Cisco equipment excluded (Include Cisco Only Routes: ${use_cisco_only_routes})`);
+          return;
+        }
+      }
+      
+      // Skip routes that don't meet MTU requirements
+      const routeMtu = mtu || 9212; // Default to 9212 if not specified
+      if (routeMtu < mtu_required) {
+        console.log(`  Skipping ${circuit_id}: MTU too low (${routeMtu} < ${mtu_required})`);
+        return;
+      }
+
+      if (!graph[location_a]) graph[location_a] = {};
+      if (!graph[location_b]) graph[location_b] = {};
+
+      const weight = parseFloat(expected_latency) || 100;
+      const routeCost = parseFloat(cost) || 0;
+
+      const edgeData = {
+        weight,
+        cost: routeCost,
+        currency,
+        bandwidth: routeBandwidthMbps,
+        bandwidthDisplay: routeBandwidth + ' Mbps',
+        carrier: underlying_carrier,
+        circuit_id,
+        cable_system: cable_system || null
+      };
+
+      // Store as ARRAY to allow multiple routes between same locations
+      if (!graph[location_a][location_b]) {
+        graph[location_a][location_b] = [];
+      }
+      graph[location_a][location_b].push(edgeData);
+
+      if (!graph[location_b][location_a]) {
+        graph[location_b][location_a] = [];
+      }
+      graph[location_b][location_a].push(edgeData);
+      
+      // Note: routeDetails already populated above before graph building
+    });
+
+    // Check if current location exists in graph
+    if (!graph[currentLocation]) {
+      return res.status(400).json({ 
+        error: `No routes available from ${currentLocation}`,
+        suggestion: 'Use Auto Design mode'
+      });
+    }
+
+    // Check if current location IS the destination (path complete)
+    if (currentLocation === destination) {
+      console.log(`\n✅ PATH COMPLETE: Current location (${currentLocation}) is the destination!`);
+      return res.json({
+        currentLocation,
+        destination,
+        suggestions: [],
+        totalAvailable: 0,
+        pathComplete: true,
+        message: 'Path complete - you have reached the destination'
+      });
+    }
+    
+    // Find direct connections from current location
+    const directConnections = graph[currentLocation];
+    
+    console.log(`\n🔍 Analyzing direct connections from ${currentLocation}:`);
+    console.log(`  Available next locations: ${Object.keys(directConnections).length}`);
+    
+    // For each direct connection, evaluate ALL routes to that location
+    const suggestions = [];
+    let skippedCount = 0;
+    let totalRoutesEvaluated = 0;
+
+    for (const [nextLoc, edgeDataArray] of Object.entries(directConnections)) {
+      // Skip if next location is in excluded list (already visited)
+      if (excludedLocations.includes(nextLoc) && nextLoc !== destination) {
+        console.log(`\n  ❌ SKIPPED Location ${nextLoc}: Already visited`);
+        skippedCount++;
+        continue;
+      }
+      
+      console.log(`\n  📍 Location: ${nextLoc} (${edgeDataArray.length} route(s) available)`);
+      
+      // Evaluate ALL routes to this location
+      edgeDataArray.forEach(edgeData => {
+        totalRoutesEvaluated++;
+        console.log(`\n  → Evaluating route to ${nextLoc} (Circuit: ${edgeData.circuit_id}):`);
+        
+        // Check bandwidth
+        if (edgeData.bandwidth < bandwidthMbps) {
+          console.log(`    ⚠️ INSUFFICIENT BANDWIDTH: ${edgeData.bandwidth} Mbps < ${bandwidthMbps} Mbps required`);
+        }
+      
+      // Create a modified graph that excludes already-visited locations for remaining path calculation
+      const modifiedGraph = JSON.parse(JSON.stringify(graph));
+      
+        // Build list of all locations to exclude from remaining path
+        // This includes: currentLocation (where we're leaving from) + all excludedLocations
+        const locationsToExclude = [...excludedLocations];
+        
+        // CRITICAL: Add currentLocation to exclusions so we never go back to where we came from
+        if (!locationsToExclude.includes(currentLocation)) {
+          locationsToExclude.push(currentLocation);
+        }
+        
+        console.log(`    Locations to exclude from remaining path:`, locationsToExclude);
+        
+        // Convert array-based graph to single-edge graph for Dijkstra (use best route for remaining path)
+        const simplifiedGraph = {};
+        Object.keys(modifiedGraph).forEach(from => {
+          simplifiedGraph[from] = {};
+          Object.keys(modifiedGraph[from]).forEach(to => {
+            const routesArray = modifiedGraph[from][to];
+            if (Array.isArray(routesArray) && routesArray.length > 0) {
+              // Pick the route with lowest latency for remaining path calculation
+              const bestRoute = routesArray.reduce((best, current) => 
+                current.weight < best.weight ? current : best
+              );
+              simplifiedGraph[from][to] = bestRoute;
+            }
+          });
+        });
+        
+        // Remove all excluded locations from simplified graph (except destination and nextLoc)
+        let removedCount = 0;
+        locationsToExclude.forEach(loc => {
+          if (loc !== destination && loc !== nextLoc) {
+            delete simplifiedGraph[loc];
+            // Remove references from all other nodes
+            Object.keys(simplifiedGraph).forEach(node => {
+              if (simplifiedGraph[node] && simplifiedGraph[node][loc]) {
+                delete simplifiedGraph[node][loc];
+                removedCount++;
+              }
+            });
+          }
+        });
+        console.log(`    Modified graph: removed ${removedCount} edges to excluded locations (including currentLocation: ${currentLocation})`);
+      
+        // Calculate best remaining path from nextLoc to destination (without revisiting excluded locations)
+        console.log(`    Calculating remaining path: ${nextLoc} → ${destination}`);
+        const remainingPath = dijkstra(simplifiedGraph, nextLoc, destination);
+        
+        if (remainingPath && remainingPath.totalLatency !== Infinity) {
+          console.log(`    ✅ Valid remaining path found:`);
+          console.log(`       Path: ${remainingPath.path.join(' → ')}`);
+          console.log(`       Remaining latency: ${remainingPath.totalLatency}ms`);
+          console.log(`       Remaining hops: ${remainingPath.path.length - 1}`);
+          
+          // Use pre-calculated entered circuits latency from frontend (simpler and more reliable)
+          console.log(`       Using entered circuits latency from frontend: ${enteredCircuitsLatency}ms`);
+          console.log(`       This hop latency: ${edgeData.weight}ms`);
+          console.log(`       Remaining path latency: ${remainingPath.totalLatency}ms`);
+          
+          const estimatedEndToEndLatency = enteredCircuitsLatency + edgeData.weight + remainingPath.totalLatency;
+          console.log(`       CALCULATION: ${enteredCircuitsLatency} (entered) + ${edgeData.weight} (this hop) + ${remainingPath.totalLatency} (remaining) = ${estimatedEndToEndLatency}ms`);
+          
+          suggestions.push({
+            circuit_id: edgeData.circuit_id,
+            ucn: edgeData.circuit_id,
+            location_a: currentLocation,
+            location_b: nextLoc,
+            latency: edgeData.weight,
+            carrier: edgeData.carrier,
+            bandwidth: edgeData.bandwidth,
+            bandwidthDisplay: edgeData.bandwidthDisplay,
+            sufficientBandwidth: edgeData.bandwidth >= bandwidthMbps,
+            estimatedEndToEndLatency: Math.round(estimatedEndToEndLatency * 100) / 100,
+            remainingHops: remainingPath.path.length - 1,
+            cost: edgeData.cost,
+            currency: edgeData.currency,
+            cable_system: edgeData.cable_system
+          });
+        } else {
+          console.log(`    ❌ No valid remaining path from ${nextLoc} to ${destination} (would require revisiting excluded locations)`);
+        }
+      }); // Close edgeDataArray.forEach
+    }
+    
+    console.log(`\n📊 SUGGESTION SUMMARY:`);
+    console.log(`  Total next locations available: ${Object.keys(directConnections).length}`);
+    console.log(`  Total routes evaluated: ${totalRoutesEvaluated}`);
+    console.log(`  Locations skipped (already visited): ${skippedCount}`);
+    console.log(`  Valid suggestions found: ${suggestions.length}`);
+
+    // Sort by estimated end-to-end latency
+    suggestions.sort((a, b) => a.estimatedEndToEndLatency - b.estimatedEndToEndLatency);
+
+    // Return top 3
+    const topSuggestions = suggestions.slice(0, 3);
+
+    console.log(`\n🎯 FINAL SUGGESTIONS (Top 3 by latency):`);
+    topSuggestions.forEach((sug, index) => {
+      console.log(`  ${index + 1}. ${sug.circuit_id}: ${sug.location_a} → ${sug.location_b}`);
+      console.log(`     Latency: ${sug.latency}ms, Est. End-to-End: ${sug.estimatedEndToEndLatency}ms`);
+      console.log(`     Bandwidth: ${sug.bandwidthDisplay} (${sug.sufficientBandwidth ? 'Sufficient' : 'Insufficient'})`);
+    });
+
+    res.json({
+      currentLocation,
+      destination,
+      suggestions: topSuggestions,
+      totalAvailable: suggestions.length,
+      pathComplete: false
+    });
+
+    // Dijkstra algorithm (same as find_path)
+    function dijkstra(graph, start, end) {
+      const distances = {};
+      const previous = {};
+      const unvisited = new Set();
+
+      for (const node in graph) {
+        distances[node] = Infinity;
+        previous[node] = null;
+        unvisited.add(node);
+      }
+      distances[start] = 0;
+
+      while (unvisited.size > 0) {
+        let currentNode = null;
+        let minDistance = Infinity;
+
+        for (const node of unvisited) {
+          if (distances[node] < minDistance) {
+            minDistance = distances[node];
+            currentNode = node;
+          }
+        }
+
+        if (currentNode === null || distances[currentNode] === Infinity) break;
+        if (currentNode === end) break;
+
+        unvisited.delete(currentNode);
+
+        for (const neighbor in graph[currentNode]) {
+          if (!unvisited.has(neighbor)) continue;
+
+          const alt = distances[currentNode] + graph[currentNode][neighbor].weight;
+          if (alt < distances[neighbor]) {
+            distances[neighbor] = alt;
+            previous[neighbor] = currentNode;
+          }
+        }
+      }
+
+      if (distances[end] === Infinity) {
+        return null;
+      }
+
+      const path = [];
+      let current = end;
+      while (current !== null) {
+        path.unshift(current);
+        current = previous[current];
+      }
+
+      return {
+        path,
+        totalLatency: distances[end]
+      };
+    }
+  });
+});
+
 // Helper function to round up to nearest $10
 const roundUpToNearest10 = (amount) => {
   return Math.ceil(amount / 10) * 10;
@@ -4165,6 +4581,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
     // Helper function to calculate enhanced pricing for a path with contract term-based pricing
     const calculatePathPricing = async (path, isProtection = false) => {
       let totalAllocatedCost = 0;
+      const segmentCalculations = []; // Track detailed calculations for each segment
       
       if (path.route) {
         path.route.forEach(segment => {
@@ -4173,6 +4590,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           const segmentBandwidth = parseFloat(segment.bandwidth) || 1000; // Default 1000 if not specified
           
           // Convert segment cost to output currency
+          const originalSegmentCost = segmentCost;
           segmentCost = convertCurrency(segmentCost, segmentCurrency, output_currency);
           
           // Calculate allocated cost based on bandwidth utilization with bandwidth-based factors
@@ -4188,6 +4606,27 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           }
           const allocationRatio = bandwidth / (segmentBandwidth * utilizationFactor);
           const allocatedCost = segmentCost * allocationRatio;
+          
+          // Track detailed calculation for this segment
+          segmentCalculations.push({
+            circuit: segment.circuit_id,
+            location: `${segment.from} → ${segment.to}`,
+            carrier: segment.carrier,
+            cable_system: segment.cable_system,
+            latency: segment.latency,
+            originalCost: originalSegmentCost,
+            originalCurrency: segmentCurrency,
+            convertedCost: segmentCost,
+            segmentBandwidth: segmentBandwidth,
+            utilizationFactor: utilizationFactor,
+            utilizationFactorType: isProtection ? 
+              (segmentBandwidth <= 10000 ? 'protectionUnder10000' : 'protectionOver10000') :
+              (segmentBandwidth <= 10000 ? 'primaryUnder10000' : 'primaryOver10000'),
+            allocationRatio: allocationRatio,
+            calculation: `${bandwidth} Mbps / (${segmentBandwidth} Mbps × ${utilizationFactor}) = ${allocationRatio.toFixed(6)}`,
+            allocatedCostCalculation: `${segmentCost.toFixed(2)} ${output_currency} × ${allocationRatio.toFixed(6)} = ${allocatedCost.toFixed(2)} ${output_currency}`,
+            allocatedCost: allocatedCost
+          });
           
           totalAllocatedCost += allocatedCost;
         });
@@ -4222,6 +4661,43 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
               const termConfig = pricingConfig.contractTerms[contract_term] || pricingConfig.contractTerms[12];
               const promoNrcCharge = convertCurrency(termConfig.nrcCharge, 'USD', output_currency);
               
+              // Detailed promo pricing calculation breakdown
+              const promoCalculations = {
+                allocatedCostBreakdown: {
+                  segments: segmentCalculations,
+                  totalAllocatedCostBeforeRounding: totalAllocatedCost,
+                  totalAllocatedCostFormula: segmentCalculations.map(s => s.allocatedCost.toFixed(2)).join(' + '),
+                  totalCalculation: `Sum of all segments = ${totalAllocatedCost.toFixed(2)} ${output_currency}`,
+                  roundedToNearest10: roundUpToNearest10(totalAllocatedCost)
+                },
+                promoPriceBreakdown: {
+                  originalPromoPrice: promoPrice.price,
+                  originalCurrency: 'USD',
+                  convertedPromoPrice: promoPriceConverted,
+                  conversionCalculation: `${promoPrice.price} USD → ${promoPriceConverted.toFixed(2)} ${output_currency}`,
+                  contractTerm: contract_term,
+                  contractTermDiscount: contract_term === 24 ? pricingConfig.promoPricing.discount24Month : 
+                                       contract_term === 36 ? pricingConfig.promoPricing.discount36Month : 0,
+                  discountFormula: contract_term === 24 ? `${promoPriceConverted.toFixed(2)} × (1 - ${pricingConfig.promoPricing.discount24Month}/100) = ${promoPriceConverted.toFixed(2)} × ${(1 - pricingConfig.promoPricing.discount24Month/100).toFixed(4)} = ${discountedPromoPrice.toFixed(2)} ${output_currency}` :
+                                  contract_term === 36 ? `${promoPriceConverted.toFixed(2)} × (1 - ${pricingConfig.promoPricing.discount36Month}/100) = ${promoPriceConverted.toFixed(2)} × ${(1 - pricingConfig.promoPricing.discount36Month/100).toFixed(4)} = ${discountedPromoPrice.toFixed(2)} ${output_currency}` :
+                                  `No discount for ${contract_term}-month term`,
+                  finalPromoPrice: discountedPromoPrice,
+                  roundedToNearest10: roundUpToNearest10(discountedPromoPrice)
+                },
+                marginVerification: {
+                  minimumMarginRequired: promoMinMargin,
+                  actualMargin: actualMargin,
+                  marginFormula: `((Promo Price - Allocated Cost) / Promo Price) × 100 = ((${discountedPromoPrice.toFixed(2)} - ${totalAllocatedCost.toFixed(2)}) / ${discountedPromoPrice.toFixed(2)}) × 100 = ${actualMargin.toFixed(2)}%`,
+                  marginRequirementMet: totalAllocatedCost <= requiredAllocatedCost,
+                  requiredAllocatedCostCalculation: `${discountedPromoPrice.toFixed(2)} × (1 - ${promoMinMargin}/100) = ${requiredAllocatedCost.toFixed(2)} ${output_currency}`
+                },
+                nrcCharge: {
+                  baseChargeUSD: termConfig.nrcCharge,
+                  convertedCharge: promoNrcCharge,
+                  calculation: `${termConfig.nrcCharge} USD → ${promoNrcCharge.toFixed(2)} ${output_currency}`
+                }
+              };
+              
               return {
                 allocatedCost: roundUpToNearest10(totalAllocatedCost),
                 minimumPrice: roundUpToNearest10(discountedPromoPrice),
@@ -4240,7 +4716,8 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
                   ruleName: promoPrice.ruleName,
                   originalPriceUSD: promoPrice.price,
                   priceField: promoPrice.priceField
-                }
+                },
+                detailedCalculations: promoCalculations
               };
             }
           }
@@ -4272,6 +4749,50 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       const actualMinMargin = ((finalMinPrice - totalAllocatedCost) / finalMinPrice) * 100;
       const actualSuggestedMargin = ((finalSuggestedPrice - totalAllocatedCost) / finalSuggestedPrice) * 100;
 
+      // Create detailed calculation breakdown for logging
+      const detailedCalculations = {
+        allocatedCostBreakdown: {
+          segments: segmentCalculations,
+          totalAllocatedCostBeforeRounding: totalAllocatedCost,
+          totalAllocatedCostFormula: segmentCalculations.map(s => s.allocatedCost.toFixed(2)).join(' + '),
+          totalCalculation: `Sum of all segments = ${totalAllocatedCost.toFixed(2)} ${output_currency}`,
+          roundedToNearest10: roundUpToNearest10(totalAllocatedCost)
+        },
+        minimumPriceBreakdown: {
+          targetMargin: minMarginPercent,
+          formula: `Allocated Cost / (1 - Margin/100)`,
+          calculation: `${totalAllocatedCost.toFixed(2)} / (1 - ${minMarginPercent}/100) = ${totalAllocatedCost.toFixed(2)} / ${(1 - minMarginPercent/100).toFixed(4)} = ${minPriceByMargin.toFixed(2)} ${output_currency}`,
+          priceByMargin: minPriceByMargin,
+          locationMinimumPrice: locationMinPrice,
+          finalPriceFormula: `MAX(${minPriceByMargin.toFixed(2)}, ${locationMinPrice.toFixed(2)})`,
+          finalPriceBeforeRounding: finalMinPrice,
+          roundedToNearest10: roundUpToNearest10(finalMinPrice),
+          wasLocationMinimumEnforced: finalMinPrice === locationMinPrice
+        },
+        suggestedPriceBreakdown: {
+          targetMargin: suggestedMarginPercent,
+          formula: `Allocated Cost / (1 - Margin/100)`,
+          calculation: `${totalAllocatedCost.toFixed(2)} / (1 - ${suggestedMarginPercent}/100) = ${totalAllocatedCost.toFixed(2)} / ${(1 - suggestedMarginPercent/100).toFixed(4)} = ${suggestedPriceByMargin.toFixed(2)} ${output_currency}`,
+          priceByMargin: suggestedPriceByMargin,
+          locationMinimumPrice: locationMinPrice,
+          finalPriceFormula: `MAX(${suggestedPriceByMargin.toFixed(2)}, ${locationMinPrice.toFixed(2)})`,
+          finalPriceBeforeRounding: finalSuggestedPrice,
+          roundedToNearest10: roundUpToNearest10(finalSuggestedPrice),
+          wasLocationMinimumEnforced: finalSuggestedPrice === locationMinPrice
+        },
+        marginVerification: {
+          actualMinMargin: actualMinMargin,
+          actualMinMarginFormula: `((Final Min Price - Allocated Cost) / Final Min Price) × 100 = ((${finalMinPrice.toFixed(2)} - ${totalAllocatedCost.toFixed(2)}) / ${finalMinPrice.toFixed(2)}) × 100 = ${actualMinMargin.toFixed(2)}%`,
+          actualSuggestedMargin: actualSuggestedMargin,
+          actualSuggestedMarginFormula: `((Final Suggested Price - Allocated Cost) / Final Suggested Price) × 100 = ((${finalSuggestedPrice.toFixed(2)} - ${totalAllocatedCost.toFixed(2)}) / ${finalSuggestedPrice.toFixed(2)}) × 100 = ${actualSuggestedMargin.toFixed(2)}%`
+        },
+        nrcCharge: {
+          baseChargeUSD: termConfig.nrcCharge,
+          convertedCharge: nrcCharge,
+          calculation: `${termConfig.nrcCharge} USD → ${nrcCharge.toFixed(2)} ${output_currency}`
+        }
+      };
+
       return {
         allocatedCost: roundUpToNearest10(totalAllocatedCost),
         minimumPrice: roundUpToNearest10(finalMinPrice),
@@ -4286,7 +4807,8 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
         nrcCharge: Math.round(nrcCharge * 100) / 100,
         promoPricing: {
           used: false
-        }
+        },
+        detailedCalculations: detailedCalculations
       };
     };
 
@@ -4331,6 +4853,54 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       // NRC charge for protection is only charged once (from primary path)
       const protectionNrcCharge = primaryPricing.nrcCharge;
 
+      // Detailed protection pricing calculation breakdown
+      const protectionCalculations = {
+        protectionMultiplier: {
+          value: protectionMultiplier,
+          percentage: `${Math.round(protectionMultiplier * 100)}%`,
+          description: 'Secondary path is charged at 70% of its individual price'
+        },
+        allocatedCostBreakdown: {
+          primaryAllocatedCost: primaryPricing.allocatedCost,
+          secondaryAllocatedCost: secondaryPricing.allocatedCost,
+          secondaryWeightedCost: secondaryPricing.allocatedCost * protectionMultiplier,
+          formula: `Primary + (Secondary × ${protectionMultiplier})`,
+          calculation: `${primaryPricing.allocatedCost.toFixed(2)} + (${secondaryPricing.allocatedCost.toFixed(2)} × ${protectionMultiplier}) = ${primaryPricing.allocatedCost.toFixed(2)} + ${(secondaryPricing.allocatedCost * protectionMultiplier).toFixed(2)} = ${protectedAllocatedCost.toFixed(2)} ${output_currency}`,
+          totalBeforeRounding: protectedAllocatedCost,
+          roundedToNearest10: roundUpToNearest10(protectedAllocatedCost)
+        },
+        minimumPriceBreakdown: {
+          primaryMinimumPrice: primaryPricing.minimumPrice,
+          secondaryMinimumPrice: secondaryPricing.minimumPrice,
+          secondaryWeightedPrice: secondaryPricing.minimumPrice * protectionMultiplier,
+          formula: `Primary Min + (Secondary Min × ${protectionMultiplier})`,
+          calculation: `${primaryPricing.minimumPrice.toFixed(2)} + (${secondaryPricing.minimumPrice.toFixed(2)} × ${protectionMultiplier}) = ${primaryPricing.minimumPrice.toFixed(2)} + ${(secondaryPricing.minimumPrice * protectionMultiplier).toFixed(2)} = ${protectedMinPrice.toFixed(2)} ${output_currency}`,
+          totalBeforeRounding: protectedMinPrice,
+          roundedToNearest10: roundUpToNearest10(protectedMinPrice)
+        },
+        suggestedPriceBreakdown: {
+          primarySuggestedPrice: primaryPricing.suggestedPrice,
+          secondarySuggestedPrice: secondaryPricing.suggestedPrice,
+          secondaryWeightedPrice: secondaryPricing.suggestedPrice * protectionMultiplier,
+          formula: `Primary Suggested + (Secondary Suggested × ${protectionMultiplier})`,
+          calculation: `${primaryPricing.suggestedPrice.toFixed(2)} + (${secondaryPricing.suggestedPrice.toFixed(2)} × ${protectionMultiplier}) = ${primaryPricing.suggestedPrice.toFixed(2)} + ${(secondaryPricing.suggestedPrice * protectionMultiplier).toFixed(2)} = ${protectedSuggestedPrice.toFixed(2)} ${output_currency}`,
+          totalBeforeRounding: protectedSuggestedPrice,
+          roundedToNearest10: roundUpToNearest10(protectedSuggestedPrice)
+        },
+        marginVerification: {
+          actualMinMargin: actualProtectedMinMargin,
+          actualMinMarginFormula: `((Protected Min - Protected Allocated) / Protected Min) × 100 = ((${protectedMinPrice.toFixed(2)} - ${protectedAllocatedCost.toFixed(2)}) / ${protectedMinPrice.toFixed(2)}) × 100 = ${actualProtectedMinMargin.toFixed(2)}%`,
+          actualSuggestedMargin: actualProtectedSuggestedMargin,
+          actualSuggestedMarginFormula: `((Protected Suggested - Protected Allocated) / Protected Suggested) × 100 = ((${protectedSuggestedPrice.toFixed(2)} - ${protectedAllocatedCost.toFixed(2)}) / ${protectedSuggestedPrice.toFixed(2)}) × 100 = ${actualProtectedSuggestedMargin.toFixed(2)}%`
+        },
+        nrcCharge: {
+          chargedOnce: true,
+          description: 'NRC charge is only applied once for protected service (from primary path)',
+          amount: protectionNrcCharge,
+          calculation: `${protectionNrcCharge.toFixed(2)} ${output_currency} (from primary path only)`
+        }
+      };
+
       protectionPricing = {
         minimumPrice: roundUpToNearest10(protectedMinPrice),
         suggestedPrice: roundUpToNearest10(protectedSuggestedPrice),
@@ -4354,7 +4924,8 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
             allocatedCost: roundUpToNearest10(secondaryPricing.allocatedCost * protectionMultiplier),
             weight: `${Math.round(protectionMultiplier * 100)}%`
           }
-        }
+        },
+        detailedCalculations: protectionCalculations
       };
     }
     
@@ -4393,11 +4964,24 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
             individual: pricingResults,
             protection: protectionPricing
           },
+          detailedCalculationBreakdowns: {
+            primaryPath: pricingResults[0]?.pricing?.detailedCalculations || null,
+            secondaryPath: pricingResults[1]?.pricing?.detailedCalculations || null,
+            protectionPricing: protectionPricing?.detailedCalculations || null,
+            description: 'Step-by-step calculation formulas showing how allocated cost, minimum price, suggested price, and protection pricing are derived'
+          },
           contractTermRules: {
             term: contract_term,
             appliedRules: contract_term === 12 ? '40%/60% margins + $1000 NRC' :
                          contract_term === 24 ? '37.5%/55% margins + $500 NRC' :
-                         contract_term === 36 ? '35%/50% margins + $0 NRC' : 'Default 12-month rules'
+                         contract_term === 36 ? '35%/50% margins + $0 NRC' : 'Default 12-month rules',
+            marginFormulas: {
+              minMarginFormula: 'MinimumPrice = AllocatedCost / (1 - MinMargin/100)',
+              suggestedMarginFormula: 'SuggestedPrice = AllocatedCost / (1 - SuggestedMargin/100)',
+              allocationRatioFormula: 'AllocationRatio = CustomerBandwidth / (SegmentBandwidth × UtilizationFactor)',
+              allocatedCostFormula: 'AllocatedCost = SegmentCost × AllocationRatio',
+              protectionFormula: 'ProtectedPrice = PrimaryPrice + (SecondaryPrice × 0.7)'
+            }
           },
           exchangeRates: exchangeRates
         }),
@@ -4509,11 +5093,12 @@ router.post('/network_design/generate_kmz', (req, res) => {
 router.post('/network_design/save_search', authenticateToken, (req, res) => {
   const { search_name, source_location, destination_location, bandwidth_required, 
           bandwidth_unit, include_ull, protection_required, max_latency, 
-          carrier_avoidance, output_currency, contract_term, search_results } = req.body;
+          carrier_avoidance, output_currency, contract_term, search_results,
+          design_mode = 'auto', manual_primary_routes = null, manual_secondary_routes = null } = req.body;
   
   db.run(
-    'INSERT INTO network_design_searches (search_name, source_location, destination_location, bandwidth_required, bandwidth_unit, include_ull, protection_required, max_latency, carrier_avoidance, output_currency, contract_term, search_results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [search_name, source_location, destination_location, bandwidth_required, bandwidth_unit, include_ull, protection_required, max_latency, carrier_avoidance, output_currency, contract_term, JSON.stringify(search_results)],
+    'INSERT INTO network_design_searches (search_name, source_location, destination_location, bandwidth_required, bandwidth_unit, include_ull, protection_required, max_latency, carrier_avoidance, output_currency, contract_term, search_results, design_mode, manual_primary_routes, manual_secondary_routes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [search_name, source_location, destination_location, bandwidth_required, bandwidth_unit, include_ull, protection_required, max_latency, carrier_avoidance, output_currency, contract_term, JSON.stringify(search_results), design_mode, manual_primary_routes, manual_secondary_routes],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
@@ -4527,7 +5112,8 @@ router.post('/network_design/save_search', authenticateToken, (req, res) => {
       try {
         logChange(req.user.id, 'network_design_searches', logRecordId, 'CREATE', null, {
           search_name, source_location, destination_location, bandwidth_required, bandwidth_unit,
-          include_ull, protection_required, max_latency, carrier_avoidance, output_currency, contract_term
+          include_ull, protection_required, max_latency, carrier_avoidance, output_currency, contract_term,
+          design_mode, manual_primary_routes, manual_secondary_routes
         }, req);
       } catch (logError) {
         console.error('Failed to log network design search creation:', logError);

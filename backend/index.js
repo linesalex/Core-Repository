@@ -28,7 +28,7 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     message: 'Network Inventory Backend API',
-    version: '3.3.0',
+    version: '3.3.1',
     status: 'running',
     timestamp: new Date().toISOString(),
     endpoints: {

@@ -50,11 +50,14 @@ function TabPanel(props) {
 const NetworkDesignTool = () => {
   const { user } = useAuth();
   
-  // Check if user can view pricing logs (not read-only)
-  const canViewPricingLogs = user && user.role !== 'read_only';
+  // Check if user can view pricing logs (all authenticated users can view)
+  const canViewPricingLogs = user !== null;
   
   // Check if user can manage logs (admin only)
   const canManageLogs = user && user.role === 'administrator';
+  
+  // Check if user is read-only (limited access to logs)
+  const isReadOnly = user && user.role === 'read_only';
   
   // Form state
   const [formData, setFormData] = useState({
@@ -73,6 +76,17 @@ const NetworkDesignTool = () => {
     quoteRequestId: '',
     customerName: ''
   });
+
+  // Manual route entry state
+  const [designMode, setDesignMode] = useState('auto'); // 'auto' or 'manual'
+  const [manualPrimaryRoutes, setManualPrimaryRoutes] = useState('');
+  const [manualSecondaryRoutes, setManualSecondaryRoutes] = useState('');
+  const [primaryRouteValidation, setPrimaryRouteValidation] = useState({ valid: false, message: '', routes: [] });
+  const [secondaryRouteValidation, setSecondaryRouteValidation] = useState({ valid: false, message: '', routes: [] });
+  const [suggestionsDialogOpen, setSuggestionsDialogOpen] = useState(false);
+  const [routeSuggestions, setRouteSuggestions] = useState([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionTarget, setSuggestionTarget] = useState('primary'); // 'primary' or 'secondary'
 
   // Data state
   const [locations, setLocations] = useState([]);
@@ -123,6 +137,19 @@ const NetworkDesignTool = () => {
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  // Clear expanded logs for read-only users
+  useEffect(() => {
+    if (user && user.role === 'read_only' && expandedLogs.size > 0) {
+      console.log('NetworkDesignTool - Clearing expanded logs for read-only user');
+      setExpandedLogs(new Set());
+    }
+    
+    if (user) {
+      console.log('NetworkDesignTool - User role:', user.role);
+      console.log('NetworkDesignTool - isReadOnly:', isReadOnly);
+    }
+  }, [user, isReadOnly, expandedLogs]);
 
   // Auto-refresh exchange rates when component becomes visible (e.g., switching back from Exchange Rates module)
   useEffect(() => {
@@ -267,6 +294,476 @@ const NetworkDesignTool = () => {
     setCurrentTab(newValue);
   };
 
+  // Manual Route Entry Functions
+  const handleDesignModeChange = (event) => {
+    const newMode = event.target.value;
+    
+    if (newMode === 'manual' && searchResults) {
+      // Convert auto-designed routes to manual entry
+      const primaryCircuits = searchResults.primaryPath?.route?.map(r => r.circuit_id).join(', ') || '';
+      const secondaryCircuits = searchResults.diversePath?.route?.map(r => r.circuit_id).join(', ') || '';
+      
+      setManualPrimaryRoutes(primaryCircuits);
+      setManualSecondaryRoutes(secondaryCircuits);
+      
+      if (primaryCircuits || secondaryCircuits) {
+        setSuccess('Auto-designed routes converted to manual entry');
+      }
+    }
+    
+    setDesignMode(newMode);
+  };
+
+  const validateManualRoutes = async (routeString, source, destination, pathType) => {
+    if (!routeString.trim()) {
+      return { valid: false, message: '', routes: [] };
+    }
+
+    const circuitIds = routeString.split(',').map(id => id.trim()).filter(id => id);
+    
+    if (circuitIds.length === 0) {
+      return { valid: false, message: '', routes: [] };
+    }
+
+    const setValidation = pathType === 'primary' ? setPrimaryRouteValidation : setSecondaryRouteValidation;
+    setValidation({ valid: false, message: `⏳ Validating ${circuitIds.length} route(s)...`, routes: [] });
+
+    try {
+      const routePromises = circuitIds.map(circuitId => 
+        networkDesignApi.fetchRoute(circuitId).catch(err => null)
+      );
+      const routes = await Promise.all(routePromises);
+
+      const notFound = circuitIds.filter((id, index) => routes[index] === null);
+      
+      if (notFound.length > 0) {
+        setValidation({
+          valid: false,
+          message: `❌ ${notFound.length} route(s) not found: ${notFound.join(', ')}`,
+          routes: routes.filter(r => r !== null)
+        });
+        return { valid: false, message: 'Routes not found', routes: routes.filter(r => r !== null) };
+      }
+
+      // Validate end-to-end connectivity
+      const validRoutes = routes.filter(r => r !== null);
+      const connectivityCheck = validateEndToEndConnectivity(validRoutes, source, destination);
+
+      if (!connectivityCheck.valid) {
+        setValidation({
+          valid: false,
+          message: `⚠️ ${connectivityCheck.message}`,
+          routes: validRoutes,
+          canFix: true
+        });
+        return { valid: false, message: connectivityCheck.message, routes: validRoutes, canFix: true };
+      }
+
+      setValidation({
+        valid: true,
+        message: `✅ All ${circuitIds.length} route(s) validated successfully`,
+        routes: validRoutes
+      });
+      
+      return { valid: true, message: 'Valid', routes: validRoutes };
+    } catch (error) {
+      setValidation({
+        valid: false,
+        message: `❌ Validation error: ${error.message}`,
+        routes: []
+      });
+      return { valid: false, message: error.message, routes: [] };
+    }
+  };
+
+  const validateEndToEndConnectivity = (routes, source, destination) => {
+    if (routes.length === 0) {
+      return { valid: false, message: 'No routes provided' };
+    }
+
+    let currentLocation = source;
+    const path = [source];
+
+    for (let i = 0; i < routes.length; i++) {
+      const route = routes[i];
+      
+      if (route.location_a === currentLocation) {
+        currentLocation = route.location_b;
+        path.push(currentLocation);
+      } else if (route.location_b === currentLocation) {
+        currentLocation = route.location_a;
+        path.push(currentLocation);
+      } else {
+        return {
+          valid: false,
+          message: `Route ${route.circuit_id} doesn't connect to ${currentLocation}. Path so far: ${path.join(' → ')}`
+        };
+      }
+    }
+
+    if (currentLocation !== destination) {
+      return {
+        valid: false,
+        message: `Path ends at ${currentLocation} but destination is ${destination}. Path: ${path.join(' → ')}`
+      };
+    }
+
+    return { valid: true, message: `Valid path: ${path.join(' → ')}` };
+  };
+
+  const handleManualPrimaryRoutesChange = async (value) => {
+    setManualPrimaryRoutes(value);
+    if (formData.source && formData.destination) {
+      await validateManualRoutes(value, formData.source, formData.destination, 'primary');
+    }
+  };
+
+  const handleManualSecondaryRoutesChange = async (value) => {
+    setManualSecondaryRoutes(value);
+    if (formData.source && formData.destination) {
+      await validateManualRoutes(value, formData.source, formData.destination, 'secondary');
+    }
+  };
+
+  const handleFindSuggestions = async (target = 'primary') => {
+    if (!formData.source || !formData.destination) {
+      setError('Please enter source and destination location');
+      return;
+    }
+    
+    if (!formData.bandwidth) {
+      setError('Please enter bandwidth');
+      return;
+    }
+
+    setSuggestionTarget(target);
+    setSuggestionsLoading(true);
+    setSuggestionsDialogOpen(true);
+
+    try {
+      const routeString = target === 'primary' ? manualPrimaryRoutes : manualSecondaryRoutes;
+      const enteredCircuits = routeString.split(',').map(id => id.trim()).filter(id => id);
+      
+      // Track all visited locations and build the path
+      const visitedLocations = new Set();
+      const excludedCircuits = new Set(enteredCircuits);
+      
+      // CRITICAL: If finding secondary suggestions, also exclude ALL primary circuits AND locations
+      if (target === 'secondary' && manualPrimaryRoutes) {
+        const primaryCircuits = manualPrimaryRoutes.split(',').map(id => id.trim()).filter(id => id);
+        primaryCircuits.forEach(cid => excludedCircuits.add(cid));
+        console.log('Secondary suggestions - excluding primary circuits:', primaryCircuits);
+        
+        // Also track and exclude all intermediate locations from primary path
+        try {
+          const primaryValidation = await validateManualRoutes(manualPrimaryRoutes, formData.source, formData.destination, 'primary');
+          if (primaryValidation.valid && primaryValidation.routes) {
+            let primaryCurrentLoc = formData.source;
+            primaryValidation.routes.forEach(route => {
+              // Track intermediate locations (not source, not destination)
+              const nextLoc = route.location_a === primaryCurrentLoc ? route.location_b : route.location_a;
+              if (nextLoc !== formData.source && nextLoc !== formData.destination) {
+                visitedLocations.add(nextLoc);
+              }
+              primaryCurrentLoc = nextLoc;
+            });
+            console.log('Secondary suggestions - excluding primary intermediate locations:', Array.from(visitedLocations));
+          }
+        } catch (err) {
+          console.warn('Could not extract primary path locations:', err);
+        }
+      }
+      
+      let currentLocation = formData.source;
+      visitedLocations.add(formData.source);
+      
+      if (enteredCircuits.length > 0) {
+        // Build the complete path to find all visited locations
+        try {
+          const circuitData = [];
+          
+          // Fetch all entered circuits
+          for (const cid of enteredCircuits) {
+            try {
+              const circuit = await networkDesignApi.fetchRoute(cid);
+              if (circuit) {
+                circuitData.push(circuit);
+              }
+            } catch (err) {
+              console.warn(`Could not fetch circuit ${cid}`);
+            }
+          }
+          
+          // Walk through the path to track all visited locations
+          for (const circuit of circuitData) {
+            // Find which endpoint connects to our current location
+            if (circuit.location_a === currentLocation) {
+              currentLocation = circuit.location_b;
+              visitedLocations.add(circuit.location_b);
+            } else if (circuit.location_b === currentLocation) {
+              currentLocation = circuit.location_a;
+              visitedLocations.add(circuit.location_a);
+            } else {
+              console.warn(`Circuit ${circuit.circuit_id} doesn't connect to ${currentLocation}`);
+              // Try to recover by checking both endpoints
+              if (!visitedLocations.has(circuit.location_a)) {
+                currentLocation = circuit.location_a;
+                visitedLocations.add(circuit.location_a);
+              } else if (!visitedLocations.has(circuit.location_b)) {
+                currentLocation = circuit.location_b;
+                visitedLocations.add(circuit.location_b);
+              }
+            }
+          }
+          
+        } catch (err) {
+          console.error('Error building path:', err);
+        }
+      }
+      
+      // Exclude all visited locations EXCEPT the current location and destination
+      const excludedLocations = Array.from(visitedLocations).filter(
+        loc => loc !== currentLocation && loc !== formData.destination
+      );
+      
+      // Calculate total latency of entered circuits (frontend has this data from validation)
+      let enteredCircuitsLatency = 0;
+      const validation = target === 'primary' ? primaryRouteValidation : secondaryRouteValidation;
+      if (validation.routes && validation.routes.length > 0) {
+        enteredCircuitsLatency = validation.routes.reduce((sum, route) => {
+          return sum + (parseFloat(route.expected_latency) || 0);
+        }, 0);
+        console.log('Calculated entered circuits total latency from validation:', enteredCircuitsLatency, 'ms');
+      }
+      
+      console.log('Current location:', currentLocation);
+      console.log('Visited locations:', Array.from(visitedLocations));
+      console.log('Excluded locations:', excludedLocations);
+      console.log('Entered circuits being sent to backend:', enteredCircuits);
+      console.log('Total latency of entered circuits:', enteredCircuitsLatency, 'ms');
+
+      const requestData = {
+        currentLocation,
+        destination: formData.destination,
+        bandwidth: formData.bandwidth,
+        bandwidth_unit: 'Mbps',
+        excludedCircuits: Array.from(excludedCircuits),
+        excludedLocations: excludedLocations,
+        enteredCircuits: enteredCircuits,
+        enteredCircuitsLatency: enteredCircuitsLatency, // Send pre-calculated latency from frontend
+        source: formData.source,
+        // Pass Auto Design rules to Find Suggestions
+        include_ull: formData.includeULL,
+        use_cisco_only_routes: formData.useCiscoOnlyRoutes,
+        mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500
+      };
+
+      console.log('Complete request data:', JSON.stringify(requestData, null, 2));
+
+      const response = await fetch(`${API_BASE_URL}/network_design/suggest_routes`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestData)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to get suggestions');
+      }
+
+      const data = await response.json();
+      
+      // Check if path is complete
+      if (data.pathComplete) {
+        setRouteSuggestions([]);
+        setSuccess('Path complete - you have reached the destination!');
+        setSuggestionsDialogOpen(false);
+        return;
+      }
+      
+      setRouteSuggestions(data.suggestions || []);
+      
+      // Show message if no suggestions available
+      if (data.suggestions.length === 0) {
+        setError('No route suggestions available. Try using Auto Design mode.');
+      }
+    } catch (error) {
+      const errorMessage = error.message || 'Failed to get route suggestions';
+      
+      // Check for specific error responses
+      if (error.message && error.message.includes('No routes available')) {
+        setError('No routes available from current location. Try using Auto Design mode.');
+      } else {
+        setError('Failed to get route suggestions: ' + errorMessage);
+      }
+      
+      setRouteSuggestions([]);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  };
+
+  const handleAddSuggestedRoute = async (circuitId) => {
+    const currentRoutes = suggestionTarget === 'primary' ? manualPrimaryRoutes : manualSecondaryRoutes;
+    const newRoutes = currentRoutes ? `${currentRoutes}, ${circuitId}` : circuitId;
+    
+    if (suggestionTarget === 'primary') {
+      setManualPrimaryRoutes(newRoutes);
+      await validateManualRoutes(newRoutes, formData.source, formData.destination, 'primary');
+    } else {
+      setManualSecondaryRoutes(newRoutes);
+      await validateManualRoutes(newRoutes, formData.source, formData.destination, 'secondary');
+    }
+    
+    // Close dialog immediately
+    setSuggestionsDialogOpen(false);
+    setRouteSuggestions([]);
+    setExpandedAccordion('search'); // Revert back to search form
+    
+    // Show success message for 3 seconds (stays visible in top-right corner)
+    setSuccess(`Route ${circuitId} added successfully!`);
+  };
+
+  const handleSuggestSecondaryPath = async () => {
+    if (!formData.source || !formData.destination || !formData.bandwidth) {
+      setError('Please enter source, destination, and bandwidth first');
+      return;
+    }
+
+    console.log('\n=== SUGGEST SECONDARY PATH REQUEST ===');
+    console.log('Source:', formData.source);
+    console.log('Destination:', formData.destination);
+    console.log('Bandwidth:', formData.bandwidth);
+    console.log('Primary Routes Entered:', manualPrimaryRoutes);
+
+    setLoading(true);
+    try {
+      // Build the manual primary path structure to send to backend
+      let manualPrimaryPath = null;
+      
+      if (manualPrimaryRoutes && manualPrimaryRoutes.trim()) {
+        console.log('Building manual primary path structure from:', manualPrimaryRoutes);
+        
+        // Validate manual routes first
+        const validation = await validateManualRoutes(manualPrimaryRoutes, formData.source, formData.destination, 'primary');
+        
+        if (!validation.valid) {
+          setError('Cannot suggest secondary path: Primary routes are invalid. ' + validation.message);
+          setLoading(false);
+          return;
+        }
+        
+        // Build path structure (same helper function used in handleSearch)
+        const buildPathFromRoutes = (routes, startLocation) => {
+          let currentLoc = startLocation;
+          const pathLocations = [startLocation];
+          const segments = [];
+          
+          routes.forEach(route => {
+            const segment = {
+              circuit_id: route.circuit_id,
+              from: currentLoc,
+              to: route.location_a === currentLoc ? route.location_b : route.location_a,
+              latency: parseFloat(route.expected_latency) || 0,
+              cost: parseFloat(route.cost) || 0,
+              currency: route.currency || 'USD',
+              bandwidth: parseFloat(route.bandwidth) || 0,
+              carrier: route.underlying_carrier,
+              cable_system: route.cable_system || null
+            };
+            
+            segments.push(segment);
+            currentLoc = segment.to;
+            pathLocations.push(currentLoc);
+          });
+          
+          return {
+            path: pathLocations,
+            route: segments,
+            totalLatency: routes.reduce((sum, r) => sum + (parseFloat(r.expected_latency) || 0), 0),
+            hops: routes.length
+          };
+        };
+        
+        manualPrimaryPath = buildPathFromRoutes(validation.routes, formData.source);
+        console.log('Manual primary path structure:', manualPrimaryPath);
+      }
+      
+      // Use the existing find_path endpoint to get a diverse secondary path
+      const requestBody = {
+        source: formData.source,
+        destination: formData.destination,
+        bandwidth: formData.bandwidth,
+        bandwidth_unit: 'Mbps',
+        manualPrimaryPath: manualPrimaryPath, // Send manual primary path for protection calculation
+        constraints: {
+          protection_required: true,
+          mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500,
+          carrier_avoidance: formData.carrierAvoidance.length > 0 ? formData.carrierAvoidance : undefined,
+          circuit_exclusion: formData.circuitExclusion.length > 0 ? formData.circuitExclusion : undefined
+        },
+        include_ull: formData.includeULL,
+        use_cisco_only_routes: formData.useCiscoOnlyRoutes,
+        use_100gb_and_df_only: formData.use100GbAndDFOnly
+      };
+
+      console.log('Request body:', JSON.stringify(requestBody, null, 2));
+
+      const response = await fetch(`${API_BASE_URL}/network_design/find_path`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Secondary path error response:', errorData);
+        throw new Error(errorData.error || 'Failed to find secondary path');
+      }
+
+      const data = await response.json();
+      console.log('Secondary path response:', data);
+      
+      // Check protection status
+      if (data.protectionStatus) {
+        console.log('Protection Status:', data.protectionStatus);
+        if (data.protectionStatus.failureReasons) {
+          console.log('Failure Reasons:', data.protectionStatus.failureReasons);
+        }
+      }
+      
+      // Get the diverse path (second path)
+      if (data.diversePath && data.diversePath.route) {
+        console.log('✅ Diverse path found!');
+        console.log('Diverse path route:', data.diversePath.route);
+        const secondaryCircuits = data.diversePath.route.map(r => r.circuit_id).join(', ');
+        console.log('Secondary circuits to add:', secondaryCircuits);
+        
+        setManualSecondaryRoutes(secondaryCircuits);
+        await validateManualRoutes(secondaryCircuits, formData.source, formData.destination, 'secondary');
+        setSuccess('Secondary path suggested successfully: ' + secondaryCircuits);
+      } else {
+        console.error('❌ No diverse path found in response');
+        console.log('Protection required:', data.protectionStatus?.required);
+        console.log('Protection available:', data.protectionStatus?.available);
+        console.log('Protection message:', data.protectionStatus?.message);
+        
+        setError('No diverse secondary path found. ' + (data.protectionStatus?.message || 'Try adjusting constraints or use manual entry.'));
+      }
+    } catch (error) {
+      console.error('Suggest secondary path error:', error);
+      setError('Failed to suggest secondary path: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSearch = async () => {
     if (!formData.source || !formData.destination) {
       setError('Please select both source and destination locations');
@@ -286,27 +783,112 @@ const NetworkDesignTool = () => {
     setPricingResults(null);
 
     try {
-      const searchParams = {
-        source: formData.source,
-        destination: formData.destination,
-        bandwidth: formData.bandwidth ? parseFloat(formData.bandwidth) : undefined,
-        bandwidth_unit: 'Mbps',
-        include_ull: formData.includeULL,
-        use_cisco_only_routes: formData.useCiscoOnlyRoutes,
-        use_100gb_and_df_only: formData.use100GbAndDFOnly,
-        quoteRequestId: formData.quoteRequestId,
-        customerName: formData.customerName,
-        constraints: {
-          protection_required: formData.protectionRequired,
-          mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500, // Default to 1500 if not specified
-          carrier_avoidance: formData.carrierAvoidance.length > 0 ? formData.carrierAvoidance : undefined,
-          circuit_exclusion: formData.circuitExclusion.length > 0 ? formData.circuitExclusion : undefined
+      let results;
+      
+      // Handle manual mode
+      if (designMode === 'manual') {
+        // Validate manual routes
+        if (!manualPrimaryRoutes.trim()) {
+          setError('Please enter primary routes');
+          setLoading(false);
+          return;
         }
-      };
 
-      console.log('Sending search request:', searchParams);
-      const results = await networkDesignApi.findPath(searchParams);
-      console.log('Received search results:', results);
+        const primaryValidation = await validateManualRoutes(
+          manualPrimaryRoutes,
+          formData.source,
+          formData.destination,
+          'primary'
+        );
+
+        if (!primaryValidation.valid) {
+          setError('Primary routes validation failed: ' + primaryValidation.message);
+          setLoading(false);
+          return;
+        }
+
+        // Build results object from manual routes
+        // Transform database routes into proper segment format with cable system
+        const buildPathFromRoutes = (routes, startLocation) => {
+          let currentLoc = startLocation;
+          const segments = [];
+          
+          routes.forEach(route => {
+            const segment = {
+              circuit_id: route.circuit_id,
+              from: currentLoc,
+              to: route.location_a === currentLoc ? route.location_b : route.location_a,
+              latency: parseFloat(route.expected_latency) || 0,
+              cost: parseFloat(route.cost) || 0,
+              currency: route.currency || 'USD',
+              bandwidth: parseFloat(route.bandwidth) || 0,
+              carrier: route.underlying_carrier,
+              cable_system: route.cable_system || null
+            };
+            
+            segments.push(segment);
+            currentLoc = segment.to;
+          });
+          
+          return {
+            route: segments,
+            path: [startLocation, ...segments.map(s => s.to)],
+            totalLatency: routes.reduce((sum, r) => sum + (parseFloat(r.expected_latency) || 0), 0),
+            totalCost: routes.reduce((sum, r) => sum + (parseFloat(r.cost) || 0), 0),
+            hops: routes.length
+          };
+        };
+        
+        results = {
+          primaryPath: buildPathFromRoutes(primaryValidation.routes, formData.source)
+        };
+
+        // Handle secondary routes if protection is required
+        if (formData.protectionRequired && manualSecondaryRoutes.trim()) {
+          const secondaryValidation = await validateManualRoutes(
+            manualSecondaryRoutes,
+            formData.source,
+            formData.destination,
+            'secondary'
+          );
+
+          if (!secondaryValidation.valid) {
+            setError('Secondary routes validation failed: ' + secondaryValidation.message);
+            setLoading(false);
+            return;
+          }
+
+          results.diversePath = buildPathFromRoutes(secondaryValidation.routes, formData.source);
+        } else if (formData.protectionRequired && !manualSecondaryRoutes.trim()) {
+          setError('Protection is required but no secondary routes entered. Use "Suggest Secondary Path" button.');
+          setLoading(false);
+          return;
+        }
+      } else {
+        // Auto design mode - existing logic
+        const searchParams = {
+          source: formData.source,
+          destination: formData.destination,
+          bandwidth: formData.bandwidth ? parseFloat(formData.bandwidth) : undefined,
+          bandwidth_unit: 'Mbps',
+          include_ull: formData.includeULL,
+          use_cisco_only_routes: formData.useCiscoOnlyRoutes,
+          use_100gb_and_df_only: formData.use100GbAndDFOnly,
+          quoteRequestId: formData.quoteRequestId,
+          customerName: formData.customerName,
+          constraints: {
+            protection_required: formData.protectionRequired,
+            mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500, // Default to 1500 if not specified
+            carrier_avoidance: formData.carrierAvoidance.length > 0 ? formData.carrierAvoidance : undefined,
+            circuit_exclusion: formData.circuitExclusion.length > 0 ? formData.circuitExclusion : undefined
+          }
+        };
+
+        console.log('Sending search request:', searchParams);
+        results = await networkDesignApi.findPath(searchParams);
+        console.log('Received search results:', results);
+      }
+      
       setSearchResults(results);
       setExpandedAccordion('results');
 
@@ -423,6 +1005,11 @@ const NetworkDesignTool = () => {
   };
 
   const toggleLogExpansion = (logId) => {
+    // Prevent read-only users from expanding logs
+    if (user && user.role === 'read_only') {
+      return;
+    }
+    
     const newExpanded = new Set(expandedLogs);
     if (newExpanded.has(logId)) {
       newExpanded.delete(logId);
@@ -931,6 +1518,51 @@ const NetworkDesignTool = () => {
     }
   };
 
+  // Reload search from pricing log
+  const handleReloadFromLog = (log) => {
+    try {
+      const params = log.parameters || log.pricing_data?.inputParameters;
+      
+      if (!params) {
+        setError('Unable to reload - missing parameters in log');
+        return;
+      }
+
+      // Set form data from log parameters
+      setFormData(prev => ({
+        ...prev,
+        source: params.source || '',
+        destination: params.destination || '',
+        bandwidth: params.bandwidth?.toString() || '',
+        includeULL: params.include_ull || params.includeULL || false,
+        useCiscoOnlyRoutes: params.use_cisco_only_routes || params.useCiscoOnlyRoutes || false,
+        use100GbAndDFOnly: params.use_100gb_and_df_only || params.use100GbAndDFOnly || false,
+        protectionRequired: params.protection_required || params.protectionRequired || false,
+        mtuRequired: params.mtu_required || params.mtuRequired || '',
+        carrierAvoidance: params.carrier_avoidance || params.carrierAvoidance || [],
+        circuitExclusion: params.circuit_exclusion || params.circuitExclusion || [],
+        outputCurrency: params.output_currency || params.outputCurrency || 'USD',
+        contractTerm: params.contract_term || params.contractTerm || 12,
+        quoteRequestId: params.quoteRequestId || params.quote_request_id || '',
+        customerName: params.customerName || params.customer_name || ''
+      }));
+
+      // Check if this was a manual mode search by looking at the log data
+      // (Future enhancement: store design_mode in the log parameters)
+      setDesignMode('auto'); // Default to auto for now
+
+      // Switch to the Network Design tab
+      setCurrentTab(0);
+      setExpandedAccordion('search');
+      
+      setSuccess('Search parameters loaded from pricing log. You can modify and re-run the search.');
+      
+    } catch (error) {
+      console.error('Reload from log error:', error);
+      setError('Failed to reload search: ' + error.message);
+    }
+  };
+
   const generatePricingLogEmailBody = (params, results) => {
     let emailBody = '';
     
@@ -1005,16 +1637,7 @@ const NetworkDesignTool = () => {
       section += `Contract Term: ${pricing.contractTerm} months\n`;
       section += `Bandwidth: ${pricing.bandwidth} Mbps\n`;
       
-      // Add detailed pricing breakdown if available
-      if (pricing.allocatedCost !== undefined) {
-        section += `Allocated Cost: ${formatCurrency(pricing.allocatedCost, pricing.currency)}\n`;
-      }
-      if (pricing.minimumMargin !== undefined) {
-        section += `Minimum Margin: ${pricing.minimumMargin.toFixed(1)}%\n`;
-      }
-      if (pricing.suggestedMargin !== undefined) {
-        section += `Suggested Margin: ${pricing.suggestedMargin.toFixed(1)}%\n`;
-      }
+      // Margins removed - not included in exports per user requirement
       
       // Add promo pricing information if used
       if (pricing.promoPricing && pricing.promoPricing.used) {
@@ -1043,17 +1666,39 @@ const NetworkDesignTool = () => {
         
         console.log(`Export Debug - Processing ${pathType}:`, result);
         
-        // Generate route table from path array
-        if (result.path && Array.isArray(result.path)) {
+        // Generate route table - check if we have detailed route info
+        if (result.pricing && result.pricing.detailedCalculations && result.pricing.detailedCalculations.allocatedCostBreakdown && result.pricing.detailedCalculations.allocatedCostBreakdown.segments) {
+          // Use detailed calculations which have all circuit info
+          const segments = result.pricing.detailedCalculations.allocatedCostBreakdown.segments;
           let table = `${pathType} Route:\n`;
           table += `Circuit ID\tRoute Segment\tLatency\tCarrier\tCable System\n`;
+          table += `${'='.repeat(70)}\n`;
+          
+          segments.forEach(segment => {
+            const circuitId = segment.circuit || 'N/A';
+            const location = segment.location || 'N/A';
+            const latency = segment.latency || 0;
+            const carrier = segment.carrier || 'N/A';
+            const cableSystem = segment.cable_system || segment.cableSystem || 'N/A';
+            table += `${circuitId}\t${location}\t${formatLatency(latency)}ms\t${carrier}\t${cableSystem}\n`;
+          });
+          
+          table += `${'='.repeat(70)}\n`;
+          table += `Total Latency: ${formatLatency(result.totalLatency || 0)}ms\n`;
+          table += `Hops: ${result.hops || segments.length}\n\n`;
+          
+          emailBody += table;
+        } else if (result.path && Array.isArray(result.path)) {
+          // Fallback to path array if detailed calculations not available
+          let table = `${pathType} Route:\n`;
+          table += `Route Segment\tLatency\n`;
           table += `${'='.repeat(70)}\n`;
           
           // Convert path array to route segments
           for (let i = 0; i < result.path.length - 1; i++) {
             const from = result.path[i];
             const to = result.path[i + 1];
-            table += `Direct Route\t${from} → ${to}\t${formatLatency(result.totalLatency || 0)}ms\tN/A\tN/A\n`;
+            table += `${from} → ${to}\t${formatLatency(result.totalLatency || 0)}ms\n`;
           }
           
           table += `${'='.repeat(70)}\n`;
@@ -1342,6 +1987,24 @@ const NetworkDesignTool = () => {
           </AccordionSummary>
           <AccordionDetails>
             <Grid container spacing={3}>
+              {/* Design Mode Selector */}
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Design Mode</InputLabel>
+                  <Select
+                    value={designMode}
+                    label="Design Mode"
+                    onChange={handleDesignModeChange}
+                  >
+                    <MenuItem value="auto">Auto Design</MenuItem>
+                    <MenuItem value="manual">Manual Route Entry</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              
+              {/* Spacer for half-width design mode */}
+              <Grid item xs={12} md={6} />
+              
               {/* Customer Name */}
               <Grid item xs={12} md={6}>
                 <TextField
@@ -1416,8 +2079,100 @@ const NetworkDesignTool = () => {
                 />
               </Grid>
 
-              {/* Carrier Avoidance - Now searchable */}
-              <Grid item xs={12} md={6}>
+              {/* Manual Route Entry Fields */}
+              {designMode === 'manual' && (
+                <>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Primary Routes (Circuit IDs)"
+                      value={manualPrimaryRoutes}
+                      onChange={(e) => handleManualPrimaryRoutesChange(e.target.value)}
+                      placeholder="Enter circuit IDs separated by commas (e.g., LONLON123123, LONSNG442222, SNGHKG999555)"
+                      helperText={primaryRouteValidation.message || "Enter circuit IDs in order from source to destination"}
+                      error={!primaryRouteValidation.valid && primaryRouteValidation.message !== ''}
+                      InputProps={{
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <Button
+                              size="small"
+                              onClick={() => {
+                                setManualPrimaryRoutes('');
+                                setPrimaryRouteValidation({ valid: false, message: '', routes: [] });
+                              }}
+                              disabled={!manualPrimaryRoutes}
+                              sx={{ mr: 1 }}
+                            >
+                              Clear
+                            </Button>
+                            <Button
+                              size="small"
+                              variant="contained"
+                              onClick={() => handleFindSuggestions('primary')}
+                              disabled={!formData.source || !formData.destination || !formData.bandwidth}
+                            >
+                              Find Suggestions
+                            </Button>
+                          </InputAdornment>
+                        )
+                      }}
+                    />
+                  </Grid>
+
+                  {formData.protectionRequired && (
+                    <Grid item xs={12}>
+                      <TextField
+                        fullWidth
+                        label="Secondary Routes (Circuit IDs)"
+                        value={manualSecondaryRoutes}
+                        onChange={(e) => handleManualSecondaryRoutesChange(e.target.value)}
+                        placeholder="Enter circuit IDs separated by commas"
+                        helperText={secondaryRouteValidation.message || "Enter circuit IDs for diverse path"}
+                        error={!secondaryRouteValidation.valid && secondaryRouteValidation.message !== ''}
+                        InputProps={{
+                          endAdornment: (
+                            <InputAdornment position="end">
+                              <Button
+                                size="small"
+                                onClick={() => {
+                                  setManualSecondaryRoutes('');
+                                  setSecondaryRouteValidation({ valid: false, message: '', routes: [] });
+                                }}
+                                disabled={!manualSecondaryRoutes}
+                                sx={{ mr: 1 }}
+                              >
+                                Clear
+                              </Button>
+                              <Button
+                                size="small"
+                                onClick={() => handleFindSuggestions('secondary')}
+                                disabled={!formData.source || !formData.destination || !formData.bandwidth}
+                                sx={{ mr: 1 }}
+                              >
+                                Find Suggestions
+                              </Button>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                onClick={handleSuggestSecondaryPath}
+                                disabled={!formData.source || !formData.destination || !formData.bandwidth}
+                              >
+                                Suggest Secondary Path
+                              </Button>
+                            </InputAdornment>
+                          )
+                        }}
+                      />
+                    </Grid>
+                  )}
+                </>
+              )}
+
+              {/* Auto Design Constraints - Only show in auto mode */}
+              {designMode === 'auto' && (
+                <>
+                  {/* Carrier Avoidance - Now searchable */}
+                  <Grid item xs={12} md={6}>
                 <Autocomplete
                   multiple
                   options={carriers}
@@ -1460,6 +2215,8 @@ const NetworkDesignTool = () => {
                   )}
                 />
               </Grid>
+                </>
+              )}
 
               {/* Output Currency */}
               <Grid item xs={12} md={6}>
@@ -1510,52 +2267,58 @@ const NetworkDesignTool = () => {
                 </FormControl>
               </Grid>
 
-              {/* Include Cisco Only Routes - right side with other checkboxes */}
-              <Grid item xs={12} md={6}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={formData.useCiscoOnlyRoutes}
-                      onChange={(e) => handleInputChange('useCiscoOnlyRoutes', e.target.checked)}
-                    />
-                  }
-                  label="Include Cisco Only Routes"
-                />
-              </Grid>
+              {/* Include Cisco Only Routes - right side, hide when Protection Required */}
+              {!formData.protectionRequired && (
+                <Grid item xs={12} md={6}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={formData.useCiscoOnlyRoutes}
+                        onChange={(e) => handleInputChange('useCiscoOnlyRoutes', e.target.checked)}
+                      />
+                    }
+                    label="Include Cisco Only Routes"
+                  />
+                </Grid>
+              )}
 
               {/* Empty space for proper alignment */}
               <Grid item xs={12} md={6}>
               </Grid>
 
-              {/* Include ULL - right side with other checkboxes */}
-              <Grid item xs={12} md={6}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={formData.includeULL}
-                      onChange={(e) => handleInputChange('includeULL', e.target.checked)}
-                    />
-                  }
-                  label="Include ULL"
-                />
-              </Grid>
+              {/* Include ULL - right side, hide when Protection Required */}
+              {!formData.protectionRequired && (
+                <Grid item xs={12} md={6}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={formData.includeULL}
+                        onChange={(e) => handleInputChange('includeULL', e.target.checked)}
+                      />
+                    }
+                    label="Include ULL"
+                  />
+                </Grid>
+              )}
 
               {/* Empty space for proper alignment */}
               <Grid item xs={12} md={6}>
               </Grid>
 
-              {/* Use 100Gb and DF routes only - below Include ULL */}
-              <Grid item xs={12} md={6}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={formData.use100GbAndDFOnly}
-                      onChange={(e) => handleInputChange('use100GbAndDFOnly', e.target.checked)}
-                    />
-                  }
-                  label="Use 100Gb and DF routes only"
-                />
-              </Grid>
+              {/* Use 100Gb and DF routes only - hide when manual mode */}
+              {designMode === 'auto' && (
+                <Grid item xs={12} md={6}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={formData.use100GbAndDFOnly}
+                        onChange={(e) => handleInputChange('use100GbAndDFOnly', e.target.checked)}
+                      />
+                    }
+                    label="Use 100Gb and DF routes only"
+                  />
+                </Grid>
+              )}
 
               {/* Action Buttons */}
               <Grid item xs={12}>
@@ -1567,7 +2330,7 @@ const NetworkDesignTool = () => {
                     loading={loading}
                     disabled={!formData.source || !formData.destination}
                   >
-                    Find Route
+                    {designMode === 'manual' ? 'Calculate Pricing' : 'Find Route'}
                   </LoadingButton>
                 </Box>
               </Grid>
@@ -2338,27 +3101,45 @@ const NetworkDesignTool = () => {
                       </TableCell>
                       <TableCell align="center">
                         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'center' }}>
+                          {/* View Details - hide for read-only users */}
+                          {user && (user.role === 'administrator' || user.role === 'provisioner') && (
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              onClick={() => toggleLogExpansion(log.id)}
+                            >
+                              {expandedLogs.has(log.id) ? 'Hide Details' : 'View Details'}
+                            </Button>
+                          )}
+                          
+                          {/* Export - only for CONTRACT_TERM_PRICING_CALCULATION */}
+                          {log.action_type === 'CONTRACT_TERM_PRICING_CALCULATION' && (
+                            <Button
+                              variant="contained"
+                              size="small"
+                              startIcon={<EmailIcon />}
+                              onClick={() => handleExportPricingLog(log)}
+                              disabled={!log.results && !log.pricing_data?.calculationResults}
+                              color="primary"
+                            >
+                              Export
+                            </Button>
+                          )}
+                          
+                          {/* Reload Search - available to all users */}
                           <Button
                             variant="outlined"
                             size="small"
-                            onClick={() => toggleLogExpansion(log.id)}
+                            startIcon={<HistoryIcon />}
+                            onClick={() => handleReloadFromLog(log)}
+                            color="secondary"
                           >
-                            {expandedLogs.has(log.id) ? 'Hide Details' : 'View Details'}
-                          </Button>
-                          <Button
-                            variant="contained"
-                            size="small"
-                            startIcon={<EmailIcon />}
-                            onClick={() => handleExportPricingLog(log)}
-                            disabled={!log.results && !log.pricing_data?.calculationResults}
-                            color="primary"
-                          >
-                            Export
+                            Reload Search
                           </Button>
                         </Box>
                       </TableCell>
                     </TableRow>
-                    {expandedLogs.has(log.id) && (
+                    {expandedLogs.has(log.id) && user && (user.role === 'administrator' || user.role === 'provisioner') && (
                       <TableRow>
                         <TableCell colSpan={8} sx={{ backgroundColor: '#f8f9fa', border: 'none' }}>
                           <Box sx={{ p: 2 }}>
@@ -2536,6 +3317,119 @@ const NetworkDesignTool = () => {
             disabled={!Object.values(exportOptions).some(Boolean)}
           >
             Download Email File
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Route Suggestions Dialog */}
+      <Dialog
+        open={suggestionsDialogOpen}
+        onClose={() => setSuggestionsDialogOpen(false)}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle>
+          Route Suggestions for {suggestionTarget === 'primary' ? 'Primary' : 'Secondary'} Path
+        </DialogTitle>
+        <DialogContent>
+          {/* Show currently selected routes */}
+          {((suggestionTarget === 'primary' && manualPrimaryRoutes) || 
+            (suggestionTarget === 'secondary' && manualSecondaryRoutes)) && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" gutterBottom>Currently Selected Routes:</Typography>
+              <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                {suggestionTarget === 'primary' ? manualPrimaryRoutes : manualSecondaryRoutes}
+              </Typography>
+            </Alert>
+          )}
+          
+          {suggestionsLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+              <CircularProgress />
+            </Box>
+          ) : routeSuggestions.length > 0 ? (
+            <>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Showing top {routeSuggestions.length} route{routeSuggestions.length > 1 ? 's' : ''} by estimated end-to-end latency.
+                After adding a route, close this dialog and click "Find Suggestions" again to see next hops.
+              </Typography>
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                    <TableCell>UCN</TableCell>
+                    <TableCell>Location A</TableCell>
+                    <TableCell>Location B</TableCell>
+                    <TableCell>Latency (ms)</TableCell>
+                    <TableCell>Carrier</TableCell>
+                    <TableCell>Cable System</TableCell>
+                    <TableCell>Bandwidth</TableCell>
+                    <TableCell>Est. End-to-End Latency (ms)</TableCell>
+                    <TableCell>Action</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {routeSuggestions.map((suggestion, index) => (
+                      <TableRow 
+                        key={suggestion.circuit_id}
+                        sx={{
+                          backgroundColor: !suggestion.sufficientBandwidth ? 'rgba(255, 0, 0, 0.05)' : undefined,
+                          opacity: !suggestion.sufficientBandwidth ? 0.6 : 1
+                        }}
+                      >
+                        <TableCell>{suggestion.ucn}</TableCell>
+                        <TableCell>{suggestion.location_a}</TableCell>
+                        <TableCell>{suggestion.location_b}</TableCell>
+                        <TableCell>{suggestion.latency}</TableCell>
+                        <TableCell>{suggestion.carrier || 'N/A'}</TableCell>
+                        <TableCell>{suggestion.cable_system || 'N/A'}</TableCell>
+                        <TableCell>
+                          {suggestion.bandwidthDisplay}
+                          {!suggestion.sufficientBandwidth && (
+                            <Chip 
+                              label="Insufficient" 
+                              size="small" 
+                              color="error" 
+                              sx={{ ml: 1 }} 
+                            />
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={suggestion.estimatedEndToEndLatency}
+                            color={index === 0 ? 'success' : 'default'}
+                            size="small"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Tooltip title={!suggestion.sufficientBandwidth ? 'Insufficient bandwidth' : 'Add this route'}>
+                            <span>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                onClick={() => handleAddSuggestedRoute(suggestion.circuit_id)}
+                                disabled={!suggestion.sufficientBandwidth}
+                              >
+                                Add Route
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </>
+          ) : (
+            <Alert severity="info">
+              No route suggestions available. Try using Auto Design mode.
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSuggestionsDialogOpen(false)}>
+            Close
           </Button>
         </DialogActions>
       </Dialog>
