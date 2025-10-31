@@ -61,10 +61,6 @@ const AllocatedCostCalculator = () => {
   const [auditLogs, setAuditLogs] = useState([]);
   const [searchResults, setSearchResults] = useState(null);
   const [pricingResults, setPricingResults] = useState(null);
-  const [crossConnectResults, setCrossConnectResults] = useState({
-    source: null,
-    destination: null
-  });
   
   // Validation state
   const [primaryPathValidation, setPrimaryPathValidation] = useState({ valid: false, message: '', routes: [] });
@@ -82,12 +78,6 @@ const AllocatedCostCalculator = () => {
   const [filteredAuditLogs, setFilteredAuditLogs] = useState([]);
   const [logSearchTerm, setLogSearchTerm] = useState('');
   const [logDateFilter, setLogDateFilter] = useState({ startDate: '', endDate: '' });
-  
-  // Cross-connect state
-  const [crossConnectEnabled, setCrossConnectEnabled] = useState({
-    source: false,
-    destination: false
-  });
   
   // Export dialog state
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
@@ -357,8 +347,6 @@ const AllocatedCostCalculator = () => {
         contractTerm: formData.contractTerm,
         quoteRequestId: formData.quoteRequestId,
         customerName: formData.customerName,
-        crossConnectA: crossConnectEnabled.source ? crossConnectResults.source : null,
-        crossConnectB: crossConnectEnabled.destination ? crossConnectResults.destination : null,
         calling_module: 'allocated_cost_calculator',
         protection_required: formData.pricingType === 'protected'
       };
@@ -391,6 +379,20 @@ const AllocatedCostCalculator = () => {
     let totalLatency = 0;
     
     routes.forEach(route => {
+      // Handle Dark Fiber bandwidth
+      let bandwidthValue;
+      let bandwidthDisplay;
+      
+      if (route.bandwidth && typeof route.bandwidth === 'string' && route.bandwidth.toLowerCase().includes('dark fiber')) {
+        // Dark Fiber: use 200000 Mbps for calculations, preserve "Dark Fiber" for display
+        bandwidthValue = 200000;
+        bandwidthDisplay = 'Dark Fiber';
+      } else {
+        // Regular bandwidth: parse numeric value
+        bandwidthValue = parseFloat(route.bandwidth) || 0;
+        bandwidthDisplay = bandwidthValue;
+      }
+      
       const segment = {
         circuit_id: route.circuit_id,
         from: currentLocation,
@@ -398,7 +400,8 @@ const AllocatedCostCalculator = () => {
         latency: parseFloat(route.expected_latency) || 0,
         carrier: route.underlying_carrier,
         cable_system: route.cable_system,
-        bandwidth: parseFloat(route.bandwidth),
+        bandwidth: bandwidthValue, // Numeric value for calculations (200000 for Dark Fiber)
+        bandwidthDisplay: bandwidthDisplay, // Display value ("Dark Fiber" or number)
         cost: parseFloat(route.cost)
       };
       
@@ -454,77 +457,6 @@ const AllocatedCostCalculator = () => {
       await loadAuditLogs();
     } catch (err) {
       setError(`Failed to clear logs: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-  
-  const toggleCrossConnect = async (locationType) => {
-    const locationCode = locationType === 'source' ? formData.source : formData.destination;
-    
-    if (!locationCode) {
-      setError(`Please select ${locationType} location first`);
-      return;
-    }
-    
-    // If disabling, just toggle off
-    if (crossConnectEnabled[locationType]) {
-      setCrossConnectEnabled(prev => ({
-        ...prev,
-        [locationType]: false
-      }));
-      return;
-    }
-    
-    // If enabling, fetch cross connect data
-    setLoading(true);
-    try {
-      const crossConnectData = await networkDesignApi.getCrossConnectInfo(locationCode);
-      
-      if (!crossConnectData) {
-        setError(`No cross-connect data available for ${locationCode}`);
-        return;
-      }
-      
-      // Convert prices to output currency
-      const convertCurrency = (amount, fromCurrency, toCurrency) => {
-        const fromRate = exchangeRates[fromCurrency] || 1;
-        const toRate = exchangeRates[toCurrency] || 1;
-        const amountInUSD = amount / fromRate;
-        return amountInUSD * toRate;
-      };
-      
-      const nrcPrice = convertCurrency(
-        parseFloat(crossConnectData.cross_connect_nrc),
-        crossConnectData.cross_connect_nrc_currency,
-        formData.outputCurrency
-      );
-      
-      const mrcPrice = convertCurrency(
-        parseFloat(crossConnectData.cross_connect_mrc),
-        crossConnectData.cross_connect_mrc_currency,
-        formData.outputCurrency
-      );
-      
-      setCrossConnectResults(prev => ({
-        ...prev,
-        [locationType]: {
-          locationCode: crossConnectData.location_code,
-          datacenterName: crossConnectData.datacenter_name,
-          nrc: nrcPrice,
-          mrc: mrcPrice,
-          notes: crossConnectData.cross_connect_notes,
-          currency: formData.outputCurrency
-        }
-      }));
-      
-      setCrossConnectEnabled(prev => ({
-        ...prev,
-        [locationType]: true
-      }));
-      
-    } catch (err) {
-      setError('Failed to get cross connect pricing: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -842,58 +774,6 @@ const AllocatedCostCalculator = () => {
                 </Grid>
               )}
               
-              {/* Cross Connect Options */}
-              <Grid item xs={12}>
-                <Divider sx={{ my: 2 }} />
-                <Typography variant="subtitle1" gutterBottom>Cross-Connect Options</Typography>
-                <Grid container spacing={2}>
-                  <Grid item xs={12} md={6}>
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={crossConnectEnabled.source}
-                          onChange={() => toggleCrossConnect('source')}
-                          disabled={!formData.source}
-                        />
-                      }
-                      label={`Add Cross-Connect at Source (${formData.source || 'Select source'})`}
-                    />
-                    {crossConnectEnabled.source && crossConnectResults.source && (
-                      <Box sx={{ ml: 4, mt: 1 }}>
-                        <Typography variant="body2">
-                          NRC: {formatCurrency(crossConnectResults.source.nrc, crossConnectResults.source.currency)}
-                        </Typography>
-                        <Typography variant="body2">
-                          MRC: {formatCurrency(crossConnectResults.source.mrc, crossConnectResults.source.currency)}
-                        </Typography>
-                      </Box>
-                    )}
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={crossConnectEnabled.destination}
-                          onChange={() => toggleCrossConnect('destination')}
-                          disabled={!formData.destination}
-                        />
-                      }
-                      label={`Add Cross-Connect at Destination (${formData.destination || 'Select destination'})`}
-                    />
-                    {crossConnectEnabled.destination && crossConnectResults.destination && (
-                      <Box sx={{ ml: 4, mt: 1 }}>
-                        <Typography variant="body2">
-                          NRC: {formatCurrency(crossConnectResults.destination.nrc, crossConnectResults.destination.currency)}
-                        </Typography>
-                        <Typography variant="body2">
-                          MRC: {formatCurrency(crossConnectResults.destination.mrc, crossConnectResults.destination.currency)}
-                        </Typography>
-                      </Box>
-                    )}
-                  </Grid>
-                </Grid>
-              </Grid>
-              
               {/* Calculate Button */}
               <Grid item xs={12}>
                 <Button
@@ -947,7 +827,7 @@ const AllocatedCostCalculator = () => {
                                 <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                 <TableCell>{segment.from} → {segment.to}</TableCell>
                                 <TableCell>{formatLatency(segment.latency)}ms</TableCell>
-                                <TableCell>{segment.bandwidth || 'N/A'}</TableCell>
+                                <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
                                 <TableCell>{segment.carrier || 'N/A'}</TableCell>
                                 <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                               </TableRow>
@@ -994,7 +874,7 @@ const AllocatedCostCalculator = () => {
                                   <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                   <TableCell>{segment.from} → {segment.to}</TableCell>
                                   <TableCell>{formatLatency(segment.latency)}ms</TableCell>
-                                  <TableCell>{segment.bandwidth || 'N/A'}</TableCell>
+                                  <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
                                   <TableCell>{segment.carrier || 'N/A'}</TableCell>
                                   <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                                 </TableRow>

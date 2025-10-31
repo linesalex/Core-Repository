@@ -199,9 +199,9 @@ const dbWrapper = {
         const errorType = classifyDatabaseError(err);
         const userError = createUserFriendlyError(errorType, err);
         console.error('Database RUN error:', err.message);
-        if (callback) callback(err, null, userError);
+        if (callback) callback.call(this, err, null, userError);
       } else {
-        if (callback) callback(null, this);
+        if (callback) callback.call(this, null);
       }
     });
   },

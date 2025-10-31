@@ -127,37 +127,14 @@ class OutageHistoryCleanupService {
               const actualDeleted = this.changes;
               console.log(`✅ Successfully deleted ${actualDeleted} outage history records older than ${this.retentionDays} days`);
               
-              // Log the cleanup activity
-              const logEntry = {
-                action: 'outage_history_cleanup',
-                records_deleted: actualDeleted,
-                cutoff_date: cutoffDateString,
-                retention_days: this.retentionDays,
-                timestamp: new Date().toISOString()
-              };
-              
-              db.run(
-                'INSERT INTO change_logs (user_id, table_name, record_id, action, new_values, changes_summary) VALUES (?, ?, ?, ?, ?, ?)',
-                [
-                  null, // system operation
-                  'core_outage_history',
-                  '0', // Use '0' as placeholder for system operations without specific record
-                  'cleanup',
-                  JSON.stringify(logEntry),
-                  `Automated cleanup: deleted ${actualDeleted} records older than ${this.retentionDays} days`
-                ],
-                function(logErr) {
-                  if (logErr) {
-                    console.warn('⚠️  Failed to log cleanup activity:', logErr);
-                  }
-                  
-                  resolve({
-                    deleted: actualDeleted,
-                    cutoffDate: cutoffDateString,
-                    retentionDays: this.retentionDays
-                  });
-                }
-              );
+              // Note: Automated cleanup operations are not logged to change_logs table
+              // since they are system operations without a user context.
+              // Manual cleanups triggered by administrators are logged separately.
+              resolve({
+                deleted: actualDeleted,
+                cutoffDate: cutoffDateString,
+                retentionDays: this.retentionDays
+              });
             }
           );
         }

@@ -3649,8 +3649,11 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
       
       // Convert bandwidth to Mbps for comparison (all data is now in Mbps)
       let routeBandwidthMbps = routeBandwidth;
+      let routeBandwidthDisplay = routeBandwidth; // Preserve original for display
+      
       if (routeBandwidth && routeBandwidth.toLowerCase().includes('dark fiber')) {
-        routeBandwidthMbps = '200000'; // Dark fiber = 200 Gbps = 200,000 Mbps
+        routeBandwidthMbps = '200000'; // Dark fiber = 200 Gbps = 200,000 Mbps (for filtering)
+        routeBandwidthDisplay = 'Dark Fiber'; // Preserve "Dark Fiber" text for display
       }
       
       // Skip routes that don't meet bandwidth requirements (requires 2x requested bandwidth)
@@ -3837,7 +3840,7 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
           weight,
           cost: routeCost,
           currency,
-          bandwidth: routeBandwidthMbps + ' Mbps',
+          bandwidth: routeBandwidthDisplay,
           carrier: underlying_carrier,
           circuit_id: route.circuit_id,
           cable_system: cable_system || null
@@ -3847,7 +3850,7 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
           weight,
           cost: routeCost,
           currency,
-          bandwidth: routeBandwidthMbps + ' Mbps',
+          bandwidth: routeBandwidthDisplay,
           carrier: underlying_carrier,
           circuit_id: route.circuit_id,
           cable_system: cable_system || null
@@ -4795,7 +4798,14 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
         path.route.forEach(segment => {
           let segmentCost = parseFloat(segment.cost) || 0;
           const segmentCurrency = segment.currency || 'USD';
-          const segmentBandwidth = parseFloat(segment.bandwidth) || 1000; // Default 1000 if not specified
+          
+          // Handle Dark Fiber bandwidth - check if bandwidth is a string containing "dark fiber"
+          let segmentBandwidth;
+          if (segment.bandwidth && typeof segment.bandwidth === 'string' && segment.bandwidth.toLowerCase().includes('dark fiber')) {
+            segmentBandwidth = 200000; // Dark Fiber = 200 Gbps = 200,000 Mbps
+          } else {
+            segmentBandwidth = parseFloat(segment.bandwidth) || 1000; // Default 1000 if not specified
+          }
           
           // Convert segment cost to output currency
           const originalSegmentCost = segmentCost;

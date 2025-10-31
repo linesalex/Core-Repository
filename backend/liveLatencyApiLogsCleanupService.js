@@ -134,37 +134,14 @@ class LiveLatencyApiLogsCleanupService {
               const actualDeleted = this.changes;
               console.log(`✅ Successfully deleted ${actualDeleted} live latency API log records older than ${retentionDays} days`);
               
-              // Log the cleanup activity
-              const logEntry = {
-                action: 'live_latency_api_logs_cleanup',
-                records_deleted: actualDeleted,
-                cutoff_date: cutoffDateString,
-                retention_days: retentionDays,
-                timestamp: new Date().toISOString()
-              };
-              
-              db.run(
-                'INSERT INTO change_logs (user_id, table_name, record_id, action, new_values, changes_summary) VALUES (?, ?, ?, ?, ?, ?)',
-                [
-                  null, // system operation
-                  'live_latency_api_logs',
-                  '0', // Use '0' as placeholder for system operations without specific record
-                  'cleanup',
-                  JSON.stringify(logEntry),
-                  `Automated cleanup: deleted ${actualDeleted} live latency API log records older than ${retentionDays} days`
-                ],
-                function(logErr) {
-                  if (logErr) {
-                    console.warn('⚠️  Failed to log cleanup activity:', logErr);
-                  }
-                  
-                  resolve({
-                    deleted: actualDeleted,
-                    cutoffDate: cutoffDateString,
-                    retentionDays: retentionDays
-                  });
-                }
-              );
+              // Note: Automated cleanup operations are not logged to change_logs table
+              // since they are system operations without a user context.
+              // Manual cleanups triggered by administrators are logged separately.
+              resolve({
+                deleted: actualDeleted,
+                cutoffDate: cutoffDateString,
+                retentionDays: retentionDays
+              });
             }
           );
         }

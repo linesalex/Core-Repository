@@ -870,6 +870,20 @@ const NetworkDesignTool = () => {
           const segments = [];
           
           routes.forEach(route => {
+            // Handle Dark Fiber bandwidth
+            let bandwidthValue;
+            let bandwidthDisplay;
+            
+            if (route.bandwidth && typeof route.bandwidth === 'string' && route.bandwidth.toLowerCase().includes('dark fiber')) {
+              // Dark Fiber: use 200000 Mbps for calculations, preserve "Dark Fiber" for display
+              bandwidthValue = 200000;
+              bandwidthDisplay = 'Dark Fiber';
+            } else {
+              // Regular bandwidth: parse numeric value
+              bandwidthValue = parseFloat(route.bandwidth) || 0;
+              bandwidthDisplay = bandwidthValue;
+            }
+            
             const segment = {
               circuit_id: route.circuit_id,
               from: currentLoc,
@@ -877,7 +891,8 @@ const NetworkDesignTool = () => {
               latency: parseFloat(route.expected_latency) || 0,
               cost: parseFloat(route.cost) || 0,
               currency: route.currency || 'USD',
-              bandwidth: parseFloat(route.bandwidth) || 0,
+              bandwidth: bandwidthValue, // Numeric value for calculations (200000 for Dark Fiber)
+              bandwidthDisplay: bandwidthDisplay, // Display value ("Dark Fiber" or number)
               carrier: route.underlying_carrier,
               cable_system: route.cable_system || null
             };
@@ -2537,7 +2552,7 @@ const NetworkDesignTool = () => {
                                 <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                 <TableCell>{segment.from} → {segment.to}</TableCell>
                                 <TableCell>{formatLatency(segment.latency)}ms</TableCell>
-                                <TableCell>{segment.bandwidth || 'N/A'}</TableCell>
+                                <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
                                 <TableCell>{segment.carrier || 'N/A'}</TableCell>
                                 <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                               </TableRow>
@@ -2584,7 +2599,7 @@ const NetworkDesignTool = () => {
                                   <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                   <TableCell>{segment.from} → {segment.to}</TableCell>
                                   <TableCell>{formatLatency(segment.latency)}ms</TableCell>
-                                  <TableCell>{segment.bandwidth || 'N/A'}</TableCell>
+                                  <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
                                   <TableCell>{segment.carrier || 'N/A'}</TableCell>
                                   <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                                 </TableRow>
