@@ -113,7 +113,7 @@ function AuthenticatedApp() {
     location: '',
     cable_system: '',
     bandwidth: '',
-    is_special: false,
+    is_special: '',
     regions: []
   });
   const [isServerSideFiltered, setIsServerSideFiltered] = useState(false);
@@ -162,7 +162,7 @@ function AuthenticatedApp() {
         location: '',
         cable_system: '',
         bandwidth: '',
-        is_special: false,
+        is_special: '',
         regions: []
       });
       setIsServerSideFiltered(false);
@@ -258,8 +258,10 @@ function AuthenticatedApp() {
     const matchesBandwidth = !routeFilters.bandwidth || 
       (route.bandwidth && route.bandwidth.toString().includes(routeFilters.bandwidth));
     
+    // Handle three-state Special/ULL filter: '' (blank/all), '1' (yes), '0' (no)
     const matchesSpecial = !routeFilters.is_special || 
-      (route.is_special === 1 || route.is_special === true);
+      (routeFilters.is_special === '1' && (route.is_special === 1 || route.is_special === true)) ||
+      (routeFilters.is_special === '0' && (route.is_special === 0 || route.is_special === false));
     
     const matchesRegion = !routeFilters.regions || routeFilters.regions.length === 0 || 
       routeFilters.regions.includes(route.region);
@@ -319,7 +321,7 @@ function AuthenticatedApp() {
           location: filters.location_a || filters.location_b || filters.location || '',
           cable_system: filters.cable_system || '',
           bandwidth: filters.bandwidth || '',
-          is_special: filters.is_special === '1' || filters.is_special === true,
+          is_special: filters.is_special || '',
           regions: filters.regions || []
         });
       } else {
@@ -332,7 +334,7 @@ function AuthenticatedApp() {
           location: '',
           cable_system: '',
           bandwidth: '',
-          is_special: false,
+          is_special: '',
           regions: filters.regions || []
         });
       }
@@ -449,7 +451,7 @@ function AuthenticatedApp() {
         location: '',
         cable_system: '',
         bandwidth: '',
-        is_special: false,
+        is_special: '',
         regions: []
       });
       
@@ -908,7 +910,7 @@ function AuthenticatedApp() {
               <>
                 <ListItem button onClick={() => setNetworkDesignOpen(!networkDesignOpen)}>
                   <ListItemIcon><DesignServicesIcon /></ListItemIcon>
-                  <ListItemText primary="Network Design & Pricing Tool" />
+                  <ListItemText primary="CNX Eth Design & Pricing Tool" />
                   {networkDesignOpen ? <ExpandLess /> : <ExpandMore />}
                 </ListItem>
                 <Collapse in={networkDesignOpen} timeout="auto" unmountOnExit>

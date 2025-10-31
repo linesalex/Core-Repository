@@ -869,6 +869,11 @@ router.get('/change-logs', authenticateToken, authorizeModulePermission('change_
   
   // Special handling for allocated_cost_calculator - query from allocated_cost_pricing_logs table
   if (table_name === 'allocated_cost_calculator') {
+    let countQuery = `
+      SELECT COUNT(*) as total
+      FROM allocated_cost_pricing_logs cl 
+      LEFT JOIN users u ON cl.user_id = u.id
+    `;
     let query = `
       SELECT cl.*, u.username, u.full_name 
       FROM allocated_cost_pricing_logs cl 
@@ -900,20 +905,44 @@ router.get('/change-logs', authenticateToken, authorizeModulePermission('change_
     }
     
     if (conditions.length > 0) {
-      query += ' WHERE ' + conditions.join(' AND ');
+      const whereClause = ' WHERE ' + conditions.join(' AND ');
+      countQuery += whereClause;
+      query += whereClause;
     }
     
-    query += ' ORDER BY cl.timestamp DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-    
-    db.all(query, params, (err, logs) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(logs);
+    // Get total count
+    db.get(countQuery, params, (countErr, countResult) => {
+      if (countErr) return res.status(500).json({ error: countErr.message });
+      
+      const total = countResult.total;
+      
+      // Get paginated logs
+      query += ' ORDER BY cl.timestamp DESC LIMIT ? OFFSET ?';
+      const queryParams = [...params, limit, offset];
+      
+      db.all(query, queryParams, (err, logs) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({
+          data: logs,
+          pagination: {
+            total: total,
+            limit: parseInt(limit),
+            offset: parseInt(offset),
+            page: Math.floor(parseInt(offset) / parseInt(limit)) + 1,
+            totalPages: Math.ceil(total / parseInt(limit))
+          }
+        });
+      });
     });
     return;
   }
   
   // Default behavior for other tables - query from change_logs table
+  let countQuery = `
+    SELECT COUNT(*) as total
+    FROM change_logs cl 
+    LEFT JOIN users u ON cl.user_id = u.id
+  `;
   let query = `
     SELECT cl.*, u.username, u.full_name 
     FROM change_logs cl 
@@ -959,15 +988,34 @@ router.get('/change-logs', authenticateToken, authorizeModulePermission('change_
   }
   
   if (conditions.length > 0) {
-    query += ' WHERE ' + conditions.join(' AND ');
+    const whereClause = ' WHERE ' + conditions.join(' AND ');
+    countQuery += whereClause;
+    query += whereClause;
   }
   
-  query += ' ORDER BY cl.timestamp DESC LIMIT ? OFFSET ?';
-  params.push(limit, offset);
-  
-  db.all(query, params, (err, logs) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(logs);
+  // Get total count
+  db.get(countQuery, params, (countErr, countResult) => {
+    if (countErr) return res.status(500).json({ error: countErr.message });
+    
+    const total = countResult.total;
+    
+    // Get paginated logs
+    query += ' ORDER BY cl.timestamp DESC LIMIT ? OFFSET ?';
+    const queryParams = [...params, limit, offset];
+    
+    db.all(query, queryParams, (err, logs) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({
+        data: logs,
+        pagination: {
+          total: total,
+          limit: parseInt(limit),
+          offset: parseInt(offset),
+          page: Math.floor(parseInt(offset) / parseInt(limit)) + 1,
+          totalPages: Math.ceil(total / parseInt(limit))
+        }
+      });
+    });
   });
 });
 
@@ -3111,7 +3159,7 @@ router.get('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
   
   db.get(
     `SELECT location_code, datacenter_name, 
-     cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes
+     cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes, cross_connect_mandatory
      FROM location_reference WHERE id = ?`, 
     [locationId], 
     (err, row) => {
@@ -3125,7 +3173,8 @@ router.get('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
         cross_connect_mrc_display: row.cross_connect_mrc ? row.cross_connect_mrc : 'POA',
         cross_connect_nrc_currency: row.cross_connect_nrc_currency || 'USD',
         cross_connect_mrc_currency: row.cross_connect_mrc_currency || 'USD',
-        cross_connect_notes: row.cross_connect_notes || ''
+        cross_connect_notes: row.cross_connect_notes || '',
+        cross_connect_mandatory: row.cross_connect_mandatory || 0
       };
       
       res.json(crossConnectInfo);
@@ -3135,12 +3184,13 @@ router.get('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
 
 // Update cross connect information for a specific location
 router.put('/locations/:id/cross-connect', authenticateToken, authorizeModulePermission('locations', 'provisioner'), (req, res) => {
-  const { cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes } = req.body;
+  const { cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes, cross_connect_mandatory } = req.body;
   const locationId = req.params.id;
   
   // Process cross connect values - convert 'POA' string to NULL for database storage
   const processedCrossConnectNrc = (cross_connect_nrc === 'POA' || cross_connect_nrc === '' || cross_connect_nrc === undefined) ? null : parseFloat(cross_connect_nrc);
   const processedCrossConnectMrc = (cross_connect_mrc === 'POA' || cross_connect_mrc === '' || cross_connect_mrc === undefined) ? null : parseFloat(cross_connect_mrc);
+  const processedMandatory = cross_connect_mandatory ? 1 : 0;
   
   // Get current location data for change logging
   db.get('SELECT * FROM location_reference WHERE id = ?', [locationId], (err, oldLocation) => {
@@ -3149,10 +3199,10 @@ router.put('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
     
     db.run(
       `UPDATE location_reference SET 
-        cross_connect_nrc = ?, cross_connect_nrc_currency = ?, cross_connect_mrc = ?, cross_connect_mrc_currency = ?, cross_connect_notes = ?,
+        cross_connect_nrc = ?, cross_connect_nrc_currency = ?, cross_connect_mrc = ?, cross_connect_mrc_currency = ?, cross_connect_notes = ?, cross_connect_mandatory = ?,
         updated_by = ?, updated_date = CURRENT_TIMESTAMP 
        WHERE id = ?`,
-      [processedCrossConnectNrc, cross_connect_nrc_currency || 'USD', processedCrossConnectMrc, cross_connect_mrc_currency || 'USD', cross_connect_notes || '', req.user.id, locationId],
+      [processedCrossConnectNrc, cross_connect_nrc_currency || 'USD', processedCrossConnectMrc, cross_connect_mrc_currency || 'USD', cross_connect_notes || '', processedMandatory, req.user.id, locationId],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
@@ -3163,14 +3213,16 @@ router.put('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
             cross_connect_nrc_currency: oldLocation.cross_connect_nrc_currency, 
             cross_connect_mrc: oldLocation.cross_connect_mrc, 
             cross_connect_mrc_currency: oldLocation.cross_connect_mrc_currency, 
-            cross_connect_notes: oldLocation.cross_connect_notes 
+            cross_connect_notes: oldLocation.cross_connect_notes,
+            cross_connect_mandatory: oldLocation.cross_connect_mandatory
           }, 
           { 
             cross_connect_nrc: processedCrossConnectNrc, 
             cross_connect_nrc_currency, 
             cross_connect_mrc: processedCrossConnectMrc, 
             cross_connect_mrc_currency, 
-            cross_connect_notes 
+            cross_connect_notes,
+            cross_connect_mandatory: processedMandatory
           }, req);
         
         res.json({ message: 'Cross connect information updated' });
@@ -10801,6 +10853,59 @@ router.get('/admin/live-latency/logs/:circuitId', authenticateToken, authorizeRo
       count: rows.length
     });
   });
+});
+
+// Manual cleanup of old API logs (older than 8 days)
+router.post('/admin/live-latency/cleanup-logs', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    const liveLatencyApiLogsCleanup = require('./liveLatencyApiLogsCleanupService');
+    
+    console.log(`🧹 Manual live latency API logs cleanup triggered by admin: ${req.user?.username}`);
+    
+    const result = await liveLatencyApiLogsCleanup.manualCleanup();
+    
+    // Log the manual cleanup activity
+    await new Promise((resolve, reject) => {
+      db.run(
+        'INSERT INTO change_logs (user_id, table_name, record_id, action, new_values, changes_summary) VALUES (?, ?, ?, ?, ?, ?)',
+        [
+          req.user.id,
+          'live_latency_api_logs',
+          '0', // Use '0' as placeholder for system operations without specific record
+          'manual_cleanup',
+          JSON.stringify({
+            deleted: result.deleted,
+            cutoff_date: result.cutoffDate,
+            triggered_by: req.user.username
+          }),
+          `Manual cleanup: deleted ${result.deleted} live latency API log records older than 8 days`
+        ],
+        function(err) {
+          if (err) {
+            console.warn('⚠️  Failed to log manual cleanup activity:', err);
+            resolve(); // Don't fail the request if logging fails
+          } else {
+            resolve();
+          }
+        }
+      );
+    });
+    
+    res.json({
+      success: true,
+      message: `Successfully deleted ${result.deleted} log entries older than 8 days`,
+      deleted: result.deleted,
+      cutoffDate: result.cutoffDate,
+      retentionDays: result.retentionDays
+    });
+    
+  } catch (error) {
+    console.error('❌ Error during manual live latency API logs cleanup:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to cleanup old logs'
+    });
+  }
 });
 
 // Update existing refresh endpoint to use new service

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Box, TextField, Button, Grid, MenuItem, Checkbox, FormControlLabel, Autocomplete, Chip } from '@mui/material';
+import { Box, TextField, Button, Grid, MenuItem, Autocomplete, Chip } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DownloadIcon from '@mui/icons-material/Download';
 import { styled } from '@mui/material/styles';
@@ -9,7 +9,7 @@ const initialFilters = {
   location: '', // Will search both location_a and location_b
   cable_system: '',
   bandwidth: '',
-  is_special: false, // Default to "No" (false)
+  is_special: '', // Default to blank (null) - shows all routes
   regions: [], // Multi-select region filter
 };
 
@@ -18,9 +18,14 @@ const REGION_OPTIONS = ['APAC', 'EMEA', 'AMERs', 'INTER'];
 const SmallTextField = styled(TextField)(({ theme }) => ({
   '& .MuiInputBase-input': {
     fontSize: '0.75rem', // ~12px
+    padding: '8.5px 14px', // Ensure consistent padding
   },
   '& .MuiInputLabel-root': {
     fontSize: '0.75rem', // ~12px
+  },
+  '& .MuiSelect-select': {
+    fontSize: '0.75rem', // Match text input font size
+    padding: '8.5px 14px', // Same padding as text input
   },
 }));
 
@@ -41,7 +46,7 @@ function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission, resetFi
         location_b: '',
         cable_system: '',
         bandwidth: '',
-        is_special: '0',
+        is_special: '',
         regions: []
       });
     }
@@ -63,11 +68,6 @@ function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission, resetFi
         params.location_b = filtersToSearch.location;
       }
       delete params.location;
-      
-      // Convert checkbox value to expected format
-      if (typeof params.is_special === 'boolean') {
-        params.is_special = params.is_special ? '1' : '0';
-      }
       
       onSearch(params);
     }, 300); // 300ms debounce
@@ -182,22 +182,20 @@ function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission, resetFi
           />
         </Grid>
         <Grid item>
-          <FormControlLabel
-            control={
-              <Checkbox
-                name="is_special"
-                checked={filters.is_special}
-                onChange={handleChange}
-                size="small"
-              />
-            }
+          <SmallTextField
+            select
+            size="small"
             label="Special/ULL"
-            sx={{ 
-              '& .MuiFormControlLabel-label': { 
-                fontSize: '0.75rem' 
-              } 
-            }}
-          />
+            name="is_special"
+            value={filters.is_special}
+            onChange={handleChange}
+            variant="outlined"
+            sx={{ minWidth: 180 }}
+          >
+            <MenuItem value="">All</MenuItem>
+            <MenuItem value="1">Yes</MenuItem>
+            <MenuItem value="0">No</MenuItem>
+          </SmallTextField>
         </Grid>
         <Grid item>
           <Button variant="outlined" color="primary" startIcon={<RefreshIcon />} onClick={onRefresh}>

@@ -48,7 +48,8 @@ import {
   Error as ErrorIcon,
   Warning as WarningIcon,
   Info as InfoIcon,
-  History as HistoryIcon
+  History as HistoryIcon,
+  DeleteSweep as CleanupIcon
 } from '@mui/icons-material';
 import { liveLatencyAdminApi } from './api';
 import LoadingIndicator from './components/LoadingIndicator';
@@ -85,6 +86,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
   const [testDialog, setTestDialog] = useState({ open: false, circuitId: null, result: null, loading: false });
   const [logsDialog, setLogsDialog] = useState({ open: false, circuitId: null, logs: [], loading: false });
   const [deleteDialog, setDeleteDialog] = useState({ open: false, config: null });
+  const [cleanupDialog, setCleanupDialog] = useState({ open: false, loading: false });
   
   // Pagination
   const [page, setPage] = useState(0);
@@ -247,6 +249,28 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
     }
   };
 
+  // Cleanup old logs functionality
+  const handleCleanupLogs = () => {
+    setCleanupDialog({ open: true, loading: false });
+  };
+
+  const handleCleanupConfirm = async () => {
+    setCleanupDialog(prev => ({ ...prev, loading: true }));
+    
+    try {
+      const result = await liveLatencyAdminApi.cleanupOldLogs();
+      showSnackbar(result.message || `Successfully deleted ${result.deleted} log entries older than 8 days`, 'success');
+      setCleanupDialog({ open: false, loading: false });
+      
+      // Refresh overview to update statistics
+      await loadOverview();
+    } catch (error) {
+      const errorMessage = error.response?.data?.error || error.message;
+      showSnackbar('Failed to cleanup old logs: ' + errorMessage, 'error');
+      setCleanupDialog(prev => ({ ...prev, loading: false }));
+    }
+  };
+
   // Status helpers
   const getStatusChip = (config) => {
     if (!config.enabled) {
@@ -321,13 +345,24 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
           <Grid item xs={12}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="h5">System Overview</Typography>
-              <Button
-                startIcon={<RefreshIcon />}
-                onClick={loadOverview}
-                disabled={overviewLoading}
-              >
-                Refresh
-              </Button>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button
+                  startIcon={<CleanupIcon />}
+                  onClick={handleCleanupLogs}
+                  disabled={overviewLoading || !hasPermission('user_management', 'delete')}
+                  variant="outlined"
+                  color="warning"
+                >
+                  Clear Old Logs
+                </Button>
+                <Button
+                  startIcon={<RefreshIcon />}
+                  onClick={loadOverview}
+                  disabled={overviewLoading}
+                >
+                  Refresh
+                </Button>
+              </Box>
             </Box>
           </Grid>
           
@@ -595,6 +630,35 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
           </Button>
           <Button onClick={handleDeleteConfirm} color="error" variant="contained">
             Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Cleanup Confirmation Dialog */}
+      <Dialog open={cleanupDialog.open} onClose={() => !cleanupDialog.loading && setCleanupDialog({ open: false, loading: false })}>
+        <DialogTitle>Confirm Cleanup</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete all API logs older than 8 days?
+          </Typography>
+          <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="textSecondary" sx={{ mt: 1 }}>
+            This action cannot be undone. The logs will be permanently removed from the database.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => setCleanupDialog({ open: false, loading: false })}
+            disabled={cleanupDialog.loading}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleCleanupConfirm} 
+            color="warning" 
+            variant="contained"
+            disabled={cleanupDialog.loading}
+          >
+            {cleanupDialog.loading ? <CircularProgress size={20} /> : 'Clear Old Logs'}
           </Button>
         </DialogActions>
       </Dialog>

@@ -212,7 +212,14 @@ export const networkDesignApi = {
   getExchangeRates: () => exchangeRatesApi.getExchangeRates(),
   
   // Change logs (for allocated cost calculator)
-  getAllChangeLogs: (params = {}) => api.get(`${API_BASE_URL}/change-logs`, { params }).then(res => res.data),
+  getAllChangeLogs: (params = {}) => api.get(`${API_BASE_URL}/change-logs`, { params }).then(res => {
+    // Handle new pagination response format
+    if (res.data && res.data.data) {
+      return res.data.data;
+    }
+    // Fallback for old format (backwards compatibility)
+    return res.data || [];
+  }),
   clearChangeLogs: (tableName) => api.delete(`${API_BASE_URL}/change-logs/${tableName}`).then(res => res.data),
   
   // Fetch route by circuit ID
@@ -377,7 +384,10 @@ export const liveLatencyAdminApi = {
   
   // Testing and monitoring
   testConnection: (circuitId) => api.post(`${API_BASE_URL}/admin/live-latency/test/${circuitId}`).then(res => res.data),
-  getApiLogs: (circuitId, limit = 50) => api.get(`${API_BASE_URL}/admin/live-latency/logs/${circuitId}?limit=${limit}`).then(res => res.data)
+  getApiLogs: (circuitId, limit = 50) => api.get(`${API_BASE_URL}/admin/live-latency/logs/${circuitId}?limit=${limit}`).then(res => res.data),
+  
+  // Cleanup operations
+  cleanupOldLogs: () => api.post(`${API_BASE_URL}/admin/live-latency/cleanup-logs`).then(res => res.data)
 };
 
 // ===========================

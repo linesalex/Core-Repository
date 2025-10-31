@@ -568,7 +568,8 @@ const LocationDataManager = ({ hasPermission }) => {
         cross_connect_nrc_currency: currentCrossConnect.cross_connect_nrc_currency,
         cross_connect_mrc: currentCrossConnect.cross_connect_mrc,
         cross_connect_mrc_currency: currentCrossConnect.cross_connect_mrc_currency,
-        cross_connect_notes: currentCrossConnect.cross_connect_notes
+        cross_connect_notes: currentCrossConnect.cross_connect_notes,
+        cross_connect_mandatory: currentCrossConnect.cross_connect_mandatory || 0
       });
       setSuccess('Cross connect info updated successfully');
       setCrossConnectDialogOpen(false);
@@ -1352,6 +1353,29 @@ const LocationDataManager = ({ hasPermission }) => {
                   disabled={!hasPermission || !hasPermission('locations', 'edit')}
                   inputProps={{ maxLength: 256 }}
                   helperText={`${(currentCrossConnect.cross_connect_notes || '').length}/256 characters`}
+                />
+              </Grid>
+
+              {/* Mandatory Cross Connect Checkbox */}
+              <Grid item xs={12}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={!!currentCrossConnect.cross_connect_mandatory}
+                      onChange={(e) => handleCrossConnectInputChange('cross_connect_mandatory', e.target.checked ? 1 : 0)}
+                      disabled={!hasPermission || !hasPermission('locations', 'edit')}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" fontWeight="bold">
+                        Enforce Mandatory Cross Connect in Design Tool
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        When enabled, this location will automatically require a cross connect in the Design & Pricing Tool
+                      </Typography>
+                    </Box>
+                  }
                 />
               </Grid>
             </Grid>

@@ -14,6 +14,7 @@ const db = require('./db');
 const outageMonitor = require('./outageMonitorService');
 const liveLatencyAutoRefresh = require('./liveLatencyAutoRefreshService');
 const outageHistoryCleanup = require('./outageHistoryCleanupService');
+const liveLatencyApiLogsCleanup = require('./liveLatencyApiLogsCleanupService');
 const walCheckpoint = require('./walCheckpointService');
 
 app.use(cors());
@@ -93,6 +94,11 @@ runAllMigrations((err) => {
       outageHistoryCleanup.start();
     }, 9000); // Wait 9 seconds to avoid conflicts with other services
     
+    // Start the live latency API logs cleanup service
+    setTimeout(() => {
+      liveLatencyApiLogsCleanup.start();
+    }, 10000); // Wait 10 seconds to avoid conflicts with other services
+    
     // Start the WAL checkpoint service
     setTimeout(() => {
       walCheckpoint.start();
@@ -109,6 +115,7 @@ function gracefulShutdown(signal) {
   outageMonitor.stop();
   liveLatencyAutoRefresh.stop();
   outageHistoryCleanup.stop();
+  liveLatencyApiLogsCleanup.stop();
   walCheckpoint.stop();
   
   // Perform final WAL checkpoint

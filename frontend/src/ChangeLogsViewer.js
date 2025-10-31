@@ -84,8 +84,16 @@ const ChangeLogsViewer = () => {
       });
       
       const response = await axios.get(`${API_BASE_URL}/change-logs?${params.toString()}`);
-      setLogs(response.data);
-      setTotalPages(Math.ceil(response.data.length / filters.limit));
+      
+      // Handle new response format with pagination metadata
+      if (response.data.data && response.data.pagination) {
+        setLogs(response.data.data);
+        setTotalPages(response.data.pagination.totalPages);
+      } else {
+        // Fallback for old response format (backwards compatibility)
+        setLogs(response.data);
+        setTotalPages(Math.ceil(response.data.length / filters.limit));
+      }
     } catch (err) {
       setError('Failed to load change logs: ' + (err.response?.data?.error || err.message));
     } finally {

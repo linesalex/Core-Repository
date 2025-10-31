@@ -688,15 +688,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
                 if (col.id === 'bandwidth' && row.bandwidth === 'Dark Fiber') {
                   return (
                     <SmallTableCell key={col.id} style={{ ...textCellStyle, verticalAlign: 'middle' }} align="left">
-                      <span
-                        style={darkFiberLinkStyle}
-                        onClick={e => { e.stopPropagation(); onOpenDarkFiber(row.circuit_id); }}
-                        tabIndex={0}
-                        role="button"
-                        onKeyPress={e => { if (e.key === 'Enter') { e.stopPropagation(); onOpenDarkFiber(row.circuit_id); } }}
-                      >
-                        Dark Fiber Details
-                      </span>
+                      Dark Fiber
                     </SmallTableCell>
                   );
                 }

@@ -101,6 +101,10 @@ const NetworkDesignTool = () => {
     source: null,
     destination: null
   });
+  const [mandatoryCrossConnects, setMandatoryCrossConnects] = useState({
+    source: false,
+    destination: false
+  });
   
   // UI state
   const [loading, setLoading] = useState(false);
@@ -109,6 +113,7 @@ const NetworkDesignTool = () => {
   const [expandedAccordion, setExpandedAccordion] = useState('search');
   const [currentTab, setCurrentTab] = useState(0); // Tab state
   const [expandedLogs, setExpandedLogs] = useState(new Set()); // Track expanded log details
+  const [parametersLocked, setParametersLocked] = useState(false); // Track if search parameters are locked
   
   // Pricing logs filtering state
   const [filteredAuditLogs, setFilteredAuditLogs] = useState([]);
@@ -166,6 +171,46 @@ const NetworkDesignTool = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
+
+  // Watch for source/destination changes - clear results and check mandatory cross connects
+  useEffect(() => {
+    const checkMandatoryCrossConnects = async () => {
+      const checkLocation = async (locationCode, locationType) => {
+        if (!locationCode) {
+          setMandatoryCrossConnects(prev => ({ ...prev, [locationType]: false }));
+          return;
+        }
+
+        const location = locations.find(loc => loc.location_code === locationCode);
+        if (location && location.cross_connect_mandatory) {
+          setMandatoryCrossConnects(prev => ({ ...prev, [locationType]: true }));
+          
+          // Auto-enable cross connect for mandatory location if not already enabled
+          if (!crossConnectResults[locationType]) {
+            try {
+              await handleToggleCrossConnect(locationType);
+            } catch (err) {
+              console.error(`Failed to auto-enable mandatory cross connect for ${locationType}:`, err);
+            }
+          }
+        } else {
+          setMandatoryCrossConnects(prev => ({ ...prev, [locationType]: false }));
+        }
+      };
+
+      // Clear results when source or destination changes
+      setSearchResults(null);
+      setPricingResults(null);
+
+      // Check mandatory status for source and destination
+      await checkLocation(formData.source, 'source');
+      await checkLocation(formData.destination, 'destination');
+    };
+
+    if (locations.length > 0) {
+      checkMandatoryCrossConnects();
+    }
+  }, [formData.source, formData.destination, locations]);
 
   const loadExchangeRates = async () => {
     try {
@@ -785,6 +830,9 @@ const NetworkDesignTool = () => {
       return;
     }
 
+    // Lock parameters when search/calculation begins
+    setParametersLocked(true);
+
     setLoading(true);
     setError(null);
     setSearchResults(null);
@@ -1006,7 +1054,51 @@ const NetworkDesignTool = () => {
     }
   };
 
+  // Handle refresh - unlock parameters and reset all data
+  const handleRefresh = () => {
+    // Reset all form data to initial state
+    setFormData({
+      source: '',
+      destination: '',
+      bandwidth: '',
+      includeULL: false,
+      useCiscoOnlyRoutes: false,
+      use100GbAndDFOnly: false,
+      protectionRequired: false,
+      mtuRequired: '',
+      carrierAvoidance: [],
+      circuitExclusion: [],
+      outputCurrency: 'USD',
+      contractTerm: 12,
+      quoteRequestId: '',
+      customerName: ''
+    });
 
+    // Reset manual route entry data
+    setDesignMode('auto');
+    setManualPrimaryRoutes('');
+    setManualSecondaryRoutes('');
+    setPrimaryRouteValidation({ valid: false, message: '', routes: [] });
+    setSecondaryRouteValidation({ valid: false, message: '', routes: [] });
+
+    // Clear all results
+    setSearchResults(null);
+    setPricingResults(null);
+    setCrossConnectResults({
+      source: null,
+      destination: null
+    });
+
+    // Clear any errors or success messages
+    setError(null);
+    setSuccess(null);
+
+    // Unlock parameters
+    setParametersLocked(false);
+
+    // Collapse results accordion and expand search accordion
+    setExpandedAccordion('search');
+  };
 
   const formatCurrency = (amount, currency) => {
     return new Intl.NumberFormat('en-US', {
@@ -1302,7 +1394,7 @@ const NetworkDesignTool = () => {
 
     // Cross Connect Information
     if (crossConnectResults.source) {
-      emailBody += `Source Cross Connect\n`;
+      emailBody += `Source Cross Connect${crossConnectResults.source.mandatory ? ' (Mandatory)' : ''}\n`;
       emailBody += `POP Name: ${crossConnectResults.source.locationCode} - ${crossConnectResults.source.datacenterName}\n`;
       emailBody += `NRC: ${crossConnectResults.source.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.nrc, crossConnectResults.source.currency)}\n`;
       emailBody += `MRC: ${crossConnectResults.source.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.mrc, crossConnectResults.source.currency)}\n`;
@@ -1313,7 +1405,7 @@ const NetworkDesignTool = () => {
     }
 
     if (crossConnectResults.destination) {
-      emailBody += `Destination Cross Connect\n`;
+      emailBody += `Destination Cross Connect${crossConnectResults.destination.mandatory ? ' (Mandatory)' : ''}\n`;
       emailBody += `POP Name: ${crossConnectResults.destination.locationCode} - ${crossConnectResults.destination.datacenterName}\n`;
       emailBody += `NRC: ${crossConnectResults.destination.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.nrc, crossConnectResults.destination.currency)}\n`;
       emailBody += `MRC: ${crossConnectResults.destination.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.mrc, crossConnectResults.destination.currency)}\n`;
@@ -1800,7 +1892,7 @@ const NetworkDesignTool = () => {
     // Handle cross connect information from multiple possible locations
     const logCrossConnect = params.crossConnect || results.crossConnect || {};
     if (logCrossConnect.source) {
-      emailBody += `Source Cross Connect\n`;
+      emailBody += `Source Cross Connect${logCrossConnect.source.mandatory ? ' (Mandatory)' : ''}\n`;
       emailBody += `POP Name: ${logCrossConnect.source.locationCode} - ${logCrossConnect.source.datacenterName}\n`;
       emailBody += `NRC: ${logCrossConnect.source.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.nrc, logCrossConnect.source.currency)}\n`;
       emailBody += `MRC: ${logCrossConnect.source.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.mrc, logCrossConnect.source.currency)}\n`;
@@ -1811,7 +1903,7 @@ const NetworkDesignTool = () => {
     }
 
     if (logCrossConnect.destination) {
-      emailBody += `Destination Cross Connect\n`;
+      emailBody += `Destination Cross Connect${logCrossConnect.destination.mandatory ? ' (Mandatory)' : ''}\n`;
       emailBody += `POP Name: ${logCrossConnect.destination.locationCode} - ${logCrossConnect.destination.datacenterName}\n`;
       emailBody += `NRC: ${logCrossConnect.destination.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.nrc, logCrossConnect.destination.currency)}\n`;
       emailBody += `MRC: ${logCrossConnect.destination.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.mrc, logCrossConnect.destination.currency)}\n`;
@@ -1900,6 +1992,13 @@ const NetworkDesignTool = () => {
       
       // Check if this location type already has results (remove case)
       if (crossConnectResults[locationType]) {
+        // Check if this is a mandatory cross connect - prevent disabling
+        if (mandatoryCrossConnects[locationType]) {
+          setError(`Cross connect is mandatory for this ${locationType} location and cannot be disabled`);
+          setLoading(false);
+          return;
+        }
+        
         // Remove the cross connect results
         setCrossConnectResults(prev => ({
           ...prev,
@@ -1988,7 +2087,8 @@ const NetworkDesignTool = () => {
           nrc: nrcPrice,
           mrc: mrcPrice,
           notes: crossConnectData.cross_connect_notes,
-          currency: formData.outputCurrency
+          currency: formData.outputCurrency,
+          mandatory: crossConnectData.cross_connect_mandatory || mandatoryCrossConnects[locationType]
         }
       }));
       
@@ -2014,16 +2114,30 @@ const NetworkDesignTool = () => {
         {/* Search Parameters */}
         <Accordion expanded={expandedAccordion === 'search'} onChange={() => setExpandedAccordion(expandedAccordion === 'search' ? '' : 'search')}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <SearchIcon sx={{ mr: 1 }} />
-              <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Search Parameters</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', pr: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <SearchIcon sx={{ mr: 1 }} />
+                <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Search Parameters</Typography>
+              </Box>
+              <Button
+                variant="outlined"
+                color="primary"
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation(); // Prevent accordion from toggling
+                  handleRefresh();
+                }}
+                sx={{ ml: 2 }}
+              >
+                Refresh
+              </Button>
             </Box>
           </AccordionSummary>
           <AccordionDetails>
             <Grid container spacing={3}>
               {/* Design Mode Selector */}
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
+                <FormControl fullWidth disabled={parametersLocked}>
                   <InputLabel>Design Mode</InputLabel>
                   <Select
                     value={designMode}
@@ -2046,6 +2160,7 @@ const NetworkDesignTool = () => {
                   label="Customer Name"
                   value={formData.customerName}
                   onChange={(e) => handleInputChange('customerName', e.target.value)}
+                  disabled={parametersLocked}
                 />
               </Grid>
 
@@ -2056,6 +2171,7 @@ const NetworkDesignTool = () => {
                   label="Quote Request ID"
                   value={formData.quoteRequestId}
                   onChange={(e) => handleInputChange('quoteRequestId', e.target.value)}
+                  disabled={parametersLocked}
                 />
               </Grid>
 
@@ -2068,6 +2184,7 @@ const NetworkDesignTool = () => {
                   onChange={(event, newValue) => {
                     handleInputChange('source', newValue ? newValue.location_code : '');
                   }}
+                  disabled={parametersLocked}
                   renderInput={(params) => (
                     <TextField {...params} label="Source Location" fullWidth />
                   )}
@@ -2082,6 +2199,7 @@ const NetworkDesignTool = () => {
                   onChange={(event, newValue) => {
                     handleInputChange('destination', newValue ? newValue.location_code : '');
                   }}
+                  disabled={parametersLocked}
                   renderInput={(params) => (
                     <TextField {...params} label="Destination Location" fullWidth />
                   )}
@@ -2098,6 +2216,7 @@ const NetworkDesignTool = () => {
                   onChange={(e) => handleInputChange('bandwidth', e.target.value)}
                   inputProps={{ min: 10, max: 10000, step: 1 }}
                   helperText="Enter bandwidth between 10 and 10000 Mbps"
+                  disabled={parametersLocked}
                 />
               </Grid>
 
@@ -2110,6 +2229,7 @@ const NetworkDesignTool = () => {
                   value={formData.mtuRequired}
                   onChange={(e) => handleInputChange('mtuRequired', e.target.value)}
                   helperText="Default: 1500 if not specified - Maximum service MTU is 9000"
+                  disabled={parametersLocked}
                 />
               </Grid>
 
@@ -2125,6 +2245,7 @@ const NetworkDesignTool = () => {
                       placeholder="Enter circuit IDs separated by commas (e.g., LONLON123123, LONSNG442222, SNGHKG999555)"
                       helperText={primaryRouteValidation.message || "Enter circuit IDs in order from source to destination"}
                       error={!primaryRouteValidation.valid && primaryRouteValidation.message !== ''}
+                      disabled={parametersLocked}
                       InputProps={{
                         endAdornment: (
                           <InputAdornment position="end">
@@ -2134,7 +2255,7 @@ const NetworkDesignTool = () => {
                                 setManualPrimaryRoutes('');
                                 setPrimaryRouteValidation({ valid: false, message: '', routes: [] });
                               }}
-                              disabled={!manualPrimaryRoutes}
+                              disabled={!manualPrimaryRoutes || parametersLocked}
                               sx={{ mr: 1 }}
                             >
                               Clear
@@ -2143,7 +2264,7 @@ const NetworkDesignTool = () => {
                               size="small"
                               variant="contained"
                               onClick={() => handleFindSuggestions('primary')}
-                              disabled={!formData.source || !formData.destination || !formData.bandwidth}
+                              disabled={!formData.source || !formData.destination || !formData.bandwidth || parametersLocked}
                             >
                               Find Suggestions
                             </Button>
@@ -2163,6 +2284,7 @@ const NetworkDesignTool = () => {
                         placeholder="Enter circuit IDs separated by commas"
                         helperText={secondaryRouteValidation.message || "Enter circuit IDs for diverse path"}
                         error={!secondaryRouteValidation.valid && secondaryRouteValidation.message !== ''}
+                        disabled={parametersLocked}
                         InputProps={{
                           endAdornment: (
                             <InputAdornment position="end">
@@ -2172,7 +2294,7 @@ const NetworkDesignTool = () => {
                                   setManualSecondaryRoutes('');
                                   setSecondaryRouteValidation({ valid: false, message: '', routes: [] });
                                 }}
-                                disabled={!manualSecondaryRoutes}
+                                disabled={!manualSecondaryRoutes || parametersLocked}
                                 sx={{ mr: 1 }}
                               >
                                 Clear
@@ -2180,7 +2302,7 @@ const NetworkDesignTool = () => {
                               <Button
                                 size="small"
                                 onClick={() => handleFindSuggestions('secondary')}
-                                disabled={!formData.source || !formData.destination || !formData.bandwidth}
+                                disabled={!formData.source || !formData.destination || !formData.bandwidth || parametersLocked}
                                 sx={{ mr: 1 }}
                               >
                                 Find Suggestions
@@ -2189,7 +2311,7 @@ const NetworkDesignTool = () => {
                                 size="small"
                                 variant="contained"
                                 onClick={handleSuggestSecondaryPath}
-                                disabled={!formData.source || !formData.destination || !formData.bandwidth}
+                                disabled={!formData.source || !formData.destination || !formData.bandwidth || parametersLocked}
                               >
                                 Suggest Secondary Path
                               </Button>
@@ -2215,6 +2337,7 @@ const NetworkDesignTool = () => {
                   onChange={(event, newValue) => {
                     handleInputChange('carrierAvoidance', newValue.map(carrier => carrier.carrier_name));
                   }}
+                  disabled={parametersLocked}
                   renderInput={(params) => (
                     <TextField {...params} label="Carrier Avoidance" />
                   )}
@@ -2237,6 +2360,7 @@ const NetworkDesignTool = () => {
                       loadCircuitIds(inputValue);
                     }
                   }}
+                  disabled={parametersLocked}
                   noOptionsText="Type to search circuit IDs..."
                   loadingText="Loading circuit IDs..."
                   renderInput={(params) => (
@@ -2254,7 +2378,7 @@ const NetworkDesignTool = () => {
 
               {/* Output Currency */}
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
+                <FormControl fullWidth disabled={parametersLocked}>
                   <InputLabel>Output Currency</InputLabel>
                   <Select
                     value={formData.outputCurrency}
@@ -2277,6 +2401,7 @@ const NetworkDesignTool = () => {
                     <Switch
                       checked={formData.protectionRequired}
                       onChange={(e) => handleInputChange('protectionRequired', e.target.checked)}
+                      disabled={parametersLocked}
                     />
                   }
                   label="Protection Required"
@@ -2285,7 +2410,7 @@ const NetworkDesignTool = () => {
 
               {/* Contract Term - left side under Output Currency */}
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
+                <FormControl fullWidth disabled={parametersLocked}>
                   <InputLabel>Contract Term</InputLabel>
                   <Select
                     value={formData.contractTerm}
@@ -2309,6 +2434,7 @@ const NetworkDesignTool = () => {
                       <Switch
                         checked={formData.useCiscoOnlyRoutes}
                         onChange={(e) => handleInputChange('useCiscoOnlyRoutes', e.target.checked)}
+                        disabled={parametersLocked}
                       />
                     }
                     label="Include Cisco Only Routes"
@@ -2328,6 +2454,7 @@ const NetworkDesignTool = () => {
                       <Switch
                         checked={formData.includeULL}
                         onChange={(e) => handleInputChange('includeULL', e.target.checked)}
+                        disabled={parametersLocked}
                       />
                     }
                     label="Include ULL"
@@ -2347,6 +2474,7 @@ const NetworkDesignTool = () => {
                       <Switch
                         checked={formData.use100GbAndDFOnly}
                         onChange={(e) => handleInputChange('use100GbAndDFOnly', e.target.checked)}
+                        disabled={parametersLocked}
                       />
                     }
                     label="Use 100Gb and DF routes only"
@@ -2362,7 +2490,7 @@ const NetworkDesignTool = () => {
                     startIcon={<SearchIcon />}
                     onClick={handleSearch}
                     loading={loading}
-                    disabled={!formData.source || !formData.destination}
+                    disabled={!formData.source || !formData.destination || parametersLocked}
                   >
                     {designMode === 'manual' ? 'Calculate Pricing' : 'Find Route'}
                   </LoadingButton>
@@ -2899,7 +3027,7 @@ const NetworkDesignTool = () => {
                     <Card sx={{ height: '100%', bgcolor: 'success.50', border: 1, borderColor: 'success.200' }}>
                       <CardHeader 
                         avatar={<CableIcon color="success" />}
-                        title="Source Cross Connect"
+                        title={`Source Cross Connect${crossConnectResults.source.mandatory ? ' (Mandatory)' : ''}`}
                         subheader={`${crossConnectResults.source.locationCode} - ${crossConnectResults.source.datacenterName}`}
                       />
                       <CardContent>
@@ -2941,7 +3069,7 @@ const NetworkDesignTool = () => {
                     <Card sx={{ height: '100%', bgcolor: 'warning.50', border: 1, borderColor: 'warning.200' }}>
                       <CardHeader 
                         avatar={<CableIcon color="warning" />}
-                        title="Destination Cross Connect"
+                        title={`Destination Cross Connect${crossConnectResults.destination.mandatory ? ' (Mandatory)' : ''}`}
                         subheader={`${crossConnectResults.destination.locationCode} - ${crossConnectResults.destination.datacenterName}`}
                       />
                       <CardContent>

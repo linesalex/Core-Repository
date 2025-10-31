@@ -1,46 +1,46 @@
 /**
- * Outage History Cleanup Service
- * Automatically cleans up outage history records older than 90 days
- * Runs daily at midnight GMT
+ * Live Latency API Logs Cleanup Service
+ * Automatically cleans up live_latency_api_logs records older than 8 days
+ * Runs daily at 3 AM GMT
  */
 
 const db = require('./db');
 
-class OutageHistoryCleanupService {
+class LiveLatencyApiLogsCleanupService {
   constructor() {
     this.isRunning = false;
     this.cleanupTimer = null;
-    this.retentionDays = 90; // Keep 90 days of history
+    this.retentionDays = 8; // Keep 8 days of logs
   }
 
   /**
-   * Start the outage history cleanup service
+   * Start the live latency API logs cleanup service
    */
   start() {
     if (this.isRunning) {
-      console.log('⚠️  Outage history cleanup service is already running');
+      console.log('⚠️  Live latency API logs cleanup service is already running');
       return;
     }
 
-    console.log('🚀 Starting outage history cleanup service (daily at midnight GMT)...');
+    console.log('🚀 Starting live latency API logs cleanup service (daily at 3 AM GMT)...');
     this.isRunning = true;
     
     // Schedule initial cleanup and set up daily recurring cleanup
     this.scheduleNextCleanup();
     
-    console.log('✅ Outage history cleanup service started successfully');
+    console.log('✅ Live latency API logs cleanup service started successfully');
   }
 
   /**
-   * Stop the outage history cleanup service
+   * Stop the live latency API logs cleanup service
    */
   stop() {
     if (!this.isRunning) {
-      console.log('⚠️  Outage history cleanup service is not running');
+      console.log('⚠️  Live latency API logs cleanup service is not running');
       return;
     }
 
-    console.log('🛑 Stopping outage history cleanup service...');
+    console.log('🛑 Stopping live latency API logs cleanup service...');
     
     if (this.cleanupTimer) {
       clearTimeout(this.cleanupTimer);
@@ -48,21 +48,27 @@ class OutageHistoryCleanupService {
     }
     
     this.isRunning = false;
-    console.log('✅ Outage history cleanup service stopped');
+    console.log('✅ Live latency API logs cleanup service stopped');
   }
 
   /**
-   * Schedule the next cleanup at midnight GMT
+   * Schedule the next cleanup at 3 AM GMT
    */
   scheduleNextCleanup() {
     const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    tomorrow.setUTCHours(0, 0, 0, 0); // Midnight GMT
+    const next3AM = new Date(now);
     
-    const msUntilMidnight = tomorrow.getTime() - now.getTime();
+    // Set to 3 AM GMT today
+    next3AM.setUTCHours(3, 0, 0, 0);
     
-    console.log(`📅 Next outage history cleanup scheduled for: ${tomorrow.toISOString()} (in ${Math.round(msUntilMidnight / 1000 / 60 / 60)} hours)`);
+    // If 3 AM has already passed today, schedule for tomorrow
+    if (next3AM <= now) {
+      next3AM.setUTCDate(next3AM.getUTCDate() + 1);
+    }
+    
+    const msUntilNext3AM = next3AM.getTime() - now.getTime();
+    
+    console.log(`📅 Next live latency API logs cleanup scheduled for: ${next3AM.toISOString()} (in ${Math.round(msUntilNext3AM / 1000 / 60 / 60)} hours)`);
     
     this.cleanupTimer = setTimeout(() => {
       this.performCleanup().then(() => {
@@ -71,34 +77,35 @@ class OutageHistoryCleanupService {
           this.scheduleNextCleanup();
         }
       }).catch((error) => {
-        console.error('❌ Error during cleanup, will retry tomorrow:', error);
+        console.error('❌ Error during live latency API logs cleanup, will retry tomorrow:', error);
         // Schedule the next cleanup even if this one failed
         if (this.isRunning) {
           this.scheduleNextCleanup();
         }
       });
-    }, msUntilMidnight);
+    }, msUntilNext3AM);
   }
 
   /**
-   * Perform the cleanup of old outage history records
+   * Perform the cleanup of old live latency API log records
    */
   async performCleanup() {
     return new Promise((resolve, reject) => {
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - this.retentionDays);
-      const cutoffDateString = cutoffDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+      const cutoffDateString = cutoffDate.toISOString();
+      const retentionDays = this.retentionDays; // Capture for use in callbacks
       
-      console.log(`🧹 [${new Date().toISOString()}] Starting outage history cleanup...`);
-      console.log(`📅 Deleting records older than ${this.retentionDays} days (before ${cutoffDateString})`);
+      console.log(`🧹 [${new Date().toISOString()}] Starting live latency API logs cleanup...`);
+      console.log(`📅 Deleting records older than ${retentionDays} days (before ${cutoffDateString})`);
       
       // First, count how many records will be deleted
       db.get(
-        'SELECT COUNT(*) as count FROM core_outage_history WHERE outage_start_time < ?',
+        'SELECT COUNT(*) as count FROM live_latency_api_logs WHERE created_at < ?',
         [cutoffDateString],
         (countErr, countResult) => {
           if (countErr) {
-            console.error('❌ Failed to count old outage records:', countErr);
+            console.error('❌ Failed to count old live latency API log records:', countErr);
             reject(countErr);
             return;
           }
@@ -106,33 +113,33 @@ class OutageHistoryCleanupService {
           const recordsToDelete = countResult.count;
           
           if (recordsToDelete === 0) {
-            console.log('✅ No old outage history records to clean up');
+            console.log('✅ No old live latency API log records to clean up');
             resolve({ deleted: 0, cutoffDate: cutoffDateString });
             return;
           }
           
-          console.log(`🗑️  Found ${recordsToDelete} outage history records to delete`);
+          console.log(`🗑️  Found ${recordsToDelete} live latency API log records to delete`);
           
           // Perform the cleanup
           db.run(
-            'DELETE FROM core_outage_history WHERE outage_start_time < ?',
+            'DELETE FROM live_latency_api_logs WHERE created_at < ?',
             [cutoffDateString],
             function(deleteErr) {
               if (deleteErr) {
-                console.error('❌ Failed to delete old outage records:', deleteErr);
+                console.error('❌ Failed to delete old live latency API log records:', deleteErr);
                 reject(deleteErr);
                 return;
               }
               
               const actualDeleted = this.changes;
-              console.log(`✅ Successfully deleted ${actualDeleted} outage history records older than ${this.retentionDays} days`);
+              console.log(`✅ Successfully deleted ${actualDeleted} live latency API log records older than ${retentionDays} days`);
               
               // Log the cleanup activity
               const logEntry = {
-                action: 'outage_history_cleanup',
+                action: 'live_latency_api_logs_cleanup',
                 records_deleted: actualDeleted,
                 cutoff_date: cutoffDateString,
-                retention_days: this.retentionDays,
+                retention_days: retentionDays,
                 timestamp: new Date().toISOString()
               };
               
@@ -140,11 +147,11 @@ class OutageHistoryCleanupService {
                 'INSERT INTO change_logs (user_id, table_name, record_id, action, new_values, changes_summary) VALUES (?, ?, ?, ?, ?, ?)',
                 [
                   null, // system operation
-                  'core_outage_history',
+                  'live_latency_api_logs',
                   '0', // Use '0' as placeholder for system operations without specific record
                   'cleanup',
                   JSON.stringify(logEntry),
-                  `Automated cleanup: deleted ${actualDeleted} records older than ${this.retentionDays} days`
+                  `Automated cleanup: deleted ${actualDeleted} live latency API log records older than ${retentionDays} days`
                 ],
                 function(logErr) {
                   if (logErr) {
@@ -154,7 +161,7 @@ class OutageHistoryCleanupService {
                   resolve({
                     deleted: actualDeleted,
                     cutoffDate: cutoffDateString,
-                    retentionDays: this.retentionDays
+                    retentionDays: retentionDays
                   });
                 }
               );
@@ -169,11 +176,7 @@ class OutageHistoryCleanupService {
    * Manually trigger cleanup (for testing or manual maintenance)
    */
   async manualCleanup() {
-    if (!this.isRunning) {
-      throw new Error('Cleanup service is not running');
-    }
-    
-    console.log('🔧 Manual outage history cleanup triggered');
+    console.log('🔧 Manual live latency API logs cleanup triggered');
     return await this.performCleanup();
   }
 
@@ -185,33 +188,27 @@ class OutageHistoryCleanupService {
     let nextCleanup = null;
     
     if (this.isRunning) {
-      const tomorrow = new Date(now);
-      tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-      tomorrow.setUTCHours(0, 0, 0, 0);
-      nextCleanup = tomorrow.toISOString();
+      const next3AM = new Date(now);
+      next3AM.setUTCHours(3, 0, 0, 0);
+      
+      // If 3 AM has already passed today, show tomorrow's time
+      if (next3AM <= now) {
+        next3AM.setUTCDate(next3AM.getUTCDate() + 1);
+      }
+      
+      nextCleanup = next3AM.toISOString();
     }
     
     return {
       isRunning: this.isRunning,
       retentionDays: this.retentionDays,
       nextCleanup: nextCleanup,
-      serviceType: 'outage_history_cleanup'
+      serviceType: 'live_latency_api_logs_cleanup'
     };
-  }
-
-  /**
-   * Update retention period (requires restart to take effect)
-   */
-  setRetentionDays(days) {
-    if (days < 1 || days > 365) {
-      throw new Error('Retention days must be between 1 and 365');
-    }
-    
-    this.retentionDays = days;
-    console.log(`📝 Outage history retention period updated to ${days} days`);
   }
 }
 
 // Export singleton instance
-const outageHistoryCleanup = new OutageHistoryCleanupService();
-module.exports = outageHistoryCleanup;
+const liveLatencyApiLogsCleanup = new LiveLatencyApiLogsCleanupService();
+module.exports = liveLatencyApiLogsCleanup;
+
