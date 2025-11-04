@@ -49,23 +49,13 @@ The Manage Locations module is your master database of all network connection po
 ### Required Fields
 1. **Location Code**: Exactly 3 uppercase letters (e.g., `LON`, `NYC`, `SNG`)
    - Must be unique
-   - Use IATA airport codes when possible
 2. **City**: Full city name (e.g., "London")
 3. **Country**: Full country name (e.g., "United Kingdom")
 4. **Region**: Select one:
    - **APAC**: Asia-Pacific
    - **EMEA**: Europe, Middle East, Africa
    - **Americas**: North and South America
-   - **Global**: Multi-region
 
-### Optional Fields
-- **Metro Area**: Logical grouping (e.g., "London" for LON, SLO, REA)
-
-### Steps
-1. Click **"Add Location"**
-2. Fill in required fields
-3. Add metro area if applicable
-4. Click **"Add"**
 
 ⚠️ **Important Rules:**
 - Location code must be exactly 3 letters
