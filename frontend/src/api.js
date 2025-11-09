@@ -470,5 +470,46 @@ export const deleteFeedback = (feedbackId) =>
 export const getFeedbackNotificationCount = () => 
   api.get(`${API_BASE_URL}/feedback/notifications/count`).then(res => res.data);
 
+// Analytics
+export const getAnalyticsOverview = (startDate, endDate) => {
+  const params = {};
+  if (startDate) params.start_date = startDate;
+  if (endDate) params.end_date = endDate;
+  return api.get(`${API_BASE_URL}/analytics/overview`, { params }).then(res => res.data);
+};
+
+export const getAnalyticsDesignPricing = (startDate, endDate) => {
+  const params = {};
+  if (startDate) params.start_date = startDate;
+  if (endDate) params.end_date = endDate;
+  return api.get(`${API_BASE_URL}/analytics/design-pricing`, { params }).then(res => res.data);
+};
+
+export const getAnalyticsAllocatedCost = (startDate, endDate) => {
+  const params = {};
+  if (startDate) params.start_date = startDate;
+  if (endDate) params.end_date = endDate;
+  return api.get(`${API_BASE_URL}/analytics/allocated-cost`, { params }).then(res => res.data);
+};
+
+export const getAnalyticsUsers = (startDate, endDate) => {
+  const params = {};
+  if (startDate) params.start_date = startDate;
+  if (endDate) params.end_date = endDate;
+  return api.get(`${API_BASE_URL}/analytics/users`, { params }).then(res => res.data);
+};
+
+export const getAnalyticsPerformance = (startDate, endDate) => {
+  const params = {};
+  if (startDate) params.start_date = startDate;
+  if (endDate) params.end_date = endDate;
+  return api.get(`${API_BASE_URL}/analytics/performance`, { params }).then(res => res.data);
+};
+
+// System Settings
+export const getSystemSettings = () => api.get(`${API_BASE_URL}/system-settings`).then(res => res.data);
+export const getSystemSetting = (key) => api.get(`${API_BASE_URL}/system-settings/${key}`).then(res => res.data);
+export const updateSystemSetting = (key, value) => api.put(`${API_BASE_URL}/system-settings/${key}`, { setting_value: value }).then(res => res.data);
+
 // Export the base api object for direct use
 export { api }; 

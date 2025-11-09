@@ -2241,6 +2241,7 @@ async function validateRowForeignKeys(row, module) {
   const errors = [];
   
   if (module === 'carrier_contacts') {
+    // Validate carrier_id
     if (row.carrier_id) {
       try {
         const result = await new Promise((resolve, reject) => {
@@ -2254,6 +2255,24 @@ async function validateRowForeignKeys(row, module) {
         }
       } catch (err) {
         errors.push(`Database error validating carrier_id: ${err.message}`);
+      }
+    }
+    
+    // Validate contact_type against allowed values
+    if (row.contact_type) {
+      const validContactTypes = bulkUploadModules.carrier_contacts.validContactTypes;
+      const trimmedType = row.contact_type.trim();
+      if (!validContactTypes.includes(trimmedType)) {
+        errors.push(`Invalid contact_type: "${trimmedType}". Must be one of: ${validContactTypes.join(', ')}`);
+      }
+    }
+    
+    // Validate contact_level against allowed values (if provided)
+    if (row.contact_level && row.contact_level.trim() !== '') {
+      const validContactLevels = bulkUploadModules.carrier_contacts.validContactLevels;
+      const trimmedLevel = row.contact_level.trim();
+      if (!validContactLevels.includes(trimmedLevel)) {
+        errors.push(`Invalid contact_level: "${trimmedLevel}". Must be one of: ${validContactLevels.join(', ')}`);
       }
     }
   } else if (module === 'pop_capabilities') {
@@ -3226,7 +3245,7 @@ router.get('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
   
   db.get(
     `SELECT location_code, datacenter_name, 
-     cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes, cross_connect_mandatory
+     cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes, cross_connect_mandatory, customer_owned_xc
      FROM location_reference WHERE id = ?`, 
     [locationId], 
     (err, row) => {
@@ -3241,7 +3260,8 @@ router.get('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
         cross_connect_nrc_currency: row.cross_connect_nrc_currency || 'USD',
         cross_connect_mrc_currency: row.cross_connect_mrc_currency || 'USD',
         cross_connect_notes: row.cross_connect_notes || '',
-        cross_connect_mandatory: row.cross_connect_mandatory || 0
+        cross_connect_mandatory: row.cross_connect_mandatory || 0,
+        customer_owned_xc: row.customer_owned_xc || 0
       };
       
       res.json(crossConnectInfo);
@@ -3251,13 +3271,18 @@ router.get('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
 
 // Update cross connect information for a specific location
 router.put('/locations/:id/cross-connect', authenticateToken, authorizeModulePermission('locations', 'provisioner'), (req, res) => {
-  const { cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes, cross_connect_mandatory } = req.body;
+  const { cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency, cross_connect_notes, cross_connect_mandatory, customer_owned_xc } = req.body;
   const locationId = req.params.id;
   
   // Process cross connect values - convert 'POA' string to NULL for database storage
   const processedCrossConnectNrc = (cross_connect_nrc === 'POA' || cross_connect_nrc === '' || cross_connect_nrc === undefined) ? null : parseFloat(cross_connect_nrc);
   const processedCrossConnectMrc = (cross_connect_mrc === 'POA' || cross_connect_mrc === '' || cross_connect_mrc === undefined) ? null : parseFloat(cross_connect_mrc);
   const processedMandatory = cross_connect_mandatory ? 1 : 0;
+  const processedCustomerOwned = customer_owned_xc ? 1 : 0;
+  
+  // Enforce mutual exclusivity: if one is enabled, the other must be disabled
+  const finalMandatory = processedCustomerOwned ? 0 : processedMandatory;
+  const finalCustomerOwned = processedMandatory ? 0 : processedCustomerOwned;
   
   // Get current location data for change logging
   db.get('SELECT * FROM location_reference WHERE id = ?', [locationId], (err, oldLocation) => {
@@ -3266,10 +3291,10 @@ router.put('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
     
     db.run(
       `UPDATE location_reference SET 
-        cross_connect_nrc = ?, cross_connect_nrc_currency = ?, cross_connect_mrc = ?, cross_connect_mrc_currency = ?, cross_connect_notes = ?, cross_connect_mandatory = ?,
+        cross_connect_nrc = ?, cross_connect_nrc_currency = ?, cross_connect_mrc = ?, cross_connect_mrc_currency = ?, cross_connect_notes = ?, cross_connect_mandatory = ?, customer_owned_xc = ?,
         updated_by = ?, updated_date = CURRENT_TIMESTAMP 
        WHERE id = ?`,
-      [processedCrossConnectNrc, cross_connect_nrc_currency || 'USD', processedCrossConnectMrc, cross_connect_mrc_currency || 'USD', cross_connect_notes || '', processedMandatory, req.user.id, locationId],
+      [processedCrossConnectNrc, cross_connect_nrc_currency || 'USD', processedCrossConnectMrc, cross_connect_mrc_currency || 'USD', cross_connect_notes || '', finalMandatory, finalCustomerOwned, req.user.id, locationId],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Location not found' });
@@ -3281,7 +3306,8 @@ router.put('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
             cross_connect_mrc: oldLocation.cross_connect_mrc, 
             cross_connect_mrc_currency: oldLocation.cross_connect_mrc_currency, 
             cross_connect_notes: oldLocation.cross_connect_notes,
-            cross_connect_mandatory: oldLocation.cross_connect_mandatory
+            cross_connect_mandatory: oldLocation.cross_connect_mandatory,
+            customer_owned_xc: oldLocation.customer_owned_xc
           }, 
           { 
             cross_connect_nrc: processedCrossConnectNrc, 
@@ -3289,7 +3315,8 @@ router.put('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
             cross_connect_mrc: processedCrossConnectMrc, 
             cross_connect_mrc_currency, 
             cross_connect_notes,
-            cross_connect_mandatory: processedMandatory
+            cross_connect_mandatory: finalMandatory,
+            customer_owned_xc: finalCustomerOwned
           }, req);
         
         res.json({ message: 'Cross connect information updated' });
@@ -4780,6 +4807,7 @@ const roundUpToNearest10 = (amount) => {
 
 // Network Design with Enhanced Pricing
 router.post('/network_design/calculate_pricing', authenticateToken, async (req, res) => {
+  const startTime = Date.now();
   const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, use_cisco_only_routes = false, use_100gb_and_df_only = false, bandwidth, source, destination, protection_required = false, customerName, quoteRequestId, design_mode = 'auto', manual_primary_routes = null, manual_secondary_routes = null, mtu_required = null, carrier_avoidance = [], circuit_exclusion = [], calling_module = 'network_design', incrementalCosts = [] } = req.body;
   
   if (!paths || !Array.isArray(paths)) {
@@ -5335,8 +5363,9 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       );
     } else {
       // Default: Save to audit_logs table (for Network Design Tool)
+      const executionTime = Date.now() - startTime;
       db.run(
-        'INSERT INTO audit_logs (action_type, user_id, user_name, parameters, pricing_data, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO audit_logs (action_type, user_id, user_name, parameters, pricing_data, execution_time, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         [
           'CONTRACT_TERM_PRICING_CALCULATION',
           req.user?.id || null,
@@ -5403,6 +5432,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           },
           exchangeRates: exchangeRates
         }),
+          executionTime,
           req.ip || req.connection?.remoteAddress || 'unknown',
           req.get('User-Agent') || 'unknown'
         ],
@@ -7873,13 +7903,34 @@ const bulkUploadModules = {
     templateFields: [
       'carrier_id', 'contact_type', 'contact_level', 'contact_name', 'contact_function', 'contact_email', 'contact_phone', 'notes'
     ],
-    requiredFields: ['carrier_id', 'contact_name', 'contact_email'],
+    requiredFields: ['carrier_id', 'contact_type', 'contact_name', 'contact_function'],
+    validContactTypes: [
+      'Primary Support Contact',
+      'Primary Order Contact',
+      'Billing Contact',
+      'Primary Legal Contact',
+      'Account Manager',
+      'Service Manager',
+      'Support - Peer to Peer Escalation',
+      'Delivery - Peer to Peer Escalation',
+      'Service Management - Peer to Peer Escalation',
+      'Account Management - Peer to Peer Escalation',
+      'Cease Contact'
+    ],
+    validContactLevels: [
+      'General',
+      '1st Level',
+      '2nd Level',
+      '3rd Level',
+      '4th Level',
+      '5th Level'
+    ],
     sampleData: {
       carrier_id: '1',
-      contact_type: 'Business',
-      contact_level: 'Manager',
+      contact_type: 'Primary Support Contact',
+      contact_level: '2nd Level',
       contact_name: 'John Smith',
-      contact_function: 'Account Management',
+      contact_function: 'Technical Support Manager',
       contact_email: 'john.smith@carrier.com',
       contact_phone: '+1-555-0789',
       notes: 'Primary contact for technical issues'
@@ -11721,6 +11772,594 @@ router.delete('/feedback/:id', authenticateToken, authorizeRole('administrator')
         });
       });
     });
+  });
+});
+
+// ====================================
+// ANALYTICS ENDPOINTS (Admin Only)
+// ====================================
+
+// Get overview analytics
+router.get('/analytics/overview', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    
+    // Build date filter
+    let dateFilter = '';
+    let params = [];
+    if (start_date && end_date) {
+      dateFilter = ' AND timestamp >= ? AND timestamp <= ?';
+      params = [start_date, end_date];
+    }
+    
+    // Total calculations from both tools
+    const designCalcs = await new Promise((resolve, reject) => {
+      db.get(
+        `SELECT COUNT(*) as count FROM audit_logs WHERE action_type = 'CONTRACT_TERM_PRICING_CALCULATION'${dateFilter}`,
+        params,
+        (err, row) => err ? reject(err) : resolve(row.count || 0)
+      );
+    });
+    
+    const allocatedCalcs = await new Promise((resolve, reject) => {
+      db.get(
+        `SELECT COUNT(*) as count FROM allocated_cost_pricing_logs WHERE action = 'CALCULATE'${dateFilter}`,
+        params,
+        (err, row) => err ? reject(err) : resolve(row.count || 0)
+      );
+    });
+    
+    // Unique active users
+    const activeUsers = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT DISTINCT user_id FROM (
+          SELECT user_id FROM audit_logs WHERE action_type = 'CONTRACT_TERM_PRICING_CALCULATION'${dateFilter}
+          UNION
+          SELECT user_id FROM allocated_cost_pricing_logs WHERE action = 'CALCULATE'${dateFilter}
+        )`,
+        params.concat(params),
+        (err, rows) => err ? reject(err) : resolve(rows.length)
+      );
+    });
+    
+    // Month-to-month trends (last 12 months)
+    const monthlyTrends = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT 
+          strftime('%Y-%m', timestamp) as month,
+          COUNT(*) as count,
+          'design' as tool
+        FROM audit_logs 
+        WHERE action_type = 'CONTRACT_TERM_PRICING_CALCULATION'
+        GROUP BY strftime('%Y-%m', timestamp)
+        UNION ALL
+        SELECT 
+          strftime('%Y-%m', timestamp) as month,
+          COUNT(*) as count,
+          'allocated' as tool
+        FROM allocated_cost_pricing_logs 
+        WHERE action = 'CALCULATE'
+        GROUP BY strftime('%Y-%m', timestamp)
+        ORDER BY month DESC
+        LIMIT 24`,
+        [],
+        (err, rows) => err ? reject(err) : resolve(rows)
+      );
+    });
+    
+    res.json({
+      totalCalculations: designCalcs + allocatedCalcs,
+      designCalculations: designCalcs,
+      allocatedCalculations: allocatedCalcs,
+      activeUsers,
+      monthlyTrends
+    });
+  } catch (error) {
+    console.error('Error fetching overview analytics:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get Design & Pricing analytics
+router.get('/analytics/design-pricing', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    
+    let dateFilter = '';
+    let params = [];
+    if (start_date && end_date) {
+      dateFilter = ' AND timestamp >= ? AND timestamp <= ?';
+      params = [start_date, end_date];
+    }
+    
+    // Get all design pricing calculations
+    const calculations = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT parameters, pricing_data, execution_time FROM audit_logs 
+         WHERE action_type = 'CONTRACT_TERM_PRICING_CALCULATION'${dateFilter}
+         ORDER BY timestamp DESC`,
+        params,
+        (err, rows) => err ? reject(err) : resolve(rows)
+      );
+    });
+    
+    // Process data
+    const routePairs = {};
+    const cityCodes = {};
+    const individualLocations = {};
+    const bandwidthRanges = {};
+    const customers = {};
+    let totalSuggestedPrice = 0;
+    let priceCount = 0;
+    let totalResponseTime = 0;
+    let responseTimeCount = 0;
+    
+    calculations.forEach(calc => {
+      try {
+        const params = JSON.parse(calc.parameters || '{}');
+        const pricing = JSON.parse(calc.pricing_data || '{}');
+        
+        // Route pairs (normalized)
+        if (params.source && params.destination) {
+          const locations = [params.source, params.destination].sort();
+          const routeKey = `${locations[0]} ↔ ${locations[1]}`;
+          routePairs[routeKey] = (routePairs[routeKey] || 0) + 1;
+          
+          // City codes (first 6 chars)
+          const cityA = params.source.substring(0, 6);
+          const cityB = params.destination.substring(0, 6);
+          cityCodes[cityA] = (cityCodes[cityA] || 0) + 1;
+          cityCodes[cityB] = (cityCodes[cityB] || 0) + 1;
+          
+          // Individual locations
+          individualLocations[params.source] = (individualLocations[params.source] || 0) + 1;
+          individualLocations[params.destination] = (individualLocations[params.destination] || 0) + 1;
+        }
+        
+        // Bandwidth ranges
+        if (params.bandwidth) {
+          const bw = parseInt(params.bandwidth);
+          let range = 'Unknown';
+          if (bw < 1000) range = '< 1 Gbps';
+          else if (bw < 10000) range = '1-10 Gbps';
+          else if (bw < 100000) range = '10-100 Gbps';
+          else range = '100+ Gbps';
+          bandwidthRanges[range] = (bandwidthRanges[range] || 0) + 1;
+        }
+        
+        // Customer names (normalized - trim and lowercase)
+        if (params.customerName) {
+          const customerKey = params.customerName.trim().toLowerCase();
+          customers[customerKey] = (customers[customerKey] || 0) + 1;
+        }
+        
+        // Average suggested price from protection pricing
+        if (pricing.calculationResults?.protection?.pricing?.suggestedPrice) {
+          totalSuggestedPrice += parseFloat(pricing.calculationResults.protection.pricing.suggestedPrice);
+          priceCount++;
+        } else if (pricing.calculationResults?.individual && pricing.calculationResults.individual.length > 0) {
+          // If no protection pricing, use first path's suggested price
+          const firstPath = pricing.calculationResults.individual[0];
+          if (firstPath?.pricing?.suggestedPrice) {
+            totalSuggestedPrice += parseFloat(firstPath.pricing.suggestedPrice);
+            priceCount++;
+          }
+        }
+        
+        // Response time
+        if (calc.execution_time) {
+          totalResponseTime += parseFloat(calc.execution_time);
+          responseTimeCount++;
+        }
+      } catch (e) {
+        console.error('Error parsing calculation:', e);
+      }
+    });
+    
+    res.json({
+      totalCalculations: calculations.length,
+      routePairs: Object.entries(routePairs)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([route, count]) => ({ route, count })),
+      cityCodes: Object.entries(cityCodes)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([city, count]) => ({ city, count })),
+      individualLocations: Object.entries(individualLocations)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([location, count]) => ({ location, count })),
+      bandwidthRanges: Object.entries(bandwidthRanges)
+        .map(([range, count]) => ({ range, count })),
+      topCustomers: Object.entries(customers)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([customer, count]) => ({ customer, count })),
+      averageSuggestedPrice: priceCount > 0 ? (totalSuggestedPrice / priceCount).toFixed(2) : 0,
+      averageResponseTime: responseTimeCount > 0 ? (totalResponseTime / responseTimeCount).toFixed(0) : 0
+    });
+  } catch (error) {
+    console.error('Error fetching design pricing analytics:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get Allocated Cost Calculator analytics
+router.get('/analytics/allocated-cost', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    
+    let dateFilter = '';
+    let params = [];
+    if (start_date && end_date) {
+      dateFilter = ' AND timestamp >= ? AND timestamp <= ?';
+      params = [start_date, end_date];
+    }
+    
+    // Get all allocated cost calculations
+    const calculations = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT new_values, record_id FROM allocated_cost_pricing_logs 
+         WHERE action = 'CALCULATE'${dateFilter}
+         ORDER BY timestamp DESC`,
+        params,
+        (err, rows) => err ? reject(err) : resolve(rows)
+      );
+    });
+    
+    // Process data
+    const routePairs = {};
+    const cityCodes = {};
+    const individualLocations = {};
+    const bandwidthRanges = {};
+    const customers = {};
+    const quoteRequestIds = {};
+    let totalSuggestedPrice = 0;
+    let priceCount = 0;
+    
+    calculations.forEach(calc => {
+      try {
+        const data = JSON.parse(calc.new_values || '{}');
+        const params = data.inputParameters || {};
+        const results = data.calculationResults || {};
+        
+        // Route pairs (normalized)
+        if (params.source && params.destination) {
+          const locations = [params.source, params.destination].sort();
+          const routeKey = `${locations[0]} ↔ ${locations[1]}`;
+          routePairs[routeKey] = (routePairs[routeKey] || 0) + 1;
+          
+          // City codes (first 6 chars)
+          const cityA = params.source.substring(0, 6);
+          const cityB = params.destination.substring(0, 6);
+          cityCodes[cityA] = (cityCodes[cityA] || 0) + 1;
+          cityCodes[cityB] = (cityCodes[cityB] || 0) + 1;
+          
+          // Individual locations
+          individualLocations[params.source] = (individualLocations[params.source] || 0) + 1;
+          individualLocations[params.destination] = (individualLocations[params.destination] || 0) + 1;
+        }
+        
+        // Bandwidth ranges
+        if (params.bandwidth) {
+          const bw = parseInt(params.bandwidth);
+          let range = 'Unknown';
+          if (bw < 1000) range = '< 1 Gbps';
+          else if (bw < 10000) range = '1-10 Gbps';
+          else if (bw < 100000) range = '10-100 Gbps';
+          else range = '100+ Gbps';
+          bandwidthRanges[range] = (bandwidthRanges[range] || 0) + 1;
+        }
+        
+        // Customer names (normalized)
+        if (params.customerName) {
+          const customerKey = params.customerName.trim().toLowerCase();
+          customers[customerKey] = (customers[customerKey] || 0) + 1;
+        }
+        
+        // Quote Request IDs
+        if (params.quoteRequestId) {
+          const qid = params.quoteRequestId.trim();
+          quoteRequestIds[qid] = (quoteRequestIds[qid] || 0) + 1;
+        }
+        
+        // Average suggested price from protection pricing
+        if (results.protection?.pricing?.suggestedPrice) {
+          totalSuggestedPrice += parseFloat(results.protection.pricing.suggestedPrice);
+          priceCount++;
+        } else if (results.individual && results.individual.length > 0) {
+          // Use first path's suggested price if no protection pricing
+          const firstPath = results.individual[0];
+          if (firstPath?.pricing?.suggestedPrice) {
+            totalSuggestedPrice += parseFloat(firstPath.pricing.suggestedPrice);
+            priceCount++;
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing calculation:', e);
+      }
+    });
+    
+    res.json({
+      totalCalculations: calculations.length,
+      routePairs: Object.entries(routePairs)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([route, count]) => ({ route, count })),
+      cityCodes: Object.entries(cityCodes)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([city, count]) => ({ city, count })),
+      individualLocations: Object.entries(individualLocations)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([location, count]) => ({ location, count })),
+      bandwidthRanges: Object.entries(bandwidthRanges)
+        .map(([range, count]) => ({ range, count })),
+      topCustomers: Object.entries(customers)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([customer, count]) => ({ customer, count })),
+      quoteRequestIds: Object.entries(quoteRequestIds)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([quoteId, count]) => ({ quoteId, count })),
+      uniqueQuoteIds: Object.keys(quoteRequestIds).length,
+      averageSuggestedPrice: priceCount > 0 ? (totalSuggestedPrice / priceCount).toFixed(2) : 0
+    });
+  } catch (error) {
+    console.error('Error fetching allocated cost analytics:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get user analytics
+router.get('/analytics/users', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    
+    let dateFilter = '';
+    let params = [];
+    if (start_date && end_date) {
+      dateFilter = ' AND timestamp >= ? AND timestamp <= ?';
+      params = [start_date, end_date];
+    }
+    
+    // User registrations over time
+    const userRegistrations = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT strftime('%Y-%m', created_at) as month, COUNT(*) as count
+         FROM users
+         WHERE created_at IS NOT NULL
+         GROUP BY strftime('%Y-%m', created_at)
+         ORDER BY month DESC
+         LIMIT 24`,
+        [],
+        (err, rows) => err ? reject(err) : resolve(rows)
+      );
+    });
+    
+    // Most active users with breakdown
+    const activeUsers = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT 
+          u.id,
+          u.username,
+          u.full_name,
+          COUNT(DISTINCT CASE WHEN al.action_type = 'CONTRACT_TERM_PRICING_CALCULATION' THEN al.id END) as design_calcs,
+          COUNT(DISTINCT CASE WHEN acl.action = 'CALCULATE' THEN acl.id END) as allocated_calcs
+        FROM users u
+        LEFT JOIN audit_logs al ON u.id = al.user_id AND al.action_type = 'CONTRACT_TERM_PRICING_CALCULATION'${dateFilter}
+        LEFT JOIN allocated_cost_pricing_logs acl ON u.id = acl.user_id AND acl.action = 'CALCULATE'${dateFilter}
+        GROUP BY u.id, u.username, u.full_name
+        HAVING (design_calcs + allocated_calcs) > 0
+        ORDER BY (design_calcs + allocated_calcs) DESC
+        LIMIT 20`,
+        params.concat(params),
+        (err, rows) => err ? reject(err) : resolve(rows)
+      );
+    });
+    
+    // Total registered users
+    const totalUsers = await new Promise((resolve, reject) => {
+      db.get(
+        `SELECT COUNT(*) as count FROM users`,
+        [],
+        (err, row) => err ? reject(err) : resolve(row.count || 0)
+      );
+    });
+    
+    // Daily login counts over time
+    const dailyLoginCounts = await new Promise((resolve, reject) => {
+      let loginDateFilter = '';
+      let loginParams = [];
+      if (start_date && end_date) {
+        loginDateFilter = ' WHERE timestamp >= ? AND timestamp <= ?';
+        loginParams = [start_date, end_date];
+      }
+      
+      db.all(
+        `SELECT 
+          strftime('%Y-%m-%d', timestamp) as date,
+          COUNT(DISTINCT user_id) as unique_users,
+          COUNT(*) as total_logins
+         FROM change_logs
+         WHERE table_name = 'user_activity' AND action = 'LOGIN'${loginDateFilter}
+         GROUP BY strftime('%Y-%m-%d', timestamp)
+         ORDER BY date DESC
+         LIMIT 90`,
+        loginParams,
+        (err, rows) => err ? reject(err) : resolve(rows)
+      );
+    });
+    
+    res.json({
+      totalUsers,
+      userRegistrations,
+      dailyLoginCounts,
+      mostActiveUsers: activeUsers.map(user => ({
+        username: user.username,
+        fullName: user.full_name,
+        designCalculations: user.design_calcs || 0,
+        allocatedCalculations: user.allocated_calcs || 0,
+        totalCalculations: (user.design_calcs || 0) + (user.allocated_calcs || 0)
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching user analytics:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get performance analytics
+router.get('/analytics/performance', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    
+    let dateFilter = '';
+    let params = [];
+    if (start_date && end_date) {
+      dateFilter = ' AND timestamp >= ? AND timestamp <= ?';
+      params = [start_date, end_date];
+    }
+    
+    // Average response times for design pricing
+    const designResponseTimes = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT 
+          execution_time,
+          strftime('%Y-%m-%d', timestamp) as date
+         FROM audit_logs 
+         WHERE action_type = 'CONTRACT_TERM_PRICING_CALCULATION' 
+         AND execution_time IS NOT NULL${dateFilter}
+         ORDER BY timestamp DESC`,
+        params,
+        (err, rows) => err ? reject(err) : resolve(rows)
+      );
+    });
+    
+    // Calculate average response time
+    let totalTime = 0;
+    let count = 0;
+    const dailyAvg = {};
+    
+    designResponseTimes.forEach(row => {
+      const time = parseFloat(row.execution_time);
+      if (!isNaN(time)) {
+        totalTime += time;
+        count++;
+        
+        if (!dailyAvg[row.date]) {
+          dailyAvg[row.date] = { total: 0, count: 0 };
+        }
+        dailyAvg[row.date].total += time;
+        dailyAvg[row.date].count++;
+      }
+    });
+    
+    // Calculations per day of week and hour
+    const calculationsByTime = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT 
+          strftime('%w', timestamp) as day_of_week,
+          strftime('%H', timestamp) as hour,
+          COUNT(*) as count
+         FROM (
+           SELECT timestamp FROM audit_logs WHERE action_type = 'CONTRACT_TERM_PRICING_CALCULATION'${dateFilter}
+           UNION ALL
+           SELECT timestamp FROM allocated_cost_pricing_logs WHERE action = 'CALCULATE'${dateFilter}
+         )
+         GROUP BY day_of_week, hour`,
+        params.concat(params),
+        (err, rows) => err ? reject(err) : resolve(rows)
+      );
+    });
+    
+    // Calculations per day
+    const calculationsPerDay = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT 
+          strftime('%Y-%m-%d', timestamp) as date,
+          COUNT(*) as count
+         FROM (
+           SELECT timestamp FROM audit_logs WHERE action_type = 'CONTRACT_TERM_PRICING_CALCULATION'${dateFilter}
+           UNION ALL
+           SELECT timestamp FROM allocated_cost_pricing_logs WHERE action = 'CALCULATE'${dateFilter}
+         )
+         GROUP BY date
+         ORDER BY date DESC
+         LIMIT 90`,
+        params.concat(params),
+        (err, rows) => err ? reject(err) : resolve(rows)
+      );
+    });
+    
+    res.json({
+      averageResponseTime: count > 0 ? (totalTime / count).toFixed(0) : 0,
+      dailyAverageResponseTimes: Object.entries(dailyAvg)
+        .map(([date, data]) => ({
+          date,
+          avgTime: (data.total / data.count).toFixed(0)
+        }))
+        .slice(0, 30),
+      calculationsByTimeOfDay: calculationsByTime,
+      calculationsPerDay
+    });
+  } catch (error) {
+    console.error('Error fetching performance analytics:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ====================================
+// SYSTEM SETTINGS ENDPOINTS
+// ====================================
+
+// Get all system settings (public endpoint for all authenticated users)
+router.get('/system-settings', authenticateToken, (req, res) => {
+  db.all('SELECT id, setting_key, setting_value, description, updated_at FROM system_settings ORDER BY setting_key', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+// Get a specific system setting by key (public endpoint for all authenticated users)
+router.get('/system-settings/:key', authenticateToken, (req, res) => {
+  const { key } = req.params;
+  db.get('SELECT id, setting_key, setting_value, description, updated_at FROM system_settings WHERE setting_key = ?', [key], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'Setting not found' });
+    res.json(row);
+  });
+});
+
+// Update system setting (admin only)
+router.put('/system-settings/:key', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const { key } = req.params;
+  const { setting_value } = req.body;
+
+  // Get old value for change log
+  db.get('SELECT * FROM system_settings WHERE setting_key = ?', [key], (err, oldSetting) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldSetting) return res.status(404).json({ error: 'Setting not found' });
+
+    db.run(
+      'UPDATE system_settings SET setting_value = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE setting_key = ?',
+      [setting_value, req.user.id, key],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Setting not found' });
+
+        // Log the change
+        logChange(req.user.id, 'system_settings', key, 'UPDATE', 
+          { setting_key: oldSetting.setting_key, setting_value: oldSetting.setting_value }, 
+          { setting_key: key, setting_value }, 
+          req);
+
+        res.json({ message: 'Setting updated successfully' });
+      }
+    );
   });
 });
 

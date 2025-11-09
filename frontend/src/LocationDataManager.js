@@ -557,7 +557,8 @@ const LocationDataManager = ({ hasPermission }) => {
         cross_connect_mrc: currentCrossConnect.cross_connect_mrc,
         cross_connect_mrc_currency: currentCrossConnect.cross_connect_mrc_currency,
         cross_connect_notes: currentCrossConnect.cross_connect_notes,
-        cross_connect_mandatory: currentCrossConnect.cross_connect_mandatory || 0
+        cross_connect_mandatory: currentCrossConnect.cross_connect_mandatory || 0,
+        customer_owned_xc: currentCrossConnect.customer_owned_xc || 0
       });
       setSuccess('Cross connect info updated successfully');
       setCrossConnectDialogOpen(false);
@@ -568,10 +569,18 @@ const LocationDataManager = ({ hasPermission }) => {
   };
 
   const handleCrossConnectInputChange = (field, value) => {
-    setCurrentCrossConnect(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    setCurrentCrossConnect(prev => {
+      const updated = { ...prev, [field]: value };
+      
+      // Enforce mutual exclusivity between mandatory and customer-owned
+      if (field === 'cross_connect_mandatory' && value) {
+        updated.customer_owned_xc = 0;
+      } else if (field === 'customer_owned_xc' && value) {
+        updated.cross_connect_mandatory = 0;
+      }
+      
+      return updated;
+    });
   };
 
   const handleExportCSV = async () => {
@@ -1274,10 +1283,10 @@ const LocationDataManager = ({ hasPermission }) => {
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
                   <TextField
                     label="NRC Amount"
-                    value={currentCrossConnect.cross_connect_nrc || ''}
+                    value={currentCrossConnect.customer_owned_xc ? '' : (currentCrossConnect.cross_connect_nrc || '')}
                     onChange={(e) => handleCrossConnectInputChange('cross_connect_nrc', e.target.value)}
-                    placeholder="Enter amount or POA"
-                    disabled={!hasPermission || !hasPermission('locations', 'edit')}
+                    placeholder={currentCrossConnect.customer_owned_xc ? "N/A - Customer Provided" : "Enter amount or POA"}
+                    disabled={!!currentCrossConnect.customer_owned_xc || !hasPermission || !hasPermission('locations', 'edit')}
                     sx={{ flexGrow: 1 }}
                   />
                   <FormControl sx={{ minWidth: 80 }}>
@@ -1286,7 +1295,7 @@ const LocationDataManager = ({ hasPermission }) => {
                       value={currentCrossConnect.cross_connect_nrc_currency || 'USD'}
                       onChange={(e) => handleCrossConnectInputChange('cross_connect_nrc_currency', e.target.value)}
                       label="Currency"
-                      disabled={!hasPermission || !hasPermission('locations', 'edit')}
+                      disabled={!!currentCrossConnect.customer_owned_xc || !hasPermission || !hasPermission('locations', 'edit')}
                     >
                       {currencies.map(currency => (
                         <MenuItem key={currency} value={currency}>{currency}</MenuItem>
@@ -1304,10 +1313,10 @@ const LocationDataManager = ({ hasPermission }) => {
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
                   <TextField
                     label="MRC Amount"
-                    value={currentCrossConnect.cross_connect_mrc || ''}
+                    value={currentCrossConnect.customer_owned_xc ? '' : (currentCrossConnect.cross_connect_mrc || '')}
                     onChange={(e) => handleCrossConnectInputChange('cross_connect_mrc', e.target.value)}
-                    placeholder="Enter amount or POA"
-                    disabled={!hasPermission || !hasPermission('locations', 'edit')}
+                    placeholder={currentCrossConnect.customer_owned_xc ? "N/A - Customer Provided" : "Enter amount or POA"}
+                    disabled={!!currentCrossConnect.customer_owned_xc || !hasPermission || !hasPermission('locations', 'edit')}
                     sx={{ flexGrow: 1 }}
                   />
                   <FormControl sx={{ minWidth: 80 }}>
@@ -1316,7 +1325,7 @@ const LocationDataManager = ({ hasPermission }) => {
                       value={currentCrossConnect.cross_connect_mrc_currency || 'USD'}
                       onChange={(e) => handleCrossConnectInputChange('cross_connect_mrc_currency', e.target.value)}
                       label="Currency"
-                      disabled={!hasPermission || !hasPermission('locations', 'edit')}
+                      disabled={!!currentCrossConnect.customer_owned_xc || !hasPermission || !hasPermission('locations', 'edit')}
                     >
                       {currencies.map(currency => (
                         <MenuItem key={currency} value={currency}>{currency}</MenuItem>
@@ -1361,6 +1370,29 @@ const LocationDataManager = ({ hasPermission }) => {
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         When enabled, this location will automatically require a cross connect in the Design & Pricing Tool
+                      </Typography>
+                    </Box>
+                  }
+                />
+              </Grid>
+
+              {/* Customer Owned Cross Connect Checkbox */}
+              <Grid item xs={12}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={!!currentCrossConnect.customer_owned_xc}
+                      onChange={(e) => handleCrossConnectInputChange('customer_owned_xc', e.target.checked ? 1 : 0)}
+                      disabled={!hasPermission || !hasPermission('locations', 'edit')}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" fontWeight="bold">
+                        Customer Owned Cross Connect Only
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        When enabled, cross connect will be enforced but marked as customer-provided (no NRC/MRC charges)
                       </Typography>
                     </Box>
                   }

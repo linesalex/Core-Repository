@@ -33,6 +33,7 @@ import TextFormatIcon from '@mui/icons-material/TextFormat';
 import FeedbackIcon from '@mui/icons-material/Feedback';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import BusinessCenterIcon from '@mui/icons-material/BusinessCenter';
+import AnalyticsIcon from '@mui/icons-material/Analytics';
 import { AuthProvider, useAuth } from './AuthContext';
 import { TextSizeProvider, useTextSize } from './TextSizeContext';
 import LoginForm from './LoginForm';
@@ -55,8 +56,12 @@ import ExchangeDataManager from './ExchangeDataManager';
 import FeedbackManager from './FeedbackManager';
 import BulkUpload from './BulkUpload';
 import LiveLatencyAdminManager from './LiveLatencyAdminManager';
+import AnalyticsDashboard from './AnalyticsDashboard';
+import SystemSettingsManager from './SystemSettingsManager';
+import MenuBookIcon from '@mui/icons-material/MenuBook';
 
 import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking, getFeedbackNotificationCount } from './api';
+import { API_BASE_URL } from './config';
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
 import DarkFiberModal from './DarkFiberModal';
@@ -102,6 +107,19 @@ function AuthenticatedApp() {
   // Feedback notification count
   const [notificationCount, setNotificationCount] = useState(0);
   const [feedbackInitialTab, setFeedbackInitialTab] = useState(0);
+  
+  // Documentation URL from system settings
+  const [documentationUrl, setDocumentationUrl] = useState('https://docs.example.com');
+  
+  // Helper function to ensure URL has protocol
+  const ensureProtocol = (url) => {
+    if (!url) return 'https://docs.example.com';
+    const trimmedUrl = url.trim();
+    if (trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')) {
+      return trimmedUrl;
+    }
+    return `https://${trimmedUrl}`;
+  };
   
   // Live latency status
   const [liveLatencyStatus, setLiveLatencyStatus] = useState(null);
@@ -187,6 +205,34 @@ function AuthenticatedApp() {
     
     prevTabRef.current = currentTab;
   }, [currentTab, hasModuleAccess]);
+
+  // Load documentation URL from system settings
+  useEffect(() => {
+    const loadDocumentationUrl = async () => {
+      const token = localStorage.getItem('authToken');
+      if (!isAuthenticated || !token) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/system-settings/documentation_url`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setDocumentationUrl(data.setting_value || 'https://docs.example.com');
+        }
+      } catch (err) {
+        // Silently fail - keep default URL
+      }
+    };
+
+    if (isAuthenticated) {
+      loadDocumentationUrl();
+    }
+  }, [isAuthenticated]);
 
   // Poll feedback notification count every 30 seconds (only when authenticated)
   useEffect(() => {
@@ -685,6 +731,20 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'analytics':
+        return hasRole('administrator') ? (
+          <AnalyticsDashboard />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'system-settings':
+        return hasRole('administrator') ? (
+          <SystemSettingsManager hasRole={hasRole} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'core-outages':
         return hasModuleAccess('network_routes') ? (
           <CoreOutagesTable />
@@ -720,7 +780,7 @@ function AuthenticatedApp() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.3.1
+              v3.3.2
             </Typography>
           </Typography>
           
@@ -734,6 +794,20 @@ function AuthenticatedApp() {
               size="small"
             />
             
+            {/* Documentation Button */}
+            <Tooltip title="Documentation">
+              <IconButton
+                color="inherit"
+                component="a"
+                href={ensureProtocol(documentationUrl)}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="documentation"
+              >
+                <MenuBookIcon />
+              </IconButton>
+            </Tooltip>
+
             {/* Feedback Notifications */}
             <Tooltip title={notificationCount > 0 ? `${notificationCount} unread feedback item${notificationCount > 1 ? 's' : ''}` : 'No new notifications'}>
               <IconButton
@@ -1110,7 +1184,23 @@ function AuthenticatedApp() {
                 </ListItem>
                 <Collapse in={adminOpen} timeout="auto" unmountOnExit>
                   <List component="div" disablePadding>
-                    <ListItem 
+                  <ListItem
+                    button
+                    onClick={() => setCurrentTab('analytics')}
+                    sx={{ pl: 4, backgroundColor: currentTab === 'analytics' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                  >
+                    <ListItemIcon><AnalyticsIcon /></ListItemIcon>
+                    <ListItemText primary="Analytics" />
+                  </ListItem>
+                  <ListItem
+                    button
+                    onClick={() => setCurrentTab('system-settings')}
+                    sx={{ pl: 4, backgroundColor: currentTab === 'system-settings' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                  >
+                    <ListItemIcon><SettingsIcon /></ListItemIcon>
+                    <ListItemText primary="System Settings" />
+                  </ListItem>
+                  <ListItem
                       button 
                       onClick={() => setCurrentTab('live-latency-admin')} 
                       sx={{ pl: 4, backgroundColor: currentTab === 'live-latency-admin' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}

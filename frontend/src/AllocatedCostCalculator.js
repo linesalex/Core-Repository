@@ -2170,58 +2170,6 @@ const AllocatedCostCalculator = () => {
                               </Box>
                             </Paper>
                           )}
-                          
-                          {/* Protected Service Special Calculation */}
-                          {result.pathType === 'protected' && detailedCalcs.protectionBreakdown && (
-                            <Paper sx={{ p: 3, mb: 3, bgcolor: 'warning.50', border: '3px solid', borderColor: 'warning.main' }}>
-                              <Typography variant="subtitle1" gutterBottom color="warning.main" fontWeight="bold">
-                                🛡️ Protected Service Calculation
-                              </Typography>
-                              
-                              <Alert severity="info" sx={{ mb: 2 }}>
-                                Protected service pricing uses a 70% weight for the secondary path, reflecting its standby nature.
-                              </Alert>
-                              
-                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
-                                <Typography variant="subtitle2" gutterBottom>Allocated Cost Formula:</Typography>
-                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                  {detailedCalcs.protectionBreakdown.allocatedCostFormula}
-                                </Typography>
-                                <Typography variant="body1" color="primary" fontWeight="bold" sx={{ mt: 1 }}>
-                                  = {formatCurrency(detailedCalcs.protectionBreakdown.allocatedCostCalculation, formData.outputCurrency)}
-                                </Typography>
-                              </Box>
-                              
-                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
-                                <Typography variant="subtitle2" gutterBottom>Minimum Price Formula:</Typography>
-                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                  {detailedCalcs.protectionBreakdown.minimumPriceFormula}
-                                </Typography>
-                                <Typography variant="body1" color="error.main" fontWeight="bold" sx={{ mt: 1 }}>
-                                  = {formatCurrency(detailedCalcs.protectionBreakdown.minimumPriceCalculation, formData.outputCurrency)}
-                                </Typography>
-                              </Box>
-                              
-                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
-                                <Typography variant="subtitle2" gutterBottom>Suggested Price Formula:</Typography>
-                                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                  {detailedCalcs.protectionBreakdown.suggestedPriceFormula}
-                                </Typography>
-                                <Typography variant="body1" color="success.main" fontWeight="bold" sx={{ mt: 1 }}>
-                                  = {formatCurrency(detailedCalcs.protectionBreakdown.suggestedPriceCalculation, formData.outputCurrency)}
-                                </Typography>
-                              </Box>
-                              
-                              {detailedCalcs.protectionBreakdown.nrcCharge && (
-                                <Alert severity="warning" sx={{ mt: 2 }}>
-                                  <Typography variant="body2">
-                                    <strong>NRC Charge:</strong> {detailedCalcs.protectionBreakdown.nrcCharge.description}<br/>
-                                    Amount: {detailedCalcs.protectionBreakdown.nrcCharge.calculation}
-                                  </Typography>
-                                </Alert>
-                              )}
-                            </Paper>
-                          )}
                         </AccordionDetails>
                       </Accordion>
                           </Grid>

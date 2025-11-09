@@ -194,7 +194,7 @@ const NetworkDesignTool = () => {
         }
 
         const location = locations.find(loc => loc.location_code === locationCode);
-        if (location && location.cross_connect_mandatory) {
+        if (location && (location.cross_connect_mandatory || location.customer_owned_xc)) {
           setMandatoryCrossConnects(prev => ({ ...prev, [locationType]: true }));
           
           // Auto-enable cross connect for mandatory location if not already enabled
@@ -326,11 +326,12 @@ const NetworkDesignTool = () => {
         }));
       } else {
         // Fallback for old format (backwards compatibility)
-        setAuditLogs(response);
+        setAuditLogs(Array.isArray(response) ? response : []);
       }
     } catch (err) {
       console.error('Failed to load audit logs:', err);
       setError('Failed to load pricing logs: ' + err.message);
+      setAuditLogs([]); // Ensure it's always an array on error
     }
   };
 
@@ -1507,25 +1508,31 @@ const NetworkDesignTool = () => {
 
     // Cross Connect Information
     if (crossConnectResults.source) {
-      emailBody += `Source Cross Connect${crossConnectResults.source.mandatory ? ' (Mandatory)' : ''}\n`;
+      emailBody += `Source Cross Connect${crossConnectResults.source.mandatory ? ' (Mandatory)' : ''}${crossConnectResults.source.customerOwned ? ' (Customer Owned)' : ''}\n`;
       emailBody += `POP Name: ${crossConnectResults.source.locationCode} - ${crossConnectResults.source.datacenterName}\n`;
-      emailBody += `NRC: ${crossConnectResults.source.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.nrc, crossConnectResults.source.currency)}\n`;
-      emailBody += `MRC: ${crossConnectResults.source.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.mrc, crossConnectResults.source.currency)}\n`;
+      emailBody += `NRC: ${crossConnectResults.source.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.source.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.nrc, crossConnectResults.source.currency))}\n`;
+      emailBody += `MRC: ${crossConnectResults.source.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.source.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.mrc, crossConnectResults.source.currency))}\n`;
       if (crossConnectResults.source.notes) {
         emailBody += `Notes: ${crossConnectResults.source.notes}\n`;
       }
-      emailBody += `Currency: ${crossConnectResults.source.currency}\n\n`;
+      if (!crossConnectResults.source.customerOwned) {
+        emailBody += `Currency: ${crossConnectResults.source.currency}\n`;
+      }
+      emailBody += `\n`;
     }
 
     if (crossConnectResults.destination) {
-      emailBody += `Destination Cross Connect${crossConnectResults.destination.mandatory ? ' (Mandatory)' : ''}\n`;
+      emailBody += `Destination Cross Connect${crossConnectResults.destination.mandatory ? ' (Mandatory)' : ''}${crossConnectResults.destination.customerOwned ? ' (Customer Owned)' : ''}\n`;
       emailBody += `POP Name: ${crossConnectResults.destination.locationCode} - ${crossConnectResults.destination.datacenterName}\n`;
-      emailBody += `NRC: ${crossConnectResults.destination.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.nrc, crossConnectResults.destination.currency)}\n`;
-      emailBody += `MRC: ${crossConnectResults.destination.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.mrc, crossConnectResults.destination.currency)}\n`;
+      emailBody += `NRC: ${crossConnectResults.destination.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.destination.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.nrc, crossConnectResults.destination.currency))}\n`;
+      emailBody += `MRC: ${crossConnectResults.destination.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.destination.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.mrc, crossConnectResults.destination.currency))}\n`;
       if (crossConnectResults.destination.notes) {
         emailBody += `Notes: ${crossConnectResults.destination.notes}\n`;
       }
-      emailBody += `Currency: ${crossConnectResults.destination.currency}\n\n`;
+      if (!crossConnectResults.destination.customerOwned) {
+        emailBody += `Currency: ${crossConnectResults.destination.currency}\n`;
+      }
+      emailBody += `\n`;
     }
 
     // Pricing Disclaimer
@@ -2005,25 +2012,31 @@ const NetworkDesignTool = () => {
     // Handle cross connect information from multiple possible locations
     const logCrossConnect = params.crossConnect || results.crossConnect || {};
     if (logCrossConnect.source) {
-      emailBody += `Source Cross Connect${logCrossConnect.source.mandatory ? ' (Mandatory)' : ''}\n`;
+      emailBody += `Source Cross Connect${logCrossConnect.source.mandatory ? ' (Mandatory)' : ''}${logCrossConnect.source.customerOwned ? ' (Customer Owned)' : ''}\n`;
       emailBody += `POP Name: ${logCrossConnect.source.locationCode} - ${logCrossConnect.source.datacenterName}\n`;
-      emailBody += `NRC: ${logCrossConnect.source.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.nrc, logCrossConnect.source.currency)}\n`;
-      emailBody += `MRC: ${logCrossConnect.source.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.mrc, logCrossConnect.source.currency)}\n`;
+      emailBody += `NRC: ${logCrossConnect.source.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.source.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.nrc, logCrossConnect.source.currency))}\n`;
+      emailBody += `MRC: ${logCrossConnect.source.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.source.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.mrc, logCrossConnect.source.currency))}\n`;
       if (logCrossConnect.source.notes) {
         emailBody += `Notes: ${logCrossConnect.source.notes}\n`;
       }
-      emailBody += `Currency: ${logCrossConnect.source.currency}\n\n`;
+      if (!logCrossConnect.source.customerOwned) {
+        emailBody += `Currency: ${logCrossConnect.source.currency}\n`;
+      }
+      emailBody += `\n`;
     }
 
     if (logCrossConnect.destination) {
-      emailBody += `Destination Cross Connect${logCrossConnect.destination.mandatory ? ' (Mandatory)' : ''}\n`;
+      emailBody += `Destination Cross Connect${logCrossConnect.destination.mandatory ? ' (Mandatory)' : ''}${logCrossConnect.destination.customerOwned ? ' (Customer Owned)' : ''}\n`;
       emailBody += `POP Name: ${logCrossConnect.destination.locationCode} - ${logCrossConnect.destination.datacenterName}\n`;
-      emailBody += `NRC: ${logCrossConnect.destination.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.nrc, logCrossConnect.destination.currency)}\n`;
-      emailBody += `MRC: ${logCrossConnect.destination.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.mrc, logCrossConnect.destination.currency)}\n`;
+      emailBody += `NRC: ${logCrossConnect.destination.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.destination.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.nrc, logCrossConnect.destination.currency))}\n`;
+      emailBody += `MRC: ${logCrossConnect.destination.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.destination.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.mrc, logCrossConnect.destination.currency))}\n`;
       if (logCrossConnect.destination.notes) {
         emailBody += `Notes: ${logCrossConnect.destination.notes}\n`;
       }
-      emailBody += `Currency: ${logCrossConnect.destination.currency}\n\n`;
+      if (!logCrossConnect.destination.customerOwned) {
+        emailBody += `Currency: ${logCrossConnect.destination.currency}\n`;
+      }
+      emailBody += `\n`;
     }
 
     // Pricing Disclaimer
@@ -2152,7 +2165,8 @@ const NetworkDesignTool = () => {
       };
 
       // Calculate pricing with margin, currency conversion, and rounding
-      const calculatePrice = (basePrice, margin, fromCurrency, toCurrency) => {
+      const calculatePrice = (basePrice, margin, fromCurrency, toCurrency, isCustomerOwned) => {
+        if (isCustomerOwned) return 'Customer must provide X/C';
         if (!basePrice || basePrice === null) return 'POA';
         
         // Apply margin (not markup) - same formula as backend pricing logic
@@ -2165,18 +2179,22 @@ const NetworkDesignTool = () => {
         return roundUpToNearest10(convertedPrice);
       };
       
+      const isCustomerOwned = crossConnectData.customer_owned_xc;
+      
       const nrcPrice = calculatePrice(
         crossConnectData.cross_connect_nrc,
         margins.nrcMargin,
         crossConnectData.cross_connect_nrc_currency,
-        formData.outputCurrency
+        formData.outputCurrency,
+        isCustomerOwned
       );
       
       const mrcPrice = calculatePrice(
         crossConnectData.cross_connect_mrc,
         margins.mrcMargin,
         crossConnectData.cross_connect_mrc_currency,
-        formData.outputCurrency
+        formData.outputCurrency,
+        isCustomerOwned
       );
       
       setCrossConnectResults(prev => ({
@@ -2188,7 +2206,8 @@ const NetworkDesignTool = () => {
           mrc: mrcPrice,
           notes: crossConnectData.cross_connect_notes,
           currency: formData.outputCurrency,
-          mandatory: crossConnectData.cross_connect_mandatory || mandatoryCrossConnects[locationType]
+          mandatory: crossConnectData.cross_connect_mandatory || mandatoryCrossConnects[locationType],
+          customerOwned: isCustomerOwned
         }
       }));
       
@@ -2930,7 +2949,7 @@ const NetworkDesignTool = () => {
               </Box>
 
               {/* Contract Term Summary */}
-              {pricingResults.contractTermDetails && (
+              {pricingResults.contractTermDetails && pricingResults.contractTermDetails.rules && (
                 <Grid item xs={12} sx={{ mb: 3 }}>
                   <Card sx={{ bgcolor: 'grey.50' }}>
                     <CardContent>
@@ -3151,7 +3170,7 @@ const NetworkDesignTool = () => {
                     <Card sx={{ height: '100%', bgcolor: 'success.50', border: 1, borderColor: 'success.200' }}>
                       <CardHeader 
                         avatar={<CableIcon color="success" />}
-                        title={`Source Cross Connect${crossConnectResults.source.mandatory ? ' (Mandatory)' : ''}`}
+                        title={`Source Cross Connect${crossConnectResults.source.mandatory ? ' (Mandatory)' : ''}${crossConnectResults.source.customerOwned ? ' (Customer Owned)' : ''}`}
                         subheader={`${crossConnectResults.source.locationCode} - ${crossConnectResults.source.datacenterName}`}
                       />
                       <CardContent>
@@ -3162,7 +3181,7 @@ const NetworkDesignTool = () => {
                                 NRC (One-time):
                               </Typography>
                               <Typography variant="body2" sx={{ fontSize: '0.75rem' }} fontWeight="bold" color="primary.main">
-                                {crossConnectResults.source.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.nrc, crossConnectResults.source.currency)}
+                                {crossConnectResults.source.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.source.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.nrc, crossConnectResults.source.currency))}
                               </Typography>
                             </Box>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -3170,7 +3189,7 @@ const NetworkDesignTool = () => {
                                 MRC (Monthly):
                               </Typography>
                               <Typography variant="body2" sx={{ fontSize: '0.75rem' }} fontWeight="bold" color="secondary.main">
-                                {crossConnectResults.source.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.mrc, crossConnectResults.source.currency)}
+                                {crossConnectResults.source.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.source.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.mrc, crossConnectResults.source.currency))}
                               </Typography>
                             </Box>
                           </Box>
@@ -3193,7 +3212,7 @@ const NetworkDesignTool = () => {
                     <Card sx={{ height: '100%', bgcolor: 'warning.50', border: 1, borderColor: 'warning.200' }}>
                       <CardHeader 
                         avatar={<CableIcon color="warning" />}
-                        title={`Destination Cross Connect${crossConnectResults.destination.mandatory ? ' (Mandatory)' : ''}`}
+                        title={`Destination Cross Connect${crossConnectResults.destination.mandatory ? ' (Mandatory)' : ''}${crossConnectResults.destination.customerOwned ? ' (Customer Owned)' : ''}`}
                         subheader={`${crossConnectResults.destination.locationCode} - ${crossConnectResults.destination.datacenterName}`}
                       />
                       <CardContent>
@@ -3204,7 +3223,7 @@ const NetworkDesignTool = () => {
                                 NRC (One-time):
                               </Typography>
                               <Typography variant="body2" sx={{ fontSize: '0.75rem' }} fontWeight="bold" color="primary.main">
-                                {crossConnectResults.destination.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.nrc, crossConnectResults.destination.currency)}
+                                {crossConnectResults.destination.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.destination.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.nrc, crossConnectResults.destination.currency))}
                               </Typography>
                             </Box>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -3212,7 +3231,7 @@ const NetworkDesignTool = () => {
                                 MRC (Monthly):
                               </Typography>
                               <Typography variant="body2" sx={{ fontSize: '0.75rem' }} fontWeight="bold" color="secondary.main">
-                                {crossConnectResults.destination.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.mrc, crossConnectResults.destination.currency)}
+                                {crossConnectResults.destination.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.destination.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.mrc, crossConnectResults.destination.currency))}
                               </Typography>
                             </Box>
                           </Box>
@@ -3376,7 +3395,7 @@ const NetworkDesignTool = () => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {auditLogs.map((log) => (
+                {Array.isArray(auditLogs) && auditLogs.map((log) => (
                   <React.Fragment key={log.id}>
                     <TableRow>
                       <TableCell>

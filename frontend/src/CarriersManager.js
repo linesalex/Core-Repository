@@ -73,7 +73,7 @@ const CarriersManager = ({ hasPermission }) => {
   const carrierContactValidationRules = {
     contact_type: { type: 'required', message: 'Contact Type is required' },
     contact_name: { type: 'required', message: 'Contact Name is required' },
-    contact_function: { type: 'required', message: 'Contact Function is required' },
+    contact_function: { type: 'required', message: 'Contact Job Title is required' },
     contact_email: { 
       type: 'oneOf', 
       fields: ['contact_email', 'contact_phone'], 
@@ -636,7 +636,7 @@ const CarriersManager = ({ hasPermission }) => {
                                   <TableCell>Type</TableCell>
                                   <TableCell>Level</TableCell>
                                   <TableCell>Name</TableCell>
-                                  <TableCell>Function</TableCell>
+                                  <TableCell>Job Title</TableCell>
                                   <TableCell>Email</TableCell>
                                   <TableCell>Phone</TableCell>
                                   <TableCell>Last Updated</TableCell>
@@ -722,7 +722,7 @@ const CarriersManager = ({ hasPermission }) => {
                     <TableCell>Carrier</TableCell>
                     <TableCell>Region</TableCell>
                     <TableCell>Contact Name</TableCell>
-                    <TableCell>Contact Function</TableCell>
+                    <TableCell>Contact Job Title</TableCell>
                     <TableCell>Email</TableCell>
                     <TableCell>Phone</TableCell>
                     <TableCell>Last Updated</TableCell>
@@ -854,7 +854,7 @@ const CarriersManager = ({ hasPermission }) => {
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12} sm={6}>
-              <ValidatedTextField
+              <ValidatedSelect
                 field="contact_type"
                 errors={contactErrors}
                 required
@@ -863,10 +863,22 @@ const CarriersManager = ({ hasPermission }) => {
                 name="contact_type"
                 value={contactFormData.contact_type}
                 onChange={(e) => handleContactInputChange('contact_type', e.target.value)}
-              />
+              >
+                <MenuItem value="Primary Support Contact">Primary Support Contact</MenuItem>
+                <MenuItem value="Primary Order Contact">Primary Order Contact</MenuItem>
+                <MenuItem value="Billing Contact">Billing Contact</MenuItem>
+                <MenuItem value="Primary Legal Contact">Primary Legal Contact</MenuItem>
+                <MenuItem value="Account Manager">Account Manager</MenuItem>
+                <MenuItem value="Service Manager">Service Manager</MenuItem>
+                <MenuItem value="Support - Peer to Peer Escalation">Support - Peer to Peer Escalation</MenuItem>
+                <MenuItem value="Delivery - Peer to Peer Escalation">Delivery - Peer to Peer Escalation</MenuItem>
+                <MenuItem value="Service Management - Peer to Peer Escalation">Service Management - Peer to Peer Escalation</MenuItem>
+                <MenuItem value="Account Management - Peer to Peer Escalation">Account Management - Peer to Peer Escalation</MenuItem>
+                <MenuItem value="Cease Contact">Cease Contact</MenuItem>
+              </ValidatedSelect>
             </Grid>
             <Grid item xs={12} sm={6}>
-              <ValidatedTextField
+              <ValidatedSelect
                 field="contact_level"
                 errors={contactErrors}
                 fullWidth
@@ -874,7 +886,14 @@ const CarriersManager = ({ hasPermission }) => {
                 name="contact_level"
                 value={contactFormData.contact_level}
                 onChange={(e) => handleContactInputChange('contact_level', e.target.value)}
-              />
+              >
+                <MenuItem value="General">General</MenuItem>
+                <MenuItem value="1st Level">1st Level</MenuItem>
+                <MenuItem value="2nd Level">2nd Level</MenuItem>
+                <MenuItem value="3rd Level">3rd Level</MenuItem>
+                <MenuItem value="4th Level">4th Level</MenuItem>
+                <MenuItem value="5th Level">5th Level</MenuItem>
+              </ValidatedSelect>
             </Grid>
             <Grid item xs={12} sm={6}>
               <ValidatedTextField
@@ -894,7 +913,7 @@ const CarriersManager = ({ hasPermission }) => {
                 errors={contactErrors}
                 required
                 fullWidth
-                label="Contact Function"
+                label="Contact Job Title"
                 name="contact_function"
                 value={contactFormData.contact_function}
                 onChange={(e) => handleContactInputChange('contact_function', e.target.value)}
