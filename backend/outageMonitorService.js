@@ -65,8 +65,8 @@ class OutageMonitorService {
       
       await Promise.all([
         this.detectNewOutages(),
-        this.detectOutageResolutions(),
-        this.processResolvedOutages()
+        this.detectOutageResolutions()
+        // processResolvedOutages() removed - outages now move to history immediately
       ]);
       
     } catch (error) {
@@ -179,7 +179,7 @@ class OutageMonitorService {
   }
 
   /**
-   * Resolve outages and move them to history
+   * Resolve outages and move them to history immediately
    */
   async resolveOutages(resolvedOutages) {
     const promises = resolvedOutages.map(outage => {
@@ -188,54 +188,48 @@ class OutageMonitorService {
         const endTime = new Date(outage.live_latency_last_updated);
         const durationMinutes = Math.round((endTime - startTime) / (1000 * 60));
 
-        // Check if there's a recent outage for the same circuit within 24 hours
-        const checkRecentQuery = `
-          SELECT * FROM core_active_outages 
-          WHERE circuit_id = ? AND status = 'resolved' 
-            AND resolved_at > datetime('now', '-24 hours')
-          ORDER BY resolved_at DESC LIMIT 1
+        // Insert into history immediately
+        const historyQuery = `
+          INSERT INTO core_outage_history 
+          (circuit_id, location_a, location_b, bandwidth, underlying_carrier,
+           cable_system, outage_start_time, outage_end_time, outage_duration_minutes, detected_by,
+           ticket_number, notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
-        db.get(checkRecentQuery, [outage.circuit_id], (checkErr, recentOutage) => {
-          if (checkErr) {
-            console.error(`Failed to check recent outages for ${outage.circuit_id}:`, checkErr);
-            reject(checkErr);
+        const historyValues = [
+          outage.circuit_id,
+          outage.location_a,
+          outage.location_b,
+          outage.bandwidth,
+          outage.underlying_carrier,
+          outage.cable_system,
+          outage.outage_start_time,
+          outage.live_latency_last_updated,
+          durationMinutes,
+          'live_latency_monitor',
+          outage.ticket_number,
+          outage.notes
+        ];
+
+        db.run(historyQuery, historyValues, function(historyErr) {
+          if (historyErr) {
+            console.error(`Failed to insert outage history for ${outage.circuit_id}:`, historyErr);
+            reject(historyErr);
             return;
           }
 
-          let ticketNumber = outage.ticket_number;
-          let notes = outage.notes;
-          let originalStartTime = outage.outage_start_time;
-
-          // If there's a recent resolved outage for same circuit, reuse its data
-          if (recentOutage) {
-            ticketNumber = recentOutage.ticket_number || ticketNumber;
-            notes = recentOutage.notes || notes;
-            originalStartTime = recentOutage.outage_start_time; // Use original start time
-            
-            // Delete the previous resolved outage since we're consolidating
-            db.run('DELETE FROM core_active_outages WHERE id = ?', [recentOutage.id], (deleteErr) => {
-              if (deleteErr) {
-                console.warn(`Failed to delete previous resolved outage for ${outage.circuit_id}:`, deleteErr);
-              }
-            });
-          }
-
-          // Mark current outage as resolved instead of moving to history immediately
-          db.run(
-            'UPDATE core_active_outages SET status = ?, resolved_at = ? WHERE id = ?',
-            ['resolved', outage.live_latency_last_updated, outage.id],
-            function(updateErr) {
-              if (updateErr) {
-                console.error(`Failed to mark outage as resolved for ${outage.circuit_id}:`, updateErr);
-                reject(updateErr);
-                return;
-              }
-              
-              console.log(`🎉 Marked outage as resolved for ${outage.circuit_id} (will move to history after 24 hours)`);
-              resolve();
+          // Delete from active outages immediately
+          db.run('DELETE FROM core_active_outages WHERE id = ?', [outage.id], function(deleteErr) {
+            if (deleteErr) {
+              console.error(`Failed to delete active outage for ${outage.circuit_id}:`, deleteErr);
+              reject(deleteErr);
+              return;
             }
-          );
+
+            console.log(`🎉 Moved outage to history for ${outage.circuit_id} (duration: ${durationMinutes} minutes)`);
+            resolve();
+          });
         });
       });
     });

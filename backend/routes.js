@@ -864,33 +864,52 @@ router.put('/users/:id/module-permissions', authenticateToken, authorizeModulePe
 // ====================================
 
 // Get change logs (admin, provisioner, and read-only can view with role-based filtering)
-router.get('/change-logs', authenticateToken, authorizeModulePermission('change_logs', 'read_only'), (req, res) => {
-  const { table_name, table_names, user_id, search, limit = 100, offset = 0 } = req.query;
+router.get('/change-logs', authenticateToken, (req, res) => {
+  const { table_name, table_names, user_id, search, customer_name, quote_request_id, limit = 100, offset = 0 } = req.query;
   
   // Special handling for allocated_cost_calculator - query from allocated_cost_pricing_logs table
   if (table_name === 'allocated_cost_calculator') {
-    let countQuery = `
-      SELECT COUNT(*) as total
-      FROM allocated_cost_pricing_logs cl 
-      LEFT JOIN users u ON cl.user_id = u.id
-    `;
-    let query = `
-      SELECT cl.*, u.username, u.full_name 
-      FROM allocated_cost_pricing_logs cl 
-      LEFT JOIN users u ON cl.user_id = u.id
-    `;
-    let params = [];
-    let conditions = [];
-    
-    // Role-based filtering: non-admin users can only see their own logs
-    if (req.user.role !== 'administrator') {
-      conditions.push('cl.user_id = ?');
-      params.push(req.user.id);
-    } else if (user_id) {
-      // Admin users can filter by specific user_id if provided
-      conditions.push('cl.user_id = ?');
-      params.push(user_id);
-    }
+    // Check allocated_cost_calculator module permission
+    getUserModulePermissions(req.user.id, (err, permissions) => {
+      if (err) {
+        console.error('Error checking permissions:', err);
+        return res.status(500).json({ error: 'Permission check failed' });
+      }
+      
+      const userPermission = permissions['allocated_cost_calculator'];
+      if (!userPermission) {
+        return res.status(403).json({ 
+          error: 'Insufficient permissions',
+          module: 'allocated_cost_calculator',
+          required: 'read_only'
+        });
+      }
+      
+      const isReadOnly = userPermission === 'read_only';
+      
+      let countQuery = `
+        SELECT COUNT(*) as total
+        FROM allocated_cost_pricing_logs cl 
+        LEFT JOIN users u ON cl.user_id = u.id
+      `;
+      let query = `
+        SELECT cl.*, u.username, u.full_name 
+        FROM allocated_cost_pricing_logs cl 
+        LEFT JOIN users u ON cl.user_id = u.id
+      `;
+      let params = [];
+      let conditions = [];
+      
+      // Module permission-based filtering: read_only users can only see their own logs
+      // Provisioner users can see all logs
+      if (isReadOnly) {
+        conditions.push('cl.user_id = ?');
+        params.push(req.user.id);
+      } else if (user_id) {
+        // Provisioner/admin users can filter by specific user_id if provided
+        conditions.push('cl.user_id = ?');
+        params.push(user_id);
+      }
     
     if (search) {
       conditions.push(`(
@@ -898,10 +917,37 @@ router.get('/change-logs', authenticateToken, authorizeModulePermission('change_
         cl.changes_summary LIKE ? OR 
         u.username LIKE ? OR 
         u.full_name LIKE ? OR
-        cl.action LIKE ?
+        cl.action LIKE ? OR
+        cl.new_values LIKE ? OR
+        json_extract(cl.new_values, '$.customerName') LIKE ? OR
+        json_extract(cl.new_values, '$.customer_name') LIKE ? OR
+        json_extract(cl.new_values, '$.quoteRequestId') LIKE ? OR
+        json_extract(cl.new_values, '$.quote_request_id') LIKE ?
       )`);
       const searchPattern = `%${search}%`;
-      params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
+      params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
+    }
+    
+    // Filter by customer name if provided (partial match)
+    if (customer_name) {
+      conditions.push(`(
+        json_extract(cl.new_values, '$.inputParameters.customerName') LIKE ? OR
+        json_extract(cl.new_values, '$.customerName') LIKE ? OR
+        json_extract(cl.new_values, '$.customer_name') LIKE ?
+      )`);
+      const customerPattern = `%${customer_name}%`;
+      params.push(customerPattern, customerPattern, customerPattern);
+    }
+    
+    // Filter by quote request ID if provided (partial match)
+    if (quote_request_id) {
+      conditions.push(`(
+        json_extract(cl.new_values, '$.inputParameters.quoteRequestId') LIKE ? OR
+        json_extract(cl.new_values, '$.quoteRequestId') LIKE ? OR
+        json_extract(cl.new_values, '$.quote_request_id') LIKE ?
+      )`);
+      const quotePattern = `%${quote_request_id}%`;
+      params.push(quotePattern, quotePattern, quotePattern);
     }
     
     if (conditions.length > 0) {
@@ -934,32 +980,52 @@ router.get('/change-logs', authenticateToken, authorizeModulePermission('change_
         });
       });
     });
+    });
     return;
   }
   
   // Default behavior for other tables - query from change_logs table
-  let countQuery = `
-    SELECT COUNT(*) as total
-    FROM change_logs cl 
-    LEFT JOIN users u ON cl.user_id = u.id
-  `;
-  let query = `
-    SELECT cl.*, u.username, u.full_name 
-    FROM change_logs cl 
-    LEFT JOIN users u ON cl.user_id = u.id
-  `;
-  let params = [];
-  let conditions = [];
-  
-  // Role-based filtering: non-admin users can only see their own logs
-  if (req.user.role !== 'administrator') {
-    conditions.push('cl.user_id = ?');
-    params.push(req.user.id);
-  } else if (user_id) {
-    // Admin users can filter by specific user_id if provided
-    conditions.push('cl.user_id = ?');
-    params.push(user_id);
-  }
+  // Check change_logs module permission
+  getUserModulePermissions(req.user.id, (err, permissions) => {
+    if (err) {
+      console.error('Error checking permissions:', err);
+      return res.status(500).json({ error: 'Permission check failed' });
+    }
+    
+    const userPermission = permissions['change_logs'];
+    if (!userPermission) {
+      return res.status(403).json({ 
+        error: 'Insufficient permissions',
+        module: 'change_logs',
+        required: 'read_only'
+      });
+    }
+    
+    const isReadOnly = userPermission === 'read_only';
+    
+    let countQuery = `
+      SELECT COUNT(*) as total
+      FROM change_logs cl 
+      LEFT JOIN users u ON cl.user_id = u.id
+    `;
+    let query = `
+      SELECT cl.*, u.username, u.full_name 
+      FROM change_logs cl 
+      LEFT JOIN users u ON cl.user_id = u.id
+    `;
+    let params = [];
+    let conditions = [];
+    
+    // Module permission-based filtering: read_only users can only see their own logs
+    // Provisioner users can see all logs
+    if (isReadOnly) {
+      conditions.push('cl.user_id = ?');
+      params.push(req.user.id);
+    } else if (user_id) {
+      // Provisioner/admin users can filter by specific user_id if provided
+      conditions.push('cl.user_id = ?');
+      params.push(user_id);
+    }
   
   // Handle single table_name (legacy support)
   if (table_name) {
@@ -1016,6 +1082,7 @@ router.get('/change-logs', authenticateToken, authorizeModulePermission('change_
         }
       });
     });
+  });
   });
 });
 
@@ -3322,15 +3389,11 @@ router.get('/locations/:id/capabilities', authenticateToken, authorizeModulePerm
         cnx_extranet_wan: false,
         cnx_ethernet: false,
         cnx_voice: false,
-        tdm_gateway: false,
         cnx_unigy: false,
-        cnx_alpha: false,
         cnx_chrono: false,
-        cnx_sdwan: false,
         csp_on_ramp: false,
         exchange_on_ramp: false,
         internet_on_ramp: false,
-        transport_only_pop: false,
         cnx_colocation: false
       });
     } else {
@@ -3352,14 +3415,14 @@ router.post('/locations/:id/capabilities', authenticateToken, authorizeModulePer
       // Update existing capabilities
       db.run(
         `UPDATE pop_capabilities SET 
-         cnx_extranet_wan = ?, cnx_ethernet = ?, cnx_voice = ?, tdm_gateway = ?, 
-         cnx_unigy = ?, cnx_alpha = ?, cnx_chrono = ?, cnx_sdwan = ?, 
-         csp_on_ramp = ?, exchange_on_ramp = ?, internet_on_ramp = ?, transport_only_pop = ?, cnx_colocation = ?, exchange_pricing_in_region = ?,
+         cnx_extranet_wan = ?, cnx_ethernet = ?, cnx_voice = ?, 
+         cnx_unigy = ?, cnx_chrono = ?, 
+         csp_on_ramp = ?, exchange_on_ramp = ?, internet_on_ramp = ?, cnx_colocation = ?, exchange_pricing_in_region = ?,
          updated_by = ? WHERE location_id = ?`,
         [
-          capabilities.cnx_extranet_wan, capabilities.cnx_ethernet, capabilities.cnx_voice, capabilities.tdm_gateway,
-          capabilities.cnx_unigy, capabilities.cnx_alpha, capabilities.cnx_chrono, capabilities.cnx_sdwan,
-          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop, capabilities.cnx_colocation, capabilities.exchange_pricing_in_region,
+          capabilities.cnx_extranet_wan, capabilities.cnx_ethernet, capabilities.cnx_voice,
+          capabilities.cnx_unigy, capabilities.cnx_chrono,
+          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.cnx_colocation, capabilities.exchange_pricing_in_region,
           req.user.id, locationId
         ],
         function(err) {
@@ -3373,13 +3436,13 @@ router.post('/locations/:id/capabilities', authenticateToken, authorizeModulePer
     } else {
       // Create new capabilities
       db.run(
-        `INSERT INTO pop_capabilities (location_id, cnx_extranet_wan, cnx_ethernet, cnx_voice, tdm_gateway, 
-         cnx_unigy, cnx_alpha, cnx_chrono, cnx_sdwan, csp_on_ramp, exchange_on_ramp, internet_on_ramp, transport_only_pop, cnx_colocation, exchange_pricing_in_region, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO pop_capabilities (location_id, cnx_extranet_wan, cnx_ethernet, cnx_voice, 
+         cnx_unigy, cnx_chrono, csp_on_ramp, exchange_on_ramp, internet_on_ramp, cnx_colocation, exchange_pricing_in_region, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          locationId, capabilities.cnx_extranet_wan, capabilities.cnx_ethernet, capabilities.cnx_voice, capabilities.tdm_gateway,
-          capabilities.cnx_unigy, capabilities.cnx_alpha, capabilities.cnx_chrono, capabilities.cnx_sdwan,
-          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.transport_only_pop, capabilities.cnx_colocation, capabilities.exchange_pricing_in_region,
+          locationId, capabilities.cnx_extranet_wan, capabilities.cnx_ethernet, capabilities.cnx_voice,
+          capabilities.cnx_unigy, capabilities.cnx_chrono,
+          capabilities.csp_on_ramp, capabilities.exchange_on_ramp, capabilities.internet_on_ramp, capabilities.cnx_colocation, capabilities.exchange_pricing_in_region,
           req.user.id
         ],
         function(err) {
@@ -4717,7 +4780,7 @@ const roundUpToNearest10 = (amount) => {
 
 // Network Design with Enhanced Pricing
 router.post('/network_design/calculate_pricing', authenticateToken, async (req, res) => {
-  const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, use_cisco_only_routes = false, use_100gb_and_df_only = false, bandwidth, source, destination, protection_required = false, customerName, quoteRequestId, design_mode = 'auto', manual_primary_routes = null, manual_secondary_routes = null, mtu_required = null, carrier_avoidance = [], circuit_exclusion = [], calling_module = 'network_design' } = req.body;
+  const { paths, contract_term = 12, output_currency = 'USD', include_ull = false, use_cisco_only_routes = false, use_100gb_and_df_only = false, bandwidth, source, destination, protection_required = false, customerName, quoteRequestId, design_mode = 'auto', manual_primary_routes = null, manual_secondary_routes = null, mtu_required = null, carrier_avoidance = [], circuit_exclusion = [], calling_module = 'network_design', incrementalCosts = [] } = req.body;
   
   if (!paths || !Array.isArray(paths)) {
     return res.status(400).json({ error: 'Paths array is required' });
@@ -4790,7 +4853,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
     };
 
     // Helper function to calculate enhanced pricing for a path with contract term-based pricing
-    const calculatePathPricing = async (path, isProtection = false) => {
+    const calculatePathPricing = async (path, isProtection = false, pathType = 'primary') => {
       let totalAllocatedCost = 0;
       const segmentCalculations = []; // Track detailed calculations for each segment
       
@@ -4850,7 +4913,44 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
         });
       }
 
-
+      // Process manual incremental costs for this path
+      if (incrementalCosts && incrementalCosts.length > 0) {
+        const pathIncrementalCosts = incrementalCosts.filter(cost => cost.pathAllocation === pathType);
+        
+        pathIncrementalCosts.forEach(cost => {
+          // Convert cost to output currency
+          const costValue = parseFloat(cost.incrementalCost) || 0;
+          const costCurrency = cost.currency || 'USD';
+          const convertedCost = convertCurrency(costValue, costCurrency, output_currency);
+          
+          // Apply allocation factor
+          const allocationFactor = parseFloat(cost.allocationFactor) || 0;
+          const allocatedIncrementalCost = convertedCost * allocationFactor;
+          
+          // Add to total allocated cost
+          totalAllocatedCost += allocatedIncrementalCost;
+          
+          // Add to segment calculations for display
+          segmentCalculations.push({
+            circuit: cost.costType === 'core_incremental_upgrade' ? `${cost.selectedCircuit} (Upgrade)` : 
+                     cost.costType === 'core_incremental_new' ? 'New Core Circuit' :
+                     cost.costType === 'aggregate_cost_a_end' ? 'Aggregate Cost A End' :
+                     'Aggregate Cost B End',
+            location: `${cost.sourceLocation} → ${cost.destinationLocation}`,
+            carrier: cost.costType === 'core_incremental_new' ? 'New' : 'N/A',
+            cable_system: 'N/A',
+            latency: cost.costType === 'core_incremental_new' ? 'New' : 'N/A',
+            originalCost: costValue,
+            originalCurrency: costCurrency,
+            convertedCost: convertedCost,
+            allocationFactor: allocationFactor,
+            allocatedCostCalculation: `${convertedCost.toFixed(2)} ${output_currency} × ${allocationFactor} = ${allocatedIncrementalCost.toFixed(2)} ${output_currency}`,
+            allocatedCost: allocatedIncrementalCost,
+            isIncrementalCost: true,
+            costType: cost.costType
+          });
+        });
+      }
 
       // Check for promo pricing first (applies to both primary and secondary paths)
       // Skip promo pricing for allocated_cost_calculator module
@@ -4903,10 +5003,6 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
                   promoUsed: true,
                   promoPrice: discountedPromoPrice,
                   nonPromoPrice: roundUpToNearest10(nonPromoFinalMinPrice),
-                  contractTermRule: contract_term === 12 ? '40% min margin, 60% suggested margin, $1000 NRC' :
-                                   contract_term === 24 ? '37.5% min margin, 55% suggested margin, $500 NRC' :
-                                   contract_term === 36 ? '35% min margin, 50% suggested margin, $0 NRC' :
-                                   contract_term === 60 ? '30% min margin, 45% suggested margin, $0 NRC' : 'Standard contract term rules',
                   calculatedPrice: discountedPromoPrice,
                   calculation: `Promo price ${promoPriceConverted.toFixed(2)} with contract term discount = ${discountedPromoPrice.toFixed(2)} ${output_currency}`
                 },
@@ -4914,10 +5010,6 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
                   promoUsed: true,
                   promoPrice: discountedPromoPrice,
                   nonPromoPrice: roundUpToNearest10(nonPromoFinalSuggestedPrice),
-                  contractTermRule: contract_term === 12 ? '40% min margin, 60% suggested margin, $1000 NRC' :
-                                   contract_term === 24 ? '37.5% min margin, 55% suggested margin, $500 NRC' :
-                                   contract_term === 36 ? '35% min margin, 50% suggested margin, $0 NRC' :
-                                   contract_term === 60 ? '30% min margin, 45% suggested margin, $0 NRC' : 'Standard contract term rules',
                   calculatedPrice: discountedPromoPrice,
                   calculation: `Promo price ${promoPriceConverted.toFixed(2)} with contract term discount = ${discountedPromoPrice.toFixed(2)} ${output_currency}`
                 },
@@ -5025,11 +5117,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           finalPriceBeforeRounding: finalMinPrice,
           roundedToNearest10: roundUpToNearest10(finalMinPrice),
           wasLocationMinimumEnforced: finalMinPrice === locationMinPrice,
-          calculatedPrice: finalMinPrice,
-          contractTermRule: contract_term === 12 ? '40% min margin, 60% suggested margin, $1000 NRC' :
-                           contract_term === 24 ? '37.5% min margin, 55% suggested margin, $500 NRC' :
-                           contract_term === 36 ? '35% min margin, 50% suggested margin, $0 NRC' :
-                           contract_term === 60 ? '30% min margin, 45% suggested margin, $0 NRC' : 'Standard contract term rules'
+          calculatedPrice: finalMinPrice
         },
         suggestedPriceBreakdown: {
           targetMargin: suggestedMarginPercent,
@@ -5041,11 +5129,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           finalPriceBeforeRounding: finalSuggestedPrice,
           roundedToNearest10: roundUpToNearest10(finalSuggestedPrice),
           wasLocationMinimumEnforced: finalSuggestedPrice === locationMinPrice,
-          calculatedPrice: finalSuggestedPrice,
-          contractTermRule: contract_term === 12 ? '40% min margin, 60% suggested margin, $1000 NRC' :
-                           contract_term === 24 ? '37.5% min margin, 55% suggested margin, $500 NRC' :
-                           contract_term === 36 ? '35% min margin, 50% suggested margin, $0 NRC' :
-                           contract_term === 60 ? '30% min margin, 45% suggested margin, $0 NRC' : 'Standard contract term rules'
+          calculatedPrice: finalSuggestedPrice
         },
         marginVerification: {
           actualMinMargin: actualMinMargin,
@@ -5087,7 +5171,8 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
     // Calculate pricing for each path (now async)
     const pricingPromises = paths.map(async (path, index) => {
       const isProtection = index > 0; // First path is primary, others are protection
-      const pathPricing = await calculatePathPricing(path, isProtection);
+      const pathType = index === 0 ? 'primary' : 'secondary';
+      const pathPricing = await calculatePathPricing(path, isProtection, pathType);
 
       return {
         path: path.path,
@@ -5223,6 +5308,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
               protection_required,
               customerName: customerName || '',
               quoteRequestId: quoteRequestId || '',
+              incrementalCosts: incrementalCosts || [],
               timestamp: new Date().toISOString()
             },
             calculationResults: {
@@ -5307,9 +5393,6 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           },
           contractTermRules: {
             term: contract_term,
-            appliedRules: contract_term === 12 ? '40%/60% margins + $1000 NRC' :
-                         contract_term === 24 ? '37.5%/55% margins + $500 NRC' :
-                         contract_term === 36 ? '35%/50% margins + $0 NRC' : 'Default 12-month rules',
             marginFormulas: {
               minMarginFormula: 'MinimumPrice = AllocatedCost / (1 - MinMargin/100)',
               suggestedMarginFormula: 'SuggestedPrice = AllocatedCost / (1 - SuggestedMargin/100)',
@@ -5337,15 +5420,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       exchangeRates: exchangeRates,
       contractTermDetails: {
         term: contract_term,
-        currency: output_currency,
-        rules: {
-          12: { minMargin: '40%', suggestedMargin: '60%', nrc: convertCurrency(1000, 'USD', output_currency) },
-          24: { minMargin: '37.5%', suggestedMargin: '55%', nrc: convertCurrency(500, 'USD', output_currency) },
-          36: { minMargin: '35%', suggestedMargin: '50%', nrc: 0 }
-        },
-        appliedRule: contract_term === 12 ? '40%/60% margins + $1000 NRC' :
-                     contract_term === 24 ? '37.5%/55% margins + $500 NRC' :
-                     contract_term === 36 ? '35%/50% margins + $0 NRC' : 'Default 12-month rules'
+        currency: output_currency
       },
       parameters: {
         bandwidth,
@@ -5501,7 +5576,7 @@ router.delete('/network_design/saved_searches/:id', authenticateToken, (req, res
 
 // Get audit logs for Network Design Tool
 router.get('/network_design/audit_logs', authenticateToken, authorizeModulePermission('network_design', 'read_only'), (req, res) => {
-  const { limit = 100, offset = 0, action_type } = req.query;
+  const { limit = 100, offset = 0, action_type, user_id, customer_name, quote_request_id } = req.query;
   
   // Check user's permission level to determine filtering
   getUserModulePermissions(req.user.id, (err, permissions) => {
@@ -5512,48 +5587,106 @@ router.get('/network_design/audit_logs', authenticateToken, authorizeModulePermi
     
     const userPermission = permissions['network_design'];
     const isReadOnly = userPermission === 'read_only';
+    const isProvisioner = userPermission === 'provisioner';
     
-    let query = 'SELECT * FROM audit_logs';
+    // Build count query
+    let countQuery = 'SELECT COUNT(*) as total FROM audit_logs al';
+    let query = 'SELECT al.*, u.username, u.full_name FROM audit_logs al LEFT JOIN users u ON al.user_id = u.id';
     let params = [];
     let conditions = [];
     
     // Read-only users can only see their own logs
+    // Provisioner and admin users can see all logs
     if (isReadOnly) {
-      conditions.push('user_id = ?');
+      conditions.push('al.user_id = ?');
       params.push(req.user.id);
+    } else if (user_id) {
+      // Admin/Provisioner users can filter by specific user_id if provided
+      conditions.push('al.user_id = ?');
+      params.push(user_id);
     }
     
     // Filter by action type if provided
     if (action_type) {
-      conditions.push('action_type = ?');
+      conditions.push('al.action_type = ?');
       params.push(action_type);
     }
     
-    if (conditions.length > 0) {
-      query += ' WHERE ' + conditions.join(' AND ');
+    // Filter by customer name if provided (partial match)
+    if (customer_name) {
+      conditions.push('al.parameters LIKE ?');
+      params.push(`%"customerName":"${customer_name}%`);
+      // Also try with customer_name format
+      conditions[conditions.length - 1] = '(al.parameters LIKE ? OR al.parameters LIKE ?)';
+      params.push(`%"customerName":"${customer_name}%`, `%"customer_name":"${customer_name}%`);
+      params.pop(); // Remove duplicate
     }
     
-    query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), parseInt(offset));
+    // Filter by quote request ID if provided (partial match)
+    if (quote_request_id) {
+      conditions.push('(al.parameters LIKE ? OR al.parameters LIKE ?)');
+      params.push(`%"quoteRequestId":"${quote_request_id}%`, `%"quote_request_id":"${quote_request_id}%`);
+    }
     
-    db.all(query, params, (err, rows) => {
-      if (err) {
-        console.error('Error fetching audit logs:', err);
-        return res.status(500).json({ error: err.message });
+    if (conditions.length > 0) {
+      const whereClause = ' WHERE ' + conditions.join(' AND ');
+      countQuery += whereClause;
+      query += whereClause;
+    }
+    
+    // Get total count first
+    db.get(countQuery, params, (countErr, countResult) => {
+      if (countErr) {
+        console.error('Error counting audit logs:', countErr);
+        return res.status(500).json({ error: countErr.message });
       }
       
-      const logs = rows.map(row => ({
-        ...row,
-        parameters: row.parameters ? JSON.parse(row.parameters) : null,
-        results: row.results ? JSON.parse(row.results) : null,
-        pricing_data: row.pricing_data ? JSON.parse(row.pricing_data) : null
-      }));
-      res.json(logs);
+      const total = countResult.total;
+      
+      // Get paginated logs
+      query += ' ORDER BY al.timestamp DESC LIMIT ? OFFSET ?';
+      const queryParams = [...params, parseInt(limit), parseInt(offset)];
+      
+      db.all(query, queryParams, (err, rows) => {
+        if (err) {
+          console.error('Error fetching audit logs:', err);
+          return res.status(500).json({ error: err.message });
+        }
+        
+        const logs = rows.map(row => ({
+          ...row,
+          parameters: row.parameters ? JSON.parse(row.parameters) : null,
+          results: row.results ? JSON.parse(row.results) : null,
+          pricing_data: row.pricing_data ? JSON.parse(row.pricing_data) : null
+        }));
+        
+        res.json({
+          data: logs,
+          pagination: {
+            total: total,
+            limit: parseInt(limit),
+            offset: parseInt(offset),
+            page: Math.floor(parseInt(offset) / parseInt(limit)) + 1,
+            totalPages: Math.ceil(total / parseInt(limit))
+          }
+        });
+      });
     });
   });
 });
 
 
+
+// Get list of users for filter dropdown (Admin and Provisioner only)
+router.get('/network_design/users_list', authenticateToken, authorizeModulePermission('network_design', 'provisioner'), (req, res) => {
+  db.all('SELECT id, username, full_name FROM users WHERE status = "active" ORDER BY username', [], (err, users) => {
+    if (err) {
+      console.error('Error fetching users list:', err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(users);
+  });
+});
 
 // Clear audit logs (Admin only)
 router.delete('/network_design/audit_logs', authenticateToken, authorizeRole('administrator'), (req, res) => {
@@ -5637,16 +5770,18 @@ router.get('/download_kmz/:filename', authenticateToken, (req, res) => {
   });
 });
 
-// Get circuit IDs for exclusion (searchable)
+// Get circuit IDs for exclusion (searchable by UCN or Cable System)
 router.get('/network_design/circuit_ids', authenticateToken, (req, res) => {
   const { search } = req.query;
   
-  let sql = 'SELECT DISTINCT circuit_id FROM network_routes WHERE circuit_id IS NOT NULL AND circuit_id != ""';
+  let sql = 'SELECT DISTINCT circuit_id, cable_system FROM network_routes WHERE circuit_id IS NOT NULL AND circuit_id != ""';
   let params = [];
   
   if (search && search.trim()) {
-    sql += ' AND circuit_id LIKE ?';
-    params.push(`%${search.trim()}%`);
+    // Search by both circuit_id and cable_system (case-insensitive)
+    sql += ' AND (circuit_id LIKE ? OR cable_system LIKE ?)';
+    const searchPattern = `%${search.trim()}%`;
+    params.push(searchPattern, searchPattern);
   }
   
   sql += ' ORDER BY circuit_id LIMIT 50'; // Limit to 50 results to prevent overwhelming the UI
@@ -5654,8 +5789,13 @@ router.get('/network_design/circuit_ids', authenticateToken, (req, res) => {
   db.all(sql, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     
-    const circuitIds = rows.map(row => row.circuit_id);
-    res.json(circuitIds);
+    // Return objects with circuit_id and cable_system
+    const circuits = rows.map(row => ({
+      circuit_id: row.circuit_id,
+      cable_system: row.cable_system || null
+    }));
+    
+    res.json(circuits);
   });
 });
 
@@ -7751,9 +7891,9 @@ const bulkUploadModules = {
       'location_code', 'region', 'city', 'country', 'datacenter_name', 'datacenter_address',
       'latitude', 'longitude', 'time_zone', 'pop_type', 'status', 'provider', 'access_info',
       'min_price_under_100mb', 'min_price_100_to_999mb', 'min_price_1000_to_2999mb', 'min_price_3000mb_plus',
-      'location_id', 'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
-      'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
-      'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation', 'exchange_pricing_in_region'
+      'location_id', 'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice',
+      'cnx_unigy', 'cnx_chrono', 'csp_on_ramp',
+      'exchange_on_ramp', 'internet_on_ramp', 'cnx_colocation', 'exchange_pricing_in_region'
     ],
     requiredFields: ['location_code'],
     sampleData: {
@@ -7778,15 +7918,11 @@ const bulkUploadModules = {
       cnx_extranet_wan: 'true',
       cnx_ethernet: 'true',
       cnx_voice: 'false',
-      tdm_gateway: 'false',
       cnx_unigy: 'true',
-      cnx_alpha: 'false',
       cnx_chrono: 'true',
-      cnx_sdwan: 'false',
       csp_on_ramp: 'true',
       exchange_on_ramp: 'true',
       internet_on_ramp: 'false',
-      transport_only_pop: 'false',
       cnx_colocation: 'false',
       exchange_pricing_in_region: 'false'
     }
@@ -7877,15 +8013,11 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
              COALESCE(pc.cnx_extranet_wan, 0) as cnx_extranet_wan, 
              COALESCE(pc.cnx_ethernet, 0) as cnx_ethernet, 
              COALESCE(pc.cnx_voice, 0) as cnx_voice, 
-             COALESCE(pc.tdm_gateway, 0) as tdm_gateway,
              COALESCE(pc.cnx_unigy, 0) as cnx_unigy, 
-             COALESCE(pc.cnx_alpha, 0) as cnx_alpha, 
              COALESCE(pc.cnx_chrono, 0) as cnx_chrono, 
-             COALESCE(pc.cnx_sdwan, 0) as cnx_sdwan, 
              COALESCE(pc.csp_on_ramp, 0) as csp_on_ramp,
              COALESCE(pc.exchange_on_ramp, 0) as exchange_on_ramp, 
              COALESCE(pc.internet_on_ramp, 0) as internet_on_ramp, 
-             COALESCE(pc.transport_only_pop, 0) as transport_only_pop, 
              COALESCE(pc.cnx_colocation, 0) as cnx_colocation,
              COALESCE(pc.exchange_pricing_in_region, 0) as exchange_pricing_in_region
              FROM location_reference lr 
@@ -8231,9 +8363,9 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
           } else if (module === 'pop_capabilities') {
             // Convert all capability boolean fields
             const booleanFields = [
-              'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
-              'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
-              'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation'
+              'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice',
+              'cnx_unigy', 'cnx_chrono', 'csp_on_ramp',
+              'exchange_on_ramp', 'internet_on_ramp', 'cnx_colocation'
             ];
             booleanFields.forEach(field => {
               if (cleanedRow[field] !== undefined && cleanedRow[field] !== null && cleanedRow[field] !== '') {
@@ -8920,9 +9052,9 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               
               // Apply default values for pop_capabilities boolean fields
               const booleanFields = [
-                'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
-                'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
-                'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation', 'exchange_pricing_in_region'
+                'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice',
+                'cnx_unigy', 'cnx_chrono', 'csp_on_ramp',
+                'exchange_on_ramp', 'internet_on_ramp', 'cnx_colocation', 'exchange_pricing_in_region'
               ];
               booleanFields.forEach(field => {
                 if (cleanRow[field] === null || cleanRow[field] === undefined) {
@@ -8944,9 +9076,9 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               
               // Only update/insert the POP capability fields
               const capabilityFields = [
-                'location_id', 'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice', 'tdm_gateway',
-                'cnx_unigy', 'cnx_alpha', 'cnx_chrono', 'cnx_sdwan', 'csp_on_ramp',
-                'exchange_on_ramp', 'internet_on_ramp', 'transport_only_pop', 'cnx_colocation', 'exchange_pricing_in_region'
+                'location_id', 'cnx_extranet_wan', 'cnx_ethernet', 'cnx_voice',
+                'cnx_unigy', 'cnx_chrono', 'csp_on_ramp',
+                'exchange_on_ramp', 'internet_on_ramp', 'cnx_colocation', 'exchange_pricing_in_region'
               ];
               
               if (existingCapabilities) {

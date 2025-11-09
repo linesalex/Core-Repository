@@ -222,10 +222,18 @@ const CoreOutagesTable = () => {
 
   const formatDuration = (minutes) => {
     if (!minutes) return 'N/A';
-    if (minutes < 60) return `${minutes}m`;
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours}h ${mins}m`;
+    
+    const days = Math.floor(minutes / 1440); // 1440 minutes in a day
+    const remainingMinutesAfterDays = minutes % 1440;
+    const hours = Math.floor(remainingMinutesAfterDays / 60);
+    const mins = remainingMinutesAfterDays % 60;
+    
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
+    
+    return parts.join(' ');
   };
 
   const calculateDownTime = (startTime) => {
@@ -387,83 +395,6 @@ const CoreOutagesTable = () => {
       <Typography variant="h4" gutterBottom sx={{ fontSize: '2rem' }}>
         Core Outages Management
       </Typography>
-      
-      {/* Statistics Cards */}
-      {!statsLoading && (
-        <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={12} md={3}>
-            <Card>
-              <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  <WarningIcon color="error" sx={{ mr: 1 }} />
-                  <Box>
-                    <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontSize: '0.75rem' }}>
-                      Current Outages
-                    </Typography>
-                    <Typography variant="h4" color="error.main" sx={{ fontSize: '2rem' }}>
-                      {stats.currentOutages || 0}
-                    </Typography>
-                  </Box>
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-          
-          <Grid item xs={12} md={3}>
-            <Card>
-              <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  <HistoryIcon color="primary" sx={{ mr: 1 }} />
-                  <Box>
-                    <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontSize: '0.75rem' }}>
-                      Total Historical
-                    </Typography>
-                    <Typography variant="h4" sx={{ fontSize: '2rem' }}>
-                      {stats.totalHistoricalOutages || 0}
-                    </Typography>
-                  </Box>
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-          
-          <Grid item xs={12} md={3}>
-            <Card>
-              <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  <WarningIcon color="warning" sx={{ mr: 1 }} />
-                  <Box>
-                    <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontSize: '0.75rem' }}>
-                      Outages (24h)
-                    </Typography>
-                    <Typography variant="h4" color="warning.main" sx={{ fontSize: '2rem' }}>
-                      {stats.outagesLast24h || 0}
-                    </Typography>
-                  </Box>
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-          
-          <Grid item xs={12} md={3}>
-            <Card>
-              <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  <CheckCircleIcon color="info" sx={{ mr: 1 }} />
-                  <Box>
-                    <Typography color="textSecondary" gutterBottom variant="body2" sx={{ fontSize: '0.75rem' }}>
-                      Avg Duration
-                    </Typography>
-                    <Typography variant="h4" color="info.main" sx={{ fontSize: '2rem' }}>
-                      {formatDuration(Math.round(stats.avgOutageDuration || 0))}
-                    </Typography>
-                  </Box>
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-      )}
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

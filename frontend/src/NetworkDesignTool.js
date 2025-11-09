@@ -5,7 +5,7 @@ import {
   TableCell, TableContainer, TableHead, TableRow, Card, CardContent, CardHeader, Divider,
   Switch, FormControlLabel, Dialog, DialogTitle, DialogContent, DialogActions, List, ListItem,
   ListItemText, ListItemIcon, Checkbox, Tooltip, IconButton, Snackbar, Tabs, Tab, Autocomplete,
-  InputAdornment
+  InputAdornment, Pagination
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchIcon from '@mui/icons-material/Search';
@@ -48,16 +48,19 @@ function TabPanel(props) {
 }
 
 const NetworkDesignTool = () => {
-  const { user } = useAuth();
+  const { user, modulePermissions } = useAuth();
   
-  // Check if user can view pricing logs (all authenticated users can view)
-  const canViewPricingLogs = user !== null;
+  // Get user's network_design module permission level
+  const networkDesignPermission = modulePermissions['network_design'] || null;
+  
+  // Check if user can view pricing logs (all authenticated users with network_design access can view)
+  const canViewPricingLogs = user !== null && networkDesignPermission !== null;
   
   // Check if user can manage logs (admin only)
   const canManageLogs = user && user.role === 'administrator';
   
   // Check if user is read-only (limited access to logs)
-  const isReadOnly = user && user.role === 'read_only';
+  const isReadOnly = networkDesignPermission === 'read_only';
   
   // Form state
   const [formData, setFormData] = useState({
@@ -65,7 +68,7 @@ const NetworkDesignTool = () => {
     destination: '',
     bandwidth: '',
     includeULL: false,
-    useCiscoOnlyRoutes: false,
+    useCiscoOnlyRoutes: true, // Default to true (enabled by default)
     use100GbAndDFOnly: false,
     protectionRequired: false,
     mtuRequired: '', // Changed from maxLatency to mtuRequired
@@ -115,12 +118,20 @@ const NetworkDesignTool = () => {
   const [expandedLogs, setExpandedLogs] = useState(new Set()); // Track expanded log details
   const [parametersLocked, setParametersLocked] = useState(false); // Track if search parameters are locked
   
-  // Pricing logs filtering state
-  const [filteredAuditLogs, setFilteredAuditLogs] = useState([]);
+  // Pricing logs filtering and pagination state
+  const [usersList, setUsersList] = useState([]);
   const [logSearchTerm, setLogSearchTerm] = useState('');
+  const [customerNameFilter, setCustomerNameFilter] = useState('');
+  const [selectedUser, setSelectedUser] = useState('');
   const [logDateFilter, setLogDateFilter] = useState({
     startDate: '',
     endDate: ''
+  });
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 100,
+    total: 0,
+    totalPages: 0
   });
   
   // Export dialog state
@@ -145,16 +156,17 @@ const NetworkDesignTool = () => {
 
   // Clear expanded logs for read-only users
   useEffect(() => {
-    if (user && user.role === 'read_only' && expandedLogs.size > 0) {
+    if (isReadOnly && expandedLogs.size > 0) {
       console.log('NetworkDesignTool - Clearing expanded logs for read-only user');
       setExpandedLogs(new Set());
     }
     
     if (user) {
-      console.log('NetworkDesignTool - User role:', user.role);
+      console.log('NetworkDesignTool - User:', user.username);
+      console.log('NetworkDesignTool - Network Design Permission:', networkDesignPermission);
       console.log('NetworkDesignTool - isReadOnly:', isReadOnly);
     }
-  }, [user, isReadOnly, expandedLogs]);
+  }, [user, networkDesignPermission, isReadOnly, expandedLogs]);
 
   // Auto-refresh exchange rates when component becomes visible (e.g., switching back from Exchange Rates module)
   useEffect(() => {
@@ -242,20 +254,29 @@ const NetworkDesignTool = () => {
         getCarriers()
       ];
       
-      // Only load audit logs if user can view pricing logs
+      // Only load users list and audit logs if user can view pricing logs
       if (canViewPricingLogs) {
-        promises.push(networkDesignApi.getAuditLogs());
+        // For provisioner and admin users, fetch users list for filter dropdown
+        // Admin users always get the list, and provisioner level users also get it
+        if (user && (user.role === 'administrator' || networkDesignPermission === 'provisioner')) {
+          promises.push(networkDesignApi.getUsersList());
+        }
       }
       
       const results = await Promise.all(promises);
-      const [locationsData, carriersData, auditLogsData] = results;
+      const [locationsData, carriersData, usersListData] = results;
       
       setLocations(locationsData);
       setCarriers(carriersData);
       
-      // Only set audit logs if user can view them
-      if (canViewPricingLogs && auditLogsData) {
-        setAuditLogs(auditLogsData);
+      // Set users list if available
+      if (usersListData) {
+        setUsersList(usersListData);
+      }
+      
+      // Load audit logs separately with pagination
+      if (canViewPricingLogs) {
+        await loadAuditLogs();
       }
       
       // Load exchange rates separately
@@ -275,11 +296,85 @@ const NetworkDesignTool = () => {
     }
   };
 
+  const loadAuditLogs = async () => {
+    try {
+      const params = {
+        limit: pagination.limit,
+        offset: (pagination.page - 1) * pagination.limit
+      };
+      
+      // Add filters if set
+      if (selectedUser) {
+        params.user_id = selectedUser;
+      }
+      if (customerNameFilter.trim()) {
+        params.customer_name = customerNameFilter.trim();
+      }
+      if (logSearchTerm.trim()) {
+        params.quote_request_id = logSearchTerm.trim();
+      }
+      
+      const response = await networkDesignApi.getAuditLogs(params);
+      
+      // Handle new pagination response format
+      if (response.data && response.pagination) {
+        setAuditLogs(response.data);
+        setPagination(prev => ({
+          ...prev,
+          total: response.pagination.total,
+          totalPages: response.pagination.totalPages
+        }));
+      } else {
+        // Fallback for old format (backwards compatibility)
+        setAuditLogs(response);
+      }
+    } catch (err) {
+      console.error('Failed to load audit logs:', err);
+      setError('Failed to load pricing logs: ' + err.message);
+    }
+  };
+
+  // Helper function to format option label for display
+  const getCircuitOptionLabel = (option) => {
+    if (!option) return '';
+    if (typeof option === 'string') {
+      // Handle legacy string format (for backward compatibility)
+      return option;
+    }
+    // Object format: {circuit_id, cable_system}
+    if (option.cable_system) {
+      return `${option.circuit_id} - ${option.cable_system}`;
+    }
+    return option.circuit_id;
+  };
+
+  // Helper function to extract circuit_id from option (for value storage)
+  const getCircuitId = (option) => {
+    if (!option) return '';
+    if (typeof option === 'string') return option;
+    return option.circuit_id;
+  };
+
   const handleInputChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    setFormData(prev => {
+      const updates = { [field]: value };
+      
+      // Special handling for protectionRequired toggle
+      if (field === 'protectionRequired') {
+        if (value === true) {
+          // When protection is enabled, disable Cisco Only Routes
+          updates.useCiscoOnlyRoutes = false;
+        } else {
+          // When protection is disabled, re-enable Cisco Only Routes
+          updates.useCiscoOnlyRoutes = true;
+        }
+      }
+      
+      return {
+        ...prev,
+        ...updates
+      };
+    });
   };
 
   const handleContractTermChange = async (newTerm) => {
@@ -937,6 +1032,9 @@ const NetworkDesignTool = () => {
         }
       } else {
         // Auto design mode - existing logic
+        // Extract circuit IDs from exclusion list (converts objects to strings)
+        const circuitExclusionIds = formData.circuitExclusion.map(item => getCircuitId(item));
+        
         const searchParams = {
           source: formData.source,
           destination: formData.destination,
@@ -951,7 +1049,7 @@ const NetworkDesignTool = () => {
             protection_required: formData.protectionRequired,
             mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500, // Default to 1500 if not specified
             carrier_avoidance: formData.carrierAvoidance.length > 0 ? formData.carrierAvoidance : undefined,
-            circuit_exclusion: formData.circuitExclusion.length > 0 ? formData.circuitExclusion : undefined
+            circuit_exclusion: circuitExclusionIds.length > 0 ? circuitExclusionIds : undefined
           }
         };
 
@@ -1946,57 +2044,44 @@ const NetworkDesignTool = () => {
     return emailBody;
   };
 
-  // Pricing Logs Filtering Functions
+  // Pricing Logs Filtering and Pagination Functions
   useEffect(() => {
-    filterAuditLogs();
-  }, [auditLogs, logSearchTerm, logDateFilter]);
-
-  const filterAuditLogs = () => {
-    let filtered = [...auditLogs];
-
-    // Search by Quote Request ID
-    if (logSearchTerm.trim()) {
-      filtered = filtered.filter(log => {
-        try {
-          const params = log.parameters || log.pricing_data?.inputParameters;
-          const quoteId = params?.quoteRequestId || params?.quote_request_id || '';
-          return quoteId.toLowerCase().includes(logSearchTerm.toLowerCase());
-        } catch {
-          return false;
-        }
-      });
+    if (canViewPricingLogs) {
+      loadAuditLogs();
     }
-
-    // Filter by date range
-    if (logDateFilter.startDate || logDateFilter.endDate) {
-      filtered = filtered.filter(log => {
-        const logDate = new Date(log.timestamp);
-        const startDate = logDateFilter.startDate ? new Date(logDateFilter.startDate) : null;
-        const endDate = logDateFilter.endDate ? new Date(logDateFilter.endDate + 'T23:59:59') : null;
-
-        if (startDate && logDate < startDate) return false;
-        if (endDate && logDate > endDate) return false;
-        return true;
-      });
-    }
-
-    setFilteredAuditLogs(filtered);
-  };
+  }, [pagination.page, pagination.limit, selectedUser, customerNameFilter, logSearchTerm]);
 
   const handleLogSearchChange = (event) => {
     setLogSearchTerm(event.target.value);
   };
 
-  const handleDateFilterChange = (field) => (event) => {
-    setLogDateFilter(prev => ({
+  const handleCustomerNameFilterChange = (event) => {
+    setCustomerNameFilter(event.target.value);
+  };
+
+  const handleUserFilterChange = (event) => {
+    setSelectedUser(event.target.value);
+    // Reset to page 1 when filter changes
+    setPagination(prev => ({ ...prev, page: 1 }));
+  };
+
+  const handlePageChange = (event, newPage) => {
+    setPagination(prev => ({ ...prev, page: newPage }));
+  };
+
+  const handleLimitChange = (event) => {
+    setPagination(prev => ({
       ...prev,
-      [field]: event.target.value
+      limit: parseInt(event.target.value),
+      page: 1 // Reset to first page when limit changes
     }));
   };
 
   const clearLogFilters = () => {
     setLogSearchTerm('');
-    setLogDateFilter({ startDate: '', endDate: '' });
+    setCustomerNameFilter('');
+    setSelectedUser('');
+    setPagination(prev => ({ ...prev, page: 1 }));
   };
 
   // Cross Connect Functions
@@ -2359,31 +2444,55 @@ const NetworkDesignTool = () => {
                 />
               </Grid>
 
-              {/* Circuit ID Exclusion - Only shows results when user types */}
+              {/* Circuit ID Exclusion - Search by UCN or Cable System */}
               <Grid item xs={12} md={6}>
                 <Autocomplete
                   multiple
                   options={circuitIds}
-                  getOptionLabel={(option) => option}
+                  getOptionLabel={getCircuitOptionLabel}
                   value={formData.circuitExclusion}
                   onChange={(event, newValue) => {
+                    // Store the selected options as-is (objects or strings)
                     handleInputChange('circuitExclusion', newValue);
                   }}
                   onInputChange={(event, inputValue) => {
                     // Only fetch circuit IDs when user starts typing
                     if (inputValue && inputValue.length >= 2) {
                       loadCircuitIds(inputValue);
+                    } else if (!inputValue) {
+                      // Clear options when input is cleared
+                      setCircuitIds([]);
                     }
                   }}
+                  isOptionEqualToValue={(option, value) => {
+                    // Compare circuit IDs
+                    const optionId = getCircuitId(option);
+                    const valueId = getCircuitId(value);
+                    return optionId === valueId;
+                  }}
                   disabled={parametersLocked}
-                  noOptionsText="Type to search circuit IDs..."
-                  loadingText="Loading circuit IDs..."
+                  noOptionsText="Type to search circuits or cable systems..."
+                  loadingText="Loading circuits..."
+                  renderTags={(value, getTagProps) => (
+                    value.map((option, index) => {
+                      const label = getCircuitId(option);
+                      return (
+                        <Chip
+                          key={`circuit-${label}-${index}`}
+                          label={label}
+                          {...getTagProps({ index })}
+                          disabled={parametersLocked}
+                          size="small"
+                        />
+                      );
+                    })
+                  )}
                   renderInput={(params) => (
                     <TextField 
                       {...params} 
                       label="Circuit ID Exclusion" 
-                      placeholder="Type to search circuits to exclude..."
-                      helperText="Search and select circuit IDs to exclude from routing"
+                      placeholder="Type to search circuits or cable systems..."
+                      helperText="Search by UCN or Cable System name - individually select circuits to exclude"
                     />
                   )}
                 />
@@ -3132,7 +3241,7 @@ const NetworkDesignTool = () => {
             <Typography variant="h6">Pricing Logs</Typography>
             <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
               <Chip 
-                label={`${filteredAuditLogs.length} of ${auditLogs.length} entries`} 
+                label={`Showing ${auditLogs.length} of ${pagination.total} entries (Page ${pagination.page}/${pagination.totalPages})`} 
                 color="info" 
                 size="small"
               />
@@ -3164,7 +3273,46 @@ const NetworkDesignTool = () => {
           <Card sx={{ mb: 3 }}>
             <CardContent>
               <Grid container spacing={2} alignItems="center">
-                <Grid item xs={12} md={4}>
+                {/* User Filter - Only for admin/provisioner */}
+                {usersList.length > 0 && (
+                  <Grid item xs={12} md={3}>
+                    <TextField
+                      fullWidth
+                      select
+                      size="small"
+                      label="User"
+                      value={selectedUser}
+                      onChange={handleUserFilterChange}
+                    >
+                      <MenuItem value="">All Users</MenuItem>
+                      {usersList.map(user => (
+                        <MenuItem key={user.id} value={user.id}>
+                          {user.username}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Grid>
+                )}
+                
+                <Grid item xs={12} md={3}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Customer Name"
+                    value={customerNameFilter}
+                    onChange={handleCustomerNameFilterChange}
+                    placeholder="Search customer name..."
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon />
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
+                </Grid>
+                
+                <Grid item xs={12} md={3}>
                   <TextField
                     fullWidth
                     size="small"
@@ -3181,29 +3329,23 @@ const NetworkDesignTool = () => {
                     }}
                   />
                 </Grid>
-                <Grid item xs={12} md={3}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    type="date"
-                    label="Start Date"
-                    value={logDateFilter.startDate}
-                    onChange={handleDateFilterChange('startDate')}
-                    InputLabelProps={{ shrink: true }}
-                  />
-                </Grid>
-                <Grid item xs={12} md={3}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    type="date"
-                    label="End Date"
-                    value={logDateFilter.endDate}
-                    onChange={handleDateFilterChange('endDate')}
-                    InputLabelProps={{ shrink: true }}
-                  />
-                </Grid>
+                
                 <Grid item xs={12} md={2}>
+                  <TextField
+                    fullWidth
+                    select
+                    size="small"
+                    label="Rows per page"
+                    value={pagination.limit}
+                    onChange={handleLimitChange}
+                  >
+                    <MenuItem value={50}>50</MenuItem>
+                    <MenuItem value={100}>100</MenuItem>
+                    <MenuItem value={200}>200</MenuItem>
+                  </TextField>
+                </Grid>
+                
+                <Grid item xs={12} md={1}>
                   <Button
                     fullWidth
                     variant="outlined"
@@ -3211,7 +3353,7 @@ const NetworkDesignTool = () => {
                     onClick={clearLogFilters}
                     startIcon={<FilterListOffIcon />}
                   >
-                    Clear Filters
+                    Clear
                   </Button>
                 </Grid>
               </Grid>
@@ -3225,15 +3367,16 @@ const NetworkDesignTool = () => {
                   <TableCell><strong>Timestamp</strong></TableCell>
                   <TableCell><strong>User</strong></TableCell>
                   <TableCell><strong>Action</strong></TableCell>
+                  <TableCell><strong>Customer Name</strong></TableCell>
                   <TableCell><strong>Quote Request ID</strong></TableCell>
                   <TableCell><strong>Request Summary</strong></TableCell>
                   <TableCell><strong>Pricing Results</strong></TableCell>
                   <TableCell><strong>Execution Time</strong></TableCell>
-                  <TableCell align="center"><strong>Actions</strong></TableCell>
+                  <TableCell align="center" sx={{ width: 150 }}><strong>Actions</strong></TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filteredAuditLogs.map((log) => (
+                {auditLogs.map((log) => (
                   <React.Fragment key={log.id}>
                     <TableRow>
                       <TableCell>
@@ -3243,7 +3386,7 @@ const NetworkDesignTool = () => {
                       </TableCell>
                       <TableCell>
                         <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                          {log.user_name || 'Unknown User'}
+                          {log.username || log.user_name || 'Unknown User'}
                         </Typography>
                       </TableCell>
                       <TableCell>
@@ -3252,6 +3395,18 @@ const NetworkDesignTool = () => {
                           color={log.action_type === 'PATH_SEARCH' ? 'primary' : 'secondary'} 
                           size="small" 
                         />
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                          {(() => {
+                            try {
+                              const params = log.parameters || log.pricing_data?.inputParameters;
+                              return params?.customerName || params?.customer_name || 'N/A';
+                            } catch {
+                              return 'N/A';
+                            }
+                          })()}
+                        </Typography>
                       </TableCell>
                       <TableCell>
                         <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
@@ -3280,13 +3435,14 @@ const NetworkDesignTool = () => {
                           {log.execution_time ? `${log.execution_time}ms` : 'N/A'}
                         </Typography>
                       </TableCell>
-                      <TableCell align="center">
-                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'center' }}>
-                          {/* View Details - hide for read-only users */}
-                          {user && (user.role === 'administrator' || user.role === 'provisioner') && (
+                      <TableCell align="center" sx={{ width: 150 }}>
+                        <Box sx={{ display: 'flex', gap: 1, flexDirection: 'column', alignItems: 'center' }}>
+                          {/* View Details - available for provisioner and admin users, not read-only */}
+                          {!isReadOnly && (
                             <Button
                               variant="outlined"
                               size="small"
+                              fullWidth
                               onClick={() => toggleLogExpansion(log.id)}
                             >
                               {expandedLogs.has(log.id) ? 'Hide Details' : 'View Details'}
@@ -3320,9 +3476,9 @@ const NetworkDesignTool = () => {
                         </Box>
                       </TableCell>
                     </TableRow>
-                    {expandedLogs.has(log.id) && user && (user.role === 'administrator' || user.role === 'provisioner') && (
+                    {expandedLogs.has(log.id) && !isReadOnly && (
                       <TableRow>
-                        <TableCell colSpan={8} sx={{ backgroundColor: '#f8f9fa', border: 'none' }}>
+                        <TableCell colSpan={9} sx={{ backgroundColor: '#f8f9fa', border: 'none' }}>
                           <Box sx={{ p: 2 }}>
                             <Grid container spacing={2}>
                               <Grid item xs={12} md={6}>
@@ -3333,13 +3489,13 @@ const NetworkDesignTool = () => {
                                   component="pre" 
                                   sx={{ 
                                     fontSize: '0.75rem', 
-                                    fontFamily: 'monospace',
+                                    fontFamily: 'Courier New, monospace',
                                     whiteSpace: 'pre-wrap',
                                     wordBreak: 'break-word',
-                                    maxHeight: '300px',
+                                    maxHeight: '400px',
                                     overflow: 'auto',
                                     backgroundColor: '#f5f5f5',
-                                    padding: 1,
+                                    padding: 2,
                                     borderRadius: 1,
                                     border: '1px solid #ddd'
                                   }}
@@ -3357,13 +3513,13 @@ const NetworkDesignTool = () => {
                                   component="pre" 
                                   sx={{ 
                                     fontSize: '0.75rem', 
-                                    fontFamily: 'monospace',
+                                    fontFamily: 'Courier New, monospace',
                                     whiteSpace: 'pre-wrap',
                                     wordBreak: 'break-word',
-                                    maxHeight: '300px',
+                                    maxHeight: '400px',
                                     overflow: 'auto',
                                     backgroundColor: '#f5f5f5',
-                                    padding: 1,
+                                    padding: 2,
                                     borderRadius: 1,
                                     border: '1px solid #ddd'
                                   }}
@@ -3383,6 +3539,19 @@ const NetworkDesignTool = () => {
               </TableBody>
             </Table>
           </TableContainer>
+          
+          {/* Pagination Controls */}
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+            <Pagination 
+              count={pagination.totalPages} 
+              page={pagination.page} 
+              onChange={handlePageChange} 
+              color="primary"
+              showFirstButton
+              showLastButton
+              size="large"
+            />
+          </Box>
         </TabPanel>
       )}
 

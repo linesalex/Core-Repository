@@ -72,15 +72,11 @@ const LocationDataManager = ({ hasPermission }) => {
     cnx_extranet_wan: false,
     cnx_ethernet: false,
     cnx_voice: false,
-    tdm_gateway: false,
     cnx_unigy: false,
-    cnx_alpha: false,
     cnx_chrono: false,
-    cnx_sdwan: false,
     csp_on_ramp: false,
     exchange_on_ramp: false,
     internet_on_ramp: false,
-    transport_only_pop: false,
     cnx_colocation: false
   });
 
@@ -142,15 +138,11 @@ const LocationDataManager = ({ hasPermission }) => {
     { key: 'cnx_extranet_wan', label: 'CNX Extranet / WAN' },
     { key: 'cnx_ethernet', label: 'CNX Ethernet' },
     { key: 'cnx_voice', label: 'CNX Voice' },
-    { key: 'tdm_gateway', label: 'TDM Gateway' },
     { key: 'cnx_unigy', label: 'CNX Unigy' },
-    { key: 'cnx_alpha', label: 'CNX Alpha' },
     { key: 'cnx_chrono', label: 'CNX Chrono' },
-    { key: 'cnx_sdwan', label: 'CNX SDWAN' },
     { key: 'csp_on_ramp', label: 'CSP On Ramp' },
     { key: 'exchange_on_ramp', label: 'Exchange On Ramp' },
     { key: 'internet_on_ramp', label: 'Internet On Ramp' },
-    { key: 'transport_only_pop', label: 'Transport Only POP' },
     { key: 'cnx_colocation', label: 'CNX Colocation' },
     { key: 'exchange_pricing_in_region', label: 'Exchange Pricing - In Region' }
   ];
@@ -238,15 +230,11 @@ const LocationDataManager = ({ hasPermission }) => {
       cnx_extranet_wan: false,
       cnx_ethernet: false,
       cnx_voice: false,
-      tdm_gateway: false,
       cnx_unigy: false,
-      cnx_alpha: false,
       cnx_chrono: false,
-      cnx_sdwan: false,
       csp_on_ramp: false,
       exchange_on_ramp: false,
       internet_on_ramp: false,
-      transport_only_pop: false,
       cnx_colocation: false
     });
     setFormErrors({}); // Clear validation errors

@@ -3,7 +3,8 @@ import {
   Box, Typography, TextField, Button, Paper, Grid, Alert, CircularProgress, Card, CardContent, CardHeader,
   Autocomplete, FormControlLabel, Checkbox, Chip, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Accordion, AccordionSummary, AccordionDetails, Tabs, Tab, IconButton, Divider,
-  Tooltip, Select, MenuItem, FormControl, InputLabel, Dialog, DialogTitle, DialogContent, DialogActions
+  Tooltip, Select, MenuItem, FormControl, InputLabel, Dialog, DialogTitle, DialogContent, DialogActions,
+  Pagination, InputAdornment
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -14,6 +15,9 @@ import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import SearchIcon from '@mui/icons-material/Search';
 import HistoryIcon from '@mui/icons-material/History';
 import DeleteIcon from '@mui/icons-material/Delete';
+import AddIcon from '@mui/icons-material/Add';
+import SaveIcon from '@mui/icons-material/Save';
+import EditIcon from '@mui/icons-material/Edit';
 import { useAuth } from './AuthContext';
 import { networkDesignApi } from './api';
 
@@ -34,11 +38,15 @@ function TabPanel(props) {
 }
 
 const AllocatedCostCalculator = () => {
-  const { user } = useAuth();
+  const { user, modulePermissions } = useAuth();
+  
+  // Get user's allocated_cost_calculator module permission level
+  const calculatorPermission = modulePermissions['allocated_cost_calculator'] || null;
   
   // Check permissions
-  const canViewPricingLogs = user && user.role !== 'read_only';
+  const canViewPricingLogs = user !== null && calculatorPermission !== null;
   const canManageLogs = user && user.role === 'administrator';
+  const isReadOnly = calculatorPermission === 'read_only';
   
   // Form state
   const [formData, setFormData] = useState({
@@ -53,6 +61,9 @@ const AllocatedCostCalculator = () => {
     quoteRequestId: '',
     customerName: ''
   });
+  
+  // Manual Incremental Costs state
+  const [incrementalCosts, setIncrementalCosts] = useState([]);
   
   // Data state
   const [locations, setLocations] = useState([]);
@@ -70,14 +81,34 @@ const AllocatedCostCalculator = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [expandedAccordion, setExpandedAccordion] = useState('input');
+  const [expandedAccordion, setExpandedAccordion] = useState({
+    input: true,
+    incremental: true,
+    results: false,
+    pricing: false
+  });
   const [currentTab, setCurrentTab] = useState(0);
   const [expandedLogs, setExpandedLogs] = useState(new Set());
   
-  // Pricing logs filtering state
-  const [filteredAuditLogs, setFilteredAuditLogs] = useState([]);
+  // Helper function to toggle accordion state
+  const toggleAccordion = (accordionName) => {
+    setExpandedAccordion(prev => ({
+      ...prev,
+      [accordionName]: !prev[accordionName]
+    }));
+  };
+  
+  // Pricing logs filtering and pagination state
+  const [usersList, setUsersList] = useState([]);
   const [logSearchTerm, setLogSearchTerm] = useState('');
-  const [logDateFilter, setLogDateFilter] = useState({ startDate: '', endDate: '' });
+  const [customerNameFilter, setCustomerNameFilter] = useState('');
+  const [selectedUser, setSelectedUser] = useState('');
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 100,
+    total: 0,
+    totalPages: 0
+  });
   
   // Export dialog state
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
@@ -95,10 +126,18 @@ const AllocatedCostCalculator = () => {
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      const [locationsData, ratesData] = await Promise.all([
+      const promises = [
         networkDesignApi.getLocations(),
         networkDesignApi.getExchangeRates()
-      ]);
+      ];
+      
+      // For provisioner and admin users, fetch users list for filter dropdown
+      if (canViewPricingLogs && user && (user.role === 'administrator' || calculatorPermission === 'provisioner')) {
+        promises.push(networkDesignApi.getUsersList());
+      }
+      
+      const results = await Promise.all(promises);
+      const [locationsData, ratesData, usersListData] = results;
       
       setLocations(locationsData);
       
@@ -113,7 +152,12 @@ const AllocatedCostCalculator = () => {
       setExchangeRates(ratesMap);
       setAvailableCurrencies(Array.from(currencies).sort());
       
-      // Load audit logs
+      // Set users list if available
+      if (usersListData) {
+        setUsersList(usersListData);
+      }
+      
+      // Load audit logs with pagination
       if (canViewPricingLogs) {
         await loadAuditLogs();
       }
@@ -127,13 +171,40 @@ const AllocatedCostCalculator = () => {
   
   const loadAuditLogs = async () => {
     try {
-      const logs = await networkDesignApi.getAllChangeLogs({
-        table_name: 'allocated_cost_calculator'
-      });
-      setAuditLogs(logs || []);
-      setFilteredAuditLogs(logs || []);
+      const params = {
+        table_name: 'allocated_cost_calculator',
+        limit: pagination.limit,
+        offset: (pagination.page - 1) * pagination.limit
+      };
+      
+      // Add filters if set
+      if (selectedUser) {
+        params.user_id = selectedUser;
+      }
+      if (customerNameFilter.trim()) {
+        params.customer_name = customerNameFilter.trim();
+      }
+      if (logSearchTerm.trim()) {
+        params.quote_request_id = logSearchTerm.trim();
+      }
+      
+      const response = await networkDesignApi.getAllChangeLogs(params);
+      
+      // Handle new pagination response format
+      if (response.data && response.pagination) {
+        setAuditLogs(response.data);
+        setPagination(prev => ({
+          ...prev,
+          total: response.pagination.total,
+          totalPages: response.pagination.totalPages
+        }));
+      } else {
+        // Fallback for old format
+        setAuditLogs(response || []);
+      }
     } catch (err) {
       console.error('Failed to load audit logs:', err);
+      setError('Failed to load pricing logs: ' + err.message);
     }
   };
   
@@ -146,6 +217,348 @@ const AllocatedCostCalculator = () => {
     } else if (field === 'secondaryPathRoutes') {
       validateRoutes(value, formData.source, formData.destination, 'secondary');
     }
+  };
+  
+  // Incremental Costs Management Functions
+  const addIncrementalCost = () => {
+    const newCost = {
+      id: Date.now(), // Unique identifier
+      costType: 'core_incremental_new',
+      sourceLocation: '',
+      destinationLocation: '',
+      incrementalCost: '',
+      currency: 'USD',
+      allocationFactor: '',
+      pathAllocation: 'primary',
+      selectedCircuit: '', // For Core Incremental Upgrade
+      saved: false // Track if the cost is saved/locked
+    };
+    setIncrementalCosts(prev => [...prev, newCost]);
+  };
+  
+  const removeIncrementalCost = (id) => {
+    const costToRemove = incrementalCosts.find(c => c.id === id);
+    
+    // If it's a Core Incremental New that was saved, remove it from the routes field
+    if (costToRemove && costToRemove.costType === 'core_incremental_new' && costToRemove.saved) {
+      const virtualCircuitId = `NEW_${costToRemove.sourceLocation}_${costToRemove.destinationLocation}`;
+      const pathField = costToRemove.pathAllocation === 'primary' ? 'primaryPathRoutes' : 'secondaryPathRoutes';
+      const currentRoutes = formData[pathField];
+      const routesArray = currentRoutes.split(',').map(r => r.trim()).filter(r => r);
+      const updatedRoutes = routesArray.filter(r => r !== virtualCircuitId).join(', ');
+      
+      setFormData(prev => ({ ...prev, [pathField]: updatedRoutes }));
+      
+      // Re-validate the path
+      if (pathField === 'primaryPathRoutes') {
+        validateRoutes(updatedRoutes, formData.source, formData.destination, 'primary');
+      } else {
+        validateRoutes(updatedRoutes, formData.source, formData.destination, 'secondary');
+      }
+    }
+    
+    setIncrementalCosts(prev => prev.filter(cost => cost.id !== id));
+  };
+  
+  const saveIncrementalCost = (id) => {
+    const cost = incrementalCosts.find(c => c.id === id);
+    if (!cost) return;
+    
+    // Validate required fields
+    if (!cost.sourceLocation || !cost.destinationLocation || !cost.incrementalCost || 
+        !cost.currency || cost.allocationFactor === '' || cost.allocationFactor === null) {
+      setError('Please fill in all required fields before saving');
+      return;
+    }
+    
+    // For Core Incremental New, add to the appropriate path routes field
+    if (cost.costType === 'core_incremental_new') {
+      const virtualCircuitId = `NEW_${cost.sourceLocation}_${cost.destinationLocation}`;
+      const pathField = cost.pathAllocation === 'primary' ? 'primaryPathRoutes' : 'secondaryPathRoutes';
+      const currentRoutes = formData[pathField];
+      const updatedRoutes = currentRoutes ? `${currentRoutes}, ${virtualCircuitId}` : virtualCircuitId;
+      
+      setFormData(prev => ({ ...prev, [pathField]: updatedRoutes }));
+      
+      // Trigger validation with the new route included
+      if (pathField === 'primaryPathRoutes') {
+        validateRoutes(updatedRoutes, formData.source, formData.destination, 'primary');
+      } else {
+        validateRoutes(updatedRoutes, formData.source, formData.destination, 'secondary');
+      }
+    }
+    
+    // Mark the cost as saved
+    setIncrementalCosts(prev => prev.map(c => 
+      c.id === id ? { ...c, saved: true } : c
+    ));
+    
+    setSuccess('Incremental cost saved successfully');
+    setTimeout(() => setSuccess(null), 3000);
+  };
+  
+  const editIncrementalCost = (id) => {
+    const cost = incrementalCosts.find(c => c.id === id);
+    if (!cost) return;
+    
+    // If it's a Core Incremental New, remove the virtual circuit from routes
+    if (cost.costType === 'core_incremental_new') {
+      const virtualCircuitId = `NEW_${cost.sourceLocation}_${cost.destinationLocation}`;
+      const pathField = cost.pathAllocation === 'primary' ? 'primaryPathRoutes' : 'secondaryPathRoutes';
+      const currentRoutes = formData[pathField];
+      const routesArray = currentRoutes.split(',').map(r => r.trim()).filter(r => r);
+      const updatedRoutes = routesArray.filter(r => r !== virtualCircuitId).join(', ');
+      
+      setFormData(prev => ({ ...prev, [pathField]: updatedRoutes }));
+      
+      // Re-validate the path
+      if (pathField === 'primaryPathRoutes') {
+        validateRoutes(updatedRoutes, formData.source, formData.destination, 'primary');
+      } else {
+        validateRoutes(updatedRoutes, formData.source, formData.destination, 'secondary');
+      }
+    }
+    
+    // Mark the cost as not saved (unlock it)
+    setIncrementalCosts(prev => prev.map(c => 
+      c.id === id ? { ...c, saved: false } : c
+    ));
+  };
+  
+  const updateIncrementalCost = (id, field, value) => {
+    setIncrementalCosts(prev => prev.map(cost => {
+      if (cost.id === id) {
+        const updatedCost = { ...cost, [field]: value };
+        
+        // Special handling for Core Incremental Upgrade - auto-fill source/destination
+        if (field === 'selectedCircuit' && value) {
+          const validation = cost.pathAllocation === 'primary' ? primaryPathValidation : secondaryPathValidation;
+          const selectedRoute = validation.routes.find(r => r.circuit_id === value);
+          if (selectedRoute) {
+            updatedCost.sourceLocation = selectedRoute.location_a;
+            updatedCost.destinationLocation = selectedRoute.location_b;
+          }
+        }
+        
+        return updatedCost;
+      }
+      return cost;
+    }));
+  };
+  
+  // Validate incremental costs
+  const validateIncrementalCosts = () => {
+    if (incrementalCosts.length === 0) {
+      return { valid: true, errors: [] };
+    }
+    
+    const errors = [];
+    
+    incrementalCosts.forEach((cost, index) => {
+      const costNum = index + 1;
+      
+      // Check required fields
+      if (!cost.sourceLocation) {
+        errors.push(`Cost ${costNum}: Source Location is required`);
+      }
+      if (!cost.destinationLocation) {
+        errors.push(`Cost ${costNum}: Destination Location is required`);
+      }
+      if (!cost.incrementalCost || cost.incrementalCost === '') {
+        errors.push(`Cost ${costNum}: Incremental Cost is required`);
+      }
+      if (!cost.currency) {
+        errors.push(`Cost ${costNum}: Currency is required`);
+      }
+      if (cost.allocationFactor === '' || cost.allocationFactor === null || cost.allocationFactor === undefined) {
+        errors.push(`Cost ${costNum}: Allocation Factor is required`);
+      }
+      
+      // Check cost range (0 to 999,999,999)
+      const costValue = parseFloat(cost.incrementalCost);
+      if (!isNaN(costValue) && (costValue < 0 || costValue > 999999999)) {
+        errors.push(`Cost ${costNum}: Incremental Cost must be between 0 and 999,999,999`);
+      }
+      
+      // Check allocation factor range (0 to 1)
+      const allocationValue = parseFloat(cost.allocationFactor);
+      if (!isNaN(allocationValue) && (allocationValue < 0 || allocationValue > 1)) {
+        errors.push(`Cost ${costNum}: Allocation Factor must be between 0.0 and 1.0`);
+      }
+      
+      // Check Core Incremental Upgrade has a selected circuit
+      if (cost.costType === 'core_incremental_upgrade' && !cost.selectedCircuit) {
+        errors.push(`Cost ${costNum}: Circuit selection is required for Core Incremental Upgrade`);
+      }
+    });
+    
+    // Validate path completeness for Core Incremental New segments
+    ['primary', 'secondary'].forEach(pathType => {
+      if (pathType === 'secondary' && formData.pricingType === 'primary') {
+        return; // Skip secondary path validation if not needed
+      }
+      
+      const pathCosts = incrementalCosts.filter(cost => 
+        cost.pathAllocation === pathType && cost.costType === 'core_incremental_new'
+      );
+      
+      if (pathCosts.length > 0) {
+        const validation = pathType === 'primary' ? primaryPathValidation : secondaryPathValidation;
+        const pathRoutes = pathType === 'primary' ? formData.primaryPathRoutes : formData.secondaryPathRoutes;
+        
+        // Check if path has any existing circuits
+        const hasExistingCircuits = pathRoutes && pathRoutes.trim().length > 0;
+        
+        if (hasExistingCircuits && validation.routes.length > 0) {
+          // Build a combined path from existing circuits and new segments
+          const pathValidationResult = validateCombinedPath(
+            validation.routes,
+            pathCosts,
+            formData.source,
+            formData.destination,
+            pathType
+          );
+          
+          if (!pathValidationResult.valid) {
+            errors.push(`${pathType.charAt(0).toUpperCase() + pathType.slice(1)} Path: ${pathValidationResult.error}`);
+          }
+        } else if (!hasExistingCircuits) {
+          // Only new segments, validate they form a complete path
+          const newSegmentsValidation = validateNewSegmentsPath(
+            pathCosts,
+            formData.source,
+            formData.destination,
+            pathType
+          );
+          
+          if (!newSegmentsValidation.valid) {
+            errors.push(`${pathType.charAt(0).toUpperCase() + pathType.slice(1)} Path: ${newSegmentsValidation.error}`);
+          }
+        }
+      }
+    });
+    
+    return {
+      valid: errors.length === 0,
+      errors
+    };
+  };
+  
+  // Validate combined path (existing circuits + new segments)
+  const validateCombinedPath = (existingRoutes, newSegments, source, destination, pathType) => {
+    try {
+      // Build a map of all available segments
+      const segments = [];
+      
+      // Add existing circuit segments
+      existingRoutes.forEach(route => {
+        segments.push({
+          from: route.location_a,
+          to: route.location_b,
+          type: 'existing'
+        });
+      });
+      
+      // Add new incremental segments
+      newSegments.forEach(seg => {
+        if (seg.sourceLocation && seg.destinationLocation) {
+          segments.push({
+            from: seg.sourceLocation,
+            to: seg.destinationLocation,
+            type: 'new'
+          });
+        }
+      });
+      
+      // Try to build a complete path from source to destination
+      const pathResult = findPath(segments, source, destination);
+      
+      if (!pathResult.found) {
+        return {
+          valid: false,
+          error: `Cannot form complete end-to-end path from ${source} to ${destination}. Existing circuits and new segments do not connect.`
+        };
+      }
+      
+      return { valid: true };
+    } catch (err) {
+      return {
+        valid: false,
+        error: `Path validation error: ${err.message}`
+      };
+    }
+  };
+  
+  // Validate path with only new segments
+  const validateNewSegmentsPath = (newSegments, source, destination, pathType) => {
+    try {
+      const segments = newSegments.map(seg => ({
+        from: seg.sourceLocation,
+        to: seg.destinationLocation,
+        type: 'new'
+      })).filter(seg => seg.from && seg.to);
+      
+      if (segments.length === 0) {
+        return {
+          valid: false,
+          error: 'No valid new segments to form a path'
+        };
+      }
+      
+      const pathResult = findPath(segments, source, destination);
+      
+      if (!pathResult.found) {
+        return {
+          valid: false,
+          error: `New segments do not form a complete path from ${source} to ${destination}`
+        };
+      }
+      
+      return { valid: true };
+    } catch (err) {
+      return {
+        valid: false,
+        error: `New segments validation error: ${err.message}`
+      };
+    }
+  };
+  
+  // Helper function to find a path using BFS
+  const findPath = (segments, source, destination) => {
+    if (source === destination) {
+      return { found: true, path: [source] };
+    }
+    
+    // Build adjacency list
+    const graph = {};
+    segments.forEach(seg => {
+      if (!graph[seg.from]) graph[seg.from] = [];
+      graph[seg.from].push(seg.to);
+    });
+    
+    // BFS to find path
+    const queue = [[source]];
+    const visited = new Set([source]);
+    
+    while (queue.length > 0) {
+      const path = queue.shift();
+      const current = path[path.length - 1];
+      
+      if (current === destination) {
+        return { found: true, path };
+      }
+      
+      if (graph[current]) {
+        for (const neighbor of graph[current]) {
+          if (!visited.has(neighbor)) {
+            visited.add(neighbor);
+            queue.push([...path, neighbor]);
+          }
+        }
+      }
+    }
+    
+    return { found: false, path: [] };
   };
   
   // Real-time route validation
@@ -168,10 +581,36 @@ const AllocatedCostCalculator = () => {
     setValidation({ valid: false, message: `⏳ Validating ${circuitIds.length} route(s)...`, routes: [] });
     
     try {
-      // Fetch route details
-      const routePromises = circuitIds.map(circuitId => 
-        networkDesignApi.fetchRoute(circuitId).catch(err => null)
-      );
+      // Fetch route details - handle virtual NEW_ circuits
+      const routePromises = circuitIds.map(circuitId => {
+        // Check if this is a virtual NEW circuit
+        if (circuitId.startsWith('NEW_')) {
+          // Parse the virtual circuit format: NEW_SourceLocation_DestinationLocation
+          const parts = circuitId.substring(4).split('_');
+          if (parts.length >= 2) {
+            const sourceLocation = parts[0];
+            const destinationLocation = parts.slice(1).join('_'); // In case destination has underscores
+            
+            // Return a virtual route object
+            return Promise.resolve({
+              circuit_id: circuitId,
+              location_a: sourceLocation,
+              location_b: destinationLocation,
+              carrier: 'New',
+              cable_system: 'N/A',
+              latency_ms: 0,
+              bandwidth_mbps: 0,
+              isVirtual: true // Flag to identify virtual circuits
+            });
+          } else {
+            // Invalid format
+            return Promise.resolve(null);
+          }
+        } else {
+          // Regular circuit - fetch from database
+          return networkDesignApi.fetchRoute(circuitId).catch(err => null);
+        }
+      });
       const routes = await Promise.all(routePromises);
       
       // Check for not found routes
@@ -179,7 +618,7 @@ const AllocatedCostCalculator = () => {
       if (notFound.length > 0) {
         setValidation({
           valid: false,
-          message: `❌ Circuit ID not found: ${notFound.join(', ')}`,
+          message: `❌ Circuit ID not found or invalid format: ${notFound.join(', ')}`,
           routes: []
         });
         return;
@@ -275,6 +714,46 @@ const AllocatedCostCalculator = () => {
     setCurrentTab(newValue);
   };
   
+  // Handle refresh - reset all data
+  const handleRefresh = () => {
+    // Reset all form data to initial state
+    setFormData({
+      source: '',
+      destination: '',
+      bandwidth: '',
+      primaryPathRoutes: '',
+      secondaryPathRoutes: '',
+      pricingType: 'primary',
+      outputCurrency: 'USD',
+      contractTerm: 12,
+      quoteRequestId: '',
+      customerName: ''
+    });
+    
+    // Clear validation
+    setPrimaryPathValidation({ valid: false, message: '', routes: [] });
+    setSecondaryPathValidation({ valid: false, message: '', routes: [] });
+    
+    // Clear incremental costs
+    setIncrementalCosts([]);
+    
+    // Clear all results
+    setSearchResults(null);
+    setPricingResults(null);
+    
+    // Clear any errors or success messages
+    setError(null);
+    setSuccess(null);
+    
+    // Reset accordion state
+    setExpandedAccordion({
+      input: true,
+      incremental: true,
+      results: false,
+      pricing: false
+    });
+  };
+  
   const handleCalculate = async () => {
     // Validation
     if (!formData.source || !formData.destination) {
@@ -316,6 +795,13 @@ const AllocatedCostCalculator = () => {
       }
     }
     
+    // Validate incremental costs
+    const incrementalValidation = validateIncrementalCosts();
+    if (!incrementalValidation.valid) {
+      setError('Incremental costs validation failed:\n' + incrementalValidation.errors.join('\n'));
+      return;
+    }
+    
     setLoading(true);
     setError(null);
     setSearchResults(null);
@@ -337,9 +823,16 @@ const AllocatedCostCalculator = () => {
         diversePath: secondaryPath
       });
       
+      // Filter out virtual segments from paths for backend calculation
+      // (their costs are handled via incrementalCosts)
+      const backendPaths = paths.map(path => ({
+        ...path,
+        route: path.route.filter(segment => !segment.isVirtual)
+      }));
+      
       // Calculate pricing
       const pricingParams = {
-        paths,
+        paths: backendPaths,
         bandwidth: bandwidth,
         source: formData.source,
         destination: formData.destination,
@@ -348,7 +841,8 @@ const AllocatedCostCalculator = () => {
         quoteRequestId: formData.quoteRequestId,
         customerName: formData.customerName,
         calling_module: 'allocated_cost_calculator',
-        protection_required: formData.pricingType === 'protected'
+        protection_required: formData.pricingType === 'protected',
+        incrementalCosts: incrementalCosts // Include manual incremental costs
       };
       
       console.log('Calculating pricing with params:', pricingParams);
@@ -356,7 +850,12 @@ const AllocatedCostCalculator = () => {
       console.log('Received pricing results:', pricing);
       
       setPricingResults(pricing);
-      setExpandedAccordion('results');
+      setExpandedAccordion({
+        input: false,
+        incremental: false,
+        results: true,
+        pricing: true
+      });
       setSuccess('Pricing calculated successfully');
       
       // Reload audit logs
@@ -379,6 +878,34 @@ const AllocatedCostCalculator = () => {
     let totalLatency = 0;
     
     routes.forEach(route => {
+      // Check if this is a virtual NEW circuit
+      if (route.isVirtual) {
+        // Virtual circuit - add to display but mark as virtual
+        // (cost/latency handled separately via incrementalCosts)
+        const nextLocation = route.location_a === currentLocation ? route.location_b : route.location_a;
+        
+        // Add virtual segment for display
+        routeSegments.push({
+          circuit_id: 'New Core Circuit',
+          from: currentLocation,
+          to: nextLocation,
+          latency: 0,
+          carrier: 'New',
+          cable_system: 'N/A',
+          bandwidth: 0,
+          bandwidthDisplay: 'N/A',
+          cost: 0,
+          isVirtual: true
+        });
+        
+        currentLocation = nextLocation;
+        if (!path.includes(nextLocation)) {
+          path.push(nextLocation);
+        }
+        return; // Skip to next route
+      }
+      
+      // Regular circuit - process normally
       // Handle Dark Fiber bandwidth
       let bandwidthValue;
       let bandwidthDisplay;
@@ -571,30 +1098,41 @@ const AllocatedCostCalculator = () => {
     handleExportClose();
   };
   
-  // Filter logs based on search and date
+  // Pricing Logs Filtering and Pagination Functions
   useEffect(() => {
-    let filtered = auditLogs;
-    
-    // Search filter
-    if (logSearchTerm) {
-      const searchLower = logSearchTerm.toLowerCase();
-      filtered = filtered.filter(log => {
-        const summary = (log.changes_summary || '').toLowerCase();
-        const newValues = (log.new_values || '').toLowerCase();
-        return summary.includes(searchLower) || newValues.includes(searchLower);
-      });
+    if (canViewPricingLogs) {
+      loadAuditLogs();
     }
-    
-    // Date filter
-    if (logDateFilter.startDate) {
-      filtered = filtered.filter(log => log.timestamp >= logDateFilter.startDate);
-    }
-    if (logDateFilter.endDate) {
-      filtered = filtered.filter(log => log.timestamp <= logDateFilter.endDate);
-    }
-    
-    setFilteredAuditLogs(filtered);
-  }, [auditLogs, logSearchTerm, logDateFilter]);
+  }, [pagination.page, pagination.limit, selectedUser, customerNameFilter, logSearchTerm]);
+
+  const handleCustomerNameFilterChange = (event) => {
+    setCustomerNameFilter(event.target.value);
+  };
+
+  const handleUserFilterChange = (event) => {
+    setSelectedUser(event.target.value);
+    // Reset to page 1 when filter changes
+    setPagination(prev => ({ ...prev, page: 1 }));
+  };
+
+  const handlePageChange = (event, newPage) => {
+    setPagination(prev => ({ ...prev, page: newPage }));
+  };
+
+  const handleLimitChange = (event) => {
+    setPagination(prev => ({
+      ...prev,
+      limit: parseInt(event.target.value),
+      page: 1 // Reset to first page when limit changes
+    }));
+  };
+
+  const clearLogFilters = () => {
+    setLogSearchTerm('');
+    setCustomerNameFilter('');
+    setSelectedUser('');
+    setPagination(prev => ({ ...prev, page: 1 }));
+  };
   
   // Render component JSX
   return (
@@ -610,11 +1148,25 @@ const AllocatedCostCalculator = () => {
       {/* Calculator Tab */}
       <TabPanel value={currentTab} index={0}>
         {/* Input Form */}
-        <Accordion expanded={expandedAccordion === 'input'} onChange={() => setExpandedAccordion(expandedAccordion === 'input' ? '' : 'input')}>
+        <Accordion expanded={expandedAccordion.input} onChange={() => toggleAccordion('input')}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <SearchIcon sx={{ mr: 1 }} />
-              <Typography variant="subtitle1" fontWeight="bold">Design Parameters</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', pr: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <SearchIcon sx={{ mr: 1 }} />
+                <Typography variant="subtitle1" fontWeight="bold">Design Parameters</Typography>
+              </Box>
+              <Button
+                variant="outlined"
+                color="primary"
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation(); // Prevent accordion from toggling
+                  handleRefresh();
+                }}
+                sx={{ ml: 2 }}
+              >
+                Refresh
+              </Button>
             </Box>
           </AccordionSummary>
           <AccordionDetails>
@@ -723,7 +1275,6 @@ const AllocatedCostCalculator = () => {
                     <MenuItem value={12}>12 Months</MenuItem>
                     <MenuItem value={24}>24 Months</MenuItem>
                     <MenuItem value={36}>36 Months</MenuItem>
-                    <MenuItem value={60}>60 Months</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -791,9 +1342,348 @@ const AllocatedCostCalculator = () => {
           </AccordionDetails>
         </Accordion>
         
+        {/* Manual Incremental Costs (Optional) */}
+        <Accordion expanded={expandedAccordion.incremental} onChange={() => toggleAccordion('incremental')} sx={{ mt: 2 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <AttachMoneyIcon sx={{ mr: 1 }} />
+              <Typography variant="subtitle1" fontWeight="bold">Manual Incremental Costs (Optional)</Typography>
+              {incrementalCosts.length > 0 && (
+                <Chip 
+                  label={`${incrementalCosts.length} cost${incrementalCosts.length !== 1 ? 's' : ''}`} 
+                  size="small" 
+                  sx={{ ml: 2 }} 
+                  color="primary"
+                />
+              )}
+            </Box>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Add manual incremental costs to be calculated into the overall pricing results. All fields are required.
+              </Typography>
+              
+              {incrementalCosts.length > 0 ? (
+                <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Cost Type</TableCell>
+                        <TableCell>Source Location</TableCell>
+                        <TableCell>Destination Location</TableCell>
+                        <TableCell>Monthly Cost</TableCell>
+                        <TableCell>Currency</TableCell>
+                        <TableCell>Allocation Factor</TableCell>
+                        <TableCell>Path</TableCell>
+                        <TableCell>Actions</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {incrementalCosts.map((cost) => (
+                        <>
+                        <TableRow key={cost.id}>
+                          {/* Cost Type */}
+                          <TableCell>
+                            <Box>
+                              <Typography variant="caption" sx={{ display: 'block', mb: 0.5, fontSize: '0.7rem', visibility: 'hidden' }}>
+                                Placeholder
+                              </Typography>
+                              <FormControl fullWidth size="small">
+                                <Select
+                                  value={cost.costType}
+                                  onChange={(e) => updateIncrementalCost(cost.id, 'costType', e.target.value)}
+                                  disabled={cost.saved}
+                                  sx={{ fontSize: '0.75rem' }}
+                                >
+                                  <MenuItem value="core_incremental_new" sx={{ fontSize: '0.75rem' }}>Core Incremental New</MenuItem>
+                                  <MenuItem value="core_incremental_upgrade" sx={{ fontSize: '0.75rem' }}>Core Incremental Upgrade</MenuItem>
+                                  <MenuItem value="aggregate_cost_a_end" sx={{ fontSize: '0.75rem' }}>Aggregate Cost A End</MenuItem>
+                                  <MenuItem value="aggregate_cost_b_end" sx={{ fontSize: '0.75rem' }}>Aggregate Cost B End</MenuItem>
+                                </Select>
+                              </FormControl>
+                            </Box>
+                          </TableCell>
+                          
+                          {/* Source Location */}
+                          <TableCell sx={{ minWidth: 150 }}>
+                            <Box>
+                              <Typography variant="caption" sx={{ display: 'block', mb: 0.5, fontSize: '0.7rem', visibility: 'hidden' }}>
+                                Placeholder
+                              </Typography>
+                              {cost.costType === 'core_incremental_upgrade' ? (
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  value={cost.sourceLocation}
+                                  disabled
+                                  placeholder="Auto-filled"
+                                  inputProps={{ style: { fontSize: '0.75rem' } }}
+                                />
+                              ) : cost.costType === 'core_incremental_new' ? (
+                                <Autocomplete
+                                  size="small"
+                                  disabled={cost.saved}
+                                  options={locations}
+                                  getOptionLabel={(option) => option.location_code}
+                                  value={locations.find(loc => loc.location_code === cost.sourceLocation) || null}
+                                  onChange={(event, newValue) => {
+                                    updateIncrementalCost(cost.id, 'sourceLocation', newValue ? newValue.location_code : '');
+                                  }}
+                                  renderInput={(params) => (
+                                    <TextField {...params} placeholder="Select" inputProps={{ ...params.inputProps, style: { fontSize: '0.75rem' } }} />
+                                  )}
+                                  sx={{ minWidth: 150 }}
+                                />
+                              ) : (
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  disabled={cost.saved}
+                                  value={cost.sourceLocation}
+                                  onChange={(e) => updateIncrementalCost(cost.id, 'sourceLocation', e.target.value)}
+                                  placeholder="Enter location"
+                                  inputProps={{ style: { fontSize: '0.75rem' } }}
+                                />
+                              )}
+                            </Box>
+                          </TableCell>
+                          
+                          {/* Destination Location */}
+                          <TableCell sx={{ minWidth: 150 }}>
+                            <Box>
+                              <Typography variant="caption" sx={{ display: 'block', mb: 0.5, fontSize: '0.7rem', visibility: 'hidden' }}>
+                                Placeholder
+                              </Typography>
+                              {cost.costType === 'core_incremental_upgrade' ? (
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  value={cost.destinationLocation}
+                                  disabled
+                                  placeholder="Auto-filled"
+                                  inputProps={{ style: { fontSize: '0.75rem' } }}
+                                />
+                              ) : cost.costType === 'core_incremental_new' ? (
+                                <Autocomplete
+                                  size="small"
+                                  disabled={cost.saved}
+                                  options={locations}
+                                  getOptionLabel={(option) => option.location_code}
+                                  value={locations.find(loc => loc.location_code === cost.destinationLocation) || null}
+                                  onChange={(event, newValue) => {
+                                    updateIncrementalCost(cost.id, 'destinationLocation', newValue ? newValue.location_code : '');
+                                  }}
+                                  renderInput={(params) => (
+                                    <TextField {...params} placeholder="Select" inputProps={{ ...params.inputProps, style: { fontSize: '0.75rem' } }} />
+                                  )}
+                                  sx={{ minWidth: 150 }}
+                                />
+                              ) : (
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  disabled={cost.saved}
+                                  value={cost.destinationLocation}
+                                  onChange={(e) => updateIncrementalCost(cost.id, 'destinationLocation', e.target.value)}
+                                  placeholder="Enter location"
+                                  inputProps={{ style: { fontSize: '0.75rem' } }}
+                                />
+                              )}
+                            </Box>
+                          </TableCell>
+                          
+                          {/* Cost */}
+                          <TableCell>
+                            <Box>
+                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontSize: '0.7rem' }}>
+                                {cost.costType === 'core_incremental_new' ? 'Total Monthly Cost' :
+                                 cost.costType === 'core_incremental_upgrade' ? 'Incremental Increase' :
+                                 cost.costType === 'aggregate_cost_a_end' ? 'Total Monthly Cost' :
+                                 cost.costType === 'aggregate_cost_b_end' ? 'Total Monthly Cost' :
+                                 'Total Monthly Cost'}
+                              </Typography>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                type="number"
+                                disabled={cost.saved}
+                                value={cost.incrementalCost}
+                                onChange={(e) => updateIncrementalCost(cost.id, 'incrementalCost', e.target.value)}
+                                placeholder="0"
+                                inputProps={{ min: 0, max: 999999999, style: { fontSize: '0.75rem' } }}
+                              />
+                            </Box>
+                          </TableCell>
+                          
+                          {/* Currency */}
+                          <TableCell>
+                            <Box>
+                              <Typography variant="caption" sx={{ display: 'block', mb: 0.5, fontSize: '0.7rem', visibility: 'hidden' }}>
+                                Placeholder
+                              </Typography>
+                              <FormControl fullWidth size="small">
+                                <Select
+                                  value={cost.currency}
+                                  onChange={(e) => updateIncrementalCost(cost.id, 'currency', e.target.value)}
+                                  disabled={cost.saved}
+                                  sx={{ fontSize: '0.75rem' }}
+                                >
+                                  {availableCurrencies.map(currency => (
+                                    <MenuItem key={currency} value={currency} sx={{ fontSize: '0.75rem' }}>{currency}</MenuItem>
+                                  ))}
+                                </Select>
+                              </FormControl>
+                            </Box>
+                          </TableCell>
+                          
+                          {/* Allocation Factor */}
+                          <TableCell>
+                            <Box>
+                              <Typography variant="caption" sx={{ display: 'block', mb: 0.5, fontSize: '0.7rem', visibility: 'hidden' }}>
+                                Placeholder
+                              </Typography>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                type="number"
+                                disabled={cost.saved}
+                                value={cost.allocationFactor}
+                                onChange={(e) => updateIncrementalCost(cost.id, 'allocationFactor', e.target.value)}
+                                placeholder="0.0-1.0"
+                                inputProps={{ min: 0, max: 1, step: 0.01, style: { fontSize: '0.75rem' } }}
+                              />
+                            </Box>
+                          </TableCell>
+                          
+                          {/* Path Allocation */}
+                          <TableCell>
+                            <Box>
+                              <Typography variant="caption" sx={{ display: 'block', mb: 0.5, fontSize: '0.7rem', visibility: 'hidden' }}>
+                                Placeholder
+                              </Typography>
+                              <FormControl fullWidth size="small">
+                                <Select
+                                  value={cost.pathAllocation}
+                                  onChange={(e) => updateIncrementalCost(cost.id, 'pathAllocation', e.target.value)}
+                                  disabled={cost.saved}
+                                  sx={{ fontSize: '0.75rem' }}
+                                >
+                                  <MenuItem value="primary" sx={{ fontSize: '0.75rem' }}>Primary</MenuItem>
+                                  <MenuItem value="secondary" sx={{ fontSize: '0.75rem' }}>Secondary</MenuItem>
+                                </Select>
+                              </FormControl>
+                            </Box>
+                          </TableCell>
+                          
+                          {/* Actions */}
+                          <TableCell>
+                            <Box>
+                              <Typography variant="caption" sx={{ display: 'block', mb: 0.5, fontSize: '0.7rem', visibility: 'hidden' }}>
+                                Placeholder
+                              </Typography>
+                              <Box sx={{ display: 'flex', gap: 0.5 }}>
+                                {!cost.saved ? (
+                                  <>
+                                    <Tooltip title="Save and lock configuration">
+                                      <IconButton
+                                        size="small"
+                                        color="primary"
+                                        onClick={() => saveIncrementalCost(cost.id)}
+                                      >
+                                        <SaveIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                    <Tooltip title="Delete">
+                                      <IconButton
+                                        size="small"
+                                        color="error"
+                                        onClick={() => removeIncrementalCost(cost.id)}
+                                      >
+                                        <DeleteIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Tooltip title="Edit configuration">
+                                      <IconButton
+                                        size="small"
+                                        color="primary"
+                                        onClick={() => editIncrementalCost(cost.id)}
+                                      >
+                                        <EditIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                    <Tooltip title="Delete">
+                                      <IconButton
+                                        size="small"
+                                        color="error"
+                                        onClick={() => removeIncrementalCost(cost.id)}
+                                      >
+                                        <DeleteIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </>
+                                )}
+                              </Box>
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                        
+                        {/* Additional Row for Core Incremental Upgrade - Circuit Selection */}
+                        {cost.costType === 'core_incremental_upgrade' && (
+                          <TableRow key={`${cost.id}-circuit`}>
+                            <TableCell colSpan={8} sx={{ bgcolor: '#f5f5f5' }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                <Typography variant="body2" sx={{ minWidth: 120 }}>Select Circuit:</Typography>
+                                <FormControl fullWidth size="small" sx={{ maxWidth: 400 }}>
+                                  <Select
+                                    value={cost.selectedCircuit}
+                                    onChange={(e) => updateIncrementalCost(cost.id, 'selectedCircuit', e.target.value)}
+                                    disabled={cost.saved}
+                                    displayEmpty
+                                    sx={{ fontSize: '0.75rem' }}
+                                  >
+                                    <MenuItem value="" sx={{ fontSize: '0.75rem' }}>
+                                      <em>Select a circuit from {cost.pathAllocation} path routes</em>
+                                    </MenuItem>
+                                    {(cost.pathAllocation === 'primary' ? primaryPathValidation.routes : secondaryPathValidation.routes).map(route => (
+                                      <MenuItem key={route.circuit_id} value={route.circuit_id} sx={{ fontSize: '0.75rem' }}>
+                                        {route.circuit_id}
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                              </Box>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              ) : (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  No manual incremental costs added. Click "Add Incremental Cost" to begin.
+                </Alert>
+              )}
+              
+              <Button
+                variant="outlined"
+                startIcon={<AddIcon />}
+                onClick={addIncrementalCost}
+              >
+                Add Incremental Cost
+              </Button>
+            </Box>
+          </AccordionDetails>
+        </Accordion>
+        
         {/* Route Results */}
         {searchResults && (
-          <Accordion expanded={expandedAccordion === 'results'} onChange={() => setExpandedAccordion(expandedAccordion === 'results' ? '' : 'results')} sx={{ mt: 2 }}>
+          <Accordion expanded={expandedAccordion.results} onChange={() => toggleAccordion('results')} sx={{ mt: 2 }}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <Typography variant="subtitle1" fontWeight="bold">Route Details</Typography>
@@ -823,10 +1713,13 @@ const AllocatedCostCalculator = () => {
                           </TableHead>
                           <TableBody>
                             {searchResults.primaryPath.route?.map((segment, index) => (
-                              <TableRow key={index}>
+                              <TableRow 
+                                key={index}
+                                sx={{ bgcolor: segment.isVirtual ? '#90EE90' : 'inherit' }}
+                              >
                                 <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                 <TableCell>{segment.from} → {segment.to}</TableCell>
-                                <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                                <TableCell>{segment.isVirtual ? 'New' : `${formatLatency(segment.latency)}ms`}</TableCell>
                                 <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
                                 <TableCell>{segment.carrier || 'N/A'}</TableCell>
                                 <TableCell>{segment.cable_system || 'N/A'}</TableCell>
@@ -870,10 +1763,13 @@ const AllocatedCostCalculator = () => {
                             </TableHead>
                             <TableBody>
                               {searchResults.diversePath.route?.map((segment, index) => (
-                                <TableRow key={index}>
+                                <TableRow 
+                                  key={index}
+                                  sx={{ bgcolor: segment.isVirtual ? '#90EE90' : 'inherit' }}
+                                >
                                   <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                   <TableCell>{segment.from} → {segment.to}</TableCell>
-                                  <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                                  <TableCell>{segment.isVirtual ? 'New' : `${formatLatency(segment.latency)}ms`}</TableCell>
                                   <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
                                   <TableCell>{segment.carrier || 'N/A'}</TableCell>
                                   <TableCell>{segment.cable_system || 'N/A'}</TableCell>
@@ -901,7 +1797,7 @@ const AllocatedCostCalculator = () => {
         
         {/* Pricing Results */}
         {pricingResults && (
-          <Accordion expanded={expandedAccordion === 'pricing'} onChange={() => setExpandedAccordion(expandedAccordion === 'pricing' ? '' : 'pricing')} sx={{ mt: 2 }}>
+          <Accordion expanded={expandedAccordion.pricing} onChange={() => toggleAccordion('pricing')} sx={{ mt: 2 }}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <AttachMoneyIcon sx={{ mr: 1 }} />
@@ -1027,11 +1923,14 @@ const AllocatedCostCalculator = () => {
                                   </TableHead>
                                   <TableBody>
                                     {detailedCalcs.allocatedCostBreakdown.segments.map((segment, idx) => (
-                                      <TableRow key={idx} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                      <TableRow key={idx} sx={{ 
+                                        '&:nth-of-type(odd)': { bgcolor: segment.isIncrementalCost ? 'rgba(144, 238, 144, 0.2)' : 'action.hover' },
+                                        bgcolor: segment.isIncrementalCost ? 'rgba(144, 238, 144, 0.15)' : 'inherit'
+                                      }}>
                                         <TableCell sx={{ fontWeight: 'bold' }}>{segment.circuit}</TableCell>
                                         <TableCell sx={{ fontSize: '0.75rem' }}>{segment.location}</TableCell>
                                         <TableCell sx={{ fontSize: '0.75rem' }}>{segment.carrier}</TableCell>
-                                        <TableCell>{segment.segmentBandwidth} Mbps</TableCell>
+                                        <TableCell>{segment.isIncrementalCost ? 'N/A' : `${segment.segmentBandwidth} Mbps`}</TableCell>
                                         <TableCell>
                                           {segment.originalCost.toFixed(2)} {segment.originalCurrency}
                                           {segment.originalCurrency !== formData.outputCurrency && (
@@ -1041,20 +1940,34 @@ const AllocatedCostCalculator = () => {
                                           )}
                                         </TableCell>
                                         <TableCell>
-                                          {segment.utilizationFactor}
-                                          <Typography variant="caption" display="block" color="text.secondary">
-                                            ({segment.utilizationFactorType})
-                                          </Typography>
+                                          {segment.isIncrementalCost ? (
+                                            <Typography variant="body2" color="text.secondary">N/A</Typography>
+                                          ) : (
+                                            <>
+                                              {segment.utilizationFactor}
+                                              <Typography variant="caption" display="block" color="text.secondary">
+                                                ({segment.utilizationFactorType})
+                                              </Typography>
+                                            </>
+                                          )}
                                         </TableCell>
                                         <TableCell>
-                                          <Box sx={{ bgcolor: 'info.50', p: 1, borderRadius: 1 }}>
-                                            <Typography variant="caption" display="block" sx={{ fontFamily: 'monospace' }}>
-                                              {segment.calculation}
-                                            </Typography>
-                                            <Typography variant="body2" fontWeight="bold">
-                                              = {segment.allocationRatio.toFixed(6)}
-                                            </Typography>
-                                          </Box>
+                                          {segment.isIncrementalCost ? (
+                                            <Box sx={{ bgcolor: 'info.50', p: 1, borderRadius: 1 }}>
+                                              <Typography variant="body2" fontWeight="bold">
+                                                Allocation Factor: {segment.allocationFactor}
+                                              </Typography>
+                                            </Box>
+                                          ) : (
+                                            <Box sx={{ bgcolor: 'info.50', p: 1, borderRadius: 1 }}>
+                                              <Typography variant="caption" display="block" sx={{ fontFamily: 'monospace' }}>
+                                                {segment.calculation}
+                                              </Typography>
+                                              <Typography variant="body2" fontWeight="bold">
+                                                = {segment.allocationRatio.toFixed(6)}
+                                              </Typography>
+                                            </Box>
+                                          )}
                                         </TableCell>
                                         <TableCell>
                                           <Box sx={{ bgcolor: 'success.50', p: 1, borderRadius: 1 }}>
@@ -1103,7 +2016,7 @@ const AllocatedCostCalculator = () => {
                                     </TableRow>
                                   </TableHead>
                                   <TableBody>
-                                    {detailedCalcs.allocatedCostBreakdown.segments.map((segment, idx) => {
+                                    {detailedCalcs.allocatedCostBreakdown.segments.filter(segment => !segment.isIncrementalCost).map((segment, idx) => {
                                       const noFactorRatio = parseFloat(formData.bandwidth) / segment.segmentBandwidth;
                                       const noFactorCost = segment.convertedCost * noFactorRatio;
                                       return (
@@ -1171,13 +2084,6 @@ const AllocatedCostCalculator = () => {
                                 2️⃣ Minimum Price Calculation
                               </Typography>
                               
-                              <Box sx={{ mb: 2 }}>
-                                <Typography variant="subtitle2" gutterBottom>Contract Term Rules:</Typography>
-                                <Typography variant="body2">
-                                  <strong>{formData.contractTerm}-Month Contract:</strong> {detailedCalcs.minimumPriceBreakdown.contractTermRule}
-                                </Typography>
-                              </Box>
-                              
                               <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
                                 <Typography variant="subtitle2" color="error.main" gutterBottom>Formula:</Typography>
                                 <Typography variant="body2" sx={{ fontFamily: 'monospace', mb: 1 }}>
@@ -1224,13 +2130,6 @@ const AllocatedCostCalculator = () => {
                               <Typography variant="subtitle1" gutterBottom color="success.main" fontWeight="bold">
                                 3️⃣ Suggested Price Calculation
                               </Typography>
-                              
-                              <Box sx={{ mb: 2 }}>
-                                <Typography variant="subtitle2" gutterBottom>Contract Term Rules:</Typography>
-                                <Typography variant="body2">
-                                  <strong>{formData.contractTerm}-Month Contract:</strong> {detailedCalcs.suggestedPriceBreakdown.contractTermRule}
-                                </Typography>
-                              </Box>
                               
                               <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1, mb: 2 }}>
                                 <Typography variant="subtitle2" color="success.main" gutterBottom>Formula:</Typography>
@@ -1425,101 +2324,266 @@ const AllocatedCostCalculator = () => {
             </AccordionDetails>
           </Accordion>
         )}
+        
+        {/* Notifications - Only show in Calculator Tab */}
+        {error && (
+          <Alert severity="error" onClose={() => setError(null)} sx={{ mt: 2 }}>
+            {error}
+          </Alert>
+        )}
+        
+        {success && (
+          <Alert severity="success" onClose={() => setSuccess(null)} sx={{ mt: 2 }}>
+            {success}
+          </Alert>
+        )}
       </TabPanel>
       
       {/* Pricing Logs Tab */}
       {canViewPricingLogs && (
         <TabPanel value={currentTab} index={1}>
-          <Paper sx={{ p: 2 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="subtitle1" fontWeight="bold">Allocated Cost Pricing Logs</Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+            <Typography variant="h6">Allocated Cost Pricing Logs</Typography>
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+              {pagination.total > 0 && (
+                <Chip 
+                  label={`Showing ${auditLogs.length} of ${pagination.total} entries (Page ${pagination.page}/${pagination.totalPages})`} 
+                  color="info" 
+                  size="small"
+                />
+              )}
               {canManageLogs && (
                 <Button
                   variant="outlined"
                   color="error"
-                  startIcon={<DeleteIcon />}
+                  size="small"
                   onClick={handleClearLogs}
-                  disabled={loading || filteredAuditLogs.length === 0}
+                  startIcon={<DeleteIcon />}
                 >
-                  Clear All Logs
+                  Clear Logs
                 </Button>
               )}
             </Box>
-            
-            {/* Search and Filter */}
-            <Grid container spacing={2} sx={{ mb: 3 }}>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Search Logs"
-                  value={logSearchTerm}
-                  onChange={(e) => setLogSearchTerm(e.target.value)}
-                  placeholder="Search by customer, quote ID, or locations..."
-                />
+          </Box>
+
+          {/* Search and Filter Controls */}
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Grid container spacing={2} alignItems="center">
+                {/* User Filter - Only for admin/provisioner */}
+                {usersList.length > 0 && (
+                  <Grid item xs={12} md={3}>
+                    <TextField
+                      fullWidth
+                      select
+                      size="small"
+                      label="User"
+                      value={selectedUser}
+                      onChange={handleUserFilterChange}
+                    >
+                      <MenuItem value="">All Users</MenuItem>
+                      {usersList.map(user => (
+                        <MenuItem key={user.id} value={user.id}>
+                          {user.username}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Grid>
+                )}
+                
+                <Grid item xs={12} md={3}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Customer Name"
+                    value={customerNameFilter}
+                    onChange={handleCustomerNameFilterChange}
+                    placeholder="Search customer name..."
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon />
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
+                </Grid>
+                
+                <Grid item xs={12} md={3}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Search Quote Request ID"
+                    value={logSearchTerm}
+                    onChange={(e) => setLogSearchTerm(e.target.value)}
+                    placeholder="Enter Quote Request ID..."
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon />
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
+                </Grid>
+                
+                <Grid item xs={12} md={2}>
+                  <TextField
+                    fullWidth
+                    select
+                    size="small"
+                    label="Rows per page"
+                    value={pagination.limit}
+                    onChange={handleLimitChange}
+                  >
+                    <MenuItem value={50}>50</MenuItem>
+                    <MenuItem value={100}>100</MenuItem>
+                    <MenuItem value={200}>200</MenuItem>
+                  </TextField>
+                </Grid>
+                
+                <Grid item xs={12} md={1}>
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    size="small"
+                    onClick={clearLogFilters}
+                    startIcon={<DeleteIcon />}
+                  >
+                    Clear
+                  </Button>
+                </Grid>
               </Grid>
-              <Grid item xs={12} md={3}>
-                <TextField
-                  fullWidth
-                  label="Start Date"
-                  type="date"
-                  value={logDateFilter.startDate}
-                  onChange={(e) => setLogDateFilter(prev => ({ ...prev, startDate: e.target.value }))}
-                  InputLabelProps={{ shrink: true }}
-                />
-              </Grid>
-              <Grid item xs={12} md={3}>
-                <TextField
-                  fullWidth
-                  label="End Date"
-                  type="date"
-                  value={logDateFilter.endDate}
-                  onChange={(e) => setLogDateFilter(prev => ({ ...prev, endDate: e.target.value }))}
-                  InputLabelProps={{ shrink: true }}
-                />
-              </Grid>
-            </Grid>
-            
-            {/* Log Results */}
-            {filteredAuditLogs.length === 0 ? (
-              <Alert severity="info">
-                {canManageLogs ? 'No pricing logs available. ' : 'No pricing logs found matching your search criteria. '}
-                {user.role === 'read_only' && 'You can only view your own logs.'}
-              </Alert>
-            ) : (
-              <Box>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Showing {filteredAuditLogs.length} log{filteredAuditLogs.length !== 1 ? 's' : ''}
-                  {user.role === 'read_only' && ' (your logs only)'}
-                </Typography>
-                {filteredAuditLogs.map((log) => (
-                  <Card key={log.id} sx={{ mb: 2 }}>
-                    <CardContent>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 1 }}>
-                        <Box>
-                          <Typography variant="subtitle1">{log.changes_summary || 'Pricing Calculation'}</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {new Date(log.timestamp).toLocaleString()} • User: {log.username || 'Unknown'}
-                          </Typography>
+            </CardContent>
+          </Card>
+          
+          <TableContainer component={Paper}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell><strong>Timestamp</strong></TableCell>
+                  <TableCell><strong>User</strong></TableCell>
+                  <TableCell><strong>Action</strong></TableCell>
+                  <TableCell><strong>Customer Name</strong></TableCell>
+                  <TableCell><strong>Quote Request ID</strong></TableCell>
+                  <TableCell><strong>Request Summary</strong></TableCell>
+                  <TableCell align="center" sx={{ width: 150 }}><strong>Actions</strong></TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {auditLogs.map((log) => (
+                  <React.Fragment key={log.id}>
+                    <TableRow>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                          {new Date(log.timestamp).toLocaleString()}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                          {log.username || log.user_name || 'Unknown User'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={log.action || 'PRICING_CALCULATION'} 
+                          color="secondary" 
+                          size="small" 
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                          {(() => {
+                            try {
+                              const data = log.new_values ? JSON.parse(log.new_values) : null;
+                              return data?.inputParameters?.customerName || data?.customerName || data?.customer_name || 'N/A';
+                            } catch {
+                              return 'N/A';
+                            }
+                          })()}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                          {(() => {
+                            try {
+                              const data = log.new_values ? JSON.parse(log.new_values) : null;
+                              return data?.inputParameters?.quoteRequestId || data?.quoteRequestId || data?.quote_request_id || 'N/A';
+                            } catch {
+                              return 'N/A';
+                            }
+                          })()}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 400 }}>
+                        <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                          {log.changes_summary || 'Allocated Cost Pricing Calculation'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="center" sx={{ width: 150 }}>
+                        <Box sx={{ display: 'flex', gap: 1, flexDirection: 'column', alignItems: 'center' }}>
+                          {/* View Details - available for all users */}
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            fullWidth
+                            onClick={() => toggleLogExpansion(log.id)}
+                          >
+                            {expandedLogs.has(log.id) ? 'Hide Details' : 'View Details'}
+                          </Button>
                         </Box>
-                        <IconButton size="small" onClick={() => toggleLogExpansion(log.id)}>
-                          {expandedLogs.has(log.id) ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                        </IconButton>
-                      </Box>
-                      
-                      {expandedLogs.has(log.id) && log.new_values && (
-                        <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-                          <Typography variant="subtitle2" gutterBottom>Details:</Typography>
-                          <pre style={{ whiteSpace: 'pre-wrap', fontSize: '0.875rem', margin: 0 }}>
-                            {JSON.stringify(JSON.parse(log.new_values), null, 2)}
-                          </pre>
-                        </Box>
-                      )}
-                    </CardContent>
-                  </Card>
+                      </TableCell>
+                    </TableRow>
+                    {expandedLogs.has(log.id) && (
+                      <TableRow>
+                        <TableCell colSpan={7} sx={{ backgroundColor: '#f8f9fa', border: 'none' }}>
+                          <Box sx={{ p: 2 }}>
+                            <Grid container spacing={2}>
+                              <Grid item xs={12}>
+                                <Typography variant="subtitle2" gutterBottom>
+                                  <strong>Complete Log Data:</strong>
+                                </Typography>
+                                <Box 
+                                  component="pre" 
+                                  sx={{ 
+                                    fontSize: '0.75rem', 
+                                    fontFamily: 'Courier New, monospace',
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-word',
+                                    maxHeight: '400px',
+                                    overflow: 'auto',
+                                    backgroundColor: '#f5f5f5',
+                                    padding: 2,
+                                    borderRadius: 1,
+                                    border: '1px solid #ddd'
+                                  }}
+                                >
+                                  {log.new_values ? JSON.stringify(JSON.parse(log.new_values), null, 2) : 'No data available'}
+                                </Box>
+                              </Grid>
+                            </Grid>
+                          </Box>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
                 ))}
-              </Box>
-            )}
-          </Paper>
+              </TableBody>
+            </Table>
+          </TableContainer>
+          
+          {/* Pagination Controls */}
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+            <Pagination 
+              count={pagination.totalPages} 
+              page={pagination.page} 
+              onChange={handlePageChange} 
+              color="primary"
+              showFirstButton
+              showLastButton
+              size="large"
+            />
+          </Box>
         </TabPanel>
       )}
       
@@ -1576,19 +2640,6 @@ const AllocatedCostCalculator = () => {
           </Button>
         </DialogActions>
       </Dialog>
-      
-      {/* Notifications */}
-      {error && (
-        <Alert severity="error" onClose={() => setError(null)} sx={{ mt: 2 }}>
-          {error}
-        </Alert>
-      )}
-      
-      {success && (
-        <Alert severity="success" onClose={() => setSuccess(null)} sx={{ mt: 2 }}>
-          {success}
-        </Alert>
-      )}
     </Box>
   );
 };

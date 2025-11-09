@@ -3,4 +3,4 @@ the terminal is using powershell so && is not valid - run each terminal command 
 do not change any features aside from ones prompted to
 ask clarification questions by default rather than proceeding without 100% clear understanding 
 run test scripts to ensure changes are made successfully after each code change.  
-This is version 3.3.1 - ensure the v3.3_release_notes.md is updated after each change.  i will inform you once the version changes via the rules.txt
+This is version 3.3.2 - update a version control for version v3.3.2 in V3.3_RELEASE_NOTES.md.  track and update after each change.  i will inform you once the version changes via the rules.txt

@@ -203,6 +203,7 @@ export const networkDesignApi = {
   exportAuditLogs: () => {
     window.open(`${API_BASE_URL}/network_design/audit_logs/export`, '_blank');
   },
+  getUsersList: () => api.get(`${API_BASE_URL}/network_design/users_list`).then(res => res.data),
   
   // Circuit IDs for exclusion
   getCircuitIds: (search = '') => api.get(`${API_BASE_URL}/network_design/circuit_ids`, { params: { search } }).then(res => res.data),
