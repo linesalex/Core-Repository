@@ -4887,6 +4887,18 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       
       if (path.route) {
         path.route.forEach(segment => {
+          // Check if this circuit is being upgraded - if so, skip it (will be processed in incrementalCosts)
+          const isBeingUpgraded = incrementalCosts && incrementalCosts.some(cost => 
+            cost.costType === 'core_incremental_upgrade' &&
+            cost.selectedCircuit === segment.circuit_id &&
+            cost.pathAllocation === pathType
+          );
+          
+          if (isBeingUpgraded) {
+            // Skip this circuit - it will be replaced by the upgrade
+            return;
+          }
+          
           let segmentCost = parseFloat(segment.cost) || 0;
           const segmentCurrency = segment.currency || 'USD';
           
@@ -4951,9 +4963,68 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           const costCurrency = cost.currency || 'USD';
           const convertedCost = convertCurrency(costValue, costCurrency, output_currency);
           
-          // Apply allocation factor
-          const allocationFactor = parseFloat(cost.allocationFactor) || 0;
-          const allocatedIncrementalCost = convertedCost * allocationFactor;
+          let allocatedIncrementalCost;
+          let segmentBandwidth;
+          let utilizationFactor;
+          let utilizationFactorType;
+          let allocationRatio;
+          let calculation;
+          let allocatedCostCalculation;
+          
+          // For Core Incremental New/Upgrade: Use bandwidth-based calculation
+          if (cost.costType === 'core_incremental_new' || cost.costType === 'core_incremental_upgrade') {
+            // Check if newBandwidth is provided
+            if (!cost.newBandwidth || cost.newBandwidth === '') {
+              console.error('Missing newBandwidth for incremental cost:', cost);
+              // Skip this cost if bandwidth is missing
+              segmentBandwidth = null;
+              utilizationFactor = null;
+              utilizationFactorType = null;
+              allocationRatio = null;
+              calculation = null;
+              allocatedIncrementalCost = 0;
+              allocatedCostCalculation = 'Missing bandwidth - cost not calculated';
+            } else {
+              // Determine segment bandwidth
+              const isDarkFiber = cost.newBandwidth && typeof cost.newBandwidth === 'string' && 
+                                  cost.newBandwidth.toLowerCase().trim() === 'dark fiber';
+              segmentBandwidth = isDarkFiber ? 200000 : parseFloat(cost.newBandwidth);
+              
+              // Calculate utilization factor based on path type and bandwidth
+              if (isProtection) {
+                utilizationFactor = segmentBandwidth <= 10000 ? 
+                  pricingConfig.utilizationFactors.protectionUnder10000 : 
+                  pricingConfig.utilizationFactors.protectionOver10000;
+                utilizationFactorType = segmentBandwidth <= 10000 ? 'protectionUnder10000' : 'protectionOver10000';
+              } else {
+                utilizationFactor = segmentBandwidth <= 10000 ? 
+                  pricingConfig.utilizationFactors.primaryUnder10000 : 
+                  pricingConfig.utilizationFactors.primaryOver10000;
+                utilizationFactorType = segmentBandwidth <= 10000 ? 'primaryUnder10000' : 'primaryOver10000';
+              }
+              
+              // Calculate allocation ratio
+              allocationRatio = bandwidth / (segmentBandwidth * utilizationFactor);
+              allocatedIncrementalCost = convertedCost * allocationRatio;
+              
+              // Build calculation strings
+              calculation = `${bandwidth} Mbps / (${segmentBandwidth} Mbps × ${utilizationFactor}) = ${allocationRatio.toFixed(6)}`;
+              allocatedCostCalculation = `${convertedCost.toFixed(2)} ${output_currency} × ${allocationRatio.toFixed(6)} = ${allocatedIncrementalCost.toFixed(2)} ${output_currency}`;
+            }
+          } 
+          // For Aggregate Cost A/B End: Use allocation factor
+          else {
+            const allocationFactor = parseFloat(cost.allocationFactor) || 0;
+            allocatedIncrementalCost = convertedCost * allocationFactor;
+            
+            // These fields won't be used for display but set for consistency
+            segmentBandwidth = null;
+            utilizationFactor = null;
+            utilizationFactorType = null;
+            allocationRatio = null;
+            calculation = null;
+            allocatedCostCalculation = `${convertedCost.toFixed(2)} ${output_currency} × ${allocationFactor} = ${allocatedIncrementalCost.toFixed(2)} ${output_currency}`;
+          }
           
           // Add to total allocated cost
           totalAllocatedCost += allocatedIncrementalCost;
@@ -4971,8 +5042,13 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
             originalCost: costValue,
             originalCurrency: costCurrency,
             convertedCost: convertedCost,
-            allocationFactor: allocationFactor,
-            allocatedCostCalculation: `${convertedCost.toFixed(2)} ${output_currency} × ${allocationFactor} = ${allocatedIncrementalCost.toFixed(2)} ${output_currency}`,
+            segmentBandwidth: segmentBandwidth,
+            utilizationFactor: utilizationFactor,
+            utilizationFactorType: utilizationFactorType,
+            allocationRatio: allocationRatio,
+            allocationFactor: cost.allocationFactor ? parseFloat(cost.allocationFactor) : null,
+            calculation: calculation,
+            allocatedCostCalculation: allocatedCostCalculation,
             allocatedCost: allocatedIncrementalCost,
             isIncrementalCost: true,
             costType: cost.costType
