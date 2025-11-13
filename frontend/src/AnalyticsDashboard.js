@@ -19,7 +19,8 @@ import {
   getAnalyticsDesignPricing,
   getAnalyticsAllocatedCost,
   getAnalyticsUsers,
-  getAnalyticsPerformance
+  getAnalyticsPerformance,
+  getAnalyticsRouteFinder
 } from './api';
 
 // Color palette for charts
@@ -90,6 +91,7 @@ const AnalyticsDashboard = () => {
   const [allocatedDateRange, setAllocatedDateRange] = useState('all');
   const [userDateRange, setUserDateRange] = useState('all');
   const [performanceDateRange, setPerformanceDateRange] = useState('all');
+  const [routeFinderDateRange, setRouteFinderDateRange] = useState('all');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
 
@@ -99,6 +101,7 @@ const AnalyticsDashboard = () => {
   const [allocatedData, setAllocatedData] = useState(null);
   const [userData, setUserData] = useState(null);
   const [performanceData, setPerformanceData] = useState(null);
+  const [routeFinderData, setRouteFinderData] = useState(null);
 
   // Get date range based on selection
   const getDateRange = (rangeType, customStart, customEnd) => {
@@ -209,6 +212,21 @@ const AnalyticsDashboard = () => {
     }
   };
 
+  const loadRouteFinderData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { startDate, endDate } = getDateRange(routeFinderDateRange, customStartDate, customEndDate);
+      const data = await getAnalyticsRouteFinder(startDate, endDate);
+      setRouteFinderData(data);
+    } catch (err) {
+      console.error('Error loading route finder data:', err);
+      setError('Failed to load route finder analytics: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Load data when tab changes or date range changes
   useEffect(() => {
     if (currentTab === 0) loadOverviewData();
@@ -234,6 +252,11 @@ const AnalyticsDashboard = () => {
     if (currentTab === 4) loadPerformanceData();
     // eslint-disable-next-line
   }, [currentTab, performanceDateRange, customStartDate, customEndDate]);
+
+  useEffect(() => {
+    if (currentTab === 5) loadRouteFinderData();
+    // eslint-disable-next-line
+  }, [currentTab, routeFinderDateRange, customStartDate, customEndDate]);
 
   const handleTabChange = (event, newValue) => {
     setCurrentTab(newValue);
@@ -334,6 +357,7 @@ const AnalyticsDashboard = () => {
           <Tab label="Allocated Cost Calculator" />
           <Tab label="User Analytics" />
           <Tab label="Performance" />
+          <Tab label="Route Finder" />
         </Tabs>
       </Box>
 
@@ -1154,6 +1178,233 @@ const AnalyticsDashboard = () => {
                 </TableContainer>
               </CardContent>
             </Card>
+          </>
+        ) : null}
+      </TabPanel>
+
+      {/* Route Finder Tab */}
+      <TabPanel value={currentTab} index={5}>
+        {renderDateRangeSelector(routeFinderDateRange, setRouteFinderDateRange)}
+        
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : routeFinderData ? (
+          <>
+            <Grid container spacing={3} sx={{ mb: 3 }}>
+              <Grid item xs={12} md={4}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom>
+                      Total Searches
+                    </Typography>
+                    <Typography variant="h4">
+                      {routeFinderData.totalSearches.toLocaleString()}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom>
+                      Avg Response Time
+                    </Typography>
+                    <Typography variant="h4">
+                      {routeFinderData.averageResponseTime}ms
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+
+            {/* Top Route Pairs */}
+            <Card sx={{ mb: 3 }}>
+              <CardContent>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="h6">Most Searched Route Pairs</Typography>
+                  <IconButton size="small" onClick={() => exportToCSV(routeFinderData.routePairs, 'route_finder_route_pairs')}>
+                    <DownloadIcon />
+                  </IconButton>
+                </Box>
+                <TableContainer sx={{ maxHeight: 400 }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Route Pair</TableCell>
+                        <TableCell align="right">Count</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {routeFinderData.routePairs.map((item, index) => (
+                        <TableRow key={index}>
+                          <TableCell>{item.route}</TableCell>
+                          <TableCell align="right">{item.count}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </CardContent>
+            </Card>
+
+            <Grid container spacing={3} sx={{ mb: 3 }}>
+              {/* City Codes */}
+              <Grid item xs={12} md={6}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Top City Codes</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(routeFinderData.cityCodes, 'route_finder_city_codes')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 300 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>City Code</TableCell>
+                            <TableCell align="right">Count</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {routeFinderData.cityCodes.map((item, index) => (
+                            <TableRow key={index}>
+                              <TableCell>{item.city}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Individual Locations */}
+              <Grid item xs={12} md={6}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Top Individual Locations</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(routeFinderData.individualLocations, 'route_finder_locations')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 300 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Location</TableCell>
+                            <TableCell align="right">Count</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {routeFinderData.individualLocations.map((item, index) => (
+                            <TableRow key={index}>
+                              <TableCell>{item.location}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+
+            <Grid container spacing={3}>
+              {/* Bandwidth Distribution */}
+              <Grid item xs={12} md={6}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Bandwidth Distribution</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(routeFinderData.bandwidthRanges, 'route_finder_bandwidth')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <PieChart>
+                        <Pie
+                          data={routeFinderData.bandwidthRanges}
+                          dataKey="count"
+                          nameKey="range"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={80}
+                          label
+                        >
+                          {routeFinderData.bandwidthRanges.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Route Mode Distribution */}
+              <Grid item xs={12} md={6}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Route Mode Distribution</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(routeFinderData.routeModes, 'route_finder_modes')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <BarChart data={routeFinderData.routeModes}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="mode" />
+                        <YAxis />
+                        <Tooltip />
+                        <Legend />
+                        <Bar dataKey="count" fill="#0088FE" name="Searches" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+
+            {/* Top Users */}
+            {routeFinderData.topUsers && routeFinderData.topUsers.length > 0 && (
+              <Card sx={{ mt: 3 }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="h6">Most Active Users</Typography>
+                    <IconButton size="small" onClick={() => exportToCSV(routeFinderData.topUsers, 'route_finder_users')}>
+                      <DownloadIcon />
+                    </IconButton>
+                  </Box>
+                  <TableContainer sx={{ maxHeight: 400 }}>
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Username</TableCell>
+                          <TableCell align="right">Searches</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {routeFinderData.topUsers.map((user, index) => (
+                          <TableRow key={index}>
+                            <TableCell>{user.username}</TableCell>
+                            <TableCell align="right">{user.count}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
+            )}
           </>
         ) : null}
       </TabPanel>

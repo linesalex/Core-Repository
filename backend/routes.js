@@ -234,7 +234,7 @@ router.post('/login', async (req, res) => {
           'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
           'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
           'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
-          'allocated_cost_calculator'
+          'allocated_cost_calculator', 'kmz_viewer', 'route_finder'
         ];
         
         allModules.forEach(module => {
@@ -297,7 +297,7 @@ router.get('/me', authenticateToken, (req, res) => {
         'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
         'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
         'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
-        'allocated_cost_calculator'
+        'allocated_cost_calculator', 'kmz_viewer', 'route_finder'
       ];
       
       allModules.forEach(module => {
@@ -12587,6 +12587,123 @@ router.get('/analytics/performance', authenticateToken, authorizeRole('administr
   }
 });
 
+// Get Route Finder analytics
+router.get('/analytics/route-finder', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    
+    let dateFilter = '';
+    let params = [];
+    if (start_date && end_date) {
+      dateFilter = ' AND timestamp >= ? AND timestamp <= ?';
+      params = [start_date, end_date];
+    }
+    
+    // Get all route finder searches
+    const searches = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT parameters, results, execution_time, user_id, user_name FROM audit_logs 
+         WHERE action_type = 'ROUTE_FINDER_SEARCH'${dateFilter}
+         ORDER BY timestamp DESC`,
+        params,
+        (err, rows) => err ? reject(err) : resolve(rows)
+      );
+    });
+    
+    // Process data
+    const routePairs = {};
+    const cityCodes = {};
+    const individualLocations = {};
+    const bandwidthRanges = {};
+    const routeModes = { fastest: 0, standard: 0 };
+    const userActivity = {};
+    let totalResponseTime = 0;
+    let responseTimeCount = 0;
+    
+    searches.forEach(search => {
+      try {
+        const params = JSON.parse(search.parameters || '{}');
+        
+        // Route pairs (normalized)
+        if (params.source && params.destination) {
+          const locations = [params.source, params.destination].sort();
+          const routeKey = `${locations[0]} ↔ ${locations[1]}`;
+          routePairs[routeKey] = (routePairs[routeKey] || 0) + 1;
+          
+          // City codes (first 6 chars)
+          const cityA = params.source.substring(0, 6);
+          const cityB = params.destination.substring(0, 6);
+          cityCodes[cityA] = (cityCodes[cityA] || 0) + 1;
+          cityCodes[cityB] = (cityCodes[cityB] || 0) + 1;
+          
+          // Individual locations
+          individualLocations[params.source] = (individualLocations[params.source] || 0) + 1;
+          individualLocations[params.destination] = (individualLocations[params.destination] || 0) + 1;
+        }
+        
+        // Bandwidth ranges
+        if (params.bandwidth) {
+          const bw = parseInt(params.bandwidth);
+          let range = 'Unknown';
+          if (bw < 1000) range = '< 1 Gbps';
+          else if (bw < 10000) range = '1-10 Gbps';
+          else if (bw < 100000) range = '10-100 Gbps';
+          else range = '100+ Gbps';
+          bandwidthRanges[range] = (bandwidthRanges[range] || 0) + 1;
+        }
+        
+        // Route modes
+        if (params.route_mode) {
+          routeModes[params.route_mode] = (routeModes[params.route_mode] || 0) + 1;
+        }
+        
+        // User activity
+        if (search.user_name) {
+          if (!userActivity[search.user_name]) {
+            userActivity[search.user_name] = { username: search.user_name, count: 0 };
+          }
+          userActivity[search.user_name].count++;
+        }
+        
+        // Response time
+        if (search.execution_time) {
+          totalResponseTime += parseFloat(search.execution_time);
+          responseTimeCount++;
+        }
+      } catch (e) {
+        console.error('Error parsing search:', e);
+      }
+    });
+    
+    res.json({
+      totalSearches: searches.length,
+      routePairs: Object.entries(routePairs)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([route, count]) => ({ route, count })),
+      cityCodes: Object.entries(cityCodes)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([city, count]) => ({ city, count })),
+      individualLocations: Object.entries(individualLocations)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([location, count]) => ({ location, count })),
+      bandwidthRanges: Object.entries(bandwidthRanges)
+        .map(([range, count]) => ({ range, count })),
+      routeModes: Object.entries(routeModes)
+        .map(([mode, count]) => ({ mode, count })),
+      topUsers: Object.values(userActivity)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 20),
+      averageResponseTime: responseTimeCount > 0 ? (totalResponseTime / responseTimeCount).toFixed(0) : 0
+    });
+  } catch (error) {
+    console.error('Error fetching route finder analytics:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ====================================
 // SYSTEM SETTINGS ENDPOINTS
 // ====================================
@@ -12636,6 +12753,347 @@ router.put('/system-settings/:key', authenticateToken, authorizeRole('administra
       }
     );
   });
+});
+
+// ============================================================================
+// ROUTE FINDER ENDPOINTS
+// ============================================================================
+
+// Find routes for Route Finder module
+router.post('/route_finder/find_routes', authenticateToken, authorizeModulePermission('route_finder', 'read_only'), async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const {
+      source,
+      destination,
+      bandwidth,
+      bandwidth_unit = 'Mbps',
+      mtu_required = 1500,
+      route_mode, // 'fastest' or 'standard'
+      include_ull,
+      use_cisco_only_routes,
+      constraints = {}
+    } = req.body;
+
+    // Validate required fields
+    if (!source || !destination) {
+      return res.status(400).json({ error: 'Source and destination are required' });
+    }
+
+    console.log('Route Finder request:', { source, destination, bandwidth, route_mode, include_ull, use_cisco_only_routes });
+
+    // Fetch all routes from database (inline graph building logic)
+    db.all(`SELECT nr.*, 
+            lr_a.status as status_a, 
+            lr_b.status as status_b
+            FROM network_routes nr
+            LEFT JOIN location_reference lr_a ON nr.location_a = lr_a.location_code
+            LEFT JOIN location_reference lr_b ON nr.location_b = lr_b.location_code
+            WHERE nr.location_a IS NOT NULL AND nr.location_b IS NOT NULL
+            AND (lr_a.status IS NULL OR lr_a.status != 'Under Decommission')
+            AND (lr_b.status IS NULL OR lr_b.status != 'Under Decommission')`, [], (err, routes) => {
+      if (err) {
+        console.error('Database error:', err);
+        return res.status(500).json({ error: err.message });
+      }
+      
+      console.log(`Total routes found: ${routes.length}`);
+      
+      // Build graph from routes
+      const graph = {};
+      let routesProcessed = 0;
+      
+      routes.forEach(route => {
+        const { location_a, location_b, expected_latency, bandwidth: routeBandwidth, underlying_carrier, circuit_id, cable_system, equipment_type, is_special } = route;
+        
+        // Convert bandwidth to Mbps for comparison
+        let routeBandwidthMbps = routeBandwidth;
+        let routeBandwidthDisplay = routeBandwidth;
+        
+        if (routeBandwidth && routeBandwidth.toLowerCase && routeBandwidth.toLowerCase().includes('dark fiber')) {
+          routeBandwidthMbps = '200000'; // Dark fiber = 200 Gbps
+          routeBandwidthDisplay = 'Dark Fiber';
+        }
+        
+        // Apply bandwidth filter (requires 2x requested bandwidth)
+        if (bandwidth && routeBandwidthMbps) {
+          const requiredBandwidth = parseFloat(bandwidth) * 2;
+          if (parseFloat(routeBandwidthMbps) < requiredBandwidth) {
+            return; // Skip this route
+          }
+        }
+        
+        // Apply equipment type filter (Standard mode excludes Cisco)
+        const equipType = equipment_type || 'Nokia';
+        if (!use_cisco_only_routes && equipType === 'Cisco') {
+          return; // Skip Cisco routes in Standard mode
+        }
+        
+        // Apply MTU filter
+        const routeMtu = route.mtu || 9212;
+        if (routeMtu < mtu_required) {
+          return; // Skip routes with insufficient MTU
+        }
+        
+        // Apply ULL/Special filter
+        if (!include_ull && is_special) {
+          return; // Skip special/ULL routes if not included
+        }
+        
+        // Add route to graph
+        routesProcessed++;
+        
+        if (!graph[location_a]) graph[location_a] = {};
+        if (!graph[location_b]) graph[location_b] = {};
+        
+        const weight = parseFloat(expected_latency) || 100;
+        
+        // Only add if this is the lowest latency route between these locations
+        const existingRoute = graph[location_a][location_b];
+        if (!existingRoute || weight < existingRoute.weight) {
+          const routeData = {
+            weight,
+            bandwidth: routeBandwidthDisplay,
+            carrier: underlying_carrier,
+            circuit_id,
+            cable_system: cable_system || null
+          };
+          
+          graph[location_a][location_b] = routeData;
+          graph[location_b][location_a] = routeData;
+        }
+      });
+      
+      console.log(`Routes processed: ${routesProcessed}`);
+      console.log(`Locations in graph: ${Object.keys(graph).length}`);
+      
+      // Validate source and destination exist in graph
+      if (!graph[source]) {
+        return res.status(404).json({ 
+          error: `Source location ${source} not found in network`,
+          details: 'No routes available from source location after applying constraints'
+        });
+      }
+      
+      if (!graph[destination]) {
+        return res.status(404).json({ 
+          error: `Destination location ${destination} not found in network`,
+          details: 'No routes available to destination location after applying constraints'
+        });
+      }
+      
+      // Dijkstra's algorithm implementation
+      const dijkstra = (graph, start, end) => {
+        const distances = {};
+        const previous = {};
+        const unvisited = new Set(Object.keys(graph));
+        
+        Object.keys(graph).forEach(node => {
+          distances[node] = node === start ? 0 : Infinity;
+          previous[node] = null;
+        });
+        
+        while (unvisited.size > 0) {
+          let current = null;
+          let minDistance = Infinity;
+          
+          for (const node of unvisited) {
+            if (distances[node] < minDistance) {
+              minDistance = distances[node];
+              current = node;
+            }
+          }
+          
+          if (current === null || distances[current] === Infinity) {
+            break;
+          }
+          
+          unvisited.delete(current);
+          
+          if (current === end) {
+            break;
+          }
+          
+          Object.keys(graph[current]).forEach(neighbor => {
+            if (unvisited.has(neighbor)) {
+              const newDistance = distances[current] + graph[current][neighbor].weight;
+              if (newDistance < distances[neighbor]) {
+                distances[neighbor] = newDistance;
+                previous[neighbor] = current;
+              }
+            }
+          });
+        }
+        
+        // Reconstruct path
+        const path = [];
+        let current = end;
+        
+        while (current !== null) {
+          path.unshift(current);
+          current = previous[current];
+        }
+        
+        if (path[0] !== start) {
+          return null;
+        }
+        
+        return {
+          path,
+          totalLatency: distances[end],
+          hops: path.length - 1
+        };
+      };
+      
+      // Find primary path
+      const primaryPath = dijkstra(graph, source, destination);
+      
+      if (!primaryPath) {
+        return res.status(404).json({ 
+          error: 'No possible route found between source and destination',
+          details: 'No connected path exists between locations after applying routing constraints'
+        });
+      }
+      
+      // Calculate route details for primary path
+      const primaryRouteDetails = [];
+      for (let i = 0; i < primaryPath.path.length - 1; i++) {
+        const from = primaryPath.path[i];
+        const to = primaryPath.path[i + 1];
+        const edge = graph[from][to];
+        
+        primaryRouteDetails.push({
+          from,
+          to,
+          latency: edge.weight,
+          bandwidth: edge.bandwidth,
+          carrier: edge.carrier,
+          circuit_id: edge.circuit_id,
+          cable_system: edge.cable_system
+        });
+      }
+      
+      primaryPath.route = primaryRouteDetails;
+      
+      // Find diverse secondary path
+      let diversePath = null;
+      if (constraints.protection_required !== false) {
+        const modifiedGraph = JSON.parse(JSON.stringify(graph));
+        
+        // Remove intermediate POPs
+        const intermediatePOPs = primaryPath.path.slice(1, -1);
+        intermediatePOPs.forEach(pop => {
+          if (modifiedGraph[pop]) {
+            delete modifiedGraph[pop];
+            Object.keys(modifiedGraph).forEach(node => {
+              if (modifiedGraph[node] && modifiedGraph[node][pop]) {
+                delete modifiedGraph[node][pop];
+              }
+            });
+          }
+        });
+        
+        // Remove edges using same circuit IDs
+        const primaryCircuitIds = new Set(primaryRouteDetails.map(r => r.circuit_id));
+        Object.keys(modifiedGraph).forEach(fromNode => {
+          Object.keys(modifiedGraph[fromNode]).forEach(toNode => {
+            const edge = modifiedGraph[fromNode][toNode];
+            if (edge && edge.circuit_id && primaryCircuitIds.has(edge.circuit_id)) {
+              delete modifiedGraph[fromNode][toNode];
+            }
+          });
+        });
+        
+        // Check if source and destination still connected
+        if (modifiedGraph[source] && Object.keys(modifiedGraph[source]).length > 0 &&
+            modifiedGraph[destination] && Object.keys(modifiedGraph[destination]).length > 0) {
+          
+          const diversePathResult = dijkstra(modifiedGraph, source, destination);
+          
+          if (diversePathResult) {
+            const diverseRouteDetails = [];
+            for (let i = 0; i < diversePathResult.path.length - 1; i++) {
+              const from = diversePathResult.path[i];
+              const to = diversePathResult.path[i + 1];
+              const edge = modifiedGraph[from][to];
+              
+              diverseRouteDetails.push({
+                from,
+                to,
+                latency: edge.weight,
+                bandwidth: edge.bandwidth,
+                carrier: edge.carrier,
+                circuit_id: edge.circuit_id,
+                cable_system: edge.cable_system
+              });
+            }
+            
+            diversePath = {
+              path: diversePathResult.path,
+              totalLatency: diversePathResult.totalLatency,
+              hops: diversePathResult.hops,
+              route: diverseRouteDetails
+            };
+          }
+        }
+      }
+      
+      const executionTime = Date.now() - startTime;
+      
+      // Log to audit_logs
+      const logData = {
+        action_type: 'ROUTE_FINDER_SEARCH',
+        user_id: req.user.id,
+        user_name: req.user.username,
+        parameters: JSON.stringify({
+          source,
+          destination,
+          bandwidth,
+          mtu_required,
+          route_mode,
+          include_ull,
+          use_cisco_only_routes
+        }),
+        results: JSON.stringify({
+          primaryPath: primaryPath ? {
+            path: primaryPath.path,
+            totalLatency: primaryPath.totalLatency,
+            hops: primaryPath.hops
+          } : null,
+          diversePath: diversePath ? {
+            path: diversePath.path,
+            totalLatency: diversePath.totalLatency,
+            hops: diversePath.hops
+          } : null
+        }),
+        execution_time: executionTime,
+        ip_address: req.ip || req.connection.remoteAddress,
+        user_agent: req.headers['user-agent']
+      };
+      
+      db.run(
+        `INSERT INTO audit_logs (action_type, user_id, user_name, parameters, results, execution_time, ip_address, user_agent, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [logData.action_type, logData.user_id, logData.user_name, logData.parameters, logData.results, logData.execution_time, logData.ip_address, logData.user_agent],
+        (err) => {
+          if (err) {
+            console.error('Failed to log Route Finder search:', err);
+          }
+        }
+      );
+      
+      res.json({
+        primaryPath,
+        diversePath,
+        executionTime
+      });
+    });
+
+  } catch (error) {
+    console.error('Route Finder error:', error);
+    res.status(500).json({ error: 'Failed to find routes: ' + error.message });
+  }
 });
 
 module.exports = router;

@@ -35,6 +35,7 @@ import NotificationsIcon from '@mui/icons-material/Notifications';
 import BusinessCenterIcon from '@mui/icons-material/BusinessCenter';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import PublicIcon from '@mui/icons-material/Public';
+import SearchIcon from '@mui/icons-material/Search';
 import { AuthProvider, useAuth } from './AuthContext';
 import { TextSizeProvider, useTextSize } from './TextSizeContext';
 import LoginForm from './LoginForm';
@@ -67,6 +68,7 @@ import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
 import DarkFiberModal from './DarkFiberModal';
 import KMZMapViewer from './KMZMapViewer';
+import RouteFinder from './RouteFinder';
 import ForcedPasswordChange from './ForcedPasswordChange';
 
 const drawerWidth = 280;
@@ -750,6 +752,13 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'route-finder':
+        return hasModuleAccess('route_finder') ? (
+          <RouteFinder />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'kmz-viewer':
         return hasModuleAccess('kmz_viewer') ? (
           <KMZMapViewer 
@@ -794,7 +803,7 @@ function AuthenticatedApp() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.3.2
+              v3.3.3
             </Typography>
           </Typography>
           
@@ -976,15 +985,29 @@ function AuthenticatedApp() {
                       </ListItem>
                     )}
 
+                    {/* Route Finder */}
+                    {isModuleVisible('route_finder') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('route-finder')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'route-finder' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><SearchIcon /></ListItemIcon>
+                        <ListItemText primary="Route Finder" />
+                      </ListItem>
+                    )}
+
                     {/* KMZ Viewer */}
-                    <ListItem 
-                      button 
-                      onClick={() => setCurrentTab('kmz-viewer')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'kmz-viewer' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                    >
-                      <ListItemIcon><PublicIcon /></ListItemIcon>
-                      <ListItemText primary="KMZ Viewer" />
-                    </ListItem>
+                    {isModuleVisible('kmz_viewer') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('kmz-viewer')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'kmz-viewer' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><PublicIcon /></ListItemIcon>
+                        <ListItemText primary="KMZ Viewer" />
+                      </ListItem>
+                    )}
                     
                     {(isModuleVisible('core_outages') && hasModuleAccess('network_routes')) && (
                       <ListItem 

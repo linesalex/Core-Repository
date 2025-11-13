@@ -512,6 +512,13 @@ export const getAnalyticsPerformance = (startDate, endDate) => {
   return api.get(`${API_BASE_URL}/analytics/performance`, { params }).then(res => res.data);
 };
 
+export const getAnalyticsRouteFinder = (startDate, endDate) => {
+  const params = {};
+  if (startDate) params.start_date = startDate;
+  if (endDate) params.end_date = endDate;
+  return api.get(`${API_BASE_URL}/analytics/route-finder`, { params }).then(res => res.data);
+};
+
 // System Settings
 export const getSystemSettings = () => api.get(`${API_BASE_URL}/system-settings`).then(res => res.data);
 export const getSystemSetting = (key) => api.get(`${API_BASE_URL}/system-settings/${key}`).then(res => res.data);

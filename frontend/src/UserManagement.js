@@ -45,6 +45,8 @@ const UserManagement = () => {
     { key: 'network_routes', label: 'Network Routes Repository' },
     { key: 'network_design', label: 'Network Design & Pricing Tool' },
     { key: 'allocated_cost_calculator', label: 'Allocated Cost Calculator' },
+    { key: 'route_finder', label: 'Route Finder' },
+    { key: 'kmz_viewer', label: 'KMZ Viewer' },
     { key: 'locations', label: 'Manage Locations' },
     { key: 'carriers', label: 'Manage Carriers' },
     { key: 'cnx_colocation', label: 'CNX Colocation' },

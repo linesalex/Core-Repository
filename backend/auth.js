@@ -89,7 +89,7 @@ const getUserModulePermissions = (userId, callback) => {
         'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
         'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
         'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
-        'allocated_cost_calculator', 'kmz_viewer'
+        'allocated_cost_calculator', 'kmz_viewer', 'route_finder'
       ];
       
       const permissionMap = {};
