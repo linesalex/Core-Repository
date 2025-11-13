@@ -2181,6 +2181,200 @@ router.get('/network_routes', authenticateToken, authorizeModulePermission('netw
   });
 });
 
+// Get routes with KMZ files only (for KMZ Map Viewer)
+router.get('/network_routes_with_kmz', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
+  const query = 'SELECT circuit_id, location_a, location_b, kmz_file_path, underlying_carrier, cable_system FROM network_routes WHERE kmz_file_path IS NOT NULL AND kmz_file_path != ""';
+  
+  db.all(query, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+// Get counts of routes by bandwidth filter (for displaying available counts)
+router.get('/kmz_viewer/route_counts', authenticateToken, authorizeModulePermission('kmz_viewer', 'read_only'), (req, res) => {
+  const counts = {};
+  
+  const queries = [
+    new Promise((resolve) => {
+      db.get(
+        `SELECT COUNT(*) as count FROM network_routes 
+         WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
+         AND LOWER(bandwidth) = 'dark fiber'`,
+        [],
+        (err, row) => {
+          counts.dark_fiber = err ? 0 : row.count;
+          resolve();
+        }
+      );
+    }),
+    new Promise((resolve) => {
+      db.get(
+        `SELECT COUNT(*) as count FROM network_routes 
+         WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
+         AND CAST(bandwidth AS INTEGER) = 100000`,
+        [],
+        (err, row) => {
+          counts.gb_100 = err ? 0 : row.count;
+          resolve();
+        }
+      );
+    }),
+    new Promise((resolve) => {
+      db.get(
+        `SELECT COUNT(*) as count FROM network_routes 
+         WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
+         AND CAST(bandwidth AS INTEGER) >= 10000 AND CAST(bandwidth AS INTEGER) < 100000`,
+        [],
+        (err, row) => {
+          counts.gb_10 = err ? 0 : row.count;
+          resolve();
+        }
+      );
+    }),
+    new Promise((resolve) => {
+      db.get(
+        `SELECT COUNT(*) as count FROM network_routes 
+         WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
+         AND CAST(bandwidth AS INTEGER) > 0 AND CAST(bandwidth AS INTEGER) < 10000`,
+        [],
+        (err, row) => {
+          counts.lt_10gb = err ? 0 : row.count;
+          resolve();
+        }
+      );
+    })
+  ];
+  
+  Promise.all(queries).then(() => {
+    res.json(counts);
+  });
+});
+
+// Get routes grouped by bandwidth filters for KMZ viewer
+router.get('/kmz_viewer/routes_by_bandwidth', authenticateToken, authorizeModulePermission('kmz_viewer', 'read_only'), (req, res) => {
+  const { filters } = req.query; // filters = 'dark_fiber,100gb,10gb,lt10gb'
+  
+  if (!filters) {
+    return res.json({ dark_fiber: [], gb_100: [], gb_10: [], lt_10gb: [] });
+  }
+  
+  const filterArray = filters.split(',');
+  const results = {};
+  
+  const queries = [];
+  
+  if (filterArray.includes('dark_fiber')) {
+    queries.push(
+      new Promise((resolve) => {
+        db.all(
+          `SELECT circuit_id, location_a, location_b, kmz_file_path, underlying_carrier, cable_system, 
+           bandwidth, expected_latency, carrier_protected 
+           FROM network_routes 
+           WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
+           AND LOWER(bandwidth) = 'dark fiber'`,
+          [],
+          (err, rows) => {
+            results.dark_fiber = err ? [] : rows;
+            resolve();
+          }
+        );
+      })
+    );
+  }
+  
+  if (filterArray.includes('100gb')) {
+    queries.push(
+      new Promise((resolve) => {
+        db.all(
+          `SELECT circuit_id, location_a, location_b, kmz_file_path, underlying_carrier, cable_system, 
+           bandwidth, expected_latency, carrier_protected 
+           FROM network_routes 
+           WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
+           AND CAST(bandwidth AS INTEGER) = 100000`,
+          [],
+          (err, rows) => {
+            results.gb_100 = err ? [] : rows;
+            resolve();
+          }
+        );
+      })
+    );
+  }
+  
+  if (filterArray.includes('10gb')) {
+    queries.push(
+      new Promise((resolve) => {
+        db.all(
+          `SELECT circuit_id, location_a, location_b, kmz_file_path, underlying_carrier, cable_system, 
+           bandwidth, expected_latency, carrier_protected 
+           FROM network_routes 
+           WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
+           AND CAST(bandwidth AS INTEGER) >= 10000 AND CAST(bandwidth AS INTEGER) < 100000`,
+          [],
+          (err, rows) => {
+            results.gb_10 = err ? [] : rows;
+            resolve();
+          }
+        );
+      })
+    );
+  }
+  
+  if (filterArray.includes('lt10gb')) {
+    queries.push(
+      new Promise((resolve) => {
+        db.all(
+          `SELECT circuit_id, location_a, location_b, kmz_file_path, underlying_carrier, cable_system, 
+           bandwidth, expected_latency, carrier_protected 
+           FROM network_routes 
+           WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
+           AND CAST(bandwidth AS INTEGER) > 0 AND CAST(bandwidth AS INTEGER) < 10000`,
+          [],
+          (err, rows) => {
+            results.lt_10gb = err ? [] : rows;
+            resolve();
+          }
+        );
+      })
+    );
+  }
+  
+  Promise.all(queries).then(() => {
+    res.json(results);
+  });
+});
+
+// Search routes for KMZ viewer advanced filter
+router.get('/kmz_viewer/search_routes', authenticateToken, authorizeModulePermission('kmz_viewer', 'read_only'), (req, res) => {
+  const { query } = req.query;
+  
+  if (!query || query.trim().length < 2) {
+    return res.json([]);
+  }
+  
+  const searchTerm = `%${query.trim()}%`;
+  
+  db.all(
+    `SELECT circuit_id, location_a, location_b, kmz_file_path, underlying_carrier, cable_system, 
+     bandwidth, expected_latency 
+     FROM network_routes 
+     WHERE kmz_file_path IS NOT NULL AND kmz_file_path != ""
+     AND (
+       circuit_id LIKE ? OR 
+       location_a LIKE ? OR 
+       location_b LIKE ?
+     )
+     ORDER BY circuit_id
+     LIMIT 50`,
+    [searchTerm, searchTerm, searchTerm],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
+});
+
 // Get single route by circuit_id
 router.get('/network_routes/:circuit_id', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   const { circuit_id } = req.params;
@@ -5868,6 +6062,11 @@ router.get('/download_kmz/:filename', authenticateToken, (req, res) => {
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'KMZ file not found' });
   }
+  
+  // Add caching headers - KMZ files don't change frequently
+  // Cache for 1 hour in browser, can be revalidated
+  res.setHeader('Cache-Control', 'private, max-age=3600, must-revalidate');
+  res.setHeader('ETag', `"${filename}-${fs.statSync(filePath).mtime.getTime()}"`);
   
   res.download(filePath, filename, (err) => {
     if (err) {

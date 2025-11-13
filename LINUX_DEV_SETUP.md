@@ -331,6 +331,13 @@ npm install --max_old_space_size=4096
 # Create environment configuration
 echo "REACT_APP_API_URL=http://$(hostname -I | awk '{print $1}'):4000" > .env
 
+# Copy Cesium static assets (required for KMZ 3D Globe Viewer)
+chmod +x setup-cesium.sh
+./setup-cesium.sh
+
+# Alternatively, copy manually:
+# cp -r node_modules/cesium/Build/Cesium public/cesium
+
 # Test frontend build
 npm run build
 # Should complete without errors
@@ -452,6 +459,54 @@ sudo swapon /swapfile
 # Or reduce PM2 memory limits in ecosystem.config.js
 ```
 
+### **🚨 Cesium KMZ Viewer Issues**
+
+**Problem**: "Not allowed to load local resource" errors in browser console
+```bash
+# Solution: Cesium assets not copied to public folder
+cd /root/Core-Repository/frontend
+
+# Run setup script
+chmod +x setup-cesium.sh
+./setup-cesium.sh
+
+# Or copy manually
+cp -r node_modules/cesium/Build/Cesium public/cesium
+
+# Verify files exist
+ls -la public/cesium/
+# Should show ~387 files including Workers/, Assets/, Widgets/
+```
+
+**Problem**: Cesium globe is black/empty
+```bash
+# Check that assets were copied correctly
+cd /root/Core-Repository/frontend
+du -sh public/cesium/
+# Should show approximately 50MB
+
+# Verify critical files exist
+ls public/cesium/Assets/Textures/NaturalEarthII/
+ls public/cesium/Workers/
+
+# If missing, re-run setup
+./setup-cesium.sh
+```
+
+**Problem**: "Failed to fetch worker" errors
+```bash
+# Solution: Workers not accessible
+cd /root/Core-Repository/frontend
+
+# Ensure public/cesium/ directory has correct structure
+find public/cesium -name "*.js" | head -10
+# Should show various .js worker files
+
+# If not, reinstall cesium package
+npm install cesium
+./setup-cesium.sh
+```
+
 ---
 
 ## 📊 **Production Monitoring**
@@ -538,10 +593,12 @@ node -e "console.log(process.versions)"
 - [ ] SQLite3 5.0.2 specifically installed
 - [ ] bcryptjs (not bcrypt) installed  
 - [ ] Backend starts without errors
+- [ ] Cesium assets copied to `frontend/public/cesium/` (~387 files)
 - [ ] Frontend builds successfully
 - [ ] PM2 processes running
 - [ ] Health check returns success: `curl http://localhost:4000/health`
 - [ ] Can access frontend: `http://server-ip:3000`
 - [ ] Can login with admin/admin123
+- [ ] KMZ Viewer loads without file:// errors (check browser console)
 
 **🎉 If all checks pass, your Network Inventory Management System is ready for production!** 

@@ -57,6 +57,9 @@ pids
 /backend/feedback_files/*
 !/backend/feedback_files/.gitkeep
 
+# Cesium static assets (copied from node_modules)
+/frontend/public/cesium/
+
 # IDE and editor files
 .vscode/
 .idea/

@@ -7,6 +7,7 @@ const api = axios;
 
 // Network Routes
 export const fetchRoutes = () => api.get(`${API_BASE_URL}/network_routes`).then(res => res.data);
+export const fetchRoutesWithKMZ = () => api.get(`${API_BASE_URL}/network_routes_with_kmz`).then(res => res.data);
 export const searchRoutes = (filters) => api.get(`${API_BASE_URL}/network_routes_search`, { params: filters }).then(res => res.data);
 export const exportRoutesCSV = () => api.get(`${API_BASE_URL}/network_routes_export`, { responseType: 'blob' });
 export const addRoute = (data) => api.post(`${API_BASE_URL}/network_routes`, data);
@@ -14,6 +15,11 @@ export const editRoute = (id, data) => api.put(`${API_BASE_URL}/network_routes/$
 export const deleteRoute = (id) => api.delete(`${API_BASE_URL}/network_routes/${id}`);
 export const fetchRoute = (id) => api.get(`${API_BASE_URL}/network_routes/${id}`).then(res => res.data);
 export const getRouteTracking = (circuitId) => api.get(`${API_BASE_URL}/network_routes/${circuitId}/tracking`).then(res => res.data);
+
+// KMZ Viewer
+export const fetchRoutesByBandwidth = (filters) => api.get(`${API_BASE_URL}/kmz_viewer/routes_by_bandwidth`, { params: { filters } }).then(res => res.data);
+export const fetchRouteCounts = () => api.get(`${API_BASE_URL}/kmz_viewer/route_counts`).then(res => res.data);
+export const searchKMZRoutes = (query) => api.get(`${API_BASE_URL}/kmz_viewer/search_routes`, { params: { query } }).then(res => res.data);
 
 // File uploads
 export const uploadKMZ = (circuitId, file) => {

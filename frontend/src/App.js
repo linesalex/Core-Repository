@@ -34,6 +34,7 @@ import FeedbackIcon from '@mui/icons-material/Feedback';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import BusinessCenterIcon from '@mui/icons-material/BusinessCenter';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
+import PublicIcon from '@mui/icons-material/Public';
 import { AuthProvider, useAuth } from './AuthContext';
 import { TextSizeProvider, useTextSize } from './TextSizeContext';
 import LoginForm from './LoginForm';
@@ -60,11 +61,12 @@ import AnalyticsDashboard from './AnalyticsDashboard';
 import SystemSettingsManager from './SystemSettingsManager';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 
-import { fetchRoutes, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking, getFeedbackNotificationCount } from './api';
+import { fetchRoutes, fetchRoutesWithKMZ, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking, getFeedbackNotificationCount } from './api';
 import { API_BASE_URL } from './config';
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
 import DarkFiberModal from './DarkFiberModal';
+import KMZMapViewer from './KMZMapViewer';
 import ForcedPasswordChange from './ForcedPasswordChange';
 
 const drawerWidth = 280;
@@ -91,6 +93,8 @@ function AuthenticatedApp() {
   const [darkFiberOpen, setDarkFiberOpen] = useState(false);
   const [darkFiberCircuitId, setDarkFiberCircuitId] = useState(null);
   const [networkRoutesOpen, setNetworkRoutesOpen] = useState(true);
+  
+  // KMZ Map Viewer state
   
   // New state for tab management
   const [currentTab, setCurrentTab] = useState('welcome');
@@ -552,6 +556,7 @@ function AuthenticatedApp() {
     setDarkFiberOpen(true);
   };
 
+
   const handleUserMenuClick = (event) => {
     setUserMenuAnchor(event.currentTarget);
   };
@@ -741,6 +746,15 @@ function AuthenticatedApp() {
       case 'system-settings':
         return hasRole('administrator') ? (
           <SystemSettingsManager hasRole={hasRole} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'kmz-viewer':
+        return hasModuleAccess('kmz_viewer') ? (
+          <KMZMapViewer 
+            onClose={() => setCurrentTab('network-routes')}
+          />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
@@ -962,7 +976,15 @@ function AuthenticatedApp() {
                       </ListItem>
                     )}
 
-
+                    {/* KMZ Viewer */}
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('kmz-viewer')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'kmz-viewer' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><PublicIcon /></ListItemIcon>
+                      <ListItemText primary="KMZ Viewer" />
+                    </ListItem>
                     
                     {(isModuleVisible('core_outages') && hasModuleAccess('network_routes')) && (
                       <ListItem 
