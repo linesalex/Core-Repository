@@ -16,6 +16,23 @@ const liveLatencyAutoRefresh = require('./liveLatencyAutoRefreshService');
 const outageHistoryCleanup = require('./outageHistoryCleanupService');
 const liveLatencyApiLogsCleanup = require('./liveLatencyApiLogsCleanupService');
 const walCheckpoint = require('./walCheckpointService');
+const fs = require('fs');
+const path = require('path');
+
+// Ensure required directories exist
+const requiredDirs = [
+  path.join(__dirname, 'temp'),
+  path.join(__dirname, 'templates'),
+  path.join(__dirname, 'kmz_files'),
+  path.join(__dirname, 'logs')
+];
+
+requiredDirs.forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`✓ Created directory: ${path.relative(__dirname, dir)}/`);
+  }
+});
 
 // Configure CORS to expose Content-Disposition header for file downloads
 app.use(cors({

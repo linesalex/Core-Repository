@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Box, Grid, Paper, Typography, TextField, Button, Select, MenuItem, FormControl, InputLabel,
-  Chip, Alert, CircularProgress, Accordion, AccordionSummary, AccordionDetails, Table, TableBody,
+  Chip, Alert, CircularProgress, LinearProgress, Accordion, AccordionSummary, AccordionDetails, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, Card, CardContent, CardHeader, Divider,
   Switch, FormControlLabel, Dialog, DialogTitle, DialogContent, DialogActions, List, ListItem,
   ListItemText, ListItemIcon, Checkbox, Tooltip, IconButton, Snackbar, Tabs, Tab, Autocomplete,
@@ -148,6 +148,8 @@ const NetworkDesignTool = () => {
   const [kmzExportDialogOpen, setKmzExportDialogOpen] = useState(false);
   const [kmzExportType, setKmzExportType] = useState('primary'); // 'primary', 'secondary', 'both'
   const [kmzExporting, setKmzExporting] = useState(false);
+  const [kmzExportProgress, setKmzExportProgress] = useState(0); // 0-100
+  const [kmzExportStep, setKmzExportStep] = useState(''); // Current step description
   const [kmzMissingCircuitsDialogOpen, setKmzMissingCircuitsDialogOpen] = useState(false);
   const [kmzMissingCircuits, setKmzMissingCircuits] = useState([]);
   const [kmzExportDataPending, setKmzExportDataPending] = useState(null);
@@ -1735,6 +1737,8 @@ const NetworkDesignTool = () => {
   const handleKMZExportClose = () => {
     setKmzExportDialogOpen(false);
     setKmzExportType('primary');
+    setKmzExportProgress(0);
+    setKmzExportStep('');
   };
 
   const handleMissingCircuitsCancel = () => {
@@ -1758,8 +1762,26 @@ const NetworkDesignTool = () => {
       setKmzExporting(true);
       console.log('Performing KMZ export with data:', exportData);
 
+      // Step 1: Validating circuits
+      setKmzExportStep('Validating circuits...');
+      setKmzExportProgress(15);
+      await new Promise(resolve => setTimeout(resolve, 300)); // Brief delay for UX
+
+      // Step 2: Loading circuit KMZ files
+      setKmzExportStep('Loading circuit KMZ files...');
+      setKmzExportProgress(40);
+
       // Call API to export
       const response = await exportNetworkDesignKMZ(exportData);
+
+      // Step 3: Combining routes
+      setKmzExportStep('Combining routes...');
+      setKmzExportProgress(70);
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Step 4: Generating KMZ file
+      setKmzExportStep('Generating KMZ file...');
+      setKmzExportProgress(90);
 
       // Check if there were skipped circuits in the response headers
       const contentType = response.headers['content-type'];
@@ -1818,9 +1840,16 @@ const NetworkDesignTool = () => {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
 
+      // Step 5: Complete
+      setKmzExportStep('Export complete!');
+      setKmzExportProgress(100);
+      await new Promise(resolve => setTimeout(resolve, 500)); // Show completion briefly
+
       setSuccess('KMZ file exported successfully');
       handleKMZExportClose();
       setKmzExporting(false);
+      setKmzExportProgress(0);
+      setKmzExportStep('');
 
     } catch (error) {
       console.error('KMZ export error:', error);
@@ -1846,6 +1875,8 @@ const NetworkDesignTool = () => {
       
       setError(`Failed to export KMZ: ${errorMessage}`);
       setKmzExporting(false);
+      setKmzExportProgress(0);
+      setKmzExportStep('');
       throw error;
     }
   };
@@ -4011,8 +4042,18 @@ const NetworkDesignTool = () => {
           </Alert>
 
           {kmzExporting && (
-            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
-              <CircularProgress size={24} />
+            <Box sx={{ mt: 3, mb: 2 }}>
+              <Typography variant="body2" color="primary" sx={{ mb: 1, fontWeight: 500 }}>
+                {kmzExportStep}
+              </Typography>
+              <LinearProgress 
+                variant="determinate" 
+                value={kmzExportProgress} 
+                sx={{ height: 8, borderRadius: 1 }}
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                {kmzExportProgress}% complete
+              </Typography>
             </Box>
           )}
         </DialogContent>

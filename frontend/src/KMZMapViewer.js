@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Box, Typography, Button, CircularProgress, Alert, Checkbox, FormControlLabel,
   FormGroup, Divider, IconButton, TextField, Autocomplete, Accordion, AccordionSummary,
-  AccordionDetails, Chip, Paper, List, ListItem, ListItemText, ListItemIcon
+  AccordionDetails, Chip, Paper, List, ListItem, ListItemText, ListItemIcon, Menu, MenuItem
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -12,7 +12,8 @@ import ZoomInIcon from '@mui/icons-material/ZoomIn';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import RouteIcon from '@mui/icons-material/Route';
-import { Viewer, Ion, KmlDataSource, Cartesian3, Cartographic, Math as CesiumMath, UrlTemplateImageryProvider, CustomDataSource, ScreenSpaceEventHandler, ScreenSpaceEventType, defined } from 'cesium';
+import PaletteIcon from '@mui/icons-material/Palette';
+import { Viewer, Ion, KmlDataSource, Cartesian3, Cartographic, Math as CesiumMath, UrlTemplateImageryProvider, CustomDataSource, ScreenSpaceEventHandler, ScreenSpaceEventType, defined, Color } from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { API_BASE_URL } from './config';
 import { fetchRoutesByBandwidth, fetchRouteCounts, searchKMZRoutes } from './api';
@@ -33,8 +34,8 @@ function KMZMapViewer({ onClose }) {
   
   // Primary filters state
   const [filters, setFilters] = useState({
-    dark_fiber: true,  // Auto-load
-    gb_100: true,      // Auto-load
+    dark_fiber: true,  // Auto-load Dark Fiber only
+    gb_100: false,     // Don't auto-load (too many routes)
     gb_10: false,
     lt_10gb: false
   });
@@ -59,6 +60,23 @@ function KMZMapViewer({ onClose }) {
   // Route visibility toggles
   const [routeVisibility, setRouteVisibility] = useState({});
   
+  // Route colors (session-only, 8 preset colors)
+  const [routeColors, setRouteColors] = useState({}); // { circuit_id: 'red', ... }
+  const [colorMenuAnchor, setColorMenuAnchor] = useState(null);
+  const [colorMenuRoute, setColorMenuRoute] = useState(null);
+  
+  // Preset colors with Cesium ABGR format
+  const PRESET_COLORS = [
+    { name: 'Red', hex: '#FF0000', cesium: 'ff0000ff' },
+    { name: 'Blue', hex: '#0000FF', cesium: 'ffff0000' },
+    { name: 'Green', hex: '#00FF00', cesium: 'ff00ff00' },
+    { name: 'Yellow', hex: '#FFFF00', cesium: 'ff00ffff' },
+    { name: 'Orange', hex: '#FF8800', cesium: 'ff0088ff' },
+    { name: 'Purple', hex: '#9C27B0', cesium: 'ffb0279c' },
+    { name: 'Pink', hex: '#E91E63', cesium: 'ff631ee9' },
+    { name: 'Cyan', hex: '#00FFFF', cesium: 'ffffff00' }
+  ];
+  
   // Advanced filter
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -69,6 +87,9 @@ function KMZMapViewer({ onClose }) {
   
   // DataSource references
   const dataSourcesRef = useRef({});
+  
+  // Reference for permanent locations data source
+  const locationsDataSourceRef = useRef(null);
   
   // Initialize Cesium Viewer
   useEffect(() => {
@@ -180,6 +201,76 @@ function KMZMapViewer({ onClose }) {
     }
   }, [viewerReady]);
 
+  // Load permanent locations.kmz template when viewer is ready
+  useEffect(() => {
+    if (!viewerReady || !viewerRef.current) return;
+    
+    const loadLocationsTemplate = async () => {
+      try {
+        console.log('Loading permanent locations template...');
+        
+        const token = localStorage.getItem('authToken');
+        const response = await fetch(`${API_BASE_URL}/kmz_templates/download/locations`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (!response.ok) {
+          console.warn('Locations template not available:', response.status);
+          return; // Silently fail if template not uploaded yet
+        }
+        
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        
+        // Load locations KMZ
+        const locationsDataSource = await KmlDataSource.load(blobUrl, {
+          camera: viewerRef.current.camera,
+          canvas: viewerRef.current.canvas,
+          clampToGround: true
+        });
+        
+        // Ensure all location pins stay visible at all zoom levels
+        const entities = locationsDataSource.entities.values;
+        entities.forEach(entity => {
+          // For billboards (pins with icons)
+          if (entity.billboard) {
+            entity.billboard.distanceDisplayCondition = undefined; // Always show
+            entity.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY; // Always visible
+            entity.billboard.scaleByDistance = undefined; // Don't scale by distance
+          }
+          
+          // For points (simple dots)
+          if (entity.point) {
+            entity.point.distanceDisplayCondition = undefined; // Always show
+            entity.point.disableDepthTestDistance = Number.POSITIVE_INFINITY; // Always visible
+          }
+          
+          // For labels
+          if (entity.label) {
+            entity.label.distanceDisplayCondition = undefined; // Always show
+            entity.label.disableDepthTestDistance = Number.POSITIVE_INFINITY; // Always visible
+            entity.label.scaleByDistance = undefined; // Don't scale by distance
+          }
+        });
+        
+        // Add to viewer - these pins stay permanent
+        viewerRef.current.dataSources.add(locationsDataSource);
+        locationsDataSourceRef.current = locationsDataSource;
+        
+        URL.revokeObjectURL(blobUrl);
+        console.log('✓ Permanent locations loaded successfully');
+        
+      } catch (err) {
+        console.error('Error loading locations template:', err);
+        // Don't show error to user - locations template is optional enhancement
+      }
+    };
+    
+    loadLocationsTemplate();
+  }, [viewerReady]);
+
   // Load routes by bandwidth filter
   const loadRoutesByFilter = async (filterString) => {
     if (!viewerRef.current) return;
@@ -248,19 +339,28 @@ function KMZMapViewer({ onClose }) {
       const entities = tempDataSource.entities.values;
       
       // Copy entities to NEW dataSource with guaranteed valid IDs
+      // IMPORTANT: Only copy route lines (polylines), skip all point-based entities (pins/placemarks)
+      // Permanent location pins are loaded from locations.kmz template separately
       entities.forEach((entity, index) => {
         try {
+          // Skip entities that are points/pins/placemarks (don't have polylines)
+          // We only want route lines from circuit KMZ files
+          if (!entity.polyline && (entity.point || entity.billboard || (entity.position && !entity.polyline))) {
+            return; // Skip this entity - it's a pin/placemark
+          }
+          
           const newId = `${route.circuit_id}_${index}`;
           cleanDataSource.entities.add({
             id: newId,
             name: entity.name || route.circuit_id,
             description: entity.description,
             position: entity.position,
-            billboard: entity.billboard,
-            label: entity.label,
-            polyline: entity.polyline,
+            // Don't copy billboard/label/point for circuit KMZs - those are from locations.kmz only
+            // billboard: entity.billboard,
+            // label: entity.label,
+            // point: entity.point,
+            polyline: entity.polyline, // Keep route lines
             polygon: entity.polygon,
-            point: entity.point,
             model: entity.model,
             path: entity.path,
             wall: entity.wall,
@@ -448,6 +548,51 @@ function KMZMapViewer({ onClose }) {
     
     dataSource.show = newVisibility;
     setRouteVisibility(prev => ({ ...prev, [circuitId]: newVisibility }));
+  };
+
+  // Open color picker menu
+  const handleColorMenuOpen = (event, circuitId) => {
+    event.stopPropagation();
+    setColorMenuAnchor(event.currentTarget);
+    setColorMenuRoute(circuitId);
+  };
+
+  // Close color picker menu
+  const handleColorMenuClose = () => {
+    setColorMenuAnchor(null);
+    setColorMenuRoute(null);
+  };
+
+  // Change route color
+  const changeRouteColor = (colorHex, cesiumColor) => {
+    if (!dataSourcesRef.current[colorMenuRoute]) {
+      handleColorMenuClose();
+      return;
+    }
+    
+    const dataSource = dataSourcesRef.current[colorMenuRoute].dataSource;
+    const entities = dataSource.entities.values;
+    
+    // Update all polyline entities with the new color
+    entities.forEach(entity => {
+      if (entity.polyline && entity.polyline.material) {
+        try {
+          // Convert cesium hex color (ABGR) to Cesium.Color
+          const a = parseInt(cesiumColor.substring(0, 2), 16) / 255;
+          const b = parseInt(cesiumColor.substring(2, 4), 16) / 255;
+          const g = parseInt(cesiumColor.substring(4, 6), 16) / 255;
+          const r = parseInt(cesiumColor.substring(6, 8), 16) / 255;
+          
+          entity.polyline.material = new Color(r, g, b, a);
+        } catch (err) {
+          console.error('Failed to set polyline color:', err);
+        }
+      }
+    });
+    
+    // Store the color for this route (session-only)
+    setRouteColors(prev => ({ ...prev, [colorMenuRoute]: colorHex }));
+    handleColorMenuClose();
   };
 
   // Handle route click
@@ -776,6 +921,20 @@ function KMZMapViewer({ onClose }) {
                         />
                         <IconButton 
                           size="small" 
+                          onClick={(e) => handleColorMenuOpen(e, route.circuit_id)}
+                          title="Change color"
+                          sx={{ 
+                            color: routeColors[route.circuit_id] || '#FF0000',
+                            border: '2px solid currentColor',
+                            width: 28,
+                            height: 28,
+                            mr: 0.5
+                          }}
+                        >
+                          <PaletteIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton 
+                          size="small" 
                           onClick={() => zoomToRoute(route.circuit_id)}
                           title="Zoom to route"
                         >
@@ -931,6 +1090,45 @@ function KMZMapViewer({ onClose }) {
           </Box>
         </Paper>
       )}
+
+      {/* Color Picker Menu */}
+      <Menu
+        anchorEl={colorMenuAnchor}
+        open={Boolean(colorMenuAnchor)}
+        onClose={handleColorMenuClose}
+        PaperProps={{
+          sx: { width: 200 }
+        }}
+      >
+        <MenuItem disabled sx={{ fontWeight: 'bold', fontSize: '0.875rem' }}>
+          <PaletteIcon sx={{ mr: 1 }} fontSize="small" />
+          Choose Color
+        </MenuItem>
+        <Divider />
+        {PRESET_COLORS.map(color => (
+          <MenuItem 
+            key={color.name}
+            onClick={() => changeRouteColor(color.hex, color.cesium)}
+            sx={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 1,
+              py: 1
+            }}
+          >
+            <Box
+              sx={{
+                width: 24,
+                height: 24,
+                backgroundColor: color.hex,
+                border: '2px solid #ddd',
+                borderRadius: 1
+              }}
+            />
+            <Typography variant="body2">{color.name}</Typography>
+          </MenuItem>
+        ))}
+      </Menu>
     </Box>
   );
 }

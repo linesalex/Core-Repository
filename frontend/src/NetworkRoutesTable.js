@@ -440,11 +440,25 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
       // Get the file blob
       const blob = await response.blob();
       
+      // Extract user-friendly filename from Content-Disposition header
+      let downloadFilename = filename; // Fallback to original filename
+      const contentDisposition = response.headers.get('Content-Disposition');
+      if (contentDisposition) {
+        // Try to extract filename from Content-Disposition header
+        // Supports multiple formats: filename*=UTF-8''..., filename="...", filename=...
+        const filenameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i) ||
+                             contentDisposition.match(/filename="([^"]+)"/i) ||
+                             contentDisposition.match(/filename=([^;]+)/i);
+        if (filenameMatch && filenameMatch[1]) {
+          downloadFilename = decodeURIComponent(filenameMatch[1].trim());
+        }
+      }
+      
       // Create download link
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = filename;
+      link.download = downloadFilename;
       document.body.appendChild(link);
       link.click();
       

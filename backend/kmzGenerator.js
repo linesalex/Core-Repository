@@ -372,6 +372,13 @@ async function generateNetworkDesignKMZ(options) {
     db // Database connection to look up kmz_file_path
   } = options;
   
+  // Ensure output directory exists
+  const fsSync = require('fs');
+  if (!fsSync.existsSync(outputDir)) {
+    fsSync.mkdirSync(outputDir, { recursive: true });
+    console.log(`✓ Created output directory: ${outputDir}`);
+  }
+  
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_'

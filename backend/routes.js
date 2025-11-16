@@ -6076,16 +6076,35 @@ router.get('/download_kmz/:filename', authenticateToken, (req, res) => {
     return res.status(404).json({ error: 'KMZ file not found' });
   }
   
-  // Add caching headers - KMZ files don't change frequently
-  // Cache for 1 hour in browser, can be revalidated
-  res.setHeader('Cache-Control', 'private, max-age=3600, must-revalidate');
-  res.setHeader('ETag', `"${filename}-${fs.statSync(filePath).mtime.getTime()}"`);
-  
-  res.download(filePath, filename, (err) => {
-    if (err) {
-      res.status(500).json({ error: 'Error downloading file' });
+  // Query database for circuit info to create friendly filename
+  db.get(
+    'SELECT circuit_id, location_a, location_b FROM network_routes WHERE kmz_file_path = ?',
+    [filename],
+    (err, circuit) => {
+      let downloadFilename = filename; // Default to original filename
+      
+      if (!err && circuit) {
+        // Format: UCN - Location A - Location B.kmz
+        // Example: LONLON123456 - IPCLON11 - IPCLON7.kmz
+        downloadFilename = `${circuit.circuit_id} - ${circuit.location_a} - ${circuit.location_b}.kmz`;
+      }
+      
+      // Add caching headers - KMZ files don't change frequently
+      // Cache for 1 hour in browser, can be revalidated
+      res.setHeader('Cache-Control', 'private, max-age=3600, must-revalidate');
+      res.setHeader('ETag', `"${filename}-${fs.statSync(filePath).mtime.getTime()}"`);
+      
+      // Explicitly set Content-Disposition header with RFC 5987 encoding
+      const encodedFilename = encodeURIComponent(downloadFilename);
+      res.setHeader('Content-Disposition', `attachment; filename="${downloadFilename}"; filename*=UTF-8''${encodedFilename}`);
+      
+      res.download(filePath, downloadFilename, (err) => {
+        if (err) {
+          res.status(500).json({ error: 'Error downloading file' });
+        }
+      });
     }
-  });
+  );
 });
 
 // Get circuit IDs for exclusion (searchable by UCN or Cable System)
