@@ -12,6 +12,10 @@ rm -rf frontend/node_modules/.cache
 rm -rf backend/node_modules/.cache
 rm -rf .cache
 
+# Clean npm cache (can help with memory issues)
+echo "Cleaning npm cache..."
+npm cache clean --force 2>/dev/null || true
+
 # Remove frontend build artifacts
 echo "Removing old build artifacts..."
 rm -rf frontend/build

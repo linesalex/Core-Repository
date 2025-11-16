@@ -10,6 +10,10 @@ Remove-Item -Path "frontend\node_modules\.cache" -Recurse -Force -ErrorAction Si
 Remove-Item -Path "backend\node_modules\.cache" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path ".cache" -Recurse -Force -ErrorAction SilentlyContinue
 
+# Clean npm cache (can help with memory issues)
+Write-Host "Cleaning npm cache..." -ForegroundColor Yellow
+npm cache clean --force 2>&1 | Out-Null
+
 # Remove frontend build artifacts
 Write-Host "Removing old build artifacts..." -ForegroundColor Yellow
 Remove-Item -Path "frontend\build" -Recurse -Force -ErrorAction SilentlyContinue

@@ -9832,7 +9832,7 @@ router.get('/pricing_logic/config', authenticateToken, (req, res) => {
       } else if (parts.length === 2 && parts[0] === 'charges') {
         // Skip protectionPathMultiplier if it exists in database (deprecated)
         if (parts[1] !== 'protectionPathMultiplier') {
-          configData.charges[parts[1]] = parseFloat(config.config_value);
+        configData.charges[parts[1]] = parseFloat(config.config_value);
         }
       } else if (parts.length === 2 && parts[0] === 'utilizationFactors') {
         configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
@@ -9888,10 +9888,10 @@ router.put('/pricing_logic/config', authenticateToken, authorizeRole('administra
   // Charges (skip deprecated protectionPathMultiplier)
   Object.keys(charges).forEach(chargeType => {
     if (chargeType !== 'protectionPathMultiplier') {
-      updateOperations.push({
-        key: `charges.${chargeType}`,
-        value: charges[chargeType]
-      });
+    updateOperations.push({
+      key: `charges.${chargeType}`,
+      value: charges[chargeType]
+    });
     }
   });
 
@@ -10048,10 +10048,10 @@ const getPricingLogicConfig = () => {
           24: { minMargin: 47.5, suggestedMargin: 65 },
           36: { minMargin: 45, suggestedMargin: 60 }
         },
-        charges: {
+              charges: {
           // protectionPathMultiplier removed - protected service pricing now based on enforced margins
-        },
-        utilizationFactors: {
+      },
+      utilizationFactors: {
         primaryUnder10000: 0.9,
         primaryOver10000: 0.9,
         protectionUnder10000: 1.0,
