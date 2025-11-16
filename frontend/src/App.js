@@ -308,7 +308,7 @@ function AuthenticatedApp() {
       (route.cable_system && route.cable_system.toLowerCase().includes(routeFilters.cable_system.toLowerCase()));
     
     const matchesBandwidth = !routeFilters.bandwidth || 
-      (route.bandwidth && route.bandwidth.toString().includes(routeFilters.bandwidth));
+      (route.bandwidth && route.bandwidth.toString() === routeFilters.bandwidth);
     
     // Handle three-state Special/ULL filter: '' (blank/all), '1' (yes), '0' (no)
     const matchesSpecial = !routeFilters.is_special || 

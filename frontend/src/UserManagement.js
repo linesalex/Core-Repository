@@ -50,10 +50,11 @@ const UserManagement = () => {
     { key: 'locations', label: 'Manage Locations' },
     { key: 'carriers', label: 'Manage Carriers' },
     { key: 'cnx_colocation', label: 'CNX Colocation' },
+    { key: 'exchange_rates', label: 'Manage Exchange Rates' },
     { key: 'exchange_data', label: 'Exchange Data' },
     { key: 'change_logs', label: 'Change Logs' },
     { key: 'core_outages', label: 'Core Outages' }
-    // Admin-only modules excluded: exchange_rates, user_management, bulk_upload, 
+    // Admin-only modules excluded: user_management, bulk_upload, 
     // minimum_pricing, pricing_logic, promo_pricing, live_latency_admin
   ]);
   
