@@ -276,7 +276,7 @@ const PromoPricingManager = ({ hasPermission }) => {
             </Typography>
             <Typography variant="body1" color="text.secondary">
               Manage promotional pricing rules that override standard pricing calculations. 
-              Promo pricing is checked first and applies to primary routes only.
+              Promo pricing is checked first and applies to both primary and secondary routes if margin requirements are met.
             </Typography>
           </Box>
         </Box>
@@ -454,7 +454,7 @@ const PromoPricingManager = ({ hasPermission }) => {
                 </Grid>
                 <Grid item xs={12} md={6}>
                   <Typography variant="body2" color="text.secondary">
-                    Promo pricing is checked first in calculations and applies to primary routes only.
+                    Promo pricing is checked first in calculations and applies to both primary and secondary routes if margin requirements are met.
                   </Typography>
                 </Grid>
               </Grid>

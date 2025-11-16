@@ -57,6 +57,12 @@ pids
 /backend/feedback_files/*
 !/backend/feedback_files/.gitkeep
 
+# KMZ templates (admin uploaded)
+/backend/templates/*.kmz
+
+# Temporary KMZ exports
+/backend/temp/*.kmz
+
 # Cesium static assets (copied from node_modules)
 /frontend/public/cesium/
 

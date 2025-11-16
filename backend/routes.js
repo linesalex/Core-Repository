@@ -5494,14 +5494,24 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       const primaryPricing = pricingResults[0].pricing;
       const secondaryPricing = pricingResults[1].pricing;
       
-      const protectionMultiplier = pricingConfig.charges.protectionPathMultiplier;
+      // Get protected service margin rules based on contract term
+      const protectedMargins = pricingConfig.protectedServiceMargins[contract_term];
+      if (!protectedMargins) {
+        throw new Error(`Protected service margins not configured for ${contract_term}-month contract term`);
+      }
       
-      // Protection pricing = 100% primary + 70% secondary (simple addition)
-      const protectedMinPrice = primaryPricing.minimumPrice + (secondaryPricing.minimumPrice * protectionMultiplier);
-      const protectedSuggestedPrice = primaryPricing.suggestedPrice + (secondaryPricing.suggestedPrice * protectionMultiplier);
-      const protectedAllocatedCost = primaryPricing.allocatedCost + (secondaryPricing.allocatedCost * protectionMultiplier);
+      const minMarginPercent = protectedMargins.minMargin;
+      const suggestedMarginPercent = protectedMargins.suggestedMargin;
       
-      // Calculate actual margins achieved
+      // Protection pricing = 100% primary + 100% secondary (full redundancy cost)
+      const protectedAllocatedCost = primaryPricing.allocatedCost + secondaryPricing.allocatedCost;
+      
+      // Calculate prices based on enforced margins
+      // Formula: Price = Allocated Cost / (1 - Margin%)
+      const protectedMinPrice = protectedAllocatedCost / (1 - (minMarginPercent / 100));
+      const protectedSuggestedPrice = protectedAllocatedCost / (1 - (suggestedMarginPercent / 100));
+      
+      // Calculate actual margins achieved (should match target margins)
       const actualProtectedMinMargin = ((protectedMinPrice - protectedAllocatedCost) / protectedMinPrice) * 100;
       const actualProtectedSuggestedMargin = ((protectedSuggestedPrice - protectedAllocatedCost) / protectedSuggestedPrice) * 100;
       
@@ -5510,43 +5520,46 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
 
       // Detailed protection pricing calculation breakdown
       const protectionCalculations = {
-        protectionMultiplier: {
-          value: protectionMultiplier,
-          percentage: `${Math.round(protectionMultiplier * 100)}%`,
-          description: 'Secondary path is charged at 70% of its individual price'
+        marginEnforcement: {
+          targetMinMargin: minMarginPercent,
+          targetSuggestedMargin: suggestedMarginPercent,
+          description: 'Prices calculated to enforce target margins based on full redundancy cost'
         },
         allocatedCostBreakdown: {
           primaryAllocatedCost: primaryPricing.allocatedCost,
           secondaryAllocatedCost: secondaryPricing.allocatedCost,
-          secondaryWeightedCost: secondaryPricing.allocatedCost * protectionMultiplier,
-          formula: `Primary + (Secondary × ${protectionMultiplier})`,
-          calculation: `${primaryPricing.allocatedCost.toFixed(2)} + (${secondaryPricing.allocatedCost.toFixed(2)} × ${protectionMultiplier}) = ${primaryPricing.allocatedCost.toFixed(2)} + ${(secondaryPricing.allocatedCost * protectionMultiplier).toFixed(2)} = ${protectedAllocatedCost.toFixed(2)} ${output_currency}`,
-          totalBeforeRounding: protectedAllocatedCost,
-          roundedToNearest10: roundUpToNearest10(protectedAllocatedCost)
+          formula: 'Primary Allocated + Secondary Allocated',
+          calculation: `${primaryPricing.allocatedCost.toFixed(2)} + ${secondaryPricing.allocatedCost.toFixed(2)} = ${protectedAllocatedCost.toFixed(2)} ${output_currency}`,
+          total: protectedAllocatedCost,
+          roundedToNearest10: roundUpToNearest10(protectedAllocatedCost),
+          description: 'Full cost of both paths (100% primary + 100% secondary)'
         },
         minimumPriceBreakdown: {
-          primaryMinimumPrice: primaryPricing.minimumPrice,
-          secondaryMinimumPrice: secondaryPricing.minimumPrice,
-          secondaryWeightedPrice: secondaryPricing.minimumPrice * protectionMultiplier,
-          formula: `Primary Min + (Secondary Min × ${protectionMultiplier})`,
-          calculation: `${primaryPricing.minimumPrice.toFixed(2)} + (${secondaryPricing.minimumPrice.toFixed(2)} × ${protectionMultiplier}) = ${primaryPricing.minimumPrice.toFixed(2)} + ${(secondaryPricing.minimumPrice * protectionMultiplier).toFixed(2)} = ${protectedMinPrice.toFixed(2)} ${output_currency}`,
+          allocatedCost: protectedAllocatedCost,
+          targetMargin: minMarginPercent,
+          formula: `Allocated Cost / (1 - ${minMarginPercent}%)`,
+          calculation: `${protectedAllocatedCost.toFixed(2)} / (1 - ${(minMarginPercent / 100).toFixed(2)}) = ${protectedAllocatedCost.toFixed(2)} / ${(1 - (minMarginPercent / 100)).toFixed(2)} = ${protectedMinPrice.toFixed(2)} ${output_currency}`,
           totalBeforeRounding: protectedMinPrice,
-          roundedToNearest10: roundUpToNearest10(protectedMinPrice)
+          roundedToNearest10: roundUpToNearest10(protectedMinPrice),
+          description: `Minimum price calculated to achieve ${minMarginPercent}% margin`
         },
         suggestedPriceBreakdown: {
-          primarySuggestedPrice: primaryPricing.suggestedPrice,
-          secondarySuggestedPrice: secondaryPricing.suggestedPrice,
-          secondaryWeightedPrice: secondaryPricing.suggestedPrice * protectionMultiplier,
-          formula: `Primary Suggested + (Secondary Suggested × ${protectionMultiplier})`,
-          calculation: `${primaryPricing.suggestedPrice.toFixed(2)} + (${secondaryPricing.suggestedPrice.toFixed(2)} × ${protectionMultiplier}) = ${primaryPricing.suggestedPrice.toFixed(2)} + ${(secondaryPricing.suggestedPrice * protectionMultiplier).toFixed(2)} = ${protectedSuggestedPrice.toFixed(2)} ${output_currency}`,
+          allocatedCost: protectedAllocatedCost,
+          targetMargin: suggestedMarginPercent,
+          formula: `Allocated Cost / (1 - ${suggestedMarginPercent}%)`,
+          calculation: `${protectedAllocatedCost.toFixed(2)} / (1 - ${(suggestedMarginPercent / 100).toFixed(2)}) = ${protectedAllocatedCost.toFixed(2)} / ${(1 - (suggestedMarginPercent / 100)).toFixed(2)} = ${protectedSuggestedPrice.toFixed(2)} ${output_currency}`,
           totalBeforeRounding: protectedSuggestedPrice,
-          roundedToNearest10: roundUpToNearest10(protectedSuggestedPrice)
+          roundedToNearest10: roundUpToNearest10(protectedSuggestedPrice),
+          description: `Suggested price calculated to achieve ${suggestedMarginPercent}% margin`
         },
         marginVerification: {
           actualMinMargin: actualProtectedMinMargin,
           actualMinMarginFormula: `((Protected Min - Protected Allocated) / Protected Min) × 100 = ((${protectedMinPrice.toFixed(2)} - ${protectedAllocatedCost.toFixed(2)}) / ${protectedMinPrice.toFixed(2)}) × 100 = ${actualProtectedMinMargin.toFixed(2)}%`,
+          targetMinMargin: minMarginPercent,
           actualSuggestedMargin: actualProtectedSuggestedMargin,
-          actualSuggestedMarginFormula: `((Protected Suggested - Protected Allocated) / Protected Suggested) × 100 = ((${protectedSuggestedPrice.toFixed(2)} - ${protectedAllocatedCost.toFixed(2)}) / ${protectedSuggestedPrice.toFixed(2)}) × 100 = ${actualProtectedSuggestedMargin.toFixed(2)}%`
+          actualSuggestedMarginFormula: `((Protected Suggested - Protected Allocated) / Protected Suggested) × 100 = ((${protectedSuggestedPrice.toFixed(2)} - ${protectedAllocatedCost.toFixed(2)}) / ${protectedSuggestedPrice.toFixed(2)}) × 100 = ${actualProtectedSuggestedMargin.toFixed(2)}%`,
+          targetSuggestedMargin: suggestedMarginPercent,
+          description: 'Margins are enforced and should match targets exactly'
         },
         nrcCharge: {
           chargedOnce: true,
@@ -5574,10 +5587,10 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
             weight: '100%'
           },
           secondary: {
-            minimumPrice: roundUpToNearest10(secondaryPricing.minimumPrice * protectionMultiplier),
-            suggestedPrice: roundUpToNearest10(secondaryPricing.suggestedPrice * protectionMultiplier),
-            allocatedCost: roundUpToNearest10(secondaryPricing.allocatedCost * protectionMultiplier),
-            weight: `${Math.round(protectionMultiplier * 100)}%`
+            minimumPrice: secondaryPricing.minimumPrice,
+            suggestedPrice: secondaryPricing.suggestedPrice,
+            allocatedCost: secondaryPricing.allocatedCost,
+            weight: '100%'
           }
         },
         detailedCalculations: protectionCalculations
@@ -9784,7 +9797,7 @@ router.get('/pricing_logic/config', authenticateToken, (req, res) => {
         36: { minMargin: 45, suggestedMargin: 60 }
       },
       charges: {
-        protectionPathMultiplier: 0.7
+        // protectionPathMultiplier removed - protected service pricing now based on enforced margins
       },
       utilizationFactors: {
         primaryUnder10000: 0.9,
@@ -9817,7 +9830,10 @@ router.get('/pricing_logic/config', authenticateToken, (req, res) => {
         if (!configData.protectedServiceMargins[term]) configData.protectedServiceMargins[term] = {};
         configData.protectedServiceMargins[term][field] = parseFloat(config.config_value);
       } else if (parts.length === 2 && parts[0] === 'charges') {
-        configData.charges[parts[1]] = parseFloat(config.config_value);
+        // Skip protectionPathMultiplier if it exists in database (deprecated)
+        if (parts[1] !== 'protectionPathMultiplier') {
+          configData.charges[parts[1]] = parseFloat(config.config_value);
+        }
       } else if (parts.length === 2 && parts[0] === 'utilizationFactors') {
         configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
       } else if (parts.length === 2 && parts[0] === 'promoPricing') {
@@ -9869,12 +9885,14 @@ router.put('/pricing_logic/config', authenticateToken, authorizeRole('administra
     });
   });
 
-  // Charges
+  // Charges (skip deprecated protectionPathMultiplier)
   Object.keys(charges).forEach(chargeType => {
-    updateOperations.push({
-      key: `charges.${chargeType}`,
-      value: charges[chargeType]
-    });
+    if (chargeType !== 'protectionPathMultiplier') {
+      updateOperations.push({
+        key: `charges.${chargeType}`,
+        value: charges[chargeType]
+      });
+    }
   });
 
   // Utilization factors
@@ -10030,10 +10048,10 @@ const getPricingLogicConfig = () => {
           24: { minMargin: 47.5, suggestedMargin: 65 },
           36: { minMargin: 45, suggestedMargin: 60 }
         },
-              charges: {
-        protectionPathMultiplier: 0.7
-      },
-      utilizationFactors: {
+        charges: {
+          // protectionPathMultiplier removed - protected service pricing now based on enforced margins
+        },
+        utilizationFactors: {
         primaryUnder10000: 0.9,
         primaryOver10000: 0.9,
         protectionUnder10000: 1.0,
@@ -13093,6 +13111,402 @@ router.post('/route_finder/find_routes', authenticateToken, authorizeModulePermi
   } catch (error) {
     console.error('Route Finder error:', error);
     res.status(500).json({ error: 'Failed to find routes: ' + error.message });
+  }
+});
+
+// ==================== KMZ Template Management ====================
+const { generateNetworkDesignKMZ } = require('./kmzGenerator');
+
+// Multer storage for template uploads
+const templateStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const templatesDir = path.join(__dirname, 'templates');
+    // Ensure directory exists
+    if (!fs.existsSync(templatesDir)) {
+      fs.mkdirSync(templatesDir, { recursive: true });
+      console.log('✓ Created templates directory:', templatesDir);
+    }
+    cb(null, templatesDir);
+  },
+  filename: function (req, file, cb) {
+    // Store as locations.kmz or disclaimer.kmz
+    // Note: req.body might not be available yet in multer's filename function
+    // We'll handle the rename in the route handler
+    const timestamp = Date.now();
+    cb(null, `temp_${timestamp}.kmz`);
+  }
+});
+
+const templateUpload = multer({ 
+  storage: templateStorage,
+  fileFilter: function (req, file, cb) {
+    // Only accept KMZ files
+    if (path.extname(file.originalname).toLowerCase() !== '.kmz') {
+      return cb(new Error('Only KMZ files are allowed'));
+    }
+    cb(null, true);
+  }
+});
+
+// Upload template (locations or disclaimer)
+router.post('/kmz_templates/upload', authenticateToken, authorizeRole('administrator'), templateUpload.single('template'), async (req, res) => {
+  try {
+    const { templateType } = req.body; // 'locations' or 'disclaimer'
+    
+    console.log('📤 KMZ Template Upload Request:');
+    console.log('  - Template Type:', templateType);
+    console.log('  - File received:', req.file ? 'Yes' : 'No');
+    if (req.file) {
+      console.log('  - Original filename:', req.file.originalname);
+      console.log('  - Temp filename:', req.file.filename);
+      console.log('  - Temp path:', req.file.path);
+      console.log('  - File size:', req.file.size, 'bytes');
+    }
+    
+    if (!templateType || !['locations', 'disclaimer'].includes(templateType)) {
+      return res.status(400).json({ error: 'Invalid template type. Must be "locations" or "disclaimer"' });
+    }
+    
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    
+    // Rename the temp file to the correct name
+    const tempPath = req.file.path;
+    const finalPath = path.join(__dirname, 'templates', `${templateType}.kmz`);
+    
+    console.log('  - Renaming file:');
+    console.log('    • From:', tempPath);
+    console.log('    • To:', finalPath);
+    
+    try {
+      // Delete existing file if it exists
+      if (fs.existsSync(finalPath)) {
+        fs.unlinkSync(finalPath);
+        console.log('    • Deleted existing file');
+      }
+      
+      // Rename temp file to final name
+      fs.renameSync(tempPath, finalPath);
+      console.log('    • ✓ File renamed successfully');
+      console.log('  - Final file exists:', fs.existsSync(finalPath) ? 'Yes ✓' : 'No ✗');
+    } catch (renameError) {
+      console.error('    • ❌ Rename failed:', renameError.message);
+      // Clean up temp file
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+      return res.status(500).json({ error: 'Failed to save template file: ' + renameError.message });
+    }
+    
+    // Store metadata in database
+    db.run(
+      `INSERT OR REPLACE INTO kmz_templates (template_type, filename, uploaded_by, uploaded_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
+      [templateType, `${templateType}.kmz`, req.user.id],
+      function(err) {
+        if (err) {
+          console.error('  - Database error:', err.message);
+          // Clean up file if database fails
+          if (fs.existsSync(finalPath)) {
+            fs.unlinkSync(finalPath);
+          }
+          return res.status(500).json({ error: err.message });
+        }
+        
+        console.log('  - ✓ Template metadata saved to database');
+        console.log('  - ✓ Upload complete!\n');
+        
+        res.json({
+          message: `${templateType} template uploaded successfully`,
+          filename: `${templateType}.kmz`,
+          uploadedBy: req.user.username,
+          uploadedAt: new Date().toISOString()
+        });
+      }
+    );
+  } catch (error) {
+    console.error('❌ Template upload error:', error);
+    // Clean up temp file if it exists
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get template info
+router.get('/kmz_templates/info/:templateType', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const { templateType } = req.params;
+  
+  if (!['locations', 'disclaimer'].includes(templateType)) {
+    return res.status(400).json({ error: 'Invalid template type' });
+  }
+  
+  db.get(
+    `SELECT t.*, u.username as uploaded_by_username
+     FROM kmz_templates t
+     LEFT JOIN users u ON t.uploaded_by = u.id
+     WHERE t.template_type = ?`,
+    [templateType],
+    (err, row) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      
+      if (!row) {
+        return res.status(404).json({ error: `No ${templateType} template found` });
+      }
+      
+      res.json(row);
+    }
+  );
+});
+
+// Download template
+router.get('/kmz_templates/download/:templateType', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const { templateType } = req.params;
+  
+  if (!['locations', 'disclaimer'].includes(templateType)) {
+    return res.status(400).json({ error: 'Invalid template type' });
+  }
+  
+  const filePath = path.join(__dirname, 'templates', `${templateType}.kmz`);
+  
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: `${templateType} template not found` });
+  }
+  
+  res.download(filePath, `${templateType}_template.kmz`);
+});
+
+// Check KMZ availability before export
+router.post('/network_design/check_kmz_availability', authenticateToken, authorizeModulePermission('network_design', 'read_only'), async (req, res) => {
+  try {
+    const {
+      primaryCircuits = [],
+      secondaryCircuits = [],
+      exportType
+    } = req.body;
+    
+    // Determine which circuits to check based on exportType
+    let circuitsToCheck = [];
+    
+    if (exportType === 'primary' || exportType === 'both') {
+      circuitsToCheck.push(...primaryCircuits.map(id => ({ id, type: 'primary' })));
+    }
+    
+    if (exportType === 'secondary' || exportType === 'both') {
+      circuitsToCheck.push(...secondaryCircuits.map(id => ({ id, type: 'secondary' })));
+    }
+    
+    // Check each circuit for KMZ file
+    const unavailable = [];
+    
+    for (const circuit of circuitsToCheck) {
+      const row = await new Promise((resolve, reject) => {
+        db.get(
+          'SELECT circuit_id, kmz_file_path FROM network_routes WHERE circuit_id = ?',
+          [circuit.id],
+          (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+          }
+        );
+      });
+      
+      if (!row || !row.kmz_file_path || row.kmz_file_path.trim() === '') {
+        unavailable.push({
+          circuitId: circuit.id,
+          type: circuit.type,
+          reason: 'No KMZ file path in database'
+        });
+      } else {
+        // Check if file actually exists
+        const kmzPath = path.join(__dirname, 'kmz_files', row.kmz_file_path);
+        if (!fs.existsSync(kmzPath)) {
+          unavailable.push({
+            circuitId: circuit.id,
+            type: circuit.type,
+            reason: 'KMZ file not found on disk'
+          });
+        }
+      }
+    }
+    
+    res.json({
+      totalCircuits: circuitsToCheck.length,
+      unavailableCircuits: unavailable,
+      availableCircuits: circuitsToCheck.length - unavailable.length,
+      canProceed: circuitsToCheck.length > unavailable.length // Can proceed if at least one circuit has KMZ
+    });
+    
+  } catch (error) {
+    console.error('KMZ availability check error:', error);
+    res.status(500).json({ error: 'Failed to check KMZ availability: ' + error.message });
+  }
+});
+
+// Export network design as KMZ
+router.post('/network_design/export_kmz', authenticateToken, authorizeModulePermission('network_design', 'read_only'), async (req, res) => {
+  try {
+    const {
+      primaryCircuits = [],
+      secondaryCircuits = [],
+      sourceLocationCode,
+      destLocationCode,
+      quoteRequestId,
+      customerName,
+      exportType // 'primary', 'secondary', 'both'
+    } = req.body;
+    
+    console.log('🗺️  KMZ Export Request:');
+    console.log('  - User:', req.user.username);
+    console.log('  - Export Type:', exportType);
+    console.log('  - Source:', sourceLocationCode);
+    console.log('  - Destination:', destLocationCode);
+    console.log('  - Primary Circuits:', primaryCircuits);
+    console.log('  - Secondary Circuits:', secondaryCircuits);
+    
+    // Validation
+    if (!sourceLocationCode || !destLocationCode) {
+      return res.status(400).json({ error: 'Source and destination locations are required' });
+    }
+    
+    if (!exportType || !['primary', 'secondary', 'both'].includes(exportType)) {
+      return res.status(400).json({ error: 'Invalid export type. Must be "primary", "secondary", or "both"' });
+    }
+    
+    // Determine which circuits to include based on exportType
+    let finalPrimaryCircuits = [];
+    let finalSecondaryCircuits = [];
+    
+    if (exportType === 'primary' || exportType === 'both') {
+      finalPrimaryCircuits = primaryCircuits;
+    }
+    
+    if (exportType === 'secondary' || exportType === 'both') {
+      finalSecondaryCircuits = secondaryCircuits;
+    }
+    
+    if (finalPrimaryCircuits.length === 0 && finalSecondaryCircuits.length === 0) {
+      return res.status(400).json({ error: 'No circuits provided for export' });
+    }
+    
+    // Check if templates exist
+    const locationsTemplatePath = path.join(__dirname, 'templates', 'locations.kmz');
+    const disclaimerPath = path.join(__dirname, 'templates', 'disclaimer.kmz');
+    
+    console.log('  - Checking for templates:');
+    console.log('    • Locations path:', locationsTemplatePath);
+    console.log('    • Locations exists:', fs.existsSync(locationsTemplatePath) ? 'Yes ✓' : 'No ✗');
+    console.log('    • Disclaimer path:', disclaimerPath);
+    console.log('    • Disclaimer exists:', fs.existsSync(disclaimerPath) ? 'Yes ✓' : 'No ✗');
+    
+    // List files in templates directory
+    const templatesDir = path.join(__dirname, 'templates');
+    console.log('    • Templates directory:', templatesDir);
+    console.log('    • Templates directory exists:', fs.existsSync(templatesDir) ? 'Yes ✓' : 'No ✗');
+    if (fs.existsSync(templatesDir)) {
+      const files = fs.readdirSync(templatesDir);
+      console.log('    • Files in templates directory:', files.length > 0 ? files : '(empty)');
+    }
+    
+    if (!fs.existsSync(disclaimerPath)) {
+      console.error('  - ❌ Disclaimer template NOT FOUND at:', disclaimerPath);
+      return res.status(400).json({ 
+        error: 'Disclaimer template not found. Please upload disclaimer template in System Settings.' 
+      });
+    }
+    
+    console.log('  - ✓ Templates check passed');
+    console.log('  - Starting KMZ generation...\n');
+    
+    // Generate KMZ
+    const result = await generateNetworkDesignKMZ({
+      primaryCircuits: finalPrimaryCircuits,
+      secondaryCircuits: finalSecondaryCircuits,
+      sourceLocationCode,
+      destLocationCode,
+      quoteRequestId: quoteRequestId || 'Quote',
+      customerName: customerName || 'Customer',
+      kmzDir: path.join(__dirname, 'kmz_files'),
+      locationsTemplatePath: fs.existsSync(locationsTemplatePath) ? locationsTemplatePath : null,
+      disclaimerPath,
+      outputDir: path.join(__dirname, 'temp'),
+      db // Pass database connection for circuit lookups
+    });
+    
+    console.log('  - ✓ KMZ generation complete!');
+    console.log('  - Stats:', JSON.stringify(result.stats, null, 2));
+    if (result.skippedCircuits.length > 0) {
+      console.log('  - ⚠️  Skipped circuits:', result.skippedCircuits.map(s => `${s.circuitId} (${s.reason})`).join(', '));
+    }
+    
+    // Log the export activity
+    const logData = {
+      action_type: 'KMZ_EXPORT',
+      user_id: req.user.id,
+      user_name: req.user.username,
+      parameters: JSON.stringify({
+        exportType,
+        sourceLocationCode,
+        destLocationCode,
+        quoteRequestId,
+        customerName,
+        primaryCircuitsCount: finalPrimaryCircuits.length,
+        secondaryCircuitsCount: finalSecondaryCircuits.length
+      }),
+      results: JSON.stringify({
+        filename: result.filename,
+        stats: result.stats,
+        skippedCircuits: result.skippedCircuits
+      }),
+      ip_address: req.ip || req.connection.remoteAddress,
+      user_agent: req.headers['user-agent']
+    };
+    
+    db.run(
+      `INSERT INTO audit_logs (action_type, user_id, user_name, parameters, results, ip_address, user_agent, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [logData.action_type, logData.user_id, logData.user_name, logData.parameters, logData.results, logData.ip_address, logData.user_agent]
+    );
+    
+    // Send file for download
+    console.log('  - Sending file for download:');
+    console.log('    • File path:', result.outputPath);
+    console.log('    • Download filename:', result.filename);
+    
+    // Explicitly set Content-Disposition header to ensure proper filename
+    const encodedFilename = encodeURIComponent(result.filename);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"; filename*=UTF-8''${encodedFilename}`);
+    res.setHeader('Content-Type', 'application/vnd.google-earth.kmz');
+    
+    console.log(`    • Content-Disposition: attachment; filename="${result.filename}"`);
+    
+    res.download(result.outputPath, result.filename, (err) => {
+      if (err) {
+        console.error('  - ❌ Download error:', err);
+      } else {
+        console.log('  - ✓ File sent successfully');
+      }
+      
+      // Clean up temp file after download
+      fs.unlink(result.outputPath, (unlinkErr) => {
+        if (unlinkErr) {
+          console.error('  - Failed to delete temp file:', unlinkErr);
+        } else {
+          console.log('  - ✓ Temp file cleaned up');
+        }
+      });
+    });
+    
+  } catch (error) {
+    console.error('KMZ export error:', error);
+    res.status(500).json({ 
+      error: 'Failed to export KMZ: ' + error.message,
+      details: error.stack
+    });
   }
 });
 

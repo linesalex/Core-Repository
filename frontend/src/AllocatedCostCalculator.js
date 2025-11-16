@@ -2457,7 +2457,7 @@ const AllocatedCostCalculator = () => {
                             
                             <Alert severity="info" sx={{ mb: 2 }}>
                               <Typography variant="body2" fontWeight="500" sx={{ fontSize: '0.875rem' }}>
-                                Protected service pricing uses a 70% weight for the secondary path, reflecting its standby nature.
+                                Protected service pricing includes 100% of both primary and secondary allocated costs, with enforced margin targets to ensure profitability.
                               </Typography>
                             </Alert>
                             

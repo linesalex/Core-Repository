@@ -50,7 +50,7 @@ const PricingLogicManager = ({ hasPermission }) => {
       36: { minMargin: 45, suggestedMargin: 60 }
     },
     charges: {
-      protectionPathMultiplier: 0.7
+      // protectionPathMultiplier removed - protected service pricing now based on enforced margins
     },
     utilizationFactors: {
       primaryUnder10000: 0.9,
@@ -193,7 +193,7 @@ const PricingLogicManager = ({ hasPermission }) => {
         36: { minMargin: 45, suggestedMargin: 60 }
       },
       charges: {
-        protectionPathMultiplier: 0.7
+        // protectionPathMultiplier removed - protected service pricing now based on enforced margins
       },
       utilizationFactors: {
         primaryUnder10000: 0.9,
@@ -407,31 +407,6 @@ const PricingLogicManager = ({ hasPermission }) => {
                 </TableContainer>
               </AccordionDetails>
             </Accordion>
-          </Grid>
-
-          {/* Additional Charges */}
-          <Grid item xs={12} md={6}>
-            <Card>
-              <CardContent>
-                <Box display="flex" alignItems="center" gap={1} mb={2}>
-                  <AttachMoneyIcon color="primary" />
-                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Additional Charges</Typography>
-                </Box>
-                <Grid container spacing={2}>
-                  <Grid item xs={12}>
-                    <TextField
-                      fullWidth
-                      label="Protection Path Multiplier"
-                      type="number"
-                      inputProps={{ step: 0.1, min: 0, max: 1 }}
-                      value={config.charges.protectionPathMultiplier}
-                      onChange={(e) => updateCharge('protectionPathMultiplier', e.target.value)}
-                      helperText="Multiplier for secondary/protection path pricing (0.0 - 1.0)"
-                    />
-                  </Grid>
-                </Grid>
-              </CardContent>
-            </Card>
           </Grid>
 
           {/* Utilization Factors */}

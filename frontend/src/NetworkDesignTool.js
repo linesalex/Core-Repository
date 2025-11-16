@@ -5,7 +5,7 @@ import {
   TableCell, TableContainer, TableHead, TableRow, Card, CardContent, CardHeader, Divider,
   Switch, FormControlLabel, Dialog, DialogTitle, DialogContent, DialogActions, List, ListItem,
   ListItemText, ListItemIcon, Checkbox, Tooltip, IconButton, Snackbar, Tabs, Tab, Autocomplete,
-  InputAdornment, Pagination
+  InputAdornment, Pagination, Radio, RadioGroup
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchIcon from '@mui/icons-material/Search';
@@ -20,8 +20,10 @@ import SaveIcon from '@mui/icons-material/Save';
 import HistoryIcon from '@mui/icons-material/History';
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import CableIcon from '@mui/icons-material/Cable';
+import MapIcon from '@mui/icons-material/Map';
+import WarningIcon from '@mui/icons-material/Warning';
 import LoadingButton from '@mui/lab/LoadingButton';
-import { networkDesignApi, getCrossConnectInfo } from './api';
+import { networkDesignApi, getCrossConnectInfo, checkKMZAvailability, exportNetworkDesignKMZ } from './api';
 import { getCarriers } from './api';
 import { useAuth } from './AuthContext';
 import { API_BASE_URL } from './config';
@@ -141,6 +143,14 @@ const NetworkDesignTool = () => {
     secondaryPricing: false,
     protectedPricing: false
   });
+
+  // KMZ Export dialog state
+  const [kmzExportDialogOpen, setKmzExportDialogOpen] = useState(false);
+  const [kmzExportType, setKmzExportType] = useState('primary'); // 'primary', 'secondary', 'both'
+  const [kmzExporting, setKmzExporting] = useState(false);
+  const [kmzMissingCircuitsDialogOpen, setKmzMissingCircuitsDialogOpen] = useState(false);
+  const [kmzMissingCircuits, setKmzMissingCircuits] = useState([]);
+  const [kmzExportDataPending, setKmzExportDataPending] = useState(null);
 
   // Contract term options (only 12, 24, 36 months)
   const contractTerms = [
@@ -1717,6 +1727,232 @@ const NetworkDesignTool = () => {
     }
   };
 
+  // KMZ Export Functions
+  const handleKMZExportOpen = () => {
+    setKmzExportDialogOpen(true);
+  };
+
+  const handleKMZExportClose = () => {
+    setKmzExportDialogOpen(false);
+    setKmzExportType('primary');
+  };
+
+  const handleMissingCircuitsCancel = () => {
+    setKmzMissingCircuitsDialogOpen(false);
+    setKmzMissingCircuits([]);
+    setKmzExportDataPending(null);
+  };
+
+  const handleMissingCircuitsContinue = async () => {
+    setKmzMissingCircuitsDialogOpen(false);
+    setKmzMissingCircuits([]);
+    
+    if (kmzExportDataPending) {
+      await performKMZExport(kmzExportDataPending);
+      setKmzExportDataPending(null);
+    }
+  };
+
+  const performKMZExport = async (exportData) => {
+    try {
+      setKmzExporting(true);
+      console.log('Performing KMZ export with data:', exportData);
+
+      // Call API to export
+      const response = await exportNetworkDesignKMZ(exportData);
+
+      // Check if there were skipped circuits in the response headers
+      const contentType = response.headers['content-type'];
+      if (contentType && contentType.includes('application/json')) {
+        // Error response
+        const errorData = await response.data.text();
+        const error = JSON.parse(errorData);
+        throw new Error(error.error || 'Failed to export KMZ');
+      }
+
+      // Create download link
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      
+      // Extract filename from Content-Disposition header if available
+      console.log('All response headers:', response.headers);
+      
+      const disposition = response.headers['content-disposition'] || response.headers['Content-Disposition'];
+      let filename = 'network_design.kmz';
+      
+      console.log('Content-Disposition header:', disposition);
+      
+      if (disposition) {
+        // Try multiple patterns to extract filename
+        // Pattern 1: filename*=UTF-8''encoded (RFC 5987)
+        let filenameMatch = disposition.match(/filename\*=UTF-8''([^;\s]+)/);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = decodeURIComponent(filenameMatch[1]);
+          console.log('Extracted filename (RFC 5987):', filename);
+        } else {
+          // Pattern 2: filename="quoted"
+          filenameMatch = disposition.match(/filename="([^"]+)"/);
+          if (filenameMatch && filenameMatch[1]) {
+            filename = filenameMatch[1];
+            console.log('Extracted filename (quoted):', filename);
+          } else {
+            // Pattern 3: filename=unquoted
+            filenameMatch = disposition.match(/filename=([^;\s]+)/);
+            if (filenameMatch && filenameMatch[1]) {
+              filename = filenameMatch[1].trim().replace(/"/g, '');
+              console.log('Extracted filename (unquoted):', filename);
+            }
+          }
+        }
+      } else {
+        console.warn('No Content-Disposition header found!');
+      }
+      
+      console.log('Final download filename:', filename);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      setSuccess('KMZ file exported successfully');
+      handleKMZExportClose();
+      setKmzExporting(false);
+
+    } catch (error) {
+      console.error('KMZ export error:', error);
+      
+      // Handle blob error response (when responseType is 'blob')
+      let errorMessage = 'Unknown error occurred';
+      
+      if (error.response?.data instanceof Blob) {
+        // Error response is a blob, need to read it as text
+        try {
+          const text = await error.response.data.text();
+          const errorData = JSON.parse(text);
+          errorMessage = errorData.error || errorData.message || text;
+        } catch (parseError) {
+          console.error('Could not parse error blob:', parseError);
+          errorMessage = 'Server returned an error';
+        }
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      setError(`Failed to export KMZ: ${errorMessage}`);
+      setKmzExporting(false);
+      throw error;
+    }
+  };
+
+  const handleKMZExport = async () => {
+    try {
+      setKmzExporting(true);
+      setError(null);
+
+      // Validate that we have search results
+      if (!searchResults) {
+        setError('No route design available to export');
+        setKmzExporting(false);
+        return;
+      }
+
+      // Extract circuit IDs from routes
+      const primaryCircuits = searchResults.primaryPath?.route?.map(r => r.circuit_id) || [];
+      const secondaryCircuits = searchResults.diversePath?.route?.map(r => r.circuit_id) || [];
+
+      // Validate based on export type
+      if (kmzExportType === 'primary' && primaryCircuits.length === 0) {
+        setError('No primary route available to export');
+        setKmzExporting(false);
+        return;
+      }
+
+      if (kmzExportType === 'secondary' && secondaryCircuits.length === 0) {
+        setError('No secondary route available to export');
+        setKmzExporting(false);
+        return;
+      }
+
+      if (kmzExportType === 'both' && primaryCircuits.length === 0 && secondaryCircuits.length === 0) {
+        setError('No routes available to export');
+        setKmzExporting(false);
+        return;
+      }
+
+      // Prepare export data
+      const exportData = {
+        primaryCircuits,
+        secondaryCircuits,
+        sourceLocationCode: formData.source,
+        destLocationCode: formData.destination,
+        quoteRequestId: formData.quoteRequestId || 'Quote',
+        customerName: formData.customerName || 'Customer',
+        exportType: kmzExportType
+      };
+
+      console.log('Checking KMZ availability for:', exportData);
+
+      // First, check KMZ availability
+      const availabilityResponse = await checkKMZAvailability(exportData);
+      const availabilityData = availabilityResponse.data;
+
+      console.log('KMZ availability check:', availabilityData);
+
+      // If there are unavailable circuits, show confirmation dialog
+      if (availabilityData.unavailableCircuits && availabilityData.unavailableCircuits.length > 0) {
+        if (!availabilityData.canProceed) {
+          setError('Cannot export KMZ: All circuits are missing KMZ files');
+          setKmzExporting(false);
+          return;
+        }
+
+        // Store export data and show confirmation dialog
+        setKmzExportDataPending(exportData);
+        setKmzMissingCircuits(availabilityData.unavailableCircuits);
+        setKmzMissingCircuitsDialogOpen(true);
+        setKmzExporting(false);
+        return;
+      }
+
+      // No missing circuits, proceed directly
+      await performKMZExport(exportData);
+
+    } catch (error) {
+      console.error('KMZ export error:', error);
+      console.error('Error status:', error.response?.status);
+      
+      // Handle blob error response (when responseType is 'blob')
+      let errorMessage = 'Unknown error occurred';
+      
+      if (error.response?.data instanceof Blob) {
+        // Error response is a blob, need to read it as text
+        try {
+          const text = await error.response.data.text();
+          const errorData = JSON.parse(text);
+          errorMessage = errorData.error || errorData.message || text;
+          console.error('Error response (parsed):', errorData);
+        } catch (parseError) {
+          console.error('Could not parse error blob:', parseError);
+          errorMessage = 'Server returned an error';
+        }
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      setError(`Failed to export KMZ: ${errorMessage}`);
+    } finally {
+      setKmzExporting(false);
+    }
+  };
+
   // Pricing Log Export Function
   const handleExportPricingLog = (log) => {
     try {
@@ -2936,8 +3172,16 @@ const NetworkDesignTool = () => {
               </Box>
             </AccordionSummary>
             <AccordionDetails>
-              {/* Export Button */}
-              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+              {/* Export Buttons */}
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, mb: 2 }}>
+                <Button
+                  variant="outlined"
+                  startIcon={<MapIcon />}
+                  onClick={handleKMZExportOpen}
+                  color="primary"
+                >
+                  Export KMZ
+                </Button>
                 <Button
                   variant="contained"
                   startIcon={<EmailIcon />}
@@ -3686,6 +3930,155 @@ const NetworkDesignTool = () => {
             disabled={!Object.values(exportOptions).some(Boolean)}
           >
             Download Email File
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* KMZ Export Dialog */}
+      <Dialog
+        open={kmzExportDialogOpen}
+        onClose={handleKMZExportClose}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <MapIcon color="primary" />
+            <Typography variant="h6">Export Network Design as KMZ</Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            Export your network design as a KMZ file for visualization in Google Earth or other mapping tools.
+            Routes will be color-coded: <strong style={{color: '#ff0000'}}>Red</strong> for Primary, <strong style={{color: '#0000ff'}}>Blue</strong> for Secondary.
+          </Typography>
+
+          <FormControl component="fieldset" sx={{ width: '100%' }}>
+            <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 'bold' }}>
+              Select Routes to Export:
+            </Typography>
+            <RadioGroup
+              value={kmzExportType}
+              onChange={(e) => setKmzExportType(e.target.value)}
+            >
+              <FormControlLabel
+                value="primary"
+                control={<Radio />}
+                label={
+                  <Box>
+                    <Typography variant="body2">Primary Route Only</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Export only the primary path (displayed in red)
+                    </Typography>
+                  </Box>
+                }
+                disabled={!searchResults?.primaryPath}
+              />
+              <FormControlLabel
+                value="secondary"
+                control={<Radio />}
+                label={
+                  <Box>
+                    <Typography variant="body2">Secondary Route Only</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Export only the secondary/protection path (displayed in blue)
+                    </Typography>
+                  </Box>
+                }
+                disabled={!searchResults?.diversePath}
+              />
+              <FormControlLabel
+                value="both"
+                control={<Radio />}
+                label={
+                  <Box>
+                    <Typography variant="body2">Both Routes (Protected Service)</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Export both paths in one file with color coding
+                    </Typography>
+                  </Box>
+                }
+                disabled={!searchResults?.primaryPath || !searchResults?.diversePath}
+              />
+            </RadioGroup>
+          </FormControl>
+
+          <Alert severity="info" sx={{ mt: 3 }}>
+            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+              <strong>File includes:</strong> Network routes with color coding, source/destination markers, and disclaimer.
+              The filename will be: {formData.quoteRequestId || 'Quote'}_{formData.customerName || 'Customer'}_{formData.source}_{formData.destination}.kmz
+            </Typography>
+          </Alert>
+
+          {kmzExporting && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+              <CircularProgress size={24} />
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleKMZExportClose} disabled={kmzExporting}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleKMZExport}
+            variant="contained"
+            startIcon={<MapIcon />}
+            disabled={kmzExporting || !searchResults}
+          >
+            {kmzExporting ? 'Exporting...' : 'Export KMZ'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Missing Circuits Confirmation Dialog */}
+      <Dialog
+        open={kmzMissingCircuitsDialogOpen}
+        onClose={handleMissingCircuitsCancel}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <WarningIcon color="warning" />
+            <Typography variant="h6">Missing KMZ Files</Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            The following circuits are missing KMZ files and will be excluded from the export:
+          </Alert>
+
+          <Box sx={{ maxHeight: 300, overflowY: 'auto', border: '1px solid #e0e0e0', borderRadius: 1, p: 2 }}>
+            {kmzMissingCircuits.map((circuit, index) => (
+              <Box key={index} sx={{ mb: 1.5, pb: 1.5, borderBottom: index < kmzMissingCircuits.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
+                <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                  {circuit.circuitId}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Type: {circuit.type === 'primary' ? 'Primary Route' : 'Secondary Route'}
+                </Typography>
+                <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5 }}>
+                  {circuit.reason}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
+
+          <Typography variant="body2" sx={{ mt: 2 }}>
+            Do you want to continue with the export using only the available circuits?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleMissingCircuitsCancel} color="inherit">
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleMissingCircuitsContinue}
+            variant="contained"
+            color="primary"
+          >
+            Continue Export
           </Button>
         </DialogActions>
       </Dialog>

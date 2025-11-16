@@ -17,7 +17,10 @@ const outageHistoryCleanup = require('./outageHistoryCleanupService');
 const liveLatencyApiLogsCleanup = require('./liveLatencyApiLogsCleanupService');
 const walCheckpoint = require('./walCheckpointService');
 
-app.use(cors());
+// Configure CORS to expose Content-Disposition header for file downloads
+app.use(cors({
+  exposedHeaders: ['Content-Disposition', 'Content-Type']
+}));
 app.use(express.json());
 
 // Add request logging middleware

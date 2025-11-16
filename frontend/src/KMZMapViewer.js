@@ -103,9 +103,9 @@ function KMZMapViewer({ onClose }) {
       
       viewer.scene.imageryLayers.addImageryProvider(cartoProvider);
 
-      // Set initial view to show Earth
+      // Set initial view to London metro area
       viewer.camera.setView({
-        destination: Cartesian3.fromDegrees(0, 20, 20000000), // Global view
+        destination: Cartesian3.fromDegrees(-0.1276, 51.5074, 500000), // London (longitude, latitude, altitude in meters)
       });
 
       // Set up click handler for route selection

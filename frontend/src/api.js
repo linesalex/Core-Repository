@@ -524,5 +524,45 @@ export const getSystemSettings = () => api.get(`${API_BASE_URL}/system-settings`
 export const getSystemSetting = (key) => api.get(`${API_BASE_URL}/system-settings/${key}`).then(res => res.data);
 export const updateSystemSetting = (key, value) => api.put(`${API_BASE_URL}/system-settings/${key}`, { setting_value: value }).then(res => res.data);
 
+// KMZ Template Management
+export const uploadKMZTemplate = (templateType, file) => {
+  const formData = new FormData();
+  formData.append('template', file);
+  formData.append('templateType', templateType); // 'locations' or 'disclaimer'
+  return api.post(`${API_BASE_URL}/kmz_templates/upload`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }).then(res => res.data);
+};
+
+export const getKMZTemplateInfo = (templateType) => {
+  return api.get(`${API_BASE_URL}/kmz_templates/info/${templateType}`).then(res => res.data);
+};
+
+export const downloadKMZTemplate = (templateType) => {
+  return api.get(`${API_BASE_URL}/kmz_templates/download/${templateType}`, {
+    responseType: 'blob'
+  }).then(response => {
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${templateType}_template.kmz`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  });
+};
+
+// Network Design KMZ Export
+export const checkKMZAvailability = (data) => {
+  return api.post(`${API_BASE_URL}/network_design/check_kmz_availability`, data);
+};
+
+export const exportNetworkDesignKMZ = (data) => {
+  return api.post(`${API_BASE_URL}/network_design/export_kmz`, data, {
+    responseType: 'blob'
+  });
+};
+
 // Export the base api object for direct use
 export { api }; 
