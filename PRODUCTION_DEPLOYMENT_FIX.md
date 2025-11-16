@@ -71,7 +71,7 @@ module.exports = {
       name: 'network-inventory-frontend',
       script: 'serve',  // ← Use 'serve', NOT 'npm'
       cwd: '/root/Core-Repository/frontend',
-      args: '-s build -l 3000',  // ← Serve the BUILD folder
+      args: ['-s', 'build', '-l', '3000'],  // ← Serve the BUILD folder (MUST be array!)
       instances: 1,
       exec_mode: 'fork',
       env: {
@@ -87,7 +87,7 @@ module.exports = {
 - ❌ `script: 'node_modules/.bin/react-scripts'` → **This is wrong!**
 
 **It should be:**
-- ✅ `script: 'serve'` with `args: '-s build -l 3000'`
+- ✅ `script: 'serve'` with `args: ['-s', 'build', '-l', '3000']` (array format!)
 
 ### Step 5: Restart PM2
 ```bash

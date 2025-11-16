@@ -34,11 +34,11 @@ module.exports = {
     },
     {
       name: 'network-frontend',
-      cwd: './frontend',
-      script: 'npx',  // ← Use npx to ensure serve is found
-      args: ['serve', '-s', 'build', '-p', '3000'],  // ← Use -p instead of -l for port
+      cwd: './',  // ← Run from root
+      script: './start-frontend.sh',  // ← Use wrapper script
       instances: 1,
       exec_mode: 'fork',
+      interpreter: 'bash',  // ← Specify bash interpreter
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
@@ -49,7 +49,7 @@ module.exports = {
         PORT: 3000,
         GENERATE_SOURCEMAP: 'false'
       },
-      max_memory_restart: '500M',  // ← CHANGED: Reduced from 2G to 500M (production build uses ~50MB)
+      max_memory_restart: '500M',
       min_uptime: '10s',
       max_restarts: 10,
       log_file: './logs/frontend-combined.log',
@@ -59,9 +59,10 @@ module.exports = {
       autorestart: true,
       watch: false,
       kill_timeout: 5000,
-      listen_timeout: 3000,  // ← CHANGED: Reduced from 8000 to 3000 (static server starts instantly)
+      listen_timeout: 3000,
       merge_logs: true,
       time: true
     }
   ]
 }; 
+

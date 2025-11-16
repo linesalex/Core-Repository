@@ -139,7 +139,7 @@ npm install -g serve
 **Usage in PM2:**
 ```javascript
 script: 'serve',
-args: '-s build -l 3000'
+args: ['-s', 'build', '-l', '3000']  // MUST be array format for PM2
 ```
 
 This is equivalent to running:
@@ -151,6 +151,8 @@ Flags:
 - `-s` = Single Page Application mode (routes all 404s to index.html)
 - `build` = Directory to serve
 - `-l 3000` = Listen on port 3000
+
+**Important:** PM2 requires `args` as an **array** when using multiple flags. Using a string like `'-s build -l 3000'` will cause parsing errors.
 
 ---
 
