@@ -35,8 +35,8 @@ module.exports = {
     {
       name: 'network-frontend',
       cwd: './frontend',
-      script: 'npx',  // ← Use npx to ensure serve is found
-      args: ['serve', '-s', 'build', '-p', '3000'],  // ← Use -p instead of -l for port
+      script: 'npx',
+      args: ['serve', '-p', '3000', '--no-clipboard'],  // ← serve.json will handle SPA config
       instances: 1,
       exec_mode: 'fork',
       env: {
