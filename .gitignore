@@ -100,6 +100,11 @@ coverage/
 # Dependency directories
 jspm_packages/
 
+# Webpack/Build caches (can grow very large in development)
+frontend/node_modules/.cache/
+backend/node_modules/.cache/
+.cache/
+
 # Optional npm cache directory
 .npm
 
