@@ -35,8 +35,8 @@ module.exports = {
     {
       name: 'network-frontend',
       cwd: './frontend',
-      script: 'npm',
-      args: 'start',
+      script: 'serve',  // ← CHANGED: Use 'serve' to serve static production build
+      args: '-s build -l 3000',  // ← CHANGED: Serve the 'build' folder on port 3000
       instances: 1,
       exec_mode: 'fork',
       env: {
@@ -49,7 +49,7 @@ module.exports = {
         PORT: 3000,
         GENERATE_SOURCEMAP: 'false'
       },
-      max_memory_restart: '2G',
+      max_memory_restart: '500M',  // ← CHANGED: Reduced from 2G to 500M (production build uses ~50MB)
       min_uptime: '10s',
       max_restarts: 10,
       log_file: './logs/frontend-combined.log',
@@ -59,7 +59,7 @@ module.exports = {
       autorestart: true,
       watch: false,
       kill_timeout: 5000,
-      listen_timeout: 8000,
+      listen_timeout: 3000,  // ← CHANGED: Reduced from 8000 to 3000 (static server starts instantly)
       merge_logs: true,
       time: true
     }
