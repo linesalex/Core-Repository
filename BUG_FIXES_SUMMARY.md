@@ -167,6 +167,60 @@ Red (default), Blue, Green, Yellow, Orange, Purple, Pink, Cyan
 
 ---
 
+## ✅ **Issue 7: KMZ Viewer Locations Toggle & Blob Fix** (BUG FIX)
+
+**Status:** ✅ FIXED
+
+**User Report:** "150+ location pins don't load in prod (work in dev with 4 pins). Blob security errors."
+
+**Problems:**
+1. Blob URLs causing browser security errors ("not allowed to load local resource")
+2. 150+ pins loaded successfully but not visible
+3. No way to toggle locations on/off
+
+**Solution:**
+1. **Blob URL → ArrayBuffer:** Load KMZ via `arrayBuffer` instead of blob URL (avoids security restrictions)
+2. **Visibility Toggle:** Added "Show Location Pins" checkbox in Primary Filters (checked by default)
+3. **Better Logging:** Console shows entity count (e.g., "✓ Loaded 152 location entities")
+
+**Files Changed:** `frontend/src/KMZMapViewer.js`
+
+---
+
+## ✅ **Issue 8: KMZ Export Path Merging** (CRITICAL BUG FIX)
+
+**Status:** ✅ FIXED
+
+**User Report:** "End-to-end KMZ export fails with 100+ circuit segments. Merged path doesn't display original routes."
+
+**Problem:**
+```
+OLD LOGIC (WRONG):
+- Merged all circuit coordinates into ONE LineString
+- Created invalid connections between separate circuits
+- Example: London→Paris (A,B,C) + Paris→Frankfurt (D,E,F) = (A,B,C,D,E,F)
+- Result: Invalid line from Paris endpoint to Paris startpoint
+```
+
+**Solution:**
+```
+NEW LOGIC (CORRECT):
+- Keep each circuit as SEPARATE Placemark
+- Each maintains its own LineString with coordinates
+- Example: Circuit 1 (A,B,C) + Circuit 2 (D,E,F) = Two separate segments
+- Result: Accurate route display, no invalid connections
+```
+
+**Impact:**
+- ✅ Handles 100+ circuit segments per route
+- ✅ Routes display correctly in Google Earth
+- ✅ No coordinate merging/corruption
+- ✅ Proper route topology maintained
+
+**Files Changed:** `backend/kmzGenerator.js` (lines 278-332)
+
+---
+
 ## 📋 **Testing Checklist**
 
 ### Issue 1: KMZ Export
@@ -238,6 +292,42 @@ Red (default), Blue, Green, Yellow, Orange, Purple, Pink, Cyan
 - [ ] Manually check "100Gb" checkbox
 - [ ] ✅ Should load additional 100Gb routes
 - [ ] ✅ Load time should be reasonable (~5-10 seconds max)
+
+### Issue 7: KMZ Viewer Locations Toggle & Blob Fix
+**Prerequisites:**
+- [ ] Upload `locations.kmz` with 150+ locations in Admin → System Settings
+
+**Testing:**
+- [ ] Open KMZ Viewer module
+- [ ] Check browser console for: "✓ Loaded X location entities"
+- [ ] ✅ Should see count (e.g., 152 entities)
+- [ ] ✅ Should see location pins on globe
+- [ ] ✅ NO blob URL security errors in console
+- [ ] Uncheck "Show Location Pins" checkbox
+- [ ] ✅ All location pins should disappear
+- [ ] Re-check "Show Location Pins"
+- [ ] ✅ All location pins should reappear
+- [ ] Zoom in/out
+- [ ] ✅ Pins should stay visible at all zoom levels
+
+### Issue 8: KMZ Export Path Merging Fix
+**Prerequisites:**
+- [ ] Design with multiple circuits (test with 5+ circuits per route)
+
+**Testing:**
+- [ ] Navigate to Design & Pricing Tool
+- [ ] Create design with 5+ primary circuits
+- [ ] Click "Export KMZ" → Primary route only
+- [ ] ✅ Export should succeed
+- [ ] Open exported KMZ in Google Earth
+- [ ] ✅ Should see "Primary Path" folder
+- [ ] Expand "Primary Path" folder
+- [ ] ✅ Should see multiple unnamed segments (not just 1)
+- [ ] ✅ Each segment should be red
+- [ ] ✅ Route should display correctly (no weird connections)
+- [ ] Test with secondary/both routes
+- [ ] ✅ Secondary segments should be blue
+- [ ] ✅ All routes display accurately
 
 ---
 

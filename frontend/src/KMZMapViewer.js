@@ -60,6 +60,9 @@ function KMZMapViewer({ onClose }) {
   // Route visibility toggles
   const [routeVisibility, setRouteVisibility] = useState({});
   
+  // Locations visibility toggle
+  const [showLocations, setShowLocations] = useState(true);
+  
   // Route colors (session-only, 8 preset colors)
   const [routeColors, setRouteColors] = useState({}); // { circuit_id: 'red', ... }
   const [colorMenuAnchor, setColorMenuAnchor] = useState(null);
@@ -221,11 +224,13 @@ function KMZMapViewer({ onClose }) {
           return; // Silently fail if template not uploaded yet
         }
         
-        const blob = await response.blob();
-        const blobUrl = URL.createObjectURL(blob);
+        const arrayBuffer = await response.arrayBuffer();
         
-        // Load locations KMZ
-        const locationsDataSource = await KmlDataSource.load(blobUrl, {
+        // Convert to Blob (Cesium requires Blob, not blob URL or arrayBuffer)
+        const blob = new Blob([arrayBuffer], { type: 'application/vnd.google-earth.kmz' });
+        
+        // Load KMZ directly from Blob object (no blob URL needed - avoids security issues)
+        const locationsDataSource = await KmlDataSource.load(blob, {
           camera: viewerRef.current.camera,
           canvas: viewerRef.current.canvas,
           clampToGround: true
@@ -233,6 +238,8 @@ function KMZMapViewer({ onClose }) {
         
         // Ensure all location pins stay visible at all zoom levels
         const entities = locationsDataSource.entities.values;
+        console.log(`✓ Loaded ${entities.length} location entities`);
+        
         entities.forEach(entity => {
           // For billboards (pins with icons)
           if (entity.billboard) {
@@ -259,8 +266,7 @@ function KMZMapViewer({ onClose }) {
         viewerRef.current.dataSources.add(locationsDataSource);
         locationsDataSourceRef.current = locationsDataSource;
         
-        URL.revokeObjectURL(blobUrl);
-        console.log('✓ Permanent locations loaded successfully');
+        console.log('✓ Permanent locations loaded successfully with', entities.length, 'pins');
         
       } catch (err) {
         console.error('Error loading locations template:', err);
@@ -270,6 +276,13 @@ function KMZMapViewer({ onClose }) {
     
     loadLocationsTemplate();
   }, [viewerReady]);
+
+  // Toggle locations visibility
+  useEffect(() => {
+    if (locationsDataSourceRef.current) {
+      locationsDataSourceRef.current.show = showLocations;
+    }
+  }, [showLocations]);
 
   // Load routes by bandwidth filter
   const loadRoutesByFilter = async (filterString) => {
@@ -735,6 +748,16 @@ function KMZMapViewer({ onClose }) {
             Primary Filters:
           </Typography>
           <FormGroup>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={showLocations}
+                  onChange={() => setShowLocations(!showLocations)}
+                />
+              }
+              label="Show Location Pins"
+              sx={{ mb: 1, borderBottom: '1px solid #e0e0e0', pb: 1 }}
+            />
             <FormControlLabel
               control={
                 <Checkbox

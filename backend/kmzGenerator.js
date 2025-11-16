@@ -277,13 +277,17 @@ async function buildKMZ(options) {
   
   // 4. Add Primary Path folder (if exists)
   if (routes.primary && routes.primary.length > 0) {
-    const allCoords = routes.primary.flat();
-    const coordString = allCoords.map(c => `${c.lon},${c.lat},${c.alt || 0}`).join(' ');
-    
     const primaryFolder = {
       name: 'Primary Path',
-      Placemark: {
-        name: 'Primary Route',
+      Placemark: []
+    };
+    
+    // Keep each route segment separate (don't merge)
+    routes.primary.forEach((segmentCoords, index) => {
+      const coordString = segmentCoords.map(c => `${c.lon},${c.lat},${c.alt || 0}`).join(' ');
+      
+      primaryFolder.Placemark.push({
+        name: '', // No name needed
         LineString: {
           coordinates: coordString
         },
@@ -293,21 +297,25 @@ async function buildKMZ(options) {
             width: 3.0
           }
         }
-      }
-    };
+      });
+    });
     
     kmlDoc.kml.Document.Folder.push(primaryFolder);
   }
   
   // 5. Add Secondary Path folder (if exists)
   if (routes.secondary && routes.secondary.length > 0) {
-    const allCoords = routes.secondary.flat();
-    const coordString = allCoords.map(c => `${c.lon},${c.lat},${c.alt || 0}`).join(' ');
-    
     const secondaryFolder = {
       name: 'Secondary Path',
-      Placemark: {
-        name: 'Secondary Route',
+      Placemark: []
+    };
+    
+    // Keep each route segment separate (don't merge)
+    routes.secondary.forEach((segmentCoords, index) => {
+      const coordString = segmentCoords.map(c => `${c.lon},${c.lat},${c.alt || 0}`).join(' ');
+      
+      secondaryFolder.Placemark.push({
+        name: '', // No name needed
         LineString: {
           coordinates: coordString
         },
@@ -317,8 +325,8 @@ async function buildKMZ(options) {
             width: 3.0
           }
         }
-      }
-    };
+      });
+    });
     
     kmlDoc.kml.Document.Folder.push(secondaryFolder);
   }
