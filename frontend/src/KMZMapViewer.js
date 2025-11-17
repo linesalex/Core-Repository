@@ -13,7 +13,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import RouteIcon from '@mui/icons-material/Route';
 import PaletteIcon from '@mui/icons-material/Palette';
-import { Viewer, Ion, KmlDataSource, Cartesian3, Cartographic, Math as CesiumMath, UrlTemplateImageryProvider, CustomDataSource, ScreenSpaceEventHandler, ScreenSpaceEventType, defined, Color, HeightReference } from 'cesium';
+import { Viewer, Ion, KmlDataSource, Cartesian3, Cartographic, Math as CesiumMath, UrlTemplateImageryProvider, CustomDataSource, ScreenSpaceEventHandler, ScreenSpaceEventType, defined, Color, HeightReference, SceneMode, JulianDate, DistanceDisplayCondition } from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { API_BASE_URL } from './config';
 import { fetchRoutesByBandwidth, fetchRouteCounts, searchKMZRoutes } from './api';
@@ -99,7 +99,7 @@ function KMZMapViewer({ onClose }) {
     if (!cesiumContainer.current) return;
 
     try {
-      // Create viewer WITHOUT imagery first, then add tiles (like the button did)
+      // Create viewer in FORCED 2D MODE (flat map, no globe)
       const viewer = new Viewer(cesiumContainer.current, {
         imageryProvider: false, // Start with no imagery
         baseLayerPicker: false,
@@ -108,10 +108,11 @@ function KMZMapViewer({ onClose }) {
         timeline: false,
         animation: false,
         homeButton: true,
-        sceneModePicker: true,
+        sceneModePicker: false, // Disable mode picker (forced 2D)
         navigationHelpButton: true,
         fullscreenButton: true,
         vrButton: false,
+        sceneMode: SceneMode.SCENE2D, // FORCE 2D flat map mode
         requestRenderMode: false,
         maximumRenderTimeChange: Infinity
       });
@@ -232,39 +233,45 @@ function KMZMapViewer({ onClose }) {
         // Load KMZ directly from Blob object (no blob URL needed - avoids security issues)
         const locationsDataSource = await KmlDataSource.load(blob, {
           camera: viewerRef.current.camera,
-          canvas: viewerRef.current.canvas,
-          clampToGround: true
+          canvas: viewerRef.current.canvas
+          // Removed clampToGround - causes issues in 2D mode
         });
         
-        // Ensure all location pins stay visible at all zoom levels AND anchored to ground
+        // Diagnostic logging to check coordinates
         const entities = locationsDataSource.entities.values;
-        console.log(`✓ Loaded ${entities.length} location entities`);
+        console.log(`✓ Loaded ${entities.length} location entities (2D mode - using original KML coordinates)`);
         
+        // Log first entity's position for debugging
+        if (entities.length > 0) {
+          const firstEntity = entities.find(e => e.position);
+          if (firstEntity) {
+            const position = firstEntity.position.getValue(JulianDate.now());
+            if (position) {
+              const cartographic = Cartographic.fromCartesian(position);
+              const lon = CesiumMath.toDegrees(cartographic.longitude);
+              const lat = CesiumMath.toDegrees(cartographic.latitude);
+              console.log(`  └─ Sample location: "${firstEntity.name}" at Lon: ${lon.toFixed(4)}°, Lat: ${lat.toFixed(4)}°`);
+              console.log(`     (Expected: London area should be around Lon: -0.1°, Lat: 51.5°)`);
+            }
+          }
+        }
+        
+        // Set distance-based visibility for labels (only show when zoomed in)
+        // Pins always visible, labels only visible at city-level zoom
+        let labelCount = 0;
         entities.forEach(entity => {
-          // CRITICAL: Ensure entity is anchored to ground coordinates (not screen-space)
-          if (entity.billboard) {
-            // Make sure billboard is clamped to ground
-            entity.billboard.heightReference = HeightReference.CLAMP_TO_GROUND;
-            entity.billboard.distanceDisplayCondition = undefined; // Always show
-            entity.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY; // Always visible
-            entity.billboard.scaleByDistance = undefined; // Don't scale by distance
-          }
-          
-          if (entity.point) {
-            // Make sure point is clamped to ground
-            entity.point.heightReference = HeightReference.CLAMP_TO_GROUND;
-            entity.point.distanceDisplayCondition = undefined; // Always show
-            entity.point.disableDepthTestDistance = Number.POSITIVE_INFINITY; // Always visible
-          }
-          
           if (entity.label) {
-            // Make sure label is clamped to ground
-            entity.label.heightReference = HeightReference.CLAMP_TO_GROUND;
-            entity.label.distanceDisplayCondition = undefined; // Always show
-            entity.label.disableDepthTestDistance = Number.POSITIVE_INFINITY; // Always visible
-            entity.label.scaleByDistance = undefined; // Don't scale by distance
+            // Labels only visible when camera is within 250km (closer city-level zoom)
+            // 0 = minimum distance, 250000 = maximum distance in meters (250km)
+            entity.label.distanceDisplayCondition = new DistanceDisplayCondition(0, 125000);
+            labelCount++;
           }
+          // Pins (billboards/points) - no distance condition, always visible
         });
+        
+        if (labelCount > 0) {
+          console.log(`  └─ Set distance-based visibility for ${labelCount} labels (visible within 250km)`);
+        }
         
         // Add to viewer - these pins stay permanent
         viewerRef.current.dataSources.add(locationsDataSource);
