@@ -176,12 +176,20 @@ Red (default), Blue, Green, Yellow, Orange, Purple, Pink, Cyan
 **Problems:**
 1. Blob URLs causing browser security errors ("not allowed to load local resource")
 2. 150+ pins loaded successfully but not visible
-3. No way to toggle locations on/off
+3. Pins "stuck" to screen (moved with camera instead of staying at geographic locations)
+4. No way to toggle locations on/off
 
 **Solution:**
-1. **Blob URL → ArrayBuffer:** Load KMZ via `arrayBuffer` instead of blob URL (avoids security restrictions)
-2. **Visibility Toggle:** Added "Show Location Pins" checkbox in Primary Filters (checked by default)
-3. **Better Logging:** Console shows entity count (e.g., "✓ Loaded 152 location entities")
+1. **Blob Object (not URL):** Load KMZ via `arrayBuffer` → `Blob object` (avoids blob URL security)
+2. **Fixed Pin Anchoring:** Set `HeightReference.CLAMP_TO_GROUND` on all entities (anchors to coordinates)
+3. **Visibility Toggle:** Added "Show Location Pins" checkbox in Primary Filters (checked by default)
+4. **Better Logging:** Console shows entity count (e.g., "✓ Loaded 152 location entities")
+
+**Why HeightReference Was Critical:**
+- Without it, pins acted like screen-space overlays
+- They would "stick" to the screen and move with the camera
+- With `CLAMP_TO_GROUND`, pins are anchored to their geographic coordinates
+- Now pins stay in correct locations when zooming/panning
 
 **Files Changed:** `frontend/src/KMZMapViewer.js`
 

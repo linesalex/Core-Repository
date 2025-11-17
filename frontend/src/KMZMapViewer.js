@@ -13,7 +13,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import RouteIcon from '@mui/icons-material/Route';
 import PaletteIcon from '@mui/icons-material/Palette';
-import { Viewer, Ion, KmlDataSource, Cartesian3, Cartographic, Math as CesiumMath, UrlTemplateImageryProvider, CustomDataSource, ScreenSpaceEventHandler, ScreenSpaceEventType, defined, Color } from 'cesium';
+import { Viewer, Ion, KmlDataSource, Cartesian3, Cartographic, Math as CesiumMath, UrlTemplateImageryProvider, CustomDataSource, ScreenSpaceEventHandler, ScreenSpaceEventType, defined, Color, HeightReference } from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { API_BASE_URL } from './config';
 import { fetchRoutesByBandwidth, fetchRouteCounts, searchKMZRoutes } from './api';
@@ -236,26 +236,30 @@ function KMZMapViewer({ onClose }) {
           clampToGround: true
         });
         
-        // Ensure all location pins stay visible at all zoom levels
+        // Ensure all location pins stay visible at all zoom levels AND anchored to ground
         const entities = locationsDataSource.entities.values;
         console.log(`✓ Loaded ${entities.length} location entities`);
         
         entities.forEach(entity => {
-          // For billboards (pins with icons)
+          // CRITICAL: Ensure entity is anchored to ground coordinates (not screen-space)
           if (entity.billboard) {
+            // Make sure billboard is clamped to ground
+            entity.billboard.heightReference = HeightReference.CLAMP_TO_GROUND;
             entity.billboard.distanceDisplayCondition = undefined; // Always show
             entity.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY; // Always visible
             entity.billboard.scaleByDistance = undefined; // Don't scale by distance
           }
           
-          // For points (simple dots)
           if (entity.point) {
+            // Make sure point is clamped to ground
+            entity.point.heightReference = HeightReference.CLAMP_TO_GROUND;
             entity.point.distanceDisplayCondition = undefined; // Always show
             entity.point.disableDepthTestDistance = Number.POSITIVE_INFINITY; // Always visible
           }
           
-          // For labels
           if (entity.label) {
+            // Make sure label is clamped to ground
+            entity.label.heightReference = HeightReference.CLAMP_TO_GROUND;
             entity.label.distanceDisplayCondition = undefined; // Always show
             entity.label.disableDepthTestDistance = Number.POSITIVE_INFINITY; // Always visible
             entity.label.scaleByDistance = undefined; // Don't scale by distance
