@@ -66,8 +66,8 @@ const COLUMN_CATEGORIES = {
   actions: 'Actions'
 };
 
-// Get available columns based on user role
-const getAvailableColumns = (userRole) => {
+// Get available columns based on user role and module permission
+const getAvailableColumns = (userRole, modulePermission) => {
   return ALL_COLUMNS.filter(col => {
     // Hide Repository Type for all users (not required)
     if (col.id === 'repository_type_id') {
@@ -79,13 +79,20 @@ const getAvailableColumns = (userRole) => {
       return userRole === 'administrator';
     }
     
+    // Hide KMZ and Test Results for Sales users
+    if (modulePermission === 'sales') {
+      if (col.id === 'kmz_file_path' || col.id === 'test_results_file') {
+        return false;
+      }
+    }
+    
     // All other columns are available to everyone
     return true;
   });
 };
 
 // Default visible columns (maintains current view)
-const getDefaultColumns = (userRole) => getAvailableColumns(userRole).filter(col => col.defaultVisible);
+const getDefaultColumns = (userRole, modulePermission) => getAvailableColumns(userRole, modulePermission).filter(col => col.defaultVisible);
 
 const textCellStyle = {
   maxWidth: 220,
@@ -141,8 +148,8 @@ const darkFiberLinkStyle = {
   color: '#9c27b0', // MUI secondary.main
 };
 
-function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onOpenDarkFiber, userRole, userId, onRefreshSuccess }) {
-  const [visibleColumns, setVisibleColumns] = useState(getDefaultColumns(userRole));
+function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onOpenDarkFiber, userRole, modulePermission, userId, onRefreshSuccess }) {
+  const [visibleColumns, setVisibleColumns] = useState(getDefaultColumns(userRole, modulePermission));
   const [columnMenuAnchor, setColumnMenuAnchor] = useState(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   
@@ -186,7 +193,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
     if (savedColumns) {
       try {
         const columnIds = JSON.parse(savedColumns);
-        const availableColumns = getAvailableColumns(userRole);
+        const availableColumns = getAvailableColumns(userRole, modulePermission);
         const customColumns = availableColumns.filter(col => columnIds.includes(col.id));
         console.log('NetworkRoutesTable: Parsed column IDs:', columnIds);
         console.log('NetworkRoutesTable: Available columns for role:', availableColumns.map(c => c.id));
@@ -197,17 +204,17 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
           setVisibleColumns(customColumns);
         } else {
           console.log('NetworkRoutesTable: No valid custom columns, using defaults');
-          setVisibleColumns(getDefaultColumns(userRole));
+          setVisibleColumns(getDefaultColumns(userRole, modulePermission));
         }
       } catch (error) {
         console.error('Failed to load column preferences:', error);
-        setVisibleColumns(getDefaultColumns(userRole));
+        setVisibleColumns(getDefaultColumns(userRole, modulePermission));
       }
     } else {
       console.log('NetworkRoutesTable: No saved preferences found, using defaults');
-      setVisibleColumns(getDefaultColumns(userRole));
+      setVisibleColumns(getDefaultColumns(userRole, modulePermission));
     }
-  }, [userRole, userId]);
+  }, [userRole, modulePermission, userId]);
 
   // Track changes to mark as unsaved (but don't auto-save anymore)
   useEffect(() => {
@@ -227,7 +234,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
       }
     } else {
       // No saved preferences, so current state is different from default if it's not default
-      const defaultColumns = getDefaultColumns(userRole);
+      const defaultColumns = getDefaultColumns(userRole, modulePermission);
       const isDefault = JSON.stringify(visibleColumns.map(c => c.id)) === JSON.stringify(defaultColumns.map(c => c.id));
       setHasUnsavedChanges(!isDefault);
     }
@@ -266,7 +273,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
         return prev.filter(col => col.id !== column.id);
       } else {
         // Add column in original order, but only from available columns
-        const availableColumns = getAvailableColumns(userRole);
+        const availableColumns = getAvailableColumns(userRole, modulePermission);
         const newColumns = availableColumns.filter(col => 
           prev.some(p => p.id === col.id) || col.id === column.id
         );
@@ -276,7 +283,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
   };
 
   const resetToDefault = () => {
-    setVisibleColumns(getDefaultColumns(userRole));
+    setVisibleColumns(getDefaultColumns(userRole, modulePermission));
     handleColumnMenuClose();
   };
 
@@ -483,7 +490,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, px: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            Showing {visibleColumns.length} of {getAvailableColumns(userRole).length} columns
+            Showing {visibleColumns.length} of {getAvailableColumns(userRole, modulePermission).length} columns
           </Typography>
           <Chip 
             size="small" 
@@ -551,7 +558,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
         <Divider />
         
         {Object.entries(COLUMN_CATEGORIES).map(([categoryKey, categoryLabel]) => {
-          const availableColumns = getAvailableColumns(userRole);
+          const availableColumns = getAvailableColumns(userRole, modulePermission);
           const categoryColumns = availableColumns.filter(col => col.category === categoryKey);
           if (categoryColumns.length === 0) return null;
           

@@ -1172,6 +1172,9 @@ const NetworkDesignTool = () => {
         errorMessage += `\n\nRoute analysis: ${exclusionData.total_routes_available} total routes, ${exclusionData.total_routes_excluded} excluded by constraints`;
         
         setError(errorMessage);
+      } else if (err.response && err.response.status === 404) {
+        // 404 without detailed exclusion data - show friendly message
+        setError('No Route Available With Current Parameters, Please Try Again');
       } else {
         setError('Search failed: ' + (err.response?.data?.error || err.message));
       }
@@ -1762,25 +1765,45 @@ const NetworkDesignTool = () => {
       setKmzExporting(true);
       console.log('Performing KMZ export with data:', exportData);
 
+      // Calculate total circuit count for progress messages
+      const primaryCount = exportData.primaryCircuits?.length || 0;
+      const secondaryCount = exportData.secondaryCircuits?.length || 0;
+      const totalCircuits = (exportData.exportType === 'primary' ? primaryCount : 
+                             exportData.exportType === 'secondary' ? secondaryCount : 
+                             primaryCount + secondaryCount);
+
       // Step 1: Validating circuits
-      setKmzExportStep('Validating circuits...');
+      setKmzExportStep(`Validating ${totalCircuits} circuit${totalCircuits !== 1 ? 's' : ''}...`);
       setKmzExportProgress(15);
       await new Promise(resolve => setTimeout(resolve, 300)); // Brief delay for UX
 
-      // Step 2: Loading circuit KMZ files
-      setKmzExportStep('Loading circuit KMZ files...');
+      // Step 2: Loading circuit KMZ files (this is the longest step)
+      setKmzExportStep(`Loading ${totalCircuits} circuit KMZ file${totalCircuits !== 1 ? 's' : ''}...`);
       setKmzExportProgress(40);
+      await new Promise(resolve => setTimeout(resolve, 100));
 
-      // Call API to export
+      // Step 2a: Show more detail during the long backend processing
+      setKmzExportStep(`Processing circuit coordinates... (${totalCircuits} file${totalCircuits !== 1 ? 's' : ''})`);
+      setKmzExportProgress(45);
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      setKmzExportStep(`Extracting route geometry from ${totalCircuits} circuit${totalCircuits !== 1 ? 's' : ''}...`);
+      setKmzExportProgress(50);
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      setKmzExportStep('Parsing KML data and validating coordinates...');
+      setKmzExportProgress(55);
+
+      // Call API to export (this is where the actual long processing happens)
       const response = await exportNetworkDesignKMZ(exportData);
 
       // Step 3: Combining routes
-      setKmzExportStep('Combining routes...');
+      setKmzExportStep('Merging route segments and applying styling...');
       setKmzExportProgress(70);
       await new Promise(resolve => setTimeout(resolve, 200));
 
       // Step 4: Generating KMZ file
-      setKmzExportStep('Generating KMZ file...');
+      setKmzExportStep('Building final KMZ package...');
       setKmzExportProgress(90);
 
       // Check if there were skipped circuits in the response headers
@@ -2920,6 +2943,18 @@ const NetworkDesignTool = () => {
               </Box>
             </AccordionSummary>
             <AccordionDetails>
+              {/* Export KMZ Button */}
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+                <Button
+                  variant="outlined"
+                  startIcon={<MapIcon />}
+                  onClick={handleKMZExportOpen}
+                  color="primary"
+                >
+                  Export KMZ
+                </Button>
+              </Box>
+
               <Grid container spacing={3}>
                 {/* Primary Path - Full Width */}
                 <Grid item xs={12}>
@@ -4054,6 +4089,14 @@ const NetworkDesignTool = () => {
               <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
                 {kmzExportProgress}% complete
               </Typography>
+              {kmzExportProgress >= 40 && kmzExportProgress < 70 && (
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  <Typography variant="caption">
+                    Processing circuit KMZ files may take 30-60 seconds for multi-hop routes. 
+                    Large files and multiple circuits require additional processing time.
+                  </Typography>
+                </Alert>
+              )}
             </Box>
           )}
         </DialogContent>

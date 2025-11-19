@@ -1,6 +1,6 @@
 {
   "name": "network-inventory-frontend",
-  "version": "3.3.3",
+  "version": "3.4.0",
   "private": true,
   "dependencies": {
     "@emotion/react": "^11.11.1",
@@ -18,7 +18,8 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "node --max-old-space-size=4096 node_modules/.bin/react-scripts build",
+    "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 react-scripts build",
+    "build-server": "cross-env NODE_OPTIONS=--max-old-space-size=1024 react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
@@ -35,6 +36,7 @@
     ]
   },
   "devDependencies": {
-    "copy-webpack-plugin": "^13.0.1"
+    "copy-webpack-plugin": "^13.0.1",
+    "cross-env": "^7.0.3"
   }
 }

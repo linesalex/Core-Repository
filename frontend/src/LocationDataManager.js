@@ -21,7 +21,7 @@ import { API_BASE_URL } from './config';
 import * as FormValidation from './components/FormValidation';
 const { ValidatedTextField, ValidatedSelect } = FormValidation;
 
-const LocationDataManager = ({ hasPermission }) => {
+const LocationDataManager = ({ hasPermission, userRole, modulePermission }) => {
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -821,8 +821,8 @@ const LocationDataManager = ({ hasPermission }) => {
               <TableCell>POP Type</TableCell>
               <TableCell>Status</TableCell>
               <TableCell align="center">POP Capabilities</TableCell>
-              <TableCell align="center">Access Info</TableCell>
-              <TableCell align="center">Cross Connect Info</TableCell>
+              {modulePermission !== 'sales' && <TableCell align="center">Access Info</TableCell>}
+              {modulePermission !== 'sales' && <TableCell align="center">Cross Connect Info</TableCell>}
               <TableCell align="center">Actions</TableCell>
             </TableRow>
           </TableHead>
@@ -860,24 +860,28 @@ const LocationDataManager = ({ hasPermission }) => {
                     {hasPermission && hasPermission('locations', 'edit') ? 'View/Edit' : 'View'}
                   </Button>
                 </TableCell>
-                <TableCell align="center">
-                  <Button
-                    size="small"
-                    startIcon={<InfoIcon />}
-                    onClick={() => handleAccessInfoClick(location)}
-                  >
-                    {hasPermission && hasPermission('locations', 'edit') ? 'View/Edit' : 'View'}
-                  </Button>
-                </TableCell>
-                <TableCell align="center">
-                  <Button
-                    size="small"
-                    startIcon={<CableIcon />}
-                    onClick={() => handleCrossConnectClick(location)}
-                  >
-                    {hasPermission && hasPermission('locations', 'edit') ? 'View/Edit' : 'View'}
-                  </Button>
-                </TableCell>
+                {modulePermission !== 'sales' && (
+                  <TableCell align="center">
+                    <Button
+                      size="small"
+                      startIcon={<InfoIcon />}
+                      onClick={() => handleAccessInfoClick(location)}
+                    >
+                      {hasPermission && hasPermission('locations', 'edit') ? 'View/Edit' : 'View'}
+                    </Button>
+                  </TableCell>
+                )}
+                {modulePermission !== 'sales' && (
+                  <TableCell align="center">
+                    <Button
+                      size="small"
+                      startIcon={<CableIcon />}
+                      onClick={() => handleCrossConnectClick(location)}
+                    >
+                      {hasPermission && hasPermission('locations', 'edit') ? 'View/Edit' : 'View'}
+                    </Button>
+                  </TableCell>
+                )}
                 <TableCell align="center">
                   {hasPermission && hasPermission('locations', 'edit') && (
                     <Tooltip title="Edit">

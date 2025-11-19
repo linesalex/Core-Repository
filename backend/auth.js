@@ -139,8 +139,9 @@ const hasModulePermission = (userId, moduleName, requiredLevel, callback) => {
         
         // Check if permission level is sufficient
         if (requiredLevel === 'read_only') {
-          // Any permission level is sufficient for read-only
-          callback(null, true);
+          // Sales, read_only, and provisioner have read access
+          const hasReadAccess = ['sales', 'read_only', 'provisioner'].includes(permission.permission_level);
+          callback(null, hasReadAccess);
         } else if (requiredLevel === 'provisioner') {
           // Only provisioner level is sufficient
           callback(null, permission.permission_level === 'provisioner');

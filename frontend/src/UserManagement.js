@@ -16,11 +16,12 @@ import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { API_BASE_URL } from './config';
 import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
-import { getPendingUsers, approveUser, rejectUser, getUserModulePermissions, updateUserModulePermissions } from './api';
+import { getPendingUsers, approveUser, rejectUser, getUserModulePermissions, updateUserModulePermissions, getModulePermissionTemplates, createModulePermissionTemplate, updateModulePermissionTemplate, deleteModulePermissionTemplate, applyTemplateToUser } from './api';
 
 const UserManagement = () => {
   const [users, setUsers] = useState([]);
   const [pendingUsers, setPendingUsers] = useState([]);
+  const [templates, setTemplates] = useState([]);
   const [currentTab, setCurrentTab] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -37,6 +38,20 @@ const UserManagement = () => {
   const [pendingUserForApproval, setPendingUserForApproval] = useState(null);
   const [selectedRole, setSelectedRole] = useState('');
   const [approvalModulePermissions, setApprovalModulePermissions] = useState({});
+  
+  // Template management states
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+  const [templateDialogMode, setTemplateDialogMode] = useState('add'); // 'add' or 'edit'
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [deleteTemplateDialogOpen, setDeleteTemplateDialogOpen] = useState(false);
+  const [applyTemplateDialogOpen, setApplyTemplateDialogOpen] = useState(false);
+  const [templateToApply, setTemplateToApply] = useState(null);
+  const [selectedTemplateInPermissions, setSelectedTemplateInPermissions] = useState('');
+  const [selectedTemplateInApproval, setSelectedTemplateInApproval] = useState('');
+  const [templateFormData, setTemplateFormData] = useState({
+    template_name: '',
+    permissions: {}
+  });
   
   // Module permissions state
   const [modulePermissions, setModulePermissions] = useState({});
@@ -93,6 +108,7 @@ const UserManagement = () => {
     if (isAuthenticated && currentUser) {
       loadUsers();
       loadPendingUsers();
+      loadTemplates();
     }
   }, [isAuthenticated, currentUser]);
 
@@ -115,6 +131,16 @@ const UserManagement = () => {
     } catch (err) {
       console.error('Failed to load pending users:', err);
       setPendingUsers([]);
+    }
+  };
+
+  const loadTemplates = async () => {
+    try {
+      const data = await getModulePermissionTemplates();
+      setTemplates(data);
+    } catch (err) {
+      console.error('Failed to load templates:', err);
+      setTemplates([]);
     }
   };
 
@@ -347,6 +373,140 @@ const UserManagement = () => {
     }
   };
 
+  // Template management handlers
+  const handleAddTemplate = () => {
+    setTemplateDialogMode('add');
+    setSelectedTemplate(null);
+    const defaultPermissions = {};
+    availableModules.forEach(module => {
+      defaultPermissions[module.key] = '';
+    });
+    setTemplateFormData({
+      template_name: '',
+      permissions: defaultPermissions
+    });
+    setTemplateDialogOpen(true);
+  };
+
+  const handleEditTemplate = (template) => {
+    setTemplateDialogMode('edit');
+    setSelectedTemplate(template);
+    setTemplateFormData({
+      template_name: template.template_name,
+      permissions: template.permissions
+    });
+    setTemplateDialogOpen(true);
+  };
+
+  const handleDeleteTemplate = (template) => {
+    setSelectedTemplate(template);
+    setDeleteTemplateDialogOpen(true);
+  };
+
+  const handleTemplateSubmit = async () => {
+    try {
+      if (!templateFormData.template_name.trim()) {
+        setError('Template name is required');
+        return;
+      }
+
+      if (templateDialogMode === 'add') {
+        await createModulePermissionTemplate(templateFormData);
+        setSuccess('Template created successfully');
+      } else {
+        await updateModulePermissionTemplate(selectedTemplate.id, templateFormData);
+        setSuccess('Template updated successfully');
+      }
+
+      setTemplateDialogOpen(false);
+      await loadTemplates();
+    } catch (err) {
+      setError('Failed to save template: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleDeleteTemplateConfirm = async () => {
+    try {
+      await deleteModulePermissionTemplate(selectedTemplate.id);
+      setSuccess('Template deleted successfully');
+      setDeleteTemplateDialogOpen(false);
+      await loadTemplates();
+    } catch (err) {
+      setError('Failed to delete template: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleTemplatePermissionChange = (module, permissionLevel) => {
+    setTemplateFormData(prev => ({
+      ...prev,
+      permissions: {
+        ...prev.permissions,
+        [module]: permissionLevel
+      }
+    }));
+  };
+
+  const handleApplyTemplateClick = (template) => {
+    setTemplateToApply(template);
+    setApplyTemplateDialogOpen(true);
+  };
+
+  const handleApplyTemplateConfirm = async () => {
+    try {
+      await applyTemplateToUser(templateToApply.id, selectedUser.id);
+      setSuccess(`Template "${templateToApply.template_name}" applied successfully to ${selectedUser.username}`);
+      setApplyTemplateDialogOpen(false);
+      setTemplateToApply(null);
+      
+      // Reload permissions in the permissions dialog if it's open
+      if (permissionsDialogOpen) {
+        const response = await getUserModulePermissions(selectedUser.id);
+        setModulePermissions(response.permissions || {});
+      }
+    } catch (err) {
+      setError('Failed to apply template: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleApplyTemplateFromPermissionsDialog = async () => {
+    if (!selectedTemplateInPermissions) return;
+    
+    const template = templates.find(t => t.id === parseInt(selectedTemplateInPermissions));
+    if (!template) return;
+    
+    // Check if user has manual edits by comparing current permissions with empty state
+    const hasManualEdits = Object.values(modulePermissions).some(val => val && val !== '');
+    
+    if (hasManualEdits) {
+      // Show warning dialog
+      setTemplateToApply(template);
+      setApplyTemplateDialogOpen(true);
+    } else {
+      // Apply directly
+      try {
+        await applyTemplateToUser(template.id, selectedUser.id);
+        setSuccess(`Template "${template.template_name}" applied successfully`);
+        const response = await getUserModulePermissions(selectedUser.id);
+        setModulePermissions(response.permissions || {});
+        setSelectedTemplateInPermissions('');
+      } catch (err) {
+        setError('Failed to apply template: ' + (err.response?.data?.error || err.message));
+      }
+    }
+  };
+
+  const handleApplyTemplateFromApprovalDialog = async () => {
+    if (!selectedTemplateInApproval) return;
+    
+    const template = templates.find(t => t.id === parseInt(selectedTemplateInApproval));
+    if (!template) return;
+    
+    // Apply template permissions to approval state
+    setApprovalModulePermissions(template.permissions);
+    setSelectedTemplateInApproval('');
+    setSuccess(`Template "${template.template_name}" loaded`);
+  };
+
   const handleTabChange = (event, newValue) => {
     setCurrentTab(newValue);
   };
@@ -409,6 +569,7 @@ const UserManagement = () => {
             label={`Pending Approvals ${pendingUsers.length > 0 ? `(${pendingUsers.length})` : ''}`}
             sx={{ color: pendingUsers.length > 0 ? 'error.main' : 'inherit' }}
           />
+          <Tab label="Module Permission Templates" />
         </Tabs>
       </Box>
 
@@ -554,6 +715,87 @@ const UserManagement = () => {
                       </TableCell>
                     </TableRow>
                   ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Box>
+      )}
+
+      {/* Module Permission Templates Table */}
+      {currentTab === 2 && (
+        <Box>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
+              Create reusable permission templates to quickly configure user access to modules
+            </Typography>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={handleAddTemplate}
+            >
+              Create Template
+            </Button>
+          </Box>
+
+          {templates.length === 0 ? (
+            <Paper sx={{ p: 3, textAlign: 'center' }}>
+              <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} color="text.secondary">
+                No permission templates created
+              </Typography>
+              <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary" sx={{ mt: 1 }}>
+                Create templates to standardize module permissions for different user roles
+              </Typography>
+            </Paper>
+          ) : (
+            <TableContainer component={Paper}>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Template Name</TableCell>
+                    <TableCell>Configured Modules</TableCell>
+                    <TableCell>Created By</TableCell>
+                    <TableCell>Created Date</TableCell>
+                    <TableCell align="center">Actions</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {templates.map((template) => {
+                    const configuredModules = Object.entries(template.permissions)
+                      .filter(([key, value]) => value && value !== '')
+                      .length;
+                    
+                    return (
+                      <TableRow key={template.id} hover>
+                        <TableCell>
+                          <Typography variant="body1" sx={{ fontSize: '0.875rem' }} fontWeight="bold">
+                            {template.template_name}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          {configuredModules} / {availableModules.length} modules
+                        </TableCell>
+                        <TableCell>
+                          {template.created_by_username || 'Unknown'}
+                        </TableCell>
+                        <TableCell>
+                          {formatDate(template.created_at)}
+                        </TableCell>
+                        <TableCell align="center">
+                          <Tooltip title="Edit Template">
+                            <IconButton onClick={() => handleEditTemplate(template)} size="small">
+                              <EditIcon />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Delete Template">
+                            <IconButton onClick={() => handleDeleteTemplate(template)} size="small" color="error">
+                              <DeleteIcon />
+                            </IconButton>
+                          </Tooltip>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -714,34 +956,73 @@ const UserManagement = () => {
               <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary" sx={{ mb: 2 }}>
                 Configure this user's access level for each module. Modules with no permission will not be visible to the user.
               </Typography>
+              
+              {/* Template Selection */}
+              <Box sx={{ mb: 2 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel shrink>Apply Permission Template</InputLabel>
+                  <Select
+                    value={selectedTemplateInPermissions}
+                    onChange={(e) => setSelectedTemplateInPermissions(e.target.value)}
+                    label="Apply Permission Template"
+                    displayEmpty
+                    notched
+                  >
+                    <MenuItem value="">-- Select a template --</MenuItem>
+                    {templates.map((template) => (
+                      <MenuItem key={template.id} value={template.id}>
+                        {template.template_name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                {selectedTemplateInPermissions && (
+                  <Button 
+                    variant="outlined" 
+                    size="small" 
+                    sx={{ mt: 1 }} 
+                    fullWidth
+                    onClick={handleApplyTemplateFromPermissionsDialog}
+                  >
+                    Apply Selected Template
+                  </Button>
+                )}
+              </Box>
+              
               <Divider sx={{ mb: 2 }} />
               <Grid container spacing={2}>
-                {availableModules.filter(module => module.key !== 'live_latency_admin').map((module) => (
-                  <Grid item xs={12} sm={6} key={module.key}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel shrink>{module.label}</InputLabel>
-                      <Select
-                        value={modulePermissions[module.key] || ''}
-                        onChange={(e) => handlePermissionChange(module.key, e.target.value)}
-                        label={module.label}
-                        displayEmpty
-                        notched
-                        renderValue={(selected) => {
-                          if (!selected || selected === '') {
-                            return 'No Access';
-                          }
-                          return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
-                        }}
-                      >
-                        <MenuItem value="">No Access</MenuItem>
-                        <MenuItem value="read_only">Read-Only</MenuItem>
-                        <MenuItem value="provisioner">Provisioner</MenuItem>
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                ))}
+                {availableModules.filter(module => module.key !== 'live_latency_admin').map((module) => {
+                  const hasSalesOption = ['network_routes', 'locations'].includes(module.key);
+                  return (
+                    <Grid item xs={12} sm={6} key={module.key}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel shrink>{module.label}</InputLabel>
+                        <Select
+                          value={modulePermissions[module.key] || ''}
+                          onChange={(e) => handlePermissionChange(module.key, e.target.value)}
+                          label={module.label}
+                          displayEmpty
+                          notched
+                          renderValue={(selected) => {
+                            if (!selected || selected === '') {
+                              return 'No Access';
+                            }
+                            if (selected === 'sales') return 'Sales';
+                            return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                          }}
+                        >
+                          <MenuItem value="">No Access</MenuItem>
+                          {hasSalesOption && <MenuItem value="sales">Sales</MenuItem>}
+                          <MenuItem value="read_only">Read-Only</MenuItem>
+                          <MenuItem value="provisioner">Provisioner</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                  );
+                })}
               </Grid>
               <Alert severity="info" sx={{ mt: 2 }}>
+                <strong>Sales:</strong> Limited view access (available for Network Routes & Locations only)<br />
                 <strong>Read-Only:</strong> Can view module data only<br />
                 <strong>Provisioner:</strong> Can view, create, edit, and delete
               </Alert>
@@ -796,33 +1077,73 @@ const UserManagement = () => {
                 Configure access levels for each module. Modules with no permission will not be visible to the user.
               </Typography>
               
+              {/* Template Selection */}
+              <Box sx={{ mb: 2 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel shrink>Load Permission Template</InputLabel>
+                  <Select
+                    value={selectedTemplateInApproval}
+                    onChange={(e) => setSelectedTemplateInApproval(e.target.value)}
+                    label="Load Permission Template"
+                    displayEmpty
+                    notched
+                  >
+                    <MenuItem value="">-- Select a template --</MenuItem>
+                    {templates.map((template) => (
+                      <MenuItem key={template.id} value={template.id}>
+                        {template.template_name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                {selectedTemplateInApproval && (
+                  <Button 
+                    variant="outlined" 
+                    size="small" 
+                    sx={{ mt: 1 }} 
+                    fullWidth
+                    onClick={handleApplyTemplateFromApprovalDialog}
+                  >
+                    Load Selected Template
+                  </Button>
+                )}
+              </Box>
+              
+              <Divider sx={{ mb: 2 }} />
+              
               <Grid container spacing={2}>
-                {availableModules.filter(module => module.key !== 'live_latency_admin').map((module) => (
-                  <Grid item xs={12} sm={6} key={module.key}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel shrink>{module.label}</InputLabel>
-                      <Select
-                        value={approvalModulePermissions[module.key] || ''}
-                        onChange={(e) => handleApprovalModulePermissionChange(module.key, e.target.value)}
-                        label={module.label}
-                        displayEmpty
-                        notched
-                        renderValue={(selected) => {
-                          if (!selected || selected === '') {
-                            return 'No Access';
-                          }
-                          return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
-                        }}
-                      >
-                        <MenuItem value="">No Access</MenuItem>
-                        <MenuItem value="read_only">Read-Only</MenuItem>
-                        <MenuItem value="provisioner">Provisioner</MenuItem>
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                ))}
+                {availableModules.filter(module => module.key !== 'live_latency_admin').map((module) => {
+                  const hasSalesOption = ['network_routes', 'locations'].includes(module.key);
+                  return (
+                    <Grid item xs={12} sm={6} key={module.key}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel shrink>{module.label}</InputLabel>
+                        <Select
+                          value={approvalModulePermissions[module.key] || ''}
+                          onChange={(e) => handleApprovalModulePermissionChange(module.key, e.target.value)}
+                          label={module.label}
+                          displayEmpty
+                          notched
+                          renderValue={(selected) => {
+                            if (!selected || selected === '') {
+                              return 'No Access';
+                            }
+                            if (selected === 'sales') return 'Sales';
+                            return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                          }}
+                        >
+                          <MenuItem value="">No Access</MenuItem>
+                          {hasSalesOption && <MenuItem value="sales">Sales</MenuItem>}
+                          <MenuItem value="read_only">Read-Only</MenuItem>
+                          <MenuItem value="provisioner">Provisioner</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                  );
+                })}
               </Grid>
               <Alert severity="info" sx={{ mt: 2 }}>
+                <strong>Sales:</strong> Limited view access (available for Network Routes & Locations only)<br />
                 <strong>Read-Only:</strong> Can view module data only<br />
                 <strong>Provisioner:</strong> Can view, create, edit, and delete
               </Alert>
@@ -857,6 +1178,135 @@ const UserManagement = () => {
           <Button onClick={() => setResetPasswordDialogOpen(false)}>Cancel</Button>
           <Button onClick={handleResetPasswordConfirm} color="warning" variant="contained">
             Reset Password
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Template Add/Edit Dialog */}
+      <Dialog 
+        open={templateDialogOpen} 
+        onClose={() => setTemplateDialogOpen(false)}
+        maxWidth="md" 
+        fullWidth
+        disableRestoreFocus
+        aria-labelledby="template-dialog-title"
+      >
+        <DialogTitle id="template-dialog-title">
+          {templateDialogMode === 'add' ? 'Create Permission Template' : 'Edit Permission Template'}
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary" sx={{ mb: 2 }}>
+            Define a reusable set of module permissions that can be applied to users
+          </Typography>
+          
+          <Grid container spacing={2}>
+            <Grid item xs={12}>
+              <TextField
+                label="Template Name *"
+                value={templateFormData.template_name}
+                onChange={(e) => setTemplateFormData(prev => ({ ...prev, template_name: e.target.value }))}
+                fullWidth
+                required
+                placeholder="e.g., Sales, Engineering, Finance"
+              />
+            </Grid>
+            
+            <Grid item xs={12}>
+              <Divider sx={{ my: 2 }} />
+              <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} sx={{ mb: 2 }}>
+                Module Permissions
+              </Typography>
+              <Grid container spacing={2}>
+                {availableModules.filter(module => module.key !== 'live_latency_admin').map((module) => {
+                  const hasSalesOption = ['network_routes', 'locations'].includes(module.key);
+                  return (
+                    <Grid item xs={12} sm={6} key={module.key}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel shrink>{module.label}</InputLabel>
+                        <Select
+                          value={templateFormData.permissions[module.key] || ''}
+                          onChange={(e) => handleTemplatePermissionChange(module.key, e.target.value)}
+                          label={module.label}
+                          displayEmpty
+                          notched
+                          renderValue={(selected) => {
+                            if (!selected || selected === '') {
+                              return 'No Access';
+                            }
+                            if (selected === 'sales') return 'Sales';
+                            return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                          }}
+                        >
+                          <MenuItem value="">No Access</MenuItem>
+                          {hasSalesOption && <MenuItem value="sales">Sales</MenuItem>}
+                          <MenuItem value="read_only">Read-Only</MenuItem>
+                          <MenuItem value="provisioner">Provisioner</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                  );
+                })}
+              </Grid>
+              <Alert severity="info" sx={{ mt: 2 }}>
+                <strong>Sales:</strong> Limited view access (available for Network Routes & Locations only)<br />
+                <strong>Read-Only:</strong> Can view module data only<br />
+                <strong>Provisioner:</strong> Can view, create, edit, and delete
+              </Alert>
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setTemplateDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleTemplateSubmit} variant="contained" color="primary">
+            {templateDialogMode === 'add' ? 'Create Template' : 'Update Template'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Template Confirmation Dialog */}
+      <Dialog 
+        open={deleteTemplateDialogOpen} 
+        onClose={() => setDeleteTemplateDialogOpen(false)}
+        disableRestoreFocus
+        aria-labelledby="delete-template-dialog-title"
+      >
+        <DialogTitle id="delete-template-dialog-title">Delete Template</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete the template <strong>{selectedTemplate?.template_name}</strong>?
+          </Typography>
+          <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary" sx={{ mt: 1 }}>
+            This will not affect users who already have permissions configured. This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTemplateDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleDeleteTemplateConfirm} color="error" variant="contained">
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Apply Template Warning Dialog */}
+      <Dialog 
+        open={applyTemplateDialogOpen} 
+        onClose={() => setApplyTemplateDialogOpen(false)}
+        disableRestoreFocus
+        aria-labelledby="apply-template-dialog-title"
+      >
+        <DialogTitle id="apply-template-dialog-title">Apply Template</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to apply the template <strong>{templateToApply?.template_name}</strong> to user <strong>{selectedUser?.username}</strong>?
+          </Typography>
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            This will overwrite any existing manual permission changes for this user.
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setApplyTemplateDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleApplyTemplateConfirm} color="primary" variant="contained">
+            Apply Template
           </Button>
         </DialogActions>
       </Dialog>

@@ -342,6 +342,13 @@ export const rejectUser = (userId) => api.delete(`${API_BASE_URL}/users/${userId
 export const getUserModulePermissions = (userId) => api.get(`${API_BASE_URL}/users/${userId}/module-permissions`).then(res => res.data);
 export const updateUserModulePermissions = (userId, permissions) => api.put(`${API_BASE_URL}/users/${userId}/module-permissions`, permissions);
 
+// Module Permission Templates (Admin only)
+export const getModulePermissionTemplates = () => api.get(`${API_BASE_URL}/module-permission-templates`).then(res => res.data);
+export const createModulePermissionTemplate = (data) => api.post(`${API_BASE_URL}/module-permission-templates`, data);
+export const updateModulePermissionTemplate = (templateId, data) => api.put(`${API_BASE_URL}/module-permission-templates/${templateId}`, data);
+export const deleteModulePermissionTemplate = (templateId) => api.delete(`${API_BASE_URL}/module-permission-templates/${templateId}`);
+export const applyTemplateToUser = (templateId, userId) => api.post(`${API_BASE_URL}/module-permission-templates/${templateId}/apply/${userId}`);
+
 // Locations
 export const getLocations = () => api.get(`${API_BASE_URL}/locations`).then(res => res.data);
 

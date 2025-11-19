@@ -247,7 +247,7 @@ router.post('/login', async (req, res) => {
         Object.keys(modulePermissions).forEach(module => {
           const permLevel = modulePermissions[module];
           legacyPermissions[module] = {
-            can_view: permLevel === 'read_only' || permLevel === 'provisioner',
+            can_view: permLevel === 'sales' || permLevel === 'read_only' || permLevel === 'provisioner',
             can_create: permLevel === 'provisioner',
             can_edit: permLevel === 'provisioner',
             can_delete: permLevel === 'provisioner'
@@ -310,7 +310,7 @@ router.get('/me', authenticateToken, (req, res) => {
       Object.keys(modulePermissions).forEach(module => {
         const permLevel = modulePermissions[module];
         legacyPermissions[module] = {
-          can_view: permLevel === 'read_only' || permLevel === 'provisioner',
+          can_view: permLevel === 'sales' || permLevel === 'read_only' || permLevel === 'provisioner',
           can_create: permLevel === 'provisioner',
           can_edit: permLevel === 'provisioner',
           can_delete: permLevel === 'provisioner'
@@ -813,6 +813,26 @@ router.put('/users/:id/module-permissions', authenticateToken, authorizeModulePe
       return res.status(400).json({ error: 'Cannot modify permissions for administrators - they have full access to all modules' });
     }
     
+    // Validate permission levels - 'sales' is only valid for specific modules
+    const modulesWithSalesPermission = ['network_routes', 'locations'];
+    const validPermissionLevels = ['read_only', 'provisioner'];
+    
+    for (const [moduleName, permissionLevel] of Object.entries(permissionSettings)) {
+      if (!permissionLevel) continue; // Skip no_access
+      
+      if (permissionLevel === 'sales') {
+        if (!modulesWithSalesPermission.includes(moduleName)) {
+          return res.status(400).json({ 
+            error: `'sales' permission level is only valid for: ${modulesWithSalesPermission.join(', ')}` 
+          });
+        }
+      } else if (!validPermissionLevels.includes(permissionLevel)) {
+        return res.status(400).json({ 
+          error: `Invalid permission level '${permissionLevel}' for module '${moduleName}'` 
+        });
+      }
+    }
+    
     // Delete existing permissions for this user
     db.run('DELETE FROM user_module_permissions WHERE user_id = ?', [userId], (delErr) => {
       if (delErr) return res.status(500).json({ error: delErr.message });
@@ -855,6 +875,313 @@ router.put('/users/:id/module-permissions', authenticateToken, authorizeModulePe
           console.error('Error updating module permissions:', err);
           res.status(500).json({ error: 'Failed to update module permissions' });
         });
+    });
+  });
+});
+
+// ====================================
+// MODULE PERMISSION TEMPLATES ENDPOINTS
+// ====================================
+
+// Get all module permission templates
+router.get('/module-permission-templates', authenticateToken, authorizeModulePermission('user_management', 'read_only'), (req, res) => {
+  db.all(
+    `SELECT mpt.*, u.username as created_by_username 
+     FROM module_permission_templates mpt
+     LEFT JOIN users u ON mpt.created_by = u.id
+     ORDER BY mpt.template_name ASC`,
+    [],
+    (err, templates) => {
+      if (err) {
+        console.error('Error fetching templates:', err);
+        return res.status(500).json({ error: err.message });
+      }
+      
+      // Parse permissions JSON
+      const parsedTemplates = templates.map(template => ({
+        ...template,
+        permissions: JSON.parse(template.permissions)
+      }));
+      
+      res.json(parsedTemplates);
+    }
+  );
+});
+
+// Create a new module permission template
+router.post('/module-permission-templates', authenticateToken, authorizeModulePermission('user_management', 'provisioner'), (req, res) => {
+  const { template_name, permissions } = req.body;
+  
+  if (!template_name || !permissions) {
+    return res.status(400).json({ error: 'Template name and permissions are required' });
+  }
+  
+  // Validate permissions is an object
+  if (typeof permissions !== 'object') {
+    return res.status(400).json({ error: 'Permissions must be an object' });
+  }
+  
+  // Validate permission levels - 'sales' is only valid for specific modules
+  const modulesWithSalesPermission = ['network_routes', 'locations'];
+  const validPermissionLevels = ['read_only', 'provisioner'];
+  
+  for (const [moduleName, permissionLevel] of Object.entries(permissions)) {
+    if (!permissionLevel) continue; // Skip no_access
+    
+    if (permissionLevel === 'sales') {
+      if (!modulesWithSalesPermission.includes(moduleName)) {
+        return res.status(400).json({ 
+          error: `'sales' permission level is only valid for: ${modulesWithSalesPermission.join(', ')}` 
+        });
+      }
+    } else if (!validPermissionLevels.includes(permissionLevel)) {
+      return res.status(400).json({ 
+        error: `Invalid permission level '${permissionLevel}' for module '${moduleName}'` 
+      });
+    }
+  }
+  
+  // Check for duplicate template name
+  db.get('SELECT id FROM module_permission_templates WHERE template_name = ?', [template_name], (checkErr, existing) => {
+    if (checkErr) {
+      console.error('Error checking template name:', checkErr);
+      return res.status(500).json({ error: checkErr.message });
+    }
+    
+    if (existing) {
+      return res.status(400).json({ error: `Template name "${template_name}" already exists` });
+    }
+    
+    // Insert new template
+    db.run(
+      `INSERT INTO module_permission_templates 
+       (template_name, permissions, created_by, created_at, updated_at) 
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [template_name, JSON.stringify(permissions), req.user.id],
+      function(err) {
+        if (err) {
+          console.error('Error creating template:', err);
+          return res.status(500).json({ error: err.message });
+        }
+        
+        // Log the creation
+        logChange(req.user.id, 'module_permission_templates', this.lastID, 'CREATE', null, {
+          template_name,
+          permissions
+        }, req);
+        
+        res.status(201).json({ 
+          id: this.lastID, 
+          message: 'Template created successfully',
+          template_name,
+          permissions
+        });
+      }
+    );
+  });
+});
+
+// Update a module permission template
+router.put('/module-permission-templates/:id', authenticateToken, authorizeModulePermission('user_management', 'provisioner'), (req, res) => {
+  const templateId = req.params.id;
+  const { template_name, permissions } = req.body;
+  
+  if (!template_name || !permissions) {
+    return res.status(400).json({ error: 'Template name and permissions are required' });
+  }
+  
+  // Validate permissions is an object
+  if (typeof permissions !== 'object') {
+    return res.status(400).json({ error: 'Permissions must be an object' });
+  }
+  
+  // Validate permission levels - 'sales' is only valid for specific modules
+  const modulesWithSalesPermission = ['network_routes', 'locations'];
+  const validPermissionLevels = ['read_only', 'provisioner'];
+  
+  for (const [moduleName, permissionLevel] of Object.entries(permissions)) {
+    if (!permissionLevel) continue; // Skip no_access
+    
+    if (permissionLevel === 'sales') {
+      if (!modulesWithSalesPermission.includes(moduleName)) {
+        return res.status(400).json({ 
+          error: `'sales' permission level is only valid for: ${modulesWithSalesPermission.join(', ')}` 
+        });
+      }
+    } else if (!validPermissionLevels.includes(permissionLevel)) {
+      return res.status(400).json({ 
+        error: `Invalid permission level '${permissionLevel}' for module '${moduleName}'` 
+      });
+    }
+  }
+  
+  // Get old template data for logging
+  db.get('SELECT * FROM module_permission_templates WHERE id = ?', [templateId], (getErr, oldTemplate) => {
+    if (getErr) {
+      console.error('Error fetching template:', getErr);
+      return res.status(500).json({ error: getErr.message });
+    }
+    
+    if (!oldTemplate) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+    
+    // Check for duplicate template name (excluding current template)
+    db.get(
+      'SELECT id FROM module_permission_templates WHERE template_name = ? AND id != ?', 
+      [template_name, templateId], 
+      (checkErr, existing) => {
+        if (checkErr) {
+          console.error('Error checking template name:', checkErr);
+          return res.status(500).json({ error: checkErr.message });
+        }
+        
+        if (existing) {
+          return res.status(400).json({ error: `Template name "${template_name}" already exists` });
+        }
+        
+        // Update template
+        db.run(
+          `UPDATE module_permission_templates 
+           SET template_name = ?, permissions = ?, updated_at = CURRENT_TIMESTAMP 
+           WHERE id = ?`,
+          [template_name, JSON.stringify(permissions), templateId],
+          (err) => {
+            if (err) {
+              console.error('Error updating template:', err);
+              return res.status(500).json({ error: err.message });
+            }
+            
+            // Log the update
+            logChange(req.user.id, 'module_permission_templates', templateId, 'UPDATE', {
+              template_name: oldTemplate.template_name,
+              permissions: JSON.parse(oldTemplate.permissions)
+            }, {
+              template_name,
+              permissions
+            }, req);
+            
+            res.json({ message: 'Template updated successfully' });
+          }
+        );
+      }
+    );
+  });
+});
+
+// Delete a module permission template
+router.delete('/module-permission-templates/:id', authenticateToken, authorizeModulePermission('user_management', 'provisioner'), (req, res) => {
+  const templateId = req.params.id;
+  
+  // Get template data for logging
+  db.get('SELECT * FROM module_permission_templates WHERE id = ?', [templateId], (getErr, template) => {
+    if (getErr) {
+      console.error('Error fetching template:', getErr);
+      return res.status(500).json({ error: getErr.message });
+    }
+    
+    if (!template) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+    
+    // Delete template
+    db.run('DELETE FROM module_permission_templates WHERE id = ?', [templateId], (err) => {
+      if (err) {
+        console.error('Error deleting template:', err);
+        return res.status(500).json({ error: err.message });
+      }
+      
+      // Log the deletion
+      logChange(req.user.id, 'module_permission_templates', templateId, 'DELETE', {
+        template_name: template.template_name,
+        permissions: JSON.parse(template.permissions)
+      }, null, req);
+      
+      res.json({ message: 'Template deleted successfully' });
+    });
+  });
+});
+
+// Apply template to user (updates user's module permissions)
+router.post('/module-permission-templates/:templateId/apply/:userId', authenticateToken, authorizeModulePermission('user_management', 'provisioner'), (req, res) => {
+  const { templateId, userId } = req.params;
+  
+  // Get template
+  db.get('SELECT * FROM module_permission_templates WHERE id = ?', [templateId], (templateErr, template) => {
+    if (templateErr) {
+      console.error('Error fetching template:', templateErr);
+      return res.status(500).json({ error: templateErr.message });
+    }
+    
+    if (!template) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+    
+    // Check if user is administrator
+    db.get('SELECT user_role FROM users WHERE id = ?', [userId], (userErr, user) => {
+      if (userErr) {
+        console.error('Error fetching user:', userErr);
+        return res.status(500).json({ error: userErr.message });
+      }
+      
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      
+      // Block applying templates to administrators
+      if (user.user_role === 'administrator') {
+        return res.status(400).json({ error: 'Cannot apply template to administrators - they have full access to all modules' });
+      }
+      
+      const permissions = JSON.parse(template.permissions);
+      
+      // Delete existing permissions for this user
+      db.run('DELETE FROM user_module_permissions WHERE user_id = ?', [userId], (delErr) => {
+        if (delErr) {
+          console.error('Error deleting permissions:', delErr);
+          return res.status(500).json({ error: delErr.message });
+        }
+        
+        // Insert new permissions from template
+        const operations = [];
+        
+        Object.entries(permissions).forEach(([moduleName, permissionLevel]) => {
+          // Skip if permission_level is null or empty (means no access)
+          if (!permissionLevel) return;
+          
+          operations.push(new Promise((resolve, reject) => {
+            db.run(
+              `INSERT INTO user_module_permissions 
+               (user_id, module_name, permission_level, created_by, updated_by, created_at, updated_at) 
+               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [userId, moduleName, permissionLevel, req.user.id, req.user.id],
+              function(err) {
+                if (err) reject(err);
+                else resolve();
+              }
+            );
+          }));
+        });
+        
+        Promise.all(operations)
+          .then(() => {
+            // Log the template application
+            logChange(req.user.id, 'user_module_permissions', userId, 'UPDATE', null, {
+              applied_template: template.template_name,
+              template_id: templateId,
+              permissions
+            }, req);
+            
+            res.json({ 
+              message: 'Template applied successfully',
+              template_name: template.template_name
+            });
+          })
+          .catch(err => {
+            console.error('Error applying template:', err);
+            res.status(500).json({ error: 'Failed to apply template' });
+          });
+      });
     });
   });
 });
@@ -4999,6 +5326,19 @@ const roundUpToNearest10 = (amount) => {
   return Math.ceil(amount / 10) * 10;
 };
 
+// Helper function to determine bandwidth tier for margin calculation
+const getBandwidthTier = (bandwidth) => {
+  const bw = parseFloat(bandwidth);
+  if (isNaN(bw)) {
+    console.warn(`Invalid bandwidth value: ${bandwidth}, defaulting to under_100mb tier`);
+    return 'under_100mb';
+  }
+  if (bw < 100) return 'under_100mb';
+  if (bw < 1000) return 'from_100_to_999mb';
+  if (bw < 3000) return 'from_1000_to_2999mb';
+  return 'over_3000mb';
+};
+
 // Network Design with Enhanced Pricing
 router.post('/network_design/calculate_pricing', authenticateToken, async (req, res) => {
   const startTime = Date.now();
@@ -5372,32 +5712,62 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
         }
       }
 
-      // Fall back to regular contract term-based pricing model
-      let minMarginPercent, suggestedMarginPercent, nrcCharge;
+      // Fall back to regular contract term-based pricing model with bandwidth tiers (v3.4.0+)
+      let minMarginPercent, suggestedMarginPercent, nrcCharge, contractDiscount;
       
+      // Step 1: Determine bandwidth tier
+      const bandwidthTier = getBandwidthTier(bandwidth);
+      
+      // Step 2: Get 12-month base margins based on bandwidth tier
+      const baseTermConfig = pricingConfig.contractTerms[12];
+      if (!baseTermConfig.bandwidthTiers || !baseTermConfig.bandwidthTiers[bandwidthTier]) {
+        console.error(`Bandwidth tier ${bandwidthTier} not configured, using defaults`);
+        minMarginPercent = 40;
+        suggestedMarginPercent = 60;
+      } else {
+        const tierMargins = baseTermConfig.bandwidthTiers[bandwidthTier];
+        minMarginPercent = tierMargins.minMargin;
+        suggestedMarginPercent = tierMargins.suggestedMargin;
+      }
+      
+      // Step 3: Get NRC charge for the requested contract term
       const termConfig = pricingConfig.contractTerms[contract_term] || pricingConfig.contractTerms[12];
-      minMarginPercent = termConfig.minMargin;
-      suggestedMarginPercent = termConfig.suggestedMargin;
-      // Set NRC to $0 for allocated_cost_calculator module
       nrcCharge = calling_module === 'allocated_cost_calculator' ? 0 : convertCurrency(termConfig.nrcCharge, 'USD', output_currency);
-
-      // Calculate pricing with contract term-based margins
+      
+      // Step 4: Calculate base pricing with 12-month margins
       const minPriceByMargin = totalAllocatedCost / (1 - minMarginPercent / 100);
       const suggestedPriceByMargin = totalAllocatedCost / (1 - suggestedMarginPercent / 100);
-
-      // Get location-based minimum price
+      
+      // Step 5: Apply contract term discount for 24/36 months
+      contractDiscount = 0;
+      if (contract_term === 24 || contract_term === 36) {
+        contractDiscount = termConfig.discountPercent || 0;
+      }
+      const discountedMinPrice = minPriceByMargin * (1 - contractDiscount / 100);
+      const discountedSuggestedPrice = suggestedPriceByMargin * (1 - contractDiscount / 100);
+      
+      // Step 6: Get location-based minimum price
       const locationMinPrice = getMinimumPrice(bandwidth, locations);
 
-      // Apply minimum price enforcement
-      const finalMinPrice = Math.max(minPriceByMargin, locationMinPrice);
-      const finalSuggestedPrice = Math.max(suggestedPriceByMargin, locationMinPrice);
+      // Step 7: Apply minimum price enforcement (location minimums still enforced after discount)
+      const finalMinPrice = Math.max(discountedMinPrice, locationMinPrice);
+      const finalSuggestedPrice = Math.max(discountedSuggestedPrice, locationMinPrice);
 
       // Calculate actual margins
       const actualMinMargin = ((finalMinPrice - totalAllocatedCost) / finalMinPrice) * 100;
       const actualSuggestedMargin = ((finalSuggestedPrice - totalAllocatedCost) / finalSuggestedPrice) * 100;
 
-      // Create detailed calculation breakdown for logging
+      // Create detailed calculation breakdown for logging (v3.4.0+ includes bandwidth tier info)
       const detailedCalculations = {
+        bandwidthTierInfo: {
+          requestedBandwidth: bandwidth,
+          detectedTier: bandwidthTier,
+          tierLabel: bandwidthTier === 'under_100mb' ? 'Under 100 Mb' :
+                     bandwidthTier === 'from_100_to_999mb' ? '100 to 999 Mb' :
+                     bandwidthTier === 'from_1000_to_2999mb' ? '1000 to 2999 Mb' : '3000 Mb Plus',
+          baseMinMargin: minMarginPercent,
+          baseSuggestedMargin: suggestedMarginPercent
+        },
         allocatedCostBreakdown: {
           segments: segmentCalculations,
           totalAllocatedCostBeforeRounding: totalAllocatedCost,
@@ -5410,8 +5780,11 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           formula: `Allocated Cost / (1 - Margin/100)`,
           calculation: `${totalAllocatedCost.toFixed(2)} / (1 - ${minMarginPercent}/100) = ${totalAllocatedCost.toFixed(2)} / ${(1 - minMarginPercent/100).toFixed(4)} = ${minPriceByMargin.toFixed(2)} ${output_currency}`,
           priceByMargin: minPriceByMargin,
+          contractDiscount: contractDiscount,
+          discountFormula: contractDiscount > 0 ? `${minPriceByMargin.toFixed(2)} × (1 - ${contractDiscount}/100) = ${discountedMinPrice.toFixed(2)} ${output_currency}` : 'No discount for 12-month term',
+          priceAfterDiscount: discountedMinPrice,
           locationMinimumPrice: locationMinPrice,
-          finalPriceFormula: `MAX(${minPriceByMargin.toFixed(2)}, ${locationMinPrice.toFixed(2)})`,
+          finalPriceFormula: `MAX(${discountedMinPrice.toFixed(2)}, ${locationMinPrice.toFixed(2)})`,
           finalPriceBeforeRounding: finalMinPrice,
           roundedToNearest10: roundUpToNearest10(finalMinPrice),
           wasLocationMinimumEnforced: finalMinPrice === locationMinPrice,
@@ -5422,8 +5795,11 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           formula: `Allocated Cost / (1 - Margin/100)`,
           calculation: `${totalAllocatedCost.toFixed(2)} / (1 - ${suggestedMarginPercent}/100) = ${totalAllocatedCost.toFixed(2)} / ${(1 - suggestedMarginPercent/100).toFixed(4)} = ${suggestedPriceByMargin.toFixed(2)} ${output_currency}`,
           priceByMargin: suggestedPriceByMargin,
+          contractDiscount: contractDiscount,
+          discountFormula: contractDiscount > 0 ? `${suggestedPriceByMargin.toFixed(2)} × (1 - ${contractDiscount}/100) = ${discountedSuggestedPrice.toFixed(2)} ${output_currency}` : 'No discount for 12-month term',
+          priceAfterDiscount: discountedSuggestedPrice,
           locationMinimumPrice: locationMinPrice,
-          finalPriceFormula: `MAX(${suggestedPriceByMargin.toFixed(2)}, ${locationMinPrice.toFixed(2)})`,
+          finalPriceFormula: `MAX(${discountedSuggestedPrice.toFixed(2)}, ${locationMinPrice.toFixed(2)})`,
           finalPriceBeforeRounding: finalSuggestedPrice,
           roundedToNearest10: roundUpToNearest10(finalSuggestedPrice),
           wasLocationMinimumEnforced: finalSuggestedPrice === locationMinPrice,
@@ -5494,22 +5870,39 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       const primaryPricing = pricingResults[0].pricing;
       const secondaryPricing = pricingResults[1].pricing;
       
-      // Get protected service margin rules based on contract term
-      const protectedMargins = pricingConfig.protectedServiceMargins[contract_term];
-      if (!protectedMargins) {
-        throw new Error(`Protected service margins not configured for ${contract_term}-month contract term`);
-      }
+      // Get protected service margin rules with bandwidth tiers (v3.4.0+)
+      const bandwidthTier = getBandwidthTier(bandwidth);
       
-      const minMarginPercent = protectedMargins.minMargin;
-      const suggestedMarginPercent = protectedMargins.suggestedMargin;
+      // Get 12-month base protected margins based on bandwidth tier
+      const baseProtectedConfig = pricingConfig.protectedServiceMargins[12];
+      let minMarginPercent, suggestedMarginPercent;
+      
+      if (!baseProtectedConfig.bandwidthTiers || !baseProtectedConfig.bandwidthTiers[bandwidthTier]) {
+        console.error(`Protected bandwidth tier ${bandwidthTier} not configured, using defaults`);
+        minMarginPercent = 50;
+        suggestedMarginPercent = 70;
+      } else {
+        const tierMargins = baseProtectedConfig.bandwidthTiers[bandwidthTier];
+        minMarginPercent = tierMargins.minMargin;
+        suggestedMarginPercent = tierMargins.suggestedMargin;
+      }
       
       // Protection pricing = 100% primary + 100% secondary (full redundancy cost)
       const protectedAllocatedCost = primaryPricing.allocatedCost + secondaryPricing.allocatedCost;
       
-      // Calculate prices based on enforced margins
+      // Calculate base prices with 12-month protected margins
       // Formula: Price = Allocated Cost / (1 - Margin%)
-      const protectedMinPrice = protectedAllocatedCost / (1 - (minMarginPercent / 100));
-      const protectedSuggestedPrice = protectedAllocatedCost / (1 - (suggestedMarginPercent / 100));
+      const protectedMinPriceBase = protectedAllocatedCost / (1 - (minMarginPercent / 100));
+      const protectedSuggestedPriceBase = protectedAllocatedCost / (1 - (suggestedMarginPercent / 100));
+      
+      // Apply contract term discount for 24/36 months
+      const termConfig = pricingConfig.protectedServiceMargins[contract_term];
+      let contractDiscount = 0;
+      if ((contract_term === 24 || contract_term === 36) && termConfig && termConfig.discountPercent !== undefined) {
+        contractDiscount = termConfig.discountPercent;
+      }
+      const protectedMinPrice = protectedMinPriceBase * (1 - contractDiscount / 100);
+      const protectedSuggestedPrice = protectedSuggestedPriceBase * (1 - contractDiscount / 100);
       
       // Calculate actual margins achieved (should match target margins)
       const actualProtectedMinMargin = ((protectedMinPrice - protectedAllocatedCost) / protectedMinPrice) * 100;
@@ -5518,12 +5911,21 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       // NRC charge for protection is only charged once (from primary path)
       const protectionNrcCharge = primaryPricing.nrcCharge;
 
-      // Detailed protection pricing calculation breakdown
+      // Detailed protection pricing calculation breakdown (v3.4.0+ includes bandwidth tier info)
       const protectionCalculations = {
+        bandwidthTierInfo: {
+          requestedBandwidth: bandwidth,
+          detectedTier: bandwidthTier,
+          tierLabel: bandwidthTier === 'under_100mb' ? 'Under 100 Mb' :
+                     bandwidthTier === 'from_100_to_999mb' ? '100 to 999 Mb' :
+                     bandwidthTier === 'from_1000_to_2999mb' ? '1000 to 2999 Mb' : '3000 Mb Plus',
+          baseMinMargin: minMarginPercent,
+          baseSuggestedMargin: suggestedMarginPercent
+        },
         marginEnforcement: {
           targetMinMargin: minMarginPercent,
           targetSuggestedMargin: suggestedMarginPercent,
-          description: 'Prices calculated to enforce target margins based on full redundancy cost'
+          description: 'Protected service margins applied based on bandwidth tier'
         },
         allocatedCostBreakdown: {
           primaryAllocatedCost: primaryPricing.allocatedCost,
@@ -5538,19 +5940,27 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           allocatedCost: protectedAllocatedCost,
           targetMargin: minMarginPercent,
           formula: `Allocated Cost / (1 - ${minMarginPercent}%)`,
-          calculation: `${protectedAllocatedCost.toFixed(2)} / (1 - ${(minMarginPercent / 100).toFixed(2)}) = ${protectedAllocatedCost.toFixed(2)} / ${(1 - (minMarginPercent / 100)).toFixed(2)} = ${protectedMinPrice.toFixed(2)} ${output_currency}`,
+          calculation: `${protectedAllocatedCost.toFixed(2)} / (1 - ${(minMarginPercent / 100).toFixed(2)}) = ${protectedAllocatedCost.toFixed(2)} / ${(1 - (minMarginPercent / 100)).toFixed(2)} = ${protectedMinPriceBase.toFixed(2)} ${output_currency}`,
+          priceByMargin: protectedMinPriceBase,
+          contractDiscount: contractDiscount,
+          discountFormula: contractDiscount > 0 ? `${protectedMinPriceBase.toFixed(2)} × (1 - ${contractDiscount}/100) = ${protectedMinPrice.toFixed(2)} ${output_currency}` : 'No discount for 12-month term',
+          priceAfterDiscount: protectedMinPrice,
           totalBeforeRounding: protectedMinPrice,
           roundedToNearest10: roundUpToNearest10(protectedMinPrice),
-          description: `Minimum price calculated to achieve ${minMarginPercent}% margin`
+          description: `Minimum price calculated to achieve ${minMarginPercent}% margin with ${contract_term}-month contract`
         },
         suggestedPriceBreakdown: {
           allocatedCost: protectedAllocatedCost,
           targetMargin: suggestedMarginPercent,
           formula: `Allocated Cost / (1 - ${suggestedMarginPercent}%)`,
-          calculation: `${protectedAllocatedCost.toFixed(2)} / (1 - ${(suggestedMarginPercent / 100).toFixed(2)}) = ${protectedAllocatedCost.toFixed(2)} / ${(1 - (suggestedMarginPercent / 100)).toFixed(2)} = ${protectedSuggestedPrice.toFixed(2)} ${output_currency}`,
+          calculation: `${protectedAllocatedCost.toFixed(2)} / (1 - ${(suggestedMarginPercent / 100).toFixed(2)}) = ${protectedAllocatedCost.toFixed(2)} / ${(1 - (suggestedMarginPercent / 100)).toFixed(2)} = ${protectedSuggestedPriceBase.toFixed(2)} ${output_currency}`,
+          priceByMargin: protectedSuggestedPriceBase,
+          contractDiscount: contractDiscount,
+          discountFormula: contractDiscount > 0 ? `${protectedSuggestedPriceBase.toFixed(2)} × (1 - ${contractDiscount}/100) = ${protectedSuggestedPrice.toFixed(2)} ${output_currency}` : 'No discount for 12-month term',
+          priceAfterDiscount: protectedSuggestedPrice,
           totalBeforeRounding: protectedSuggestedPrice,
           roundedToNearest10: roundUpToNearest10(protectedSuggestedPrice),
-          description: `Suggested price calculated to achieve ${suggestedMarginPercent}% margin`
+          description: `Suggested price calculated to achieve ${suggestedMarginPercent}% margin with ${contract_term}-month contract`
         },
         marginVerification: {
           actualMinMargin: actualProtectedMinMargin,
@@ -9799,75 +10209,19 @@ router.get('/bulk-upload/history', authenticateToken, authorizeRole('administrat
 });
 
 // Get pricing logic configuration 
-router.get('/pricing_logic/config', authenticateToken, (req, res) => {
-  db.all('SELECT * FROM pricing_logic_config', [], (err, configs) => {
-    if (err) return res.status(500).json({ error: err.message });
-    
-    // Convert flat config array to nested object structure
-    const configData = {
-      contractTerms: {
-        12: { minMargin: 40, suggestedMargin: 60, nrcCharge: 1000 },
-        24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
-        36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
-      },
-      protectedServiceMargins: {
-        12: { minMargin: 50, suggestedMargin: 70 },
-        24: { minMargin: 47.5, suggestedMargin: 65 },
-        36: { minMargin: 45, suggestedMargin: 60 }
-      },
-      charges: {
-        // protectionPathMultiplier removed - protected service pricing now based on enforced margins
-      },
-      utilizationFactors: {
-        primaryUnder10000: 0.9,
-        primaryOver10000: 0.9,
-        protectionUnder10000: 1.0,
-        protectionOver10000: 1.0
-      },
-      promoPricing: {
-        minimumMarginPercent: 35,
-        discount24Month: 5,
-        discount36Month: 10
-      },
-      crossConnect: {
-        nrcMargin: 10,
-        mrcMargin: 10
-      }
-    };
-    
-    // Override with database values
-    configs.forEach(config => {
-      const parts = config.config_key.split('.');
-      if (parts.length === 3 && parts[0] === 'contractTerms') {
-        const term = parts[1];
-        const field = parts[2];
-        if (!configData.contractTerms[term]) configData.contractTerms[term] = {};
-        configData.contractTerms[term][field] = parseFloat(config.config_value);
-      } else if (parts.length === 3 && parts[0] === 'protectedServiceMargins') {
-        const term = parts[1];
-        const field = parts[2];
-        if (!configData.protectedServiceMargins[term]) configData.protectedServiceMargins[term] = {};
-        configData.protectedServiceMargins[term][field] = parseFloat(config.config_value);
-      } else if (parts.length === 2 && parts[0] === 'charges') {
-        // Skip protectionPathMultiplier if it exists in database (deprecated)
-        if (parts[1] !== 'protectionPathMultiplier') {
-        configData.charges[parts[1]] = parseFloat(config.config_value);
-        }
-      } else if (parts.length === 2 && parts[0] === 'utilizationFactors') {
-        configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
-      } else if (parts.length === 2 && parts[0] === 'promoPricing') {
-        configData.promoPricing[parts[1]] = parseFloat(config.config_value);
-      } else if (parts.length === 2 && parts[0] === 'crossConnect') {
-        configData.crossConnect[parts[1]] = parseFloat(config.config_value);
-      }
-    });
+router.get('/pricing_logic/config', authenticateToken, async (req, res) => {
+  try {
+    // Use the internal config function to ensure consistency
+    const configData = await getPricingLogicConfig();
     
     res.json({
       success: true,
       data: configData,
       lastUpdated: new Date().toISOString()
     });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Update pricing logic configuration
@@ -9882,26 +10236,74 @@ router.put('/pricing_logic/config', authenticateToken, authorizeRole('administra
   // Prepare update operations
   const updateOperations = [];
 
-  // Contract terms
+  // Contract terms - NEW: Handle bandwidth tiers for 12-month, discountPercent for 24/36-month
   Object.keys(contractTerms).forEach(term => {
     const termConfig = contractTerms[term];
-    ['minMargin', 'suggestedMargin', 'nrcCharge'].forEach(field => {
-      updateOperations.push({
-        key: `contractTerms.${term}.${field}`,
-        value: termConfig[field]
+    
+    if (term === '12' && termConfig.bandwidthTiers) {
+      // 12-month contract: save bandwidth tier margins
+      Object.keys(termConfig.bandwidthTiers).forEach(tier => {
+        const tierConfig = termConfig.bandwidthTiers[tier];
+        ['minMargin', 'suggestedMargin'].forEach(field => {
+          if (tierConfig[field] !== undefined) {
+            updateOperations.push({
+              key: `contractTerms.${term}.bandwidthTiers.${tier}.${field}`,
+              value: tierConfig[field]
+            });
+          }
+        });
       });
-    });
+      // Save NRC charge
+      if (termConfig.nrcCharge !== undefined) {
+        updateOperations.push({
+          key: `contractTerms.${term}.nrcCharge`,
+          value: termConfig.nrcCharge
+        });
+      }
+    } else if (term === '24' || term === '36') {
+      // 24 and 36-month contracts: save discount percentage
+      if (termConfig.discountPercent !== undefined) {
+        updateOperations.push({
+          key: `contractTerms.${term}.discountPercent`,
+          value: termConfig.discountPercent
+        });
+      }
+      // Save NRC charge
+      if (termConfig.nrcCharge !== undefined) {
+        updateOperations.push({
+          key: `contractTerms.${term}.nrcCharge`,
+          value: termConfig.nrcCharge
+        });
+      }
+    }
   });
 
-  // Protected service margins
+  // Protected service margins - NEW: Handle bandwidth tiers for 12-month, discountPercent for 24/36-month
   Object.keys(protectedServiceMargins).forEach(term => {
     const termConfig = protectedServiceMargins[term];
-    ['minMargin', 'suggestedMargin'].forEach(field => {
-      updateOperations.push({
-        key: `protectedServiceMargins.${term}.${field}`,
-        value: termConfig[field]
+    
+    if (term === '12' && termConfig.bandwidthTiers) {
+      // 12-month contract: save bandwidth tier margins
+      Object.keys(termConfig.bandwidthTiers).forEach(tier => {
+        const tierConfig = termConfig.bandwidthTiers[tier];
+        ['minMargin', 'suggestedMargin'].forEach(field => {
+          if (tierConfig[field] !== undefined) {
+            updateOperations.push({
+              key: `protectedServiceMargins.${term}.bandwidthTiers.${tier}.${field}`,
+              value: tierConfig[field]
+            });
+          }
+        });
       });
-    });
+    } else if (term === '24' || term === '36') {
+      // 24 and 36-month contracts: save discount percentage
+      if (termConfig.discountPercent !== undefined) {
+        updateOperations.push({
+          key: `protectedServiceMargins.${term}.discountPercent`,
+          value: termConfig.discountPercent
+        });
+      }
+    }
   });
 
   // Charges (skip deprecated protectionPathMultiplier)
@@ -10055,52 +10457,115 @@ const getPricingLogicConfig = () => {
         return;
       }
 
-      // Default configuration
+      // Default configuration with bandwidth-based margins (v3.4.0+)
       const configData = {
         contractTerms: {
-          12: { minMargin: 40, suggestedMargin: 60, nrcCharge: 1000 },
-          24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
-          36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
+          12: {
+            bandwidthTiers: {
+              under_100mb: { minMargin: 50, suggestedMargin: 65 },
+              from_100_to_999mb: { minMargin: 40, suggestedMargin: 55 },
+              from_1000_to_2999mb: { minMargin: 35, suggestedMargin: 50 },
+              over_3000mb: { minMargin: 30, suggestedMargin: 45 }
+            },
+            nrcCharge: 1000
+          },
+          24: { discountPercent: 5, nrcCharge: 500 },
+          36: { discountPercent: 10, nrcCharge: 0 }
         },
         protectedServiceMargins: {
-          12: { minMargin: 50, suggestedMargin: 70 },
-          24: { minMargin: 47.5, suggestedMargin: 65 },
-          36: { minMargin: 45, suggestedMargin: 60 }
+          12: {
+            bandwidthTiers: {
+              under_100mb: { minMargin: 60, suggestedMargin: 75 },
+              from_100_to_999mb: { minMargin: 50, suggestedMargin: 65 },
+              from_1000_to_2999mb: { minMargin: 45, suggestedMargin: 60 },
+              over_3000mb: { minMargin: 40, suggestedMargin: 55 }
+            }
+          },
+          24: { discountPercent: 5 },
+          36: { discountPercent: 10 }
         },
-              charges: {
+        charges: {
           // protectionPathMultiplier removed - protected service pricing now based on enforced margins
-      },
-      utilizationFactors: {
-        primaryUnder10000: 0.9,
-        primaryOver10000: 0.9,
-        protectionUnder10000: 1.0,
-        protectionOver10000: 1.0
-      },
-      promoPricing: {
-        minimumMarginPercent: 35,
-        discount24Month: 5,
-        discount36Month: 10
-      },
-      crossConnect: {
-        nrcMargin: 10,
-        mrcMargin: 10
-      }
-    };
+        },
+        utilizationFactors: {
+          primaryUnder10000: 0.9,
+          primaryOver10000: 0.9,
+          protectionUnder10000: 1.0,
+          protectionOver10000: 1.0
+        },
+        promoPricing: {
+          minimumMarginPercent: 35,
+          discount24Month: 5,
+          discount36Month: 10
+        },
+        crossConnect: {
+          nrcMargin: 10,
+          mrcMargin: 10
+        }
+      };
+
+      // Track if we have old-style config (for backward compatibility)
+      let hasOldStyleConfig = false;
+      let oldStyleMargins = {};
 
       // Override with database values
       configs.forEach(config => {
         const parts = config.config_key.split('.');
-        if (parts.length === 3 && parts[0] === 'contractTerms') {
+        
+        // Handle new bandwidth tier structure: contractTerms.12.bandwidthTiers.under_100mb.minMargin
+        if (parts.length === 5 && parts[0] === 'contractTerms' && parts[2] === 'bandwidthTiers') {
           const term = parts[1];
-          const field = parts[2];
+          const tier = parts[3];
+          const field = parts[4];
+          if (!configData.contractTerms[term]) configData.contractTerms[term] = { bandwidthTiers: {}, nrcCharge: 0 };
+          if (!configData.contractTerms[term].bandwidthTiers) configData.contractTerms[term].bandwidthTiers = {};
+          if (!configData.contractTerms[term].bandwidthTiers[tier]) configData.contractTerms[term].bandwidthTiers[tier] = {};
+          configData.contractTerms[term].bandwidthTiers[tier][field] = parseFloat(config.config_value);
+        }
+        // Handle new protected service bandwidth tier structure
+        else if (parts.length === 5 && parts[0] === 'protectedServiceMargins' && parts[2] === 'bandwidthTiers') {
+          const term = parts[1];
+          const tier = parts[3];
+          const field = parts[4];
+          if (!configData.protectedServiceMargins[term]) configData.protectedServiceMargins[term] = { bandwidthTiers: {} };
+          if (!configData.protectedServiceMargins[term].bandwidthTiers) configData.protectedServiceMargins[term].bandwidthTiers = {};
+          if (!configData.protectedServiceMargins[term].bandwidthTiers[tier]) configData.protectedServiceMargins[term].bandwidthTiers[tier] = {};
+          configData.protectedServiceMargins[term].bandwidthTiers[tier][field] = parseFloat(config.config_value);
+        }
+        // Handle new discount structure: contractTerms.24.discountPercent
+        else if (parts.length === 3 && parts[0] === 'contractTerms' && parts[2] === 'discountPercent') {
+          const term = parts[1];
           if (!configData.contractTerms[term]) configData.contractTerms[term] = {};
-          configData.contractTerms[term][field] = parseFloat(config.config_value);
-        } else if (parts.length === 3 && parts[0] === 'protectedServiceMargins') {
+          configData.contractTerms[term].discountPercent = parseFloat(config.config_value);
+        }
+        else if (parts.length === 3 && parts[0] === 'protectedServiceMargins' && parts[2] === 'discountPercent') {
+          const term = parts[1];
+          if (!configData.protectedServiceMargins[term]) configData.protectedServiceMargins[term] = {};
+          configData.protectedServiceMargins[term].discountPercent = parseFloat(config.config_value);
+        }
+        // Handle NRC charges: contractTerms.12.nrcCharge
+        else if (parts.length === 3 && parts[0] === 'contractTerms' && parts[2] === 'nrcCharge') {
+          const term = parts[1];
+          if (!configData.contractTerms[term]) configData.contractTerms[term] = {};
+          configData.contractTerms[term].nrcCharge = parseFloat(config.config_value);
+        }
+        // BACKWARD COMPATIBILITY: Handle old-style flat margins (pre-v3.4.0)
+        else if (parts.length === 3 && parts[0] === 'contractTerms' && (parts[2] === 'minMargin' || parts[2] === 'suggestedMargin')) {
+          hasOldStyleConfig = true;
           const term = parts[1];
           const field = parts[2];
-          if (!configData.protectedServiceMargins[term]) configData.protectedServiceMargins[term] = {};
-          configData.protectedServiceMargins[term][field] = parseFloat(config.config_value);
-        } else if (parts.length === 2 && parts[0] === 'charges') {
+          if (!oldStyleMargins[term]) oldStyleMargins[term] = {};
+          oldStyleMargins[term][field] = parseFloat(config.config_value);
+        }
+        else if (parts.length === 3 && parts[0] === 'protectedServiceMargins' && (parts[2] === 'minMargin' || parts[2] === 'suggestedMargin')) {
+          hasOldStyleConfig = true;
+          const term = parts[1];
+          const field = parts[2];
+          if (!oldStyleMargins['protected_' + term]) oldStyleMargins['protected_' + term] = {};
+          oldStyleMargins['protected_' + term][field] = parseFloat(config.config_value);
+        }
+        // Other configs unchanged
+        else if (parts.length === 2 && parts[0] === 'charges') {
           configData.charges[parts[1]] = parseFloat(config.config_value);
         } else if (parts.length === 2 && parts[0] === 'utilizationFactors') {
           configData.utilizationFactors[parts[1]] = parseFloat(config.config_value);
@@ -10110,6 +10575,38 @@ const getPricingLogicConfig = () => {
           configData.crossConnect[parts[1]] = parseFloat(config.config_value);
         }
       });
+
+      // BACKWARD COMPATIBILITY: If old-style config detected and no bandwidth tiers configured, populate all tiers with old values
+      if (hasOldStyleConfig && oldStyleMargins['12']) {
+        const hasBandwidthTiers = configs.some(c => c.config_key.includes('bandwidthTiers'));
+        if (!hasBandwidthTiers) {
+          console.log('[Pricing Config] Detected old-style margins, applying to all bandwidth tiers for backward compatibility');
+          // Apply old 12-month margins to all bandwidth tiers
+          const tiers = ['under_100mb', 'from_100_to_999mb', 'from_1000_to_2999mb', 'over_3000mb'];
+          tiers.forEach(tier => {
+            configData.contractTerms[12].bandwidthTiers[tier] = {
+              minMargin: oldStyleMargins['12'].minMargin || 40,
+              suggestedMargin: oldStyleMargins['12'].suggestedMargin || 60
+            };
+          });
+          // Convert 24 and 36 month old margins to discount percentages (approximate)
+          if (oldStyleMargins['24']) {
+            configData.contractTerms[24].discountPercent = 5; // Default
+          }
+          if (oldStyleMargins['36']) {
+            configData.contractTerms[36].discountPercent = 10; // Default
+          }
+          // Same for protected service margins
+          if (oldStyleMargins['protected_12']) {
+            tiers.forEach(tier => {
+              configData.protectedServiceMargins[12].bandwidthTiers[tier] = {
+                minMargin: oldStyleMargins['protected_12'].minMargin || 50,
+                suggestedMargin: oldStyleMargins['protected_12'].suggestedMargin || 70
+              };
+            });
+          }
+        }
+      }
 
       resolve(configData);
     });

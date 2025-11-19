@@ -37,17 +37,55 @@ import {
 } from '@mui/icons-material';
 import { networkDesignApi } from './api';
 
+// Bandwidth tier constants for display
+const BANDWIDTH_TIERS = {
+  under_100mb: 'Under 100 Mb',
+  from_100_to_999mb: '100 to 999 Mb',
+  from_1000_to_2999mb: '1000 to 2999 Mb',
+  over_3000mb: '3000 Mb Plus'
+};
+
+// Remove spinner buttons from number inputs
+const numberInputSx = {
+  '& input[type=number]': {
+    MozAppearance: 'textfield'
+  },
+  '& input[type=number]::-webkit-outer-spin-button': {
+    WebkitAppearance: 'none',
+    margin: 0
+  },
+  '& input[type=number]::-webkit-inner-spin-button': {
+    WebkitAppearance: 'none',
+    margin: 0
+  }
+};
+
 const PricingLogicManager = ({ hasPermission }) => {
   const [config, setConfig] = useState({
     contractTerms: {
-      12: { minMargin: 40, suggestedMargin: 60, nrcCharge: 1000 },
-      24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
-      36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
+      12: {
+        bandwidthTiers: {
+          under_100mb: { minMargin: 50, suggestedMargin: 65 },
+          from_100_to_999mb: { minMargin: 40, suggestedMargin: 55 },
+          from_1000_to_2999mb: { minMargin: 35, suggestedMargin: 50 },
+          over_3000mb: { minMargin: 30, suggestedMargin: 45 }
+        },
+        nrcCharge: 1000
+      },
+      24: { discountPercent: 5, nrcCharge: 500 },
+      36: { discountPercent: 10, nrcCharge: 0 }
     },
     protectedServiceMargins: {
-      12: { minMargin: 50, suggestedMargin: 70 },
-      24: { minMargin: 47.5, suggestedMargin: 65 },
-      36: { minMargin: 45, suggestedMargin: 60 }
+      12: {
+        bandwidthTiers: {
+          under_100mb: { minMargin: 60, suggestedMargin: 75 },
+          from_100_to_999mb: { minMargin: 50, suggestedMargin: 65 },
+          from_1000_to_2999mb: { minMargin: 45, suggestedMargin: 60 },
+          over_3000mb: { minMargin: 40, suggestedMargin: 55 }
+        }
+      },
+      24: { discountPercent: 5 },
+      36: { discountPercent: 10 }
     },
     charges: {
       // protectionPathMultiplier removed - protected service pricing now based on enforced margins
@@ -114,6 +152,57 @@ const PricingLogicManager = ({ hasPermission }) => {
     }
   };
 
+  // Update 12-month bandwidth tier margins
+  const updateBandwidthTierMargin = (tier, field, value, isProtected = false) => {
+    const sectionKey = isProtected ? 'protectedServiceMargins' : 'contractTerms';
+    setConfig(prev => ({
+      ...prev,
+      [sectionKey]: {
+        ...prev[sectionKey],
+        12: {
+          ...prev[sectionKey][12],
+          bandwidthTiers: {
+            ...prev[sectionKey][12].bandwidthTiers,
+            [tier]: {
+              ...prev[sectionKey][12].bandwidthTiers[tier],
+              [field]: parseFloat(value) || 0
+            }
+          }
+        }
+      }
+    }));
+  };
+
+  // Update contract term discount percentages (24 and 36 month)
+  const updateContractDiscount = (term, value, isProtected = false) => {
+    const sectionKey = isProtected ? 'protectedServiceMargins' : 'contractTerms';
+    setConfig(prev => ({
+      ...prev,
+      [sectionKey]: {
+        ...prev[sectionKey],
+        [term]: {
+          ...prev[sectionKey][term],
+          discountPercent: parseFloat(value) || 0
+        }
+      }
+    }));
+  };
+
+  // Update NRC charge for contract terms
+  const updateNrcCharge = (term, value) => {
+    setConfig(prev => ({
+      ...prev,
+      contractTerms: {
+        ...prev.contractTerms,
+        [term]: {
+          ...prev.contractTerms[term],
+          nrcCharge: parseFloat(value) || 0
+        }
+      }
+    }));
+  };
+
+  // Legacy function - kept for backward compatibility but not used in new UI
   const updateContractTerm = (term, field, value) => {
     setConfig(prev => ({
       ...prev,
@@ -127,6 +216,7 @@ const PricingLogicManager = ({ hasPermission }) => {
     }));
   };
 
+  // Legacy function - kept for backward compatibility but not used in new UI
   const updateProtectedServiceMargin = (term, field, value) => {
     setConfig(prev => ({
       ...prev,
@@ -183,14 +273,29 @@ const PricingLogicManager = ({ hasPermission }) => {
   const resetToDefaults = () => {
     setConfig({
       contractTerms: {
-        12: { minMargin: 40, suggestedMargin: 60, nrcCharge: 1000 },
-        24: { minMargin: 37.5, suggestedMargin: 55, nrcCharge: 500 },
-        36: { minMargin: 35, suggestedMargin: 50, nrcCharge: 0 }
+        12: {
+          bandwidthTiers: {
+            under_100mb: { minMargin: 50, suggestedMargin: 65 },
+            from_100_to_999mb: { minMargin: 40, suggestedMargin: 55 },
+            from_1000_to_2999mb: { minMargin: 35, suggestedMargin: 50 },
+            over_3000mb: { minMargin: 30, suggestedMargin: 45 }
+          },
+          nrcCharge: 1000
+        },
+        24: { discountPercent: 5, nrcCharge: 500 },
+        36: { discountPercent: 10, nrcCharge: 0 }
       },
       protectedServiceMargins: {
-        12: { minMargin: 50, suggestedMargin: 70 },
-        24: { minMargin: 47.5, suggestedMargin: 65 },
-        36: { minMargin: 45, suggestedMargin: 60 }
+        12: {
+          bandwidthTiers: {
+            under_100mb: { minMargin: 60, suggestedMargin: 75 },
+            from_100_to_999mb: { minMargin: 50, suggestedMargin: 65 },
+            from_1000_to_2999mb: { minMargin: 45, suggestedMargin: 60 },
+            over_3000mb: { minMargin: 40, suggestedMargin: 55 }
+          }
+        },
+        24: { discountPercent: 5 },
+        36: { discountPercent: 10 }
       },
       charges: {
         // protectionPathMultiplier removed - protected service pricing now based on enforced margins
@@ -279,71 +384,67 @@ const PricingLogicManager = ({ hasPermission }) => {
         </Typography>
 
         <Grid container spacing={3}>
-          {/* Contract Terms Configuration */}
+          {/* Base Service Margins (12-Month Contract) - Bandwidth Tiers */}
           <Grid item xs={12}>
             <Accordion defaultExpanded>
               <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                 <Box display="flex" alignItems="center" gap={1}>
                   <TrendingUpIcon color="primary" />
-                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Contract Term Pricing Rules</Typography>
-                  <Chip label="Core Logic" color="primary" size="small" />
+                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Base Service Margins (12-Month Contract)</Typography>
+                  <Chip label="Bandwidth-Based" color="primary" size="small" />
                 </Box>
               </AccordionSummary>
               <AccordionDetails>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2, fontSize: '0.75rem' }}>
+                  Configure base margins for 12-month contracts across different bandwidth tiers. 
+                  Lower bandwidth requests typically have higher margins, while higher bandwidth requests have lower margins.
+                </Typography>
                 <TableContainer component={Paper} elevation={0} sx={{ border: 1, borderColor: 'divider' }}>
                   <Table>
                     <TableHead>
                       <TableRow>
-                        <TableCell><strong>Contract Term</strong></TableCell>
+                        <TableCell><strong>Bandwidth Tier</strong></TableCell>
                         <TableCell><strong>Minimum Margin (%)</strong></TableCell>
                         <TableCell><strong>Suggested Margin (%)</strong></TableCell>
-                        <TableCell><strong>NRC Charge (USD)</strong></TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {Object.entries(config.contractTerms).map(([term, termConfig]) => (
-                        <TableRow key={term}>
-                          <TableCell>
-                            <Chip label={`${term} months`} variant="outlined" />
-                          </TableCell>
-                          <TableCell>
-                            <TextField
-                              type="number"
-                              value={termConfig.minMargin}
-                              onChange={(e) => updateContractTerm(term, 'minMargin', e.target.value)}
-                              InputProps={{
-                                endAdornment: <InputAdornment position="end">%</InputAdornment>
-                              }}
-                              size="small"
-                              sx={{ width: 120 }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <TextField
-                              type="number"
-                              value={termConfig.suggestedMargin}
-                              onChange={(e) => updateContractTerm(term, 'suggestedMargin', e.target.value)}
-                              InputProps={{
-                                endAdornment: <InputAdornment position="end">%</InputAdornment>
-                              }}
-                              size="small"
-                              sx={{ width: 120 }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <TextField
-                              type="number"
-                              value={termConfig.nrcCharge}
-                              onChange={(e) => updateContractTerm(term, 'nrcCharge', e.target.value)}
-                              InputProps={{
-                                startAdornment: <InputAdornment position="start">$</InputAdornment>
-                              }}
-                              size="small"
-                              sx={{ width: 120 }}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {Object.entries(BANDWIDTH_TIERS).map(([tierKey, tierLabel]) => {
+                        const tierConfig = config.contractTerms[12].bandwidthTiers[tierKey];
+                        return (
+                          <TableRow key={tierKey}>
+                            <TableCell>
+                              <Chip label={tierLabel} variant="outlined" size="small" />
+                            </TableCell>
+                            <TableCell>
+                              <TextField
+                                type="number"
+                                value={tierConfig.minMargin}
+                                onChange={(e) => updateBandwidthTierMargin(tierKey, 'minMargin', e.target.value, false)}
+                                InputProps={{
+                                  endAdornment: <InputAdornment position="end">%</InputAdornment>
+                                }}
+                                size="small"
+                                sx={{ ...numberInputSx, width: 120 }}
+                                inputProps={{ min: 0, max: 100, step: 0.1 }}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <TextField
+                                type="number"
+                                value={tierConfig.suggestedMargin}
+                                onChange={(e) => updateBandwidthTierMargin(tierKey, 'suggestedMargin', e.target.value, false)}
+                                InputProps={{
+                                  endAdornment: <InputAdornment position="end">%</InputAdornment>
+                                }}
+                                size="small"
+                                sx={{ ...numberInputSx, width: 120 }}
+                                inputProps={{ min: 0, max: 100, step: 0.1 }}
+                              />
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </TableContainer>
@@ -351,60 +452,215 @@ const PricingLogicManager = ({ hasPermission }) => {
             </Accordion>
           </Grid>
 
-          {/* Protected Service Margins */}
+          {/* Contract Term Discounts & NRC Charges */}
+          <Grid item xs={12}>
+            <Accordion defaultExpanded>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <LocalOfferIcon color="primary" />
+                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Contract Term Discounts & NRC Charges</Typography>
+                </Box>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2, fontSize: '0.75rem' }}>
+                  Configure discounts applied to 12-month base prices for longer contract terms, and set NRC charges for each term.
+                </Typography>
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={4}>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="h6" sx={{ fontSize: '1rem', mb: 2 }}>12-Month Contract</Typography>
+                        <TextField
+                          fullWidth
+                          label="NRC Charge"
+                          type="number"
+                          value={config.contractTerms[12].nrcCharge}
+                          onChange={(e) => updateNrcCharge('12', e.target.value)}
+                          InputProps={{
+                            startAdornment: <InputAdornment position="start">$</InputAdornment>
+                          }}
+                          size="small"
+                          sx={numberInputSx}
+                          helperText="One-time setup charge"
+                        />
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="h6" sx={{ fontSize: '1rem', mb: 2 }}>24-Month Contract</Typography>
+                        <TextField
+                          fullWidth
+                          label="Discount Percentage"
+                          type="number"
+                          value={config.contractTerms[24].discountPercent}
+                          onChange={(e) => updateContractDiscount('24', e.target.value, false)}
+                          InputProps={{
+                            endAdornment: <InputAdornment position="end">%</InputAdornment>
+                          }}
+                          size="small"
+                          sx={{ ...numberInputSx, mb: 2 }}
+                          helperText="Discount off 12-month price"
+                          inputProps={{ min: 0, max: 100, step: 0.1 }}
+                        />
+                        <TextField
+                          fullWidth
+                          label="NRC Charge"
+                          type="number"
+                          value={config.contractTerms[24].nrcCharge}
+                          onChange={(e) => updateNrcCharge('24', e.target.value)}
+                          InputProps={{
+                            startAdornment: <InputAdornment position="start">$</InputAdornment>
+                          }}
+                          size="small"
+                          sx={numberInputSx}
+                          helperText="One-time setup charge"
+                        />
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="h6" sx={{ fontSize: '1rem', mb: 2 }}>36-Month Contract</Typography>
+                        <TextField
+                          fullWidth
+                          label="Discount Percentage"
+                          type="number"
+                          value={config.contractTerms[36].discountPercent}
+                          onChange={(e) => updateContractDiscount('36', e.target.value, false)}
+                          InputProps={{
+                            endAdornment: <InputAdornment position="end">%</InputAdornment>
+                          }}
+                          size="small"
+                          sx={{ ...numberInputSx, mb: 2 }}
+                          helperText="Discount off 12-month price"
+                          inputProps={{ min: 0, max: 100, step: 0.1 }}
+                        />
+                        <TextField
+                          fullWidth
+                          label="NRC Charge"
+                          type="number"
+                          value={config.contractTerms[36].nrcCharge}
+                          onChange={(e) => updateNrcCharge('36', e.target.value)}
+                          InputProps={{
+                            startAdornment: <InputAdornment position="start">$</InputAdornment>
+                          }}
+                          size="small"
+                          sx={numberInputSx}
+                          helperText="One-time setup charge"
+                        />
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
+              </AccordionDetails>
+            </Accordion>
+          </Grid>
+
+          {/* Protected Service Margins (12-Month Contract) - Bandwidth Tiers */}
           <Grid item xs={12}>
             <Accordion defaultExpanded>
               <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                 <Box display="flex" alignItems="center" gap={1}>
                   <SecurityIcon color="primary" />
-                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Protected Service Margin Rules</Typography>
+                  <Typography variant="h6" sx={{ fontSize: '1.1875rem' }}>Protected Service Margins (12-Month Contract)</Typography>
+                  <Chip label="Bandwidth-Based" color="secondary" size="small" />
                 </Box>
               </AccordionSummary>
               <AccordionDetails>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2, fontSize: '0.75rem' }}>
+                  Configure higher margins for protected services (redundant connectivity) across different bandwidth tiers.
+                  These margins should typically be 10-15% higher than standard service margins.
+                </Typography>
                 <TableContainer component={Paper} elevation={0} sx={{ border: 1, borderColor: 'divider' }}>
                   <Table>
-                                          <TableHead>
-                        <TableRow>
-                          <TableCell><strong>Contract Term</strong></TableCell>
-                          <TableCell><strong>Minimum Margin (%)</strong></TableCell>
-                          <TableCell><strong>Suggested Margin (%)</strong></TableCell>
-                        </TableRow>
-                      </TableHead>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell><strong>Bandwidth Tier</strong></TableCell>
+                        <TableCell><strong>Minimum Margin (%)</strong></TableCell>
+                        <TableCell><strong>Suggested Margin (%)</strong></TableCell>
+                      </TableRow>
+                    </TableHead>
                     <TableBody>
-                      {Object.entries(config.protectedServiceMargins).map(([term, termConfig]) => (
-                        <TableRow key={term}>
-                          <TableCell>
-                            <Chip label={`${term} months`} variant="outlined" color="secondary" />
-                          </TableCell>
-                          <TableCell>
-                            <TextField
-                              type="number"
-                              value={termConfig.minMargin}
-                              onChange={(e) => updateProtectedServiceMargin(term, 'minMargin', e.target.value)}
-                              InputProps={{
-                                endAdornment: <InputAdornment position="end">%</InputAdornment>
-                              }}
-                              size="small"
-                              sx={{ width: 120 }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <TextField
-                              type="number"
-                              value={termConfig.suggestedMargin}
-                              onChange={(e) => updateProtectedServiceMargin(term, 'suggestedMargin', e.target.value)}
-                              InputProps={{
-                                endAdornment: <InputAdornment position="end">%</InputAdornment>
-                              }}
-                              size="small"
-                              sx={{ width: 120 }}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {Object.entries(BANDWIDTH_TIERS).map(([tierKey, tierLabel]) => {
+                        const tierConfig = config.protectedServiceMargins[12].bandwidthTiers[tierKey];
+                        return (
+                          <TableRow key={tierKey}>
+                            <TableCell>
+                              <Chip label={tierLabel} variant="outlined" size="small" color="secondary" />
+                            </TableCell>
+                            <TableCell>
+                              <TextField
+                                type="number"
+                                value={tierConfig.minMargin}
+                                onChange={(e) => updateBandwidthTierMargin(tierKey, 'minMargin', e.target.value, true)}
+                                InputProps={{
+                                  endAdornment: <InputAdornment position="end">%</InputAdornment>
+                                }}
+                                size="small"
+                                sx={{ ...numberInputSx, width: 120 }}
+                                inputProps={{ min: 0, max: 100, step: 0.1 }}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <TextField
+                                type="number"
+                                value={tierConfig.suggestedMargin}
+                                onChange={(e) => updateBandwidthTierMargin(tierKey, 'suggestedMargin', e.target.value, true)}
+                                InputProps={{
+                                  endAdornment: <InputAdornment position="end">%</InputAdornment>
+                                }}
+                                size="small"
+                                sx={{ ...numberInputSx, width: 120 }}
+                                inputProps={{ min: 0, max: 100, step: 0.1 }}
+                              />
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </TableContainer>
+                <Divider sx={{ my: 3 }} />
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2, fontSize: '0.75rem' }}>
+                  Configure discounts for longer contract terms on protected services:
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="24-Month Discount"
+                      type="number"
+                      value={config.protectedServiceMargins[24].discountPercent}
+                      onChange={(e) => updateContractDiscount('24', e.target.value, true)}
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>
+                      }}
+                      size="small"
+                      sx={numberInputSx}
+                      helperText="Discount off 12-month protected service price"
+                      inputProps={{ min: 0, max: 100, step: 0.1 }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="36-Month Discount"
+                      type="number"
+                      value={config.protectedServiceMargins[36].discountPercent}
+                      onChange={(e) => updateContractDiscount('36', e.target.value, true)}
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>
+                      }}
+                      size="small"
+                      sx={numberInputSx}
+                      helperText="Discount off 12-month protected service price"
+                      inputProps={{ min: 0, max: 100, step: 0.1 }}
+                    />
+                  </Grid>
+                </Grid>
               </AccordionDetails>
             </Accordion>
           </Grid>
@@ -426,6 +682,7 @@ const PricingLogicManager = ({ hasPermission }) => {
                       inputProps={{ step: 0.1, min: 0, max: 1 }}
                       value={config.utilizationFactors.primaryUnder10000}
                       onChange={(e) => updateUtilizationFactor('primaryUnder10000', e.target.value)}
+                      sx={numberInputSx}
                       helperText="Primary paths for circuits 10000Mbit and below (0.0 - 1.0)"
                     />
                   </Grid>
@@ -437,6 +694,7 @@ const PricingLogicManager = ({ hasPermission }) => {
                       inputProps={{ step: 0.1, min: 0, max: 1 }}
                       value={config.utilizationFactors.primaryOver10000}
                       onChange={(e) => updateUtilizationFactor('primaryOver10000', e.target.value)}
+                      sx={numberInputSx}
                       helperText="Primary paths for circuits over 10000Mbit (0.0 - 1.0)"
                     />
                   </Grid>
@@ -448,6 +706,7 @@ const PricingLogicManager = ({ hasPermission }) => {
                       inputProps={{ step: 0.1, min: 0, max: 1 }}
                       value={config.utilizationFactors.protectionUnder10000}
                       onChange={(e) => updateUtilizationFactor('protectionUnder10000', e.target.value)}
+                      sx={numberInputSx}
                       helperText="Protection paths for circuits 10000Mbit and below (0.0 - 1.0)"
                     />
                   </Grid>
@@ -459,6 +718,7 @@ const PricingLogicManager = ({ hasPermission }) => {
                       inputProps={{ step: 0.1, min: 0, max: 1 }}
                       value={config.utilizationFactors.protectionOver10000}
                       onChange={(e) => updateUtilizationFactor('protectionOver10000', e.target.value)}
+                      sx={numberInputSx}
                       helperText="Protection paths for circuits over 10000Mbit (0.0 - 1.0)"
                     />
                   </Grid>
@@ -487,6 +747,7 @@ const PricingLogicManager = ({ hasPermission }) => {
                       InputProps={{
                         endAdornment: <InputAdornment position="end">%</InputAdornment>
                       }}
+                      sx={numberInputSx}
                       helperText="Minimum margin required for promo pricing to be used (fallback to regular pricing if not met)"
                     />
                   </Grid>
@@ -501,6 +762,7 @@ const PricingLogicManager = ({ hasPermission }) => {
                       InputProps={{
                         endAdornment: <InputAdornment position="end">%</InputAdornment>
                       }}
+                      sx={numberInputSx}
                       helperText="Additional discount from base promo price for 24-month contracts"
                     />
                   </Grid>
@@ -515,6 +777,7 @@ const PricingLogicManager = ({ hasPermission }) => {
                       InputProps={{
                         endAdornment: <InputAdornment position="end">%</InputAdornment>
                       }}
+                      sx={numberInputSx}
                       helperText="Additional discount from base promo price for 36-month contracts"
                     />
                   </Grid>
@@ -543,6 +806,7 @@ const PricingLogicManager = ({ hasPermission }) => {
                       InputProps={{
                         endAdornment: <InputAdornment position="end">%</InputAdornment>
                       }}
+                      sx={numberInputSx}
                       helperText="Margin percentage applied to cross connect NRC pricing"
                     />
                   </Grid>
@@ -557,6 +821,7 @@ const PricingLogicManager = ({ hasPermission }) => {
                       InputProps={{
                         endAdornment: <InputAdornment position="end">%</InputAdornment>
                       }}
+                      sx={numberInputSx}
                       helperText="Margin percentage applied to cross connect MRC pricing"
                     />
                   </Grid>

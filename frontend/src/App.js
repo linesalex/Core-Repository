@@ -75,7 +75,7 @@ const drawerWidth = 280;
 
 // Main authenticated application component
 function AuthenticatedApp() {
-  const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, isModuleVisible, hasPermission, hasRole, permissions, connectionError, passwordResetRequired } = useAuth();
+  const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, isModuleVisible, hasPermission, hasRole, permissions, modulePermissions, connectionError, passwordResetRequired } = useAuth();
   const { textSizeScale, updateTextSize, resetTextSize } = useTextSize();
   
   // View state for non-authenticated views
@@ -618,6 +618,7 @@ function AuthenticatedApp() {
               onOpenDarkFiber={handleOpenDarkFiber}
               hasPermission={hasPermission}
               userRole={user?.role}
+              modulePermission={modulePermissions?.network_routes}
               userId={user?.id}
               onRefreshSuccess={refreshData}
             />
@@ -670,7 +671,11 @@ function AuthenticatedApp() {
       
             case 'location-data':
         return hasModuleAccess('locations') ? (
-          <LocationDataManager hasPermission={hasPermission} />
+          <LocationDataManager 
+            hasPermission={hasPermission} 
+            userRole={user?.role}
+            modulePermission={modulePermissions?.locations}
+          />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
@@ -803,7 +808,7 @@ function AuthenticatedApp() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.3.3
+              v3.4.0
             </Typography>
           </Typography>
           
