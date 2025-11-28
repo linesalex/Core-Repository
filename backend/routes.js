@@ -2520,53 +2520,94 @@ router.get('/network_routes_with_kmz', authenticateToken, authorizeModulePermiss
 
 // Get counts of routes by bandwidth filter (for displaying available counts)
 router.get('/kmz_viewer/route_counts', authenticateToken, authorizeModulePermission('kmz_viewer', 'read_only'), (req, res) => {
-  const counts = {};
+  const counts = {
+    dark_fiber: { EMEA: 0, AMERs: 0, APAC: 0, INTER: 0, total: 0 },
+    gb_100: { EMEA: 0, AMERs: 0, APAC: 0, INTER: 0, total: 0 },
+    gb_10: { EMEA: 0, AMERs: 0, APAC: 0, INTER: 0, total: 0 },
+    lt_10gb: { EMEA: 0, AMERs: 0, APAC: 0, INTER: 0, total: 0 }
+  };
   
   const queries = [
+    // Dark Fiber counts by region
     new Promise((resolve) => {
-      db.get(
-        `SELECT COUNT(*) as count FROM network_routes 
+      db.all(
+        `SELECT UPPER(region) as region, COUNT(*) as count FROM network_routes 
          WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
-         AND LOWER(bandwidth) = 'dark fiber'`,
+         AND LOWER(bandwidth) = 'dark fiber'
+         GROUP BY UPPER(region)`,
         [],
-        (err, row) => {
-          counts.dark_fiber = err ? 0 : row.count;
+        (err, rows) => {
+          if (!err && rows) {
+            rows.forEach(row => {
+              if (row.region && counts.dark_fiber[row.region] !== undefined) {
+                counts.dark_fiber[row.region] = row.count;
+                counts.dark_fiber.total += row.count;
+              }
+            });
+          }
           resolve();
         }
       );
     }),
+    // 100Gb counts by region
     new Promise((resolve) => {
-      db.get(
-        `SELECT COUNT(*) as count FROM network_routes 
+      db.all(
+        `SELECT UPPER(region) as region, COUNT(*) as count FROM network_routes 
          WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
-         AND CAST(bandwidth AS INTEGER) = 100000`,
+         AND CAST(bandwidth AS INTEGER) = 100000
+         GROUP BY UPPER(region)`,
         [],
-        (err, row) => {
-          counts.gb_100 = err ? 0 : row.count;
+        (err, rows) => {
+          if (!err && rows) {
+            rows.forEach(row => {
+              if (row.region && counts.gb_100[row.region] !== undefined) {
+                counts.gb_100[row.region] = row.count;
+                counts.gb_100.total += row.count;
+              }
+            });
+          }
           resolve();
         }
       );
     }),
+    // 10-99Gb counts by region
     new Promise((resolve) => {
-      db.get(
-        `SELECT COUNT(*) as count FROM network_routes 
+      db.all(
+        `SELECT UPPER(region) as region, COUNT(*) as count FROM network_routes 
          WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
-         AND CAST(bandwidth AS INTEGER) >= 10000 AND CAST(bandwidth AS INTEGER) < 100000`,
+         AND CAST(bandwidth AS INTEGER) >= 10000 AND CAST(bandwidth AS INTEGER) < 100000
+         GROUP BY UPPER(region)`,
         [],
-        (err, row) => {
-          counts.gb_10 = err ? 0 : row.count;
+        (err, rows) => {
+          if (!err && rows) {
+            rows.forEach(row => {
+              if (row.region && counts.gb_10[row.region] !== undefined) {
+                counts.gb_10[row.region] = row.count;
+                counts.gb_10.total += row.count;
+              }
+            });
+          }
           resolve();
         }
       );
     }),
+    // <10Gb counts by region
     new Promise((resolve) => {
-      db.get(
-        `SELECT COUNT(*) as count FROM network_routes 
+      db.all(
+        `SELECT UPPER(region) as region, COUNT(*) as count FROM network_routes 
          WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
-         AND CAST(bandwidth AS INTEGER) > 0 AND CAST(bandwidth AS INTEGER) < 10000`,
+         AND CAST(bandwidth AS INTEGER) > 0 AND CAST(bandwidth AS INTEGER) < 10000
+         GROUP BY UPPER(region)`,
         [],
-        (err, row) => {
-          counts.lt_10gb = err ? 0 : row.count;
+        (err, rows) => {
+          if (!err && rows) {
+            rows.forEach(row => {
+              if (row.region && counts.lt_10gb[row.region] !== undefined) {
+                counts.lt_10gb[row.region] = row.count;
+                counts.lt_10gb.total += row.count;
+              }
+            });
+          }
           resolve();
         }
       );
@@ -2578,16 +2619,22 @@ router.get('/kmz_viewer/route_counts', authenticateToken, authorizeModulePermiss
   });
 });
 
-// Get routes grouped by bandwidth filters for KMZ viewer
+// Get routes grouped by bandwidth filters for KMZ viewer (with regional filtering)
 router.get('/kmz_viewer/routes_by_bandwidth', authenticateToken, authorizeModulePermission('kmz_viewer', 'read_only'), (req, res) => {
-  const { filters } = req.query; // filters = 'dark_fiber,100gb,10gb,lt10gb'
+  const { filters, regions } = req.query; // filters = 'dark_fiber,100gb,10gb,lt10gb', regions = 'EMEA,AMERs'
   
   if (!filters) {
     return res.json({ dark_fiber: [], gb_100: [], gb_10: [], lt_10gb: [] });
   }
   
   const filterArray = filters.split(',');
+  const regionArray = regions ? regions.split(',').map(r => r.toUpperCase()) : null;
   const results = {};
+  
+  // Build region filter SQL
+  const regionFilter = regionArray && regionArray.length > 0
+    ? `AND UPPER(region) IN (${regionArray.map(r => `'${r}'`).join(',')})`
+    : '';
   
   const queries = [];
   
@@ -2596,10 +2643,10 @@ router.get('/kmz_viewer/routes_by_bandwidth', authenticateToken, authorizeModule
       new Promise((resolve) => {
         db.all(
           `SELECT circuit_id, location_a, location_b, kmz_file_path, underlying_carrier, cable_system, 
-           bandwidth, expected_latency, carrier_protected 
+           bandwidth, expected_latency, carrier_protected, UPPER(region) as region 
            FROM network_routes 
            WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
-           AND LOWER(bandwidth) = 'dark fiber'`,
+           AND LOWER(bandwidth) = 'dark fiber' ${regionFilter}`,
           [],
           (err, rows) => {
             results.dark_fiber = err ? [] : rows;
@@ -2615,10 +2662,10 @@ router.get('/kmz_viewer/routes_by_bandwidth', authenticateToken, authorizeModule
       new Promise((resolve) => {
         db.all(
           `SELECT circuit_id, location_a, location_b, kmz_file_path, underlying_carrier, cable_system, 
-           bandwidth, expected_latency, carrier_protected 
+           bandwidth, expected_latency, carrier_protected, UPPER(region) as region 
            FROM network_routes 
            WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
-           AND CAST(bandwidth AS INTEGER) = 100000`,
+           AND CAST(bandwidth AS INTEGER) = 100000 ${regionFilter}`,
           [],
           (err, rows) => {
             results.gb_100 = err ? [] : rows;
@@ -2634,10 +2681,10 @@ router.get('/kmz_viewer/routes_by_bandwidth', authenticateToken, authorizeModule
       new Promise((resolve) => {
         db.all(
           `SELECT circuit_id, location_a, location_b, kmz_file_path, underlying_carrier, cable_system, 
-           bandwidth, expected_latency, carrier_protected 
+           bandwidth, expected_latency, carrier_protected, UPPER(region) as region 
            FROM network_routes 
            WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
-           AND CAST(bandwidth AS INTEGER) >= 10000 AND CAST(bandwidth AS INTEGER) < 100000`,
+           AND CAST(bandwidth AS INTEGER) >= 10000 AND CAST(bandwidth AS INTEGER) < 100000 ${regionFilter}`,
           [],
           (err, rows) => {
             results.gb_10 = err ? [] : rows;
@@ -2653,10 +2700,10 @@ router.get('/kmz_viewer/routes_by_bandwidth', authenticateToken, authorizeModule
       new Promise((resolve) => {
         db.all(
           `SELECT circuit_id, location_a, location_b, kmz_file_path, underlying_carrier, cable_system, 
-           bandwidth, expected_latency, carrier_protected 
+           bandwidth, expected_latency, carrier_protected, UPPER(region) as region 
            FROM network_routes 
            WHERE kmz_file_path IS NOT NULL AND kmz_file_path != "" 
-           AND CAST(bandwidth AS INTEGER) > 0 AND CAST(bandwidth AS INTEGER) < 10000`,
+           AND CAST(bandwidth AS INTEGER) > 0 AND CAST(bandwidth AS INTEGER) < 10000 ${regionFilter}`,
           [],
           (err, rows) => {
             results.lt_10gb = err ? [] : rows;
@@ -10642,15 +10689,53 @@ const getPromoRulesWithLocations = () => {
         return;
       }
       
-      // Parse locations strings into arrays
+      // Parse locations strings into arrays and include required_circuit_ids
       const rulesWithLocations = rules.map(rule => ({
         ...rule,
         source_locations: rule.source_locations ? rule.source_locations.split(',') : [],
-        destination_locations: rule.destination_locations ? rule.destination_locations.split(',') : []
+        destination_locations: rule.destination_locations ? rule.destination_locations.split(',') : [],
+        required_circuit_ids: rule.required_circuit_ids ? rule.required_circuit_ids.split(',').map(c => c.trim()).filter(c => c) : []
       }));
       
       resolve(rulesWithLocations);
     });
+  });
+};
+
+// Helper function to validate same-city constraint for promo pricing locations
+const validateSameCityLocations = (locations, locationType) => {
+  return new Promise((resolve, reject) => {
+    if (!locations || locations.length === 0) {
+      resolve({ valid: true });
+      return;
+    }
+    
+    const placeholders = locations.map(() => '?').join(',');
+    db.all(
+      `SELECT location_code, city FROM location_reference WHERE location_code IN (${placeholders})`,
+      locations,
+      (err, results) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        
+        // Get unique cities
+        const cities = new Set();
+        results.forEach(loc => {
+          if (loc.city) cities.add(loc.city);
+        });
+        
+        if (cities.size > 1) {
+          resolve({
+            valid: false,
+            error: `${locationType} locations must be in the same city. Found cities: ${Array.from(cities).join(', ')}`
+          });
+        } else {
+          resolve({ valid: true, city: Array.from(cities)[0] || null });
+        }
+      }
+    );
   });
 };
 
@@ -10684,10 +10769,11 @@ router.get('/promo-pricing', authenticateToken, authorizeRole('administrator'), 
 });
 
 // Create new promo pricing rule
-router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'), (req, res) => {
+router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'), async (req, res) => {
   const {
     rule_name, source_locations, destination_locations,
-    price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+    price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
+    required_circuit_ids
   } = req.body;
   
   // Validate required fields
@@ -10702,6 +10788,31 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
   if (!Array.isArray(destination_locations) || destination_locations.length === 0) {
     return res.status(400).json({ error: 'Destination locations must be a non-empty array' });
   }
+  
+  // Validate same-city constraint for source locations
+  try {
+    const sourceValidation = await validateSameCityLocations(source_locations, 'Source');
+    if (!sourceValidation.valid) {
+      return res.status(400).json({ error: sourceValidation.error });
+    }
+    
+    const destValidation = await validateSameCityLocations(destination_locations, 'Destination');
+    if (!destValidation.valid) {
+      return res.status(400).json({ error: destValidation.error });
+    }
+  } catch (validationErr) {
+    console.error('Location validation error:', validationErr);
+    return res.status(500).json({ error: 'Failed to validate locations' });
+  }
+  
+  // Process required_circuit_ids - convert array to comma-separated string
+  // Handle both string array and object array (where objects have circuit_id property)
+  const requiredCircuitsString = Array.isArray(required_circuit_ids) && required_circuit_ids.length > 0
+    ? required_circuit_ids
+        .map(c => typeof c === 'string' ? c : (c && c.circuit_id ? c.circuit_id : null))
+        .filter(c => c && c.trim && c.trim())
+        .join(',')
+    : null;
 
   // Helper function to insert locations
   const insertLocations = (ruleId, callback) => {
@@ -10752,10 +10863,10 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
   // Insert the main rule
   db.run(
     `INSERT INTO promo_pricing_rules (rule_name, price_under_100mb, price_100_to_999mb, 
-     price_1000_to_2999mb, price_3000mb_plus, is_active, created_by) 
-     VALUES (?, ?, ?, ?, ?, 1, ?)`,
+     price_1000_to_2999mb, price_3000mb_plus, required_circuit_ids, is_active, created_by) 
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
     [rule_name, parseFloat(price_under_100mb) || 0, parseFloat(price_100_to_999mb) || 0, 
-     parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, req.user.id],
+     parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, requiredCircuitsString, req.user.id],
     function(err) {
       if (err) {
         return res.status(500).json({ error: 'Promo pricing insert error: ' + err.message });
@@ -10788,7 +10899,8 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
             // Log the change
             logChange(req.user.id, 'promo_pricing_rules', ruleId, 'CREATE', null, {
               rule_name, source_locations, destination_locations, 
-              price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+              price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
+              required_circuit_ids: requiredCircuitsString
             }, req);
             
             res.json({ message: 'Promo pricing rule created successfully', id: ruleId });
@@ -10800,12 +10912,38 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
 });
 
 // Update promo pricing rule
-router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator'), (req, res) => {
+router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator'), async (req, res) => {
   const ruleId = req.params.id;
   const {
     rule_name, source_locations, destination_locations,
-    price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+    price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
+    required_circuit_ids
   } = req.body;
+  
+  // Validate same-city constraint for source locations
+  try {
+    const sourceValidation = await validateSameCityLocations(source_locations, 'Source');
+    if (!sourceValidation.valid) {
+      return res.status(400).json({ error: sourceValidation.error });
+    }
+    
+    const destValidation = await validateSameCityLocations(destination_locations, 'Destination');
+    if (!destValidation.valid) {
+      return res.status(400).json({ error: destValidation.error });
+    }
+  } catch (validationErr) {
+    console.error('Location validation error:', validationErr);
+    return res.status(500).json({ error: 'Failed to validate locations' });
+  }
+  
+  // Process required_circuit_ids - convert array to comma-separated string
+  // Handle both string array and object array (where objects have circuit_id property)
+  const requiredCircuitsString = Array.isArray(required_circuit_ids) && required_circuit_ids.length > 0
+    ? required_circuit_ids
+        .map(c => typeof c === 'string' ? c : (c && c.circuit_id ? c.circuit_id : null))
+        .filter(c => c && c.trim && c.trim())
+        .join(',')
+    : null;
   
   db.run('BEGIN TRANSACTION', (err) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -10825,9 +10963,9 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
       // Update the promo rule
       db.run(
         `UPDATE promo_pricing_rules SET rule_name = ?, price_under_100mb = ?, price_100_to_999mb = ?, 
-         price_1000_to_2999mb = ?, price_3000mb_plus = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+         price_1000_to_2999mb = ?, price_3000mb_plus = ?, required_circuit_ids = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [rule_name, parseFloat(price_under_100mb) || 0, parseFloat(price_100_to_999mb) || 0, 
-         parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, req.user.id, ruleId],
+         parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, requiredCircuitsString, req.user.id, ruleId],
         function(err) {
           if (err) {
             db.run('ROLLBACK');
@@ -10869,7 +11007,8 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
                   
                   logChange(req.user.id, 'promo_pricing_rules', ruleId, 'UPDATE', oldRule, {
                     rule_name, source_locations, destination_locations,
-                    price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus
+                    price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
+                    required_circuit_ids: requiredCircuitsString
                   }, req);
                   
                   res.json({ message: 'Promo pricing rule updated successfully' });
@@ -13627,6 +13766,375 @@ router.post('/route_finder/find_routes', authenticateToken, authorizeModulePermi
   } catch (error) {
     console.error('Route Finder error:', error);
     res.status(500).json({ error: 'Failed to find routes: ' + error.message });
+  }
+});
+
+// ============================================================================
+// ROUTE FINDER - PROMO PRICING FOR SALES
+// ============================================================================
+
+// Helper function to extract city code from location code (e.g., "IPCSNG1" -> "SNG")
+const extractCityCode = (locationCode) => {
+  if (!locationCode || locationCode.length < 6) return null;
+  return locationCode.substring(3, 6).toUpperCase();
+};
+
+// Helper function to get promo rules with locations and datacenter names for sales view
+const getPromoRulesForSales = () => {
+  return new Promise((resolve, reject) => {
+    const query = `
+      SELECT 
+        pr.id,
+        pr.price_under_100mb,
+        pr.price_100_to_999mb,
+        pr.price_1000_to_2999mb,
+        pr.price_3000mb_plus,
+        pr.required_circuit_ids,
+        pr.created_at,
+        GROUP_CONCAT(DISTINCT CASE WHEN pl.location_type = 'source' THEN pl.location_code END) as source_locations,
+        GROUP_CONCAT(DISTINCT CASE WHEN pl.location_type = 'destination' THEN pl.location_code END) as destination_locations
+      FROM promo_pricing_rules pr
+      LEFT JOIN promo_pricing_locations pl ON pr.id = pl.promo_rule_id
+      WHERE pr.is_active = 1
+      GROUP BY pr.id
+      ORDER BY pr.created_at DESC
+    `;
+    
+    db.all(query, [], async (err, rules) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      // Get all location reference data for datacenter names
+      db.all('SELECT location_code, datacenter_name, city FROM location_reference', [], (locErr, locations) => {
+        if (locErr) {
+          reject(locErr);
+          return;
+        }
+        
+        // Create lookup map for locations
+        const locationMap = {};
+        locations.forEach(loc => {
+          locationMap[loc.location_code] = {
+            datacenter_name: loc.datacenter_name || loc.location_code,
+            city: loc.city || ''
+          };
+        });
+        
+        // Process rules with location details
+        const rulesWithDetails = rules.map(rule => {
+          const sourceLocations = rule.source_locations ? rule.source_locations.split(',') : [];
+          const destLocations = rule.destination_locations ? rule.destination_locations.split(',') : [];
+          
+          // Determine source and destination cities
+          const sourceCities = new Set();
+          const destCities = new Set();
+          
+          const sourceDetails = sourceLocations.map(loc => {
+            const locInfo = locationMap[loc] || { datacenter_name: loc, city: '' };
+            if (locInfo.city) sourceCities.add(locInfo.city);
+            return {
+              location_code: loc,
+              datacenter_name: locInfo.datacenter_name,
+              display: `${loc} - ${locInfo.datacenter_name}`
+            };
+          });
+          
+          const destDetails = destLocations.map(loc => {
+            const locInfo = locationMap[loc] || { datacenter_name: loc, city: '' };
+            if (locInfo.city) destCities.add(locInfo.city);
+            return {
+              location_code: loc,
+              datacenter_name: locInfo.datacenter_name,
+              display: `${loc} - ${locInfo.datacenter_name}`
+            };
+          });
+          
+          return {
+            id: rule.id,
+            source_city: Array.from(sourceCities).join(', ') || 'Unknown',
+            destination_city: Array.from(destCities).join(', ') || 'Unknown',
+            source_locations: sourceLocations,
+            destination_locations: destLocations,
+            source_details: sourceDetails,
+            destination_details: destDetails,
+            price_10mb: rule.price_under_100mb || 0,
+            price_100mb: rule.price_100_to_999mb || 0,
+            price_1000mb: rule.price_1000_to_2999mb || 0,
+            price_10gb: rule.price_3000mb_plus || 0,
+            has_required_circuits: !!(rule.required_circuit_ids && rule.required_circuit_ids.trim())
+          };
+        });
+        
+        resolve(rulesWithDetails);
+      });
+    });
+  });
+};
+
+// Get promo pricing rules for sales (sanitized - no rule names, no margin info)
+router.get('/route_finder/promo-pricing', authenticateToken, authorizeModulePermission('route_finder', 'read_only'), async (req, res) => {
+  try {
+    const { location_filter } = req.query;
+    
+    const rules = await getPromoRulesForSales();
+    
+    // Apply location filter if provided
+    let filteredRules = rules;
+    if (location_filter && location_filter.trim()) {
+      const filterLower = location_filter.toLowerCase().trim();
+      filteredRules = rules.filter(rule => {
+        // Check if filter matches any source or destination location
+        const matchesSource = rule.source_locations.some(loc => 
+          loc.toLowerCase().includes(filterLower)
+        ) || rule.source_city.toLowerCase().includes(filterLower);
+        
+        const matchesDest = rule.destination_locations.some(loc => 
+          loc.toLowerCase().includes(filterLower)
+        ) || rule.destination_city.toLowerCase().includes(filterLower);
+        
+        // Also check datacenter names
+        const matchesSourceDC = rule.source_details.some(d => 
+          d.datacenter_name.toLowerCase().includes(filterLower)
+        );
+        const matchesDestDC = rule.destination_details.some(d => 
+          d.datacenter_name.toLowerCase().includes(filterLower)
+        );
+        
+        return matchesSource || matchesDest || matchesSourceDC || matchesDestDC;
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: filteredRules,
+      count: filteredRules.length
+    });
+  } catch (err) {
+    console.error('Error loading promo pricing for sales:', err);
+    res.status(500).json({ error: 'Failed to load promo pricing: ' + err.message });
+  }
+});
+
+// Check if a route matches promo pricing and validate margins
+router.post('/route_finder/check-promo-match', authenticateToken, authorizeModulePermission('route_finder', 'read_only'), async (req, res) => {
+  try {
+    const { source, destination, bandwidth, primary_circuit_ids = [], secondary_circuit_ids = [] } = req.body;
+    
+    if (!source || !destination) {
+      return res.status(400).json({ error: 'Source and destination are required' });
+    }
+    
+    // Find matching promo pricing rules
+    const query = `
+      SELECT pr.*, 
+             pls.location_code as source_match, 
+             pld.location_code as dest_match
+      FROM promo_pricing_rules pr
+      INNER JOIN promo_pricing_locations pls ON pr.id = pls.promo_rule_id AND pls.location_type = 'source'
+      INNER JOIN promo_pricing_locations pld ON pr.id = pld.promo_rule_id AND pld.location_type = 'destination'
+      WHERE pr.is_active = 1
+        AND ((pls.location_code = ? AND pld.location_code = ?) 
+             OR (pls.location_code = ? AND pld.location_code = ?))
+    `;
+    
+    db.all(query, [source, destination, destination, source], async (err, matchingRules) => {
+      if (err) {
+        console.error('Error checking promo match:', err);
+        return res.status(500).json({ error: 'Failed to check promo pricing' });
+      }
+      
+      if (matchingRules.length === 0) {
+        return res.json({
+          hasPromo: false,
+          valid: false,
+          prices: null
+        });
+      }
+      
+      // Combine all circuit IDs from the route
+      const routeCircuitIds = [...new Set([...primary_circuit_ids, ...secondary_circuit_ids])];
+      
+      // Find valid promo rules (those without required circuits, or where required circuits are in the route)
+      const validRules = matchingRules.filter(rule => {
+        if (!rule.required_circuit_ids || !rule.required_circuit_ids.trim()) {
+          // No required circuits - promo applies
+          return true;
+        }
+        
+        // Check if at least one of the required circuits is in the route
+        const requiredCircuits = rule.required_circuit_ids.split(',').map(c => c.trim()).filter(c => c);
+        return requiredCircuits.some(reqCircuit => routeCircuitIds.includes(reqCircuit));
+      });
+      
+      if (validRules.length === 0) {
+        // Promo exists but route doesn't include required circuits
+        return res.json({
+          hasPromo: true,
+          valid: false,
+          reason: 'route_mismatch',
+          prices: null
+        });
+      }
+      
+      // Get pricing config for margin validation
+      const pricingConfig = await getPricingLogicConfig();
+      const promoMinMargin = pricingConfig.promoPricing.minimumMarginPercent;
+      
+      // Calculate allocated cost for the route to validate margin
+      // Get route costs from network_routes table
+      const allCircuitIds = routeCircuitIds.filter(c => c);
+      
+      if (allCircuitIds.length === 0) {
+        // No circuits to validate - return promo as valid (edge case)
+        const bestRule = validRules[0];
+        return res.json({
+          hasPromo: true,
+          valid: true,
+          prices: {
+            price_10mb: bestRule.price_under_100mb || 0,
+            price_100mb: bestRule.price_100_to_999mb || 0,
+            price_1000mb: bestRule.price_1000_to_2999mb || 0,
+            price_10gb: bestRule.price_3000mb_plus || 0
+          }
+        });
+      }
+      
+      // Get costs for all circuits in the route
+      const placeholders = allCircuitIds.map(() => '?').join(',');
+      db.all(
+        `SELECT circuit_id, cost, currency, bandwidth FROM network_routes WHERE circuit_id IN (${placeholders})`,
+        allCircuitIds,
+        async (costErr, routeCosts) => {
+          if (costErr) {
+            console.error('Error fetching route costs:', costErr);
+            // Return promo without margin validation if cost lookup fails
+            const bestRule = validRules[0];
+            return res.json({
+              hasPromo: true,
+              valid: true,
+              prices: {
+                price_10mb: bestRule.price_under_100mb || 0,
+                price_100mb: bestRule.price_100_to_999mb || 0,
+                price_1000mb: bestRule.price_1000_to_2999mb || 0,
+                price_10gb: bestRule.price_3000mb_plus || 0
+              }
+            });
+          }
+          
+          // Get exchange rates for currency conversion
+          db.all('SELECT * FROM exchange_rates WHERE status = "Active"', [], (rateErr, rates) => {
+            if (rateErr) {
+              console.error('Error fetching exchange rates:', rateErr);
+              const bestRule = validRules[0];
+              return res.json({
+                hasPromo: true,
+                valid: true,
+                prices: {
+                  price_10mb: bestRule.price_under_100mb || 0,
+                  price_100mb: bestRule.price_100_to_999mb || 0,
+                  price_1000mb: bestRule.price_1000_to_2999mb || 0,
+                  price_10gb: bestRule.price_3000mb_plus || 0
+                }
+              });
+            }
+            
+            // Build exchange rate map
+            const exchangeRates = {};
+            rates.forEach(rate => {
+              exchangeRates[rate.currency_code] = rate.exchange_rate;
+            });
+            
+            // Calculate total allocated cost
+            let totalAllocatedCost = 0;
+            const requestedBandwidth = parseFloat(bandwidth) || 100; // Default to 100 Mbps
+            
+            routeCosts.forEach(route => {
+              let routeCost = parseFloat(route.cost) || 0;
+              const routeCurrency = route.currency || 'USD';
+              
+              // Convert to USD
+              if (routeCurrency !== 'USD' && exchangeRates[routeCurrency]) {
+                routeCost = routeCost / exchangeRates[routeCurrency];
+              }
+              
+              // Calculate bandwidth allocation
+              let routeBandwidth = parseFloat(route.bandwidth) || 1000;
+              if (route.bandwidth && route.bandwidth.toLowerCase && route.bandwidth.toLowerCase().includes('dark fiber')) {
+                routeBandwidth = 200000;
+              }
+              
+              const utilizationFactor = 0.9; // Default primary utilization
+              const allocationRatio = requestedBandwidth / (routeBandwidth * utilizationFactor);
+              totalAllocatedCost += routeCost * allocationRatio;
+            });
+            
+            // Find the best (lowest price) valid promo rule for the bandwidth tier
+            let priceField;
+            if (requestedBandwidth < 100) {
+              priceField = 'price_under_100mb';
+            } else if (requestedBandwidth < 1000) {
+              priceField = 'price_100_to_999mb';
+            } else if (requestedBandwidth < 3000) {
+              priceField = 'price_1000_to_2999mb';
+            } else {
+              priceField = 'price_3000mb_plus';
+            }
+            
+            let bestRule = null;
+            let lowestPrice = Infinity;
+            
+            validRules.forEach(rule => {
+              const price = parseFloat(rule[priceField]) || 0;
+              if (price > 0 && price < lowestPrice) {
+                lowestPrice = price;
+                bestRule = rule;
+              }
+            });
+            
+            if (!bestRule) {
+              return res.json({
+                hasPromo: true,
+                valid: false,
+                reason: 'no_price_configured',
+                prices: null
+              });
+            }
+            
+            // Validate margin requirement
+            // Margin formula: ((price - allocatedCost) / price) * 100
+            const requiredAllocatedCost = lowestPrice * (1 - promoMinMargin / 100);
+            const marginMet = totalAllocatedCost <= requiredAllocatedCost;
+            
+            if (!marginMet) {
+              // Margin not met - don't show promo (silent failure per requirements)
+              return res.json({
+                hasPromo: true,
+                valid: false,
+                reason: 'margin_not_met',
+                prices: null
+              });
+            }
+            
+            // Promo is valid!
+            res.json({
+              hasPromo: true,
+              valid: true,
+              prices: {
+                price_10mb: bestRule.price_under_100mb || 0,
+                price_100mb: bestRule.price_100_to_999mb || 0,
+                price_1000mb: bestRule.price_1000_to_2999mb || 0,
+                price_10gb: bestRule.price_3000mb_plus || 0
+              }
+            });
+          });
+        }
+      );
+    });
+  } catch (err) {
+    console.error('Error in check-promo-match:', err);
+    res.status(500).json({ error: 'Failed to check promo pricing match' });
   }
 });
 

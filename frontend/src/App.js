@@ -97,6 +97,10 @@ function AuthenticatedApp() {
   const [networkRoutesOpen, setNetworkRoutesOpen] = useState(true);
   
   // KMZ Map Viewer state
+  const [routeFinderMapData, setRouteFinderMapData] = useState(null);
+  
+  // Route Finder state preservation (to maintain search results when navigating to/from KMZ viewer)
+  const [routeFinderState, setRouteFinderState] = useState(null);
   
   // New state for tab management
   const [currentTab, setCurrentTab] = useState('welcome');
@@ -207,6 +211,11 @@ function AuthenticatedApp() {
             console.error('Failed to reload network routes:', err);
           });
       }
+    }
+    
+    // When navigating away from KMZ viewer, clear route finder map data
+    if (prevTab === 'kmz-viewer' && currentTab !== 'kmz-viewer') {
+      setRouteFinderMapData(null);
     }
     
     prevTabRef.current = currentTab;
@@ -397,6 +406,8 @@ function AuthenticatedApp() {
 
   const handleExport = () => {
     if (!hasPermission('network_routes', 'view')) return;
+    // Safety check: prevent Sales permission users from exporting CSV
+    if (modulePermissions?.network_routes === 'sales') return;
     
     exportRoutesCSV()
       .then(response => {
@@ -582,6 +593,18 @@ function AuthenticatedApp() {
     setUserMenuAnchor(null);
   };
 
+  // Handle View Map from Route Finder
+  const handleRouteFinderViewMap = (mapData) => {
+    setRouteFinderMapData(mapData);
+    setCurrentTab('kmz-viewer');
+  };
+
+  // Clear route finder map data when navigating away from KMZ viewer
+  const handleKMZViewerClose = () => {
+    setRouteFinderMapData(null);
+    setCurrentTab('route-finder');
+  };
+
   const renderMainContent = () => {
     switch (currentTab) {
       case 'network-routes':
@@ -759,7 +782,11 @@ function AuthenticatedApp() {
       
       case 'route-finder':
         return hasModuleAccess('route_finder') ? (
-          <RouteFinder />
+          <RouteFinder 
+            onViewMap={handleRouteFinderViewMap}
+            savedState={routeFinderState}
+            onStateChange={setRouteFinderState}
+          />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
@@ -767,7 +794,8 @@ function AuthenticatedApp() {
       case 'kmz-viewer':
         return hasModuleAccess('kmz_viewer') ? (
           <KMZMapViewer 
-            onClose={() => setCurrentTab('network-routes')}
+            onClose={routeFinderMapData ? handleKMZViewerClose : () => setCurrentTab('network-routes')}
+            routeFinderData={routeFinderMapData}
           />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
@@ -808,7 +836,7 @@ function AuthenticatedApp() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.4.0
+              v3.4.1
             </Typography>
           </Typography>
           
@@ -990,7 +1018,7 @@ function AuthenticatedApp() {
                       </ListItem>
                     )}
 
-                    {/* Route Finder */}
+                    {/* CNX Ethernet (Route Finder & Promos) */}
                     {isModuleVisible('route_finder') && (
                       <ListItem 
                         button 
@@ -998,7 +1026,11 @@ function AuthenticatedApp() {
                         sx={{ pl: 4, backgroundColor: currentTab === 'route-finder' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
                       >
                         <ListItemIcon><SearchIcon /></ListItemIcon>
-                        <ListItemText primary="Route Finder" />
+                        <ListItemText 
+                          primary="CNX Ethernet" 
+                          secondary="Route Finder & Promos"
+                          secondaryTypographyProps={{ variant: 'caption' }}
+                        />
                       </ListItem>
                     )}
 
@@ -1316,6 +1348,7 @@ function AuthenticatedApp() {
               onRefresh={refreshData}
               hasPermission={hasPermission}
               resetFilters={filterResetTrigger}
+              modulePermission={modulePermissions?.network_routes}
             />
           </Box>
         )}

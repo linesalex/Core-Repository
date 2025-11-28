@@ -118,6 +118,7 @@ const NetworkDesignTool = () => {
   const [expandedAccordion, setExpandedAccordion] = useState('search');
   const [currentTab, setCurrentTab] = useState(0); // Tab state
   const [expandedLogs, setExpandedLogs] = useState(new Set()); // Track expanded log details
+  const [logViewModes, setLogViewModes] = useState({}); // Track view mode per log: { logId: 'readable' | 'json' }
   const [parametersLocked, setParametersLocked] = useState(false); // Track if search parameters are locked
   
   // Pricing logs filtering and pagination state
@@ -1253,6 +1254,264 @@ const NetworkDesignTool = () => {
       newExpanded.add(logId);
     }
     setExpandedLogs(newExpanded);
+  };
+
+  // Get view mode for a log (default to 'readable')
+  const getLogViewMode = (logId) => {
+    return logViewModes[logId] || 'readable';
+  };
+
+  // Set view mode for a log
+  const setLogViewMode = (logId, mode) => {
+    setLogViewModes(prev => ({ ...prev, [logId]: mode }));
+  };
+
+  // Render human-readable log details
+  const renderHumanReadableLogDetails = (log) => {
+    const params = log.parameters || log.pricing_data?.inputParameters;
+    const results = log.results || log.pricing_data?.calculationResults;
+
+    if (!params && !results) {
+      return <Alert severity="info">No data available for this log</Alert>;
+    }
+
+    // Extract path data from results
+    const primaryPath = results?.primaryPath || results?.individual?.find(r => r.pathType === 'primary');
+    const diversePath = results?.diversePath || results?.individual?.find(r => r.pathType === 'protection');
+    const pricingResults = results?.results || results?.individual;
+    const protectionPricing = results?.protectionPricing;
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {/* Input Parameters Summary */}
+        {params && (
+          <Card variant="outlined">
+            <CardHeader 
+              title="Request Parameters" 
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Customer</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.customerName || params.customer_name || 'N/A'}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Quote ID</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.quoteRequestId || params.quote_request_id || 'N/A'}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Route</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.source} → {params.destination}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Bandwidth</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.bandwidth} Mbps</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Contract Term</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.contract_term || params.contractTerm || 12} months</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Currency</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.output_currency || params.outputCurrency || 'USD'}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Protection Required</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.protection_required || params.protectionRequired ? 'Yes' : 'No'}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Design Mode</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.design_mode === 'manual' ? 'Manual' : 'Auto Design'}</Typography>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Primary Path Route Table */}
+        {primaryPath && primaryPath.route && (
+          <Card variant="outlined">
+            <CardHeader 
+              title="Primary Path" 
+              subheader={primaryPath.path ? primaryPath.path.join(' → ') : ''}
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                      <TableCell><strong>Circuit ID</strong></TableCell>
+                      <TableCell><strong>Segment</strong></TableCell>
+                      <TableCell><strong>Latency</strong></TableCell>
+                      <TableCell><strong>Bandwidth</strong></TableCell>
+                      <TableCell><strong>Carrier</strong></TableCell>
+                      <TableCell><strong>Cable System</strong></TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {primaryPath.route.map((segment, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
+                        <TableCell>{segment.from} → {segment.to}</TableCell>
+                        <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                        <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
+                        <TableCell>{segment.carrier || 'N/A'}</TableCell>
+                        <TableCell>{segment.cable_system || 'N/A'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+              <Box sx={{ mt: 1.5, display: 'flex', gap: 3 }}>
+                <Typography variant="body2"><strong>Total Latency:</strong> {formatLatency(primaryPath.totalLatency)}ms</Typography>
+                <Typography variant="body2"><strong>Hops:</strong> {primaryPath.hops || primaryPath.route?.length}</Typography>
+              </Box>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Secondary/Diverse Path Route Table */}
+        {diversePath && diversePath.route && (
+          <Card variant="outlined">
+            <CardHeader 
+              title="Secondary Path" 
+              subheader={diversePath.path ? diversePath.path.join(' → ') : ''}
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                      <TableCell><strong>Circuit ID</strong></TableCell>
+                      <TableCell><strong>Segment</strong></TableCell>
+                      <TableCell><strong>Latency</strong></TableCell>
+                      <TableCell><strong>Bandwidth</strong></TableCell>
+                      <TableCell><strong>Carrier</strong></TableCell>
+                      <TableCell><strong>Cable System</strong></TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {diversePath.route.map((segment, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
+                        <TableCell>{segment.from} → {segment.to}</TableCell>
+                        <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                        <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
+                        <TableCell>{segment.carrier || 'N/A'}</TableCell>
+                        <TableCell>{segment.cable_system || 'N/A'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+              <Box sx={{ mt: 1.5, display: 'flex', gap: 3 }}>
+                <Typography variant="body2"><strong>Total Latency:</strong> {formatLatency(diversePath.totalLatency)}ms</Typography>
+                <Typography variant="body2"><strong>Hops:</strong> {diversePath.hops || diversePath.route?.length}</Typography>
+              </Box>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Pricing Summary Cards */}
+        {pricingResults && pricingResults.length > 0 && (
+          <Box>
+            <Typography variant="subtitle1" fontWeight="600" sx={{ mb: 2 }}>Pricing Results</Typography>
+            <Grid container spacing={2}>
+              {pricingResults.map((result, index) => {
+                const pricing = result.pricing;
+                if (!pricing) return null;
+                
+                return (
+                  <Grid item xs={12} md={4} key={index}>
+                    <Card sx={{ height: '100%', bgcolor: result.pathType === 'primary' ? 'grey.50' : 'info.50' }}>
+                      <CardHeader 
+                        title={result.pathType === 'primary' ? 'Primary Path' : 'Secondary Path'}
+                        subheader={`${pricing.contractTerm || 12}-Month Contract`}
+                        sx={{ pb: 0, '& .MuiCardHeader-title': { fontSize: '0.95rem', fontWeight: 600 } }}
+                      />
+                      <CardContent sx={{ pt: 1 }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">Minimum Price</Typography>
+                            <Typography variant="body1" color="error.main" fontWeight="600">
+                              {formatCurrency(pricing.minimumPrice, pricing.currency)}
+                            </Typography>
+                          </Box>
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">Suggested Price</Typography>
+                            <Typography variant="body1" color="success.main" fontWeight="600">
+                              {formatCurrency(pricing.suggestedPrice, pricing.currency)}
+                            </Typography>
+                          </Box>
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">Setup Fee (NRC)</Typography>
+                            <Typography variant="body2" fontWeight="500">
+                              {pricing.nrcCharge > 0 ? formatCurrency(pricing.nrcCharge, pricing.currency) : 'FREE'}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                );
+              })}
+
+              {/* Protected Service Pricing */}
+              {protectionPricing && (
+                <Grid item xs={12} md={4}>
+                  <Card sx={{ height: '100%', bgcolor: 'primary.50' }}>
+                    <CardHeader 
+                      title="Protected Service"
+                      subheader={`${protectionPricing.contractTerm || 12}-Month Contract`}
+                      sx={{ pb: 0, '& .MuiCardHeader-title': { fontSize: '0.95rem', fontWeight: 600 } }}
+                    />
+                    <CardContent sx={{ pt: 1 }}>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">Minimum Price</Typography>
+                          <Typography variant="body1" color="error.main" fontWeight="600">
+                            {formatCurrency(protectionPricing.minimumPrice, protectionPricing.currency)}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">Suggested Price</Typography>
+                          <Typography variant="body1" color="success.main" fontWeight="600">
+                            {formatCurrency(protectionPricing.suggestedPrice, protectionPricing.currency)}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">Setup Fee (NRC)</Typography>
+                          <Typography variant="body2" fontWeight="500">
+                            {protectionPricing.nrcCharge > 0 ? formatCurrency(protectionPricing.nrcCharge, protectionPricing.currency) : 'FREE'}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              )}
+            </Grid>
+          </Box>
+        )}
+
+        {/* Protection Status */}
+        {results?.protectionStatus && (
+          <Card variant="outlined">
+            <CardContent>
+              <Typography variant="subtitle2" gutterBottom>Protection Status</Typography>
+              <Chip 
+                label={results.protectionStatus.message}
+                color={results.protectionStatus.available === false && results.protectionStatus.required ? 'warning' : 'success'}
+                size="small"
+              />
+            </CardContent>
+          </Card>
+        )}
+      </Box>
+    );
   };
 
   const formatReadableLogSummary = (log) => {
@@ -3809,56 +4068,79 @@ const NetworkDesignTool = () => {
                       <TableRow>
                         <TableCell colSpan={9} sx={{ backgroundColor: '#f8f9fa', border: 'none' }}>
                           <Box sx={{ p: 2 }}>
-                            <Grid container spacing={2}>
-                              <Grid item xs={12} md={6}>
-                                <Typography variant="subtitle2" gutterBottom>
-                                  <strong>Complete Input Data:</strong>
-                                </Typography>
-                                <Box 
-                                  component="pre" 
-                                  sx={{ 
-                                    fontSize: '0.75rem', 
-                                    fontFamily: 'Courier New, monospace',
-                                    whiteSpace: 'pre-wrap',
-                                    wordBreak: 'break-word',
-                                    maxHeight: '400px',
-                                    overflow: 'auto',
-                                    backgroundColor: '#f5f5f5',
-                                    padding: 2,
-                                    borderRadius: 1,
-                                    border: '1px solid #ddd'
-                                  }}
+                            {/* View Mode Toggle */}
+                            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+                              <FormControl size="small" sx={{ minWidth: 180 }}>
+                                <InputLabel>View Mode</InputLabel>
+                                <Select
+                                  value={getLogViewMode(log.id)}
+                                  label="View Mode"
+                                  onChange={(e) => setLogViewMode(log.id, e.target.value)}
                                 >
-                                  {log.parameters ? JSON.stringify(log.parameters, null, 2) : 
-                                   log.pricing_data?.inputParameters ? JSON.stringify(log.pricing_data.inputParameters, null, 2) : 
-                                   'No input data available'}
-                                </Box>
+                                  <MenuItem value="readable">Visual View</MenuItem>
+                                  <MenuItem value="json">JSON Data</MenuItem>
+                                </Select>
+                              </FormControl>
+                            </Box>
+
+                            {/* Human Readable View */}
+                            {getLogViewMode(log.id) === 'readable' && (
+                              renderHumanReadableLogDetails(log)
+                            )}
+
+                            {/* JSON View */}
+                            {getLogViewMode(log.id) === 'json' && (
+                              <Grid container spacing={2}>
+                                <Grid item xs={12} md={6}>
+                                  <Typography variant="subtitle2" gutterBottom>
+                                    <strong>Complete Input Data:</strong>
+                                  </Typography>
+                                  <Box 
+                                    component="pre" 
+                                    sx={{ 
+                                      fontSize: '0.75rem', 
+                                      fontFamily: 'Courier New, monospace',
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-word',
+                                      maxHeight: '400px',
+                                      overflow: 'auto',
+                                      backgroundColor: '#f5f5f5',
+                                      padding: 2,
+                                      borderRadius: 1,
+                                      border: '1px solid #ddd'
+                                    }}
+                                  >
+                                    {log.parameters ? JSON.stringify(log.parameters, null, 2) : 
+                                     log.pricing_data?.inputParameters ? JSON.stringify(log.pricing_data.inputParameters, null, 2) : 
+                                     'No input data available'}
+                                  </Box>
+                                </Grid>
+                                <Grid item xs={12} md={6}>
+                                  <Typography variant="subtitle2" gutterBottom>
+                                    <strong>Complete Results Data:</strong>
+                                  </Typography>
+                                  <Box 
+                                    component="pre" 
+                                    sx={{ 
+                                      fontSize: '0.75rem', 
+                                      fontFamily: 'Courier New, monospace',
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-word',
+                                      maxHeight: '400px',
+                                      overflow: 'auto',
+                                      backgroundColor: '#f5f5f5',
+                                      padding: 2,
+                                      borderRadius: 1,
+                                      border: '1px solid #ddd'
+                                    }}
+                                  >
+                                    {log.results ? JSON.stringify(log.results, null, 2) : 
+                                     log.pricing_data?.calculationResults ? JSON.stringify(log.pricing_data.calculationResults, null, 2) : 
+                                     'No results data available'}
+                                  </Box>
+                                </Grid>
                               </Grid>
-                              <Grid item xs={12} md={6}>
-                                <Typography variant="subtitle2" gutterBottom>
-                                  <strong>Complete Results Data:</strong>
-                                </Typography>
-                                <Box 
-                                  component="pre" 
-                                  sx={{ 
-                                    fontSize: '0.75rem', 
-                                    fontFamily: 'Courier New, monospace',
-                                    whiteSpace: 'pre-wrap',
-                                    wordBreak: 'break-word',
-                                    maxHeight: '400px',
-                                    overflow: 'auto',
-                                    backgroundColor: '#f5f5f5',
-                                    padding: 2,
-                                    borderRadius: 1,
-                                    border: '1px solid #ddd'
-                                  }}
-                                >
-                                  {log.results ? JSON.stringify(log.results, null, 2) : 
-                                   log.pricing_data?.calculationResults ? JSON.stringify(log.pricing_data.calculationResults, null, 2) : 
-                                   'No results data available'}
-                                </Box>
-                              </Grid>
-                            </Grid>
+                            )}
                           </Box>
                         </TableCell>
                       </TableRow>

@@ -4,18 +4,25 @@ import {
   Accordion, AccordionSummary, AccordionDetails, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Card, CardContent, CardHeader,
   RadioGroup, Radio, FormControlLabel, FormControl, FormLabel, Autocomplete,
-  Snackbar
+  Snackbar, Chip, IconButton, Collapse, Tabs, Tab
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchIcon from '@mui/icons-material/Search';
 import RouteIcon from '@mui/icons-material/Route';
 import EmailIcon from '@mui/icons-material/Email';
+import MapIcon from '@mui/icons-material/Map';
+import LocalOfferIcon from '@mui/icons-material/LocalOffer';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
+import FilterListIcon from '@mui/icons-material/FilterList';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import LoadingButton from '@mui/lab/LoadingButton';
 import { API_BASE_URL } from './config';
+import { getPromoRulesForSales, checkPromoMatch } from './api';
 
-const RouteFinder = () => {
-  // Form state
-  const [formData, setFormData] = useState({
+const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
+  // Form state - initialize from savedState if available
+  const [formData, setFormData] = useState(savedState?.formData || {
     source: '',
     destination: '',
     bandwidth: '',
@@ -24,19 +31,44 @@ const RouteFinder = () => {
   });
 
   // Data state
-  const [locations, setLocations] = useState([]);
-  const [searchResults, setSearchResults] = useState(null);
+  const [locations, setLocations] = useState(savedState?.locations || []);
+  const [searchResults, setSearchResults] = useState(savedState?.searchResults || null);
   
   // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [expandedAccordion, setExpandedAccordion] = useState('search');
+  const [expandedAccordion, setExpandedAccordion] = useState(savedState?.searchResults ? 'results' : 'search');
 
-  // Load locations on mount
+  // Promo pricing state
+  const [promoRules, setPromoRules] = useState([]);
+  const [promoLoading, setPromoLoading] = useState(false);
+  const [promoLocationFilter, setPromoLocationFilter] = useState('');
+  const [primaryPromo, setPrimaryPromo] = useState(null); // Promo for primary path
+  const [secondaryPromo, setSecondaryPromo] = useState(null); // Promo for secondary path
+  const [expandedPromoRows, setExpandedPromoRows] = useState({});
+  
+  // Tab state
+  const [currentTab, setCurrentTab] = useState(0);
+
+  // Load locations and promo rules on mount
   useEffect(() => {
-    loadLocations();
+    if (!savedState?.locations?.length) {
+      loadLocations();
+    }
+    loadPromoRules();
   }, []);
+
+  // Save state to parent whenever key state changes
+  useEffect(() => {
+    if (onStateChange) {
+      onStateChange({
+        formData,
+        searchResults,
+        locations
+      });
+    }
+  }, [formData, searchResults, locations, onStateChange]);
 
   const loadLocations = async () => {
     try {
@@ -58,6 +90,105 @@ const RouteFinder = () => {
       console.error('Failed to load locations:', err);
       setError('Failed to load locations: ' + err.message);
     }
+  };
+
+  const loadPromoRules = async () => {
+    try {
+      setPromoLoading(true);
+      const result = await getPromoRulesForSales('');
+      setPromoRules(result.data || []);
+    } catch (err) {
+      console.error('Failed to load promo rules:', err);
+      // Don't show error - promo pricing is optional feature
+    } finally {
+      setPromoLoading(false);
+    }
+  };
+
+  const checkPromoForRoute = async (results) => {
+    // Check promo pricing INDEPENDENTLY for each path
+    
+    // Check Primary Path
+    if (results.primaryPath?.route) {
+      try {
+        const primaryCircuitIds = results.primaryPath.route.map(seg => seg.circuit_id).filter(Boolean);
+        
+        const primaryResult = await checkPromoMatch(
+          formData.source,
+          formData.destination,
+          formData.bandwidth || 100,
+          primaryCircuitIds,
+          [] // Empty secondary - checking primary only
+        );
+        
+        if (primaryResult.hasPromo && primaryResult.valid) {
+          setPrimaryPromo(primaryResult.prices);
+        } else {
+          setPrimaryPromo(null);
+        }
+      } catch (err) {
+        console.error('Failed to check primary promo:', err);
+        setPrimaryPromo(null);
+      }
+    } else {
+      setPrimaryPromo(null);
+    }
+    
+    // Check Secondary Path (independently)
+    if (results.diversePath?.route) {
+      try {
+        const secondaryCircuitIds = results.diversePath.route.map(seg => seg.circuit_id).filter(Boolean);
+        
+        const secondaryResult = await checkPromoMatch(
+          formData.source,
+          formData.destination,
+          formData.bandwidth || 100,
+          secondaryCircuitIds,
+          [] // Empty - checking this path only
+        );
+        
+        if (secondaryResult.hasPromo && secondaryResult.valid) {
+          setSecondaryPromo(secondaryResult.prices);
+        } else {
+          setSecondaryPromo(null);
+        }
+      } catch (err) {
+        console.error('Failed to check secondary promo:', err);
+        setSecondaryPromo(null);
+      }
+    } else {
+      setSecondaryPromo(null);
+    }
+  };
+
+  // Filter promo rules based on location filter
+  const filteredPromoRules = promoRules.filter(rule => {
+    if (!promoLocationFilter.trim()) return true;
+    const filterLower = promoLocationFilter.toLowerCase();
+    return (
+      rule.source_city?.toLowerCase().includes(filterLower) ||
+      rule.destination_city?.toLowerCase().includes(filterLower) ||
+      rule.source_locations?.some(loc => loc.toLowerCase().includes(filterLower)) ||
+      rule.destination_locations?.some(loc => loc.toLowerCase().includes(filterLower))
+    );
+  });
+
+  // Format currency helper
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(amount || 0);
+  };
+
+  // Toggle expanded row for promo locations
+  const togglePromoRow = (ruleId) => {
+    setExpandedPromoRows(prev => ({
+      ...prev,
+      [ruleId]: !prev[ruleId]
+    }));
   };
 
   const handleInputChange = (field, value) => {
@@ -125,6 +256,9 @@ const RouteFinder = () => {
       
       setSearchResults(results);
       setExpandedAccordion('results');
+      
+      // Check for matching promo pricing
+      await checkPromoForRoute(results);
 
     } catch (err) {
       console.error('Search error:', err);
@@ -143,6 +277,8 @@ const RouteFinder = () => {
       routeMode: 'standard'
     });
     setSearchResults(null);
+    setPrimaryPromo(null);
+    setSecondaryPromo(null);
     setError(null);
     setSuccess(null);
     setExpandedAccordion('search');
@@ -179,7 +315,7 @@ const RouteFinder = () => {
         });
         
         table += `${'='.repeat(70)}\n`;
-        table += `Total Latency: ${formatLatency(pathData.totalLatency)}ms\n`;
+        table += `Total Latency: ${formatLatency(pathData.totalLatency)}ms RTD\n`;
         table += `Total Hops: ${pathData.hops}\n\n`;
         
         return table;
@@ -190,12 +326,38 @@ const RouteFinder = () => {
         emailBody += generateRouteTable(searchResults.primaryPath, 'Primary');
       }
 
+      // Primary Path Promo Pricing
+      if (primaryPromo) {
+        emailBody += `PRIMARY PATH - PROMO PRICING AVAILABLE:\n`;
+        emailBody += `${'-'.repeat(40)}\n`;
+        emailBody += `10 Mbps:\t${formatCurrency(primaryPromo.price_10mb)}\n`;
+        emailBody += `100 Mbps:\t${formatCurrency(primaryPromo.price_100mb)}\n`;
+        emailBody += `1000 Mbps:\t${formatCurrency(primaryPromo.price_1000mb)}\n`;
+        emailBody += `10 Gbps:\t${formatCurrency(primaryPromo.price_10gb)}\n\n`;
+      } else {
+        emailBody += `PRIMARY PATH - Route not available for automatic promo pricing\n\n`;
+      }
+
       // Secondary Path
       if (searchResults.diversePath) {
         emailBody += generateRouteTable(searchResults.diversePath, 'Secondary');
+        
+        // Secondary Path Promo Pricing
+        if (secondaryPromo) {
+          emailBody += `SECONDARY PATH - PROMO PRICING AVAILABLE:\n`;
+          emailBody += `${'-'.repeat(40)}\n`;
+          emailBody += `10 Mbps:\t${formatCurrency(secondaryPromo.price_10mb)}\n`;
+          emailBody += `100 Mbps:\t${formatCurrency(secondaryPromo.price_100mb)}\n`;
+          emailBody += `1000 Mbps:\t${formatCurrency(secondaryPromo.price_1000mb)}\n`;
+          emailBody += `10 Gbps:\t${formatCurrency(secondaryPromo.price_10gb)}\n\n`;
+        } else {
+          emailBody += `SECONDARY PATH - Route not available for automatic promo pricing\n\n`;
+        }
       } else {
         emailBody += `Secondary Route: No diverse path available\n\n`;
       }
+
+      emailBody += `Note: Promo pricing is subject to availability and margin requirements.\n\n`;
 
       // Generate subject line
       const today = new Date().toLocaleDateString();
@@ -256,23 +418,58 @@ const RouteFinder = () => {
   return (
     <Box sx={{ width: '100%' }}>
       <Typography variant="h5" gutterBottom>
-        Route Finder
+        CNX Ethernet
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Find the fastest or standard routes between locations
+        Route Finder & Promos
       </Typography>
 
-      {/* Search Parameters */}
-      <Accordion 
-        expanded={expandedAccordion === 'search'} 
-        onChange={() => setExpandedAccordion(expandedAccordion === 'search' ? '' : 'search')}
-      >
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', pr: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <SearchIcon sx={{ mr: 1 }} />
-              <Typography variant="h6">Search Parameters</Typography>
-            </Box>
+      {/* Tab Navigation */}
+      <Paper sx={{ mb: 3 }}>
+        <Tabs 
+          value={currentTab} 
+          onChange={(e, newValue) => setCurrentTab(newValue)}
+          indicatorColor="primary"
+          textColor="primary"
+          variant="fullWidth"
+        >
+          <Tab 
+            label="Route Search" 
+            icon={<SearchIcon />} 
+            iconPosition="start"
+          />
+          <Tab 
+            label={
+              <Box display="flex" alignItems="center" gap={1}>
+                <span>Available Promo Pricing</span>
+                <Chip 
+                  label={promoRules.length} 
+                  size="small" 
+                  color="success"
+                  sx={{ height: 20 }}
+                />
+              </Box>
+            }
+            icon={<LocalOfferIcon />} 
+            iconPosition="start"
+          />
+        </Tabs>
+      </Paper>
+
+      {/* Tab 0: Route Search */}
+      {currentTab === 0 && (
+        <>
+          {/* Search Parameters */}
+          <Accordion 
+            expanded={expandedAccordion === 'search'} 
+            onChange={() => setExpandedAccordion(expandedAccordion === 'search' ? '' : 'search')}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', pr: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <SearchIcon sx={{ mr: 1 }} />
+                  <Typography variant="h6">Search Parameters</Typography>
+                </Box>
             <Button
               variant="outlined"
               color="primary"
@@ -396,8 +593,8 @@ const RouteFinder = () => {
             </Box>
           </AccordionSummary>
           <AccordionDetails>
-            {/* Export Button */}
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+            {/* Export and View Map Buttons */}
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, mb: 2 }}>
               <Button
                 variant="contained"
                 startIcon={<EmailIcon />}
@@ -406,14 +603,42 @@ const RouteFinder = () => {
               >
                 Export Results
               </Button>
+              {onViewMap && (
+                <Button
+                  variant="contained"
+                  startIcon={<MapIcon />}
+                  onClick={() => onViewMap({
+                    primaryPath: searchResults.primaryPath,
+                    diversePath: searchResults.diversePath,
+                    source: formData.source,
+                    destination: formData.destination,
+                    locations: locations
+                  })}
+                  color="secondary"
+                >
+                  View Map
+                </Button>
+              )}
             </Box>
 
             <Grid container spacing={3}>
               {/* Primary Path */}
               <Grid item xs={12}>
-                <Card>
+                <Card sx={{ border: primaryPromo ? 2 : 1, borderColor: primaryPromo ? 'success.main' : 'divider' }}>
                   <CardHeader 
-                    title="Primary Path" 
+                    title={
+                      <Box display="flex" alignItems="center" gap={1}>
+                        <span>Primary Path</span>
+                        {primaryPromo && (
+                          <Chip 
+                            icon={<LocalOfferIcon />} 
+                            label="Promo Available" 
+                            color="success" 
+                            size="small" 
+                          />
+                        )}
+                      </Box>
+                    }
                     subheader={`${searchResults.primaryPath.path.join(' → ')}`}
                   />
                   <CardContent>
@@ -441,12 +666,48 @@ const RouteFinder = () => {
                     </TableContainer>
                     <Box sx={{ mt: 2 }}>
                       <Typography variant="body2">
-                        <strong>Total Latency:</strong> {formatLatency(searchResults.primaryPath.totalLatency)}ms
+                        <strong>Total Latency:</strong> {formatLatency(searchResults.primaryPath.totalLatency)}ms RTD
                       </Typography>
                       <Typography variant="body2">
                         <strong>Total Hops:</strong> {searchResults.primaryPath.hops}
                       </Typography>
                     </Box>
+                    
+                    {/* Primary Path Promo Pricing */}
+                    {primaryPromo ? (
+                      <Box sx={{ mt: 3, p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
+                        <Box display="flex" alignItems="center" gap={1} mb={2}>
+                          <LocalOfferIcon color="success" fontSize="small" />
+                          <Typography variant="subtitle2" color="success.dark" fontWeight="bold">
+                            Promo Pricing Available
+                          </Typography>
+                        </Box>
+                        <Grid container spacing={1}>
+                          <Grid item xs={3}>
+                            <Typography variant="caption" color="text.secondary" display="block">10 Mbps</Typography>
+                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(primaryPromo.price_10mb)}</Typography>
+                          </Grid>
+                          <Grid item xs={3}>
+                            <Typography variant="caption" color="text.secondary" display="block">100 Mbps</Typography>
+                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(primaryPromo.price_100mb)}</Typography>
+                          </Grid>
+                          <Grid item xs={3}>
+                            <Typography variant="caption" color="text.secondary" display="block">1000 Mbps</Typography>
+                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(primaryPromo.price_1000mb)}</Typography>
+                          </Grid>
+                          <Grid item xs={3}>
+                            <Typography variant="caption" color="text.secondary" display="block">10 Gbps</Typography>
+                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(primaryPromo.price_10gb)}</Typography>
+                          </Grid>
+                        </Grid>
+                      </Box>
+                    ) : (
+                      <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          <em>Route not available for automatic promo pricing</em>
+                        </Typography>
+                      </Box>
+                    )}
                   </CardContent>
                 </Card>
               </Grid>
@@ -454,9 +715,21 @@ const RouteFinder = () => {
               {/* Secondary Path */}
               {searchResults.diversePath ? (
                 <Grid item xs={12}>
-                  <Card>
+                  <Card sx={{ border: secondaryPromo ? 2 : 1, borderColor: secondaryPromo ? 'success.main' : 'divider' }}>
                     <CardHeader 
-                      title="Secondary Path (Diverse)" 
+                      title={
+                        <Box display="flex" alignItems="center" gap={1}>
+                          <span>Secondary Path (Diverse)</span>
+                          {secondaryPromo && (
+                            <Chip 
+                              icon={<LocalOfferIcon />} 
+                              label="Promo Available" 
+                              color="success" 
+                              size="small" 
+                            />
+                          )}
+                        </Box>
+                      }
                       subheader={`${searchResults.diversePath.path.join(' → ')}`}
                     />
                     <CardContent>
@@ -484,12 +757,48 @@ const RouteFinder = () => {
                       </TableContainer>
                       <Box sx={{ mt: 2 }}>
                         <Typography variant="body2">
-                          <strong>Total Latency:</strong> {formatLatency(searchResults.diversePath.totalLatency)}ms
+                          <strong>Total Latency:</strong> {formatLatency(searchResults.diversePath.totalLatency)}ms RTD
                         </Typography>
                         <Typography variant="body2">
                           <strong>Total Hops:</strong> {searchResults.diversePath.hops}
                         </Typography>
                       </Box>
+                      
+                      {/* Secondary Path Promo Pricing */}
+                      {secondaryPromo ? (
+                        <Box sx={{ mt: 3, p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
+                          <Box display="flex" alignItems="center" gap={1} mb={2}>
+                            <LocalOfferIcon color="success" fontSize="small" />
+                            <Typography variant="subtitle2" color="success.dark" fontWeight="bold">
+                              Promo Pricing Available
+                            </Typography>
+                          </Box>
+                          <Grid container spacing={1}>
+                            <Grid item xs={3}>
+                              <Typography variant="caption" color="text.secondary" display="block">10 Mbps</Typography>
+                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(secondaryPromo.price_10mb)}</Typography>
+                            </Grid>
+                            <Grid item xs={3}>
+                              <Typography variant="caption" color="text.secondary" display="block">100 Mbps</Typography>
+                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(secondaryPromo.price_100mb)}</Typography>
+                            </Grid>
+                            <Grid item xs={3}>
+                              <Typography variant="caption" color="text.secondary" display="block">1000 Mbps</Typography>
+                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(secondaryPromo.price_1000mb)}</Typography>
+                            </Grid>
+                            <Grid item xs={3}>
+                              <Typography variant="caption" color="text.secondary" display="block">10 Gbps</Typography>
+                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(secondaryPromo.price_10gb)}</Typography>
+                            </Grid>
+                          </Grid>
+                        </Box>
+                      ) : (
+                        <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+                          <Typography variant="body2" color="text.secondary">
+                            <em>Route not available for automatic promo pricing</em>
+                          </Typography>
+                        </Box>
+                      )}
                     </CardContent>
                   </Card>
                 </Grid>
@@ -503,6 +812,178 @@ const RouteFinder = () => {
             </Grid>
           </AccordionDetails>
         </Accordion>
+      )}
+        </>
+      )}
+
+      {/* Tab 1: Available Promo Pricing */}
+      {currentTab === 1 && (
+        <Paper sx={{ p: 3 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+            <LocalOfferIcon sx={{ mr: 1, fontSize: 28 }} color="success" />
+            <Typography variant="h6">Available Promo Pricing</Typography>
+          </Box>
+
+          {/* Location Filter */}
+          <Box sx={{ mb: 3 }}>
+            <Autocomplete
+              freeSolo
+              options={[...new Set(promoRules.flatMap(r => [r.source_city, r.destination_city]).filter(Boolean))]}
+              value={promoLocationFilter}
+              onInputChange={(event, newValue) => setPromoLocationFilter(newValue || '')}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Filter by City or Location"
+                  placeholder="e.g., Singapore, London, IPCSNG..."
+                  InputProps={{
+                    ...params.InputProps,
+                    startAdornment: <FilterListIcon color="action" sx={{ mr: 1 }} />
+                  }}
+                  helperText="Filter promo pricing rules by source or destination city/location"
+                  size="small"
+                />
+              )}
+              sx={{ maxWidth: 400 }}
+            />
+          </Box>
+
+          {/* Promo Rules Table */}
+          {promoLoading ? (
+            <Box display="flex" justifyContent="center" p={3}>
+              <CircularProgress size={24} />
+            </Box>
+          ) : filteredPromoRules.length === 0 ? (
+            <Alert severity="info">
+              {promoLocationFilter 
+                ? `No promo pricing rules found matching "${promoLocationFilter}"` 
+                : 'No promo pricing rules available'}
+            </Alert>
+          ) : (
+            <TableContainer component={Paper} elevation={0} sx={{ border: 1, borderColor: 'divider' }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow sx={{ bgcolor: 'grey.100' }}>
+                    <TableCell width={40}></TableCell>
+                    <TableCell><strong>Source City</strong></TableCell>
+                    <TableCell><strong>Destination City</strong></TableCell>
+                    <TableCell align="right"><strong>10 Mbps</strong></TableCell>
+                    <TableCell align="right"><strong>100 Mbps</strong></TableCell>
+                    <TableCell align="right"><strong>1000 Mbps</strong></TableCell>
+                    <TableCell align="right"><strong>10 Gbps</strong></TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {filteredPromoRules.map((rule) => (
+                    <React.Fragment key={rule.id}>
+                      <TableRow hover>
+                        <TableCell>
+                          <IconButton
+                            size="small"
+                            onClick={() => togglePromoRow(rule.id)}
+                          >
+                            {expandedPromoRows[rule.id] ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                          </IconButton>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" fontWeight="medium">
+                            {rule.source_city}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {rule.source_locations?.length || 0} location(s)
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" fontWeight="medium">
+                            {rule.destination_city}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {rule.destination_locations?.length || 0} location(s)
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography variant="body2" color="success.dark" fontWeight="medium">
+                            {formatCurrency(rule.price_10mb)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography variant="body2" color="success.dark" fontWeight="medium">
+                            {formatCurrency(rule.price_100mb)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography variant="body2" color="success.dark" fontWeight="medium">
+                            {formatCurrency(rule.price_1000mb)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography variant="body2" color="success.dark" fontWeight="medium">
+                            {formatCurrency(rule.price_10gb)}
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={7}>
+                          <Collapse in={expandedPromoRows[rule.id]} timeout="auto" unmountOnExit>
+                            <Box sx={{ py: 2, px: 2 }}>
+                              <Grid container spacing={3}>
+                                <Grid item xs={12} md={6}>
+                                  <Typography variant="subtitle2" gutterBottom color="primary">
+                                    Source Locations
+                                  </Typography>
+                                  <Box display="flex" flexWrap="wrap" gap={0.5}>
+                                    {rule.source_details?.map((loc, idx) => (
+                                      <Chip
+                                        key={idx}
+                                        label={loc.display}
+                                        size="small"
+                                        variant="outlined"
+                                        color="primary"
+                                      />
+                                    ))}
+                                  </Box>
+                                </Grid>
+                                <Grid item xs={12} md={6}>
+                                  <Typography variant="subtitle2" gutterBottom color="secondary">
+                                    Destination Locations
+                                  </Typography>
+                                  <Box display="flex" flexWrap="wrap" gap={0.5}>
+                                    {rule.destination_details?.map((loc, idx) => (
+                                      <Chip
+                                        key={idx}
+                                        label={loc.display}
+                                        size="small"
+                                        variant="outlined"
+                                        color="secondary"
+                                      />
+                                    ))}
+                                  </Box>
+                                </Grid>
+                              </Grid>
+                              {rule.has_required_circuits && (
+                                <Alert severity="info" sx={{ mt: 2 }} icon={<RouteIcon />}>
+                                  This promo pricing requires specific network routes
+                                </Alert>
+                              )}
+                            </Box>
+                          </Collapse>
+                        </TableCell>
+                      </TableRow>
+                    </React.Fragment>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+
+          {/* Info note */}
+          <Alert severity="info" sx={{ mt: 2 }}>
+            <Typography variant="body2">
+              Promo pricing shown is in USD per month. Actual pricing is subject to margin requirements and route availability.
+              Go to Route Search tab and search for a route to check if promo pricing applies.
+            </Typography>
+          </Alert>
+        </Paper>
       )}
 
       {/* Error/Success Messages */}

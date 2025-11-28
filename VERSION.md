@@ -1,8 +1,8 @@
 # Network Inventory Management System
 
-## Current Version: **3.3.3**
+## Current Version: **3.4.1**
 
-**Release Date:** November 13, 2024
+**Release Date:** November 28, 2024
 
 ---
 

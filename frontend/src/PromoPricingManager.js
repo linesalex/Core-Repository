@@ -35,19 +35,23 @@ import {
   Search as SearchIcon,
   Clear as ClearIcon,
   LocalOffer as LocalOfferIcon,
-  AttachMoney as AttachMoneyIcon
+  AttachMoney as AttachMoneyIcon,
+  Route as RouteIcon,
+  Warning as WarningIcon
 } from '@mui/icons-material';
-import { api, locationDataApi } from './api';
+import { api, locationDataApi, networkDesignApi } from './api';
 import { API_BASE_URL } from './config';
 
 const PromoPricingManager = ({ hasPermission }) => {
   const [promoRules, setPromoRules] = useState([]);
   const [locations, setLocations] = useState([]);
+  const [circuitIds, setCircuitIds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
+  const [sameCityWarning, setSameCityWarning] = useState({ source: '', destination: '' });
   
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -59,13 +63,15 @@ const PromoPricingManager = ({ hasPermission }) => {
     price_under_100mb: '',
     price_100_to_999mb: '',
     price_1000_to_2999mb: '',
-    price_3000mb_plus: ''
+    price_3000mb_plus: '',
+    required_circuit_ids: []
   });
 
   // Load data on component mount
   useEffect(() => {
     loadPromoRules();
     loadLocations();
+    // Don't pre-load circuit IDs - will be loaded on search
   }, []);
 
   const loadPromoRules = async () => {
@@ -90,6 +96,68 @@ const PromoPricingManager = ({ hasPermission }) => {
       console.error('Failed to load locations:', err);
     }
   };
+
+  const loadCircuitIds = async (search = '') => {
+    try {
+      const data = await networkDesignApi.getCircuitIds(search);
+      // Handle both array format and object format with circuit_ids property
+      setCircuitIds(Array.isArray(data) ? data : (data.circuit_ids || data || []));
+    } catch (err) {
+      console.error('Failed to load circuit IDs:', err);
+      setCircuitIds([]);
+    }
+  };
+
+  // Helper function to format circuit option label for display (UCN - Cable System)
+  const getCircuitOptionLabel = (option) => {
+    if (!option) return '';
+    if (typeof option === 'string') {
+      // Handle string format (for backward compatibility or manual entry)
+      return option;
+    }
+    // Object format: {circuit_id, cable_system}
+    if (option.cable_system) {
+      return `${option.circuit_id} - ${option.cable_system}`;
+    }
+    return option.circuit_id || '';
+  };
+
+  // Helper function to extract circuit_id from option (for value storage)
+  const getCircuitId = (option) => {
+    if (!option) return '';
+    if (typeof option === 'string') return option;
+    return option.circuit_id || '';
+  };
+
+  // Helper function to check if locations are in the same city
+  const checkSameCity = (selectedLocations, locationType) => {
+    if (!selectedLocations || selectedLocations.length <= 1) {
+      return '';
+    }
+    
+    const cities = new Set();
+    selectedLocations.forEach(locCode => {
+      const loc = locations.find(l => l.location_code === locCode);
+      if (loc && loc.city) {
+        cities.add(loc.city);
+      }
+    });
+    
+    if (cities.size > 1) {
+      return `Warning: ${locationType} locations span multiple cities (${Array.from(cities).join(', ')}). All ${locationType.toLowerCase()} locations must be in the same city.`;
+    }
+    return '';
+  };
+
+  // Update same-city warnings when locations change
+  useEffect(() => {
+    if (dialogOpen) {
+      setSameCityWarning({
+        source: checkSameCity(formData.source_locations, 'Source'),
+        destination: checkSameCity(formData.destination_locations, 'Destination')
+      });
+    }
+  }, [formData.source_locations, formData.destination_locations, dialogOpen, locations]);
 
   // Helper function to create enhanced options with city code grouping
   const createLocationOptions = () => {
@@ -140,7 +208,8 @@ const PromoPricingManager = ({ hasPermission }) => {
         price_under_100mb: rule.price_under_100mb || '',
         price_100_to_999mb: rule.price_100_to_999mb || '',
         price_1000_to_2999mb: rule.price_1000_to_2999mb || '',
-        price_3000mb_plus: rule.price_3000mb_plus || ''
+        price_3000mb_plus: rule.price_3000mb_plus || '',
+        required_circuit_ids: rule.required_circuit_ids || []
       });
     } else {
       setEditingRule(null);
@@ -151,9 +220,11 @@ const PromoPricingManager = ({ hasPermission }) => {
         price_under_100mb: '',
         price_100_to_999mb: '',
         price_1000_to_2999mb: '',
-        price_3000mb_plus: ''
+        price_3000mb_plus: '',
+        required_circuit_ids: []
       });
     }
+    setSameCityWarning({ source: '', destination: '' });
     setDialogOpen(true);
   };
 
@@ -193,7 +264,8 @@ const PromoPricingManager = ({ hasPermission }) => {
         price_under_100mb: parseFloat(formData.price_under_100mb) || 0,
         price_100_to_999mb: parseFloat(formData.price_100_to_999mb) || 0,
         price_1000_to_2999mb: parseFloat(formData.price_1000_to_2999mb) || 0,
-        price_3000mb_plus: parseFloat(formData.price_3000mb_plus) || 0
+        price_3000mb_plus: parseFloat(formData.price_3000mb_plus) || 0,
+        required_circuit_ids: formData.required_circuit_ids || []
       };
 
       if (editingRule) {
@@ -345,6 +417,7 @@ const PromoPricingManager = ({ hasPermission }) => {
                 <TableCell><strong>100-999Mb (USD)</strong></TableCell>
                 <TableCell><strong>1000-2999Mb (USD)</strong></TableCell>
                 <TableCell><strong>3000Mb+ (USD)</strong></TableCell>
+                <TableCell><strong>Required Circuits</strong></TableCell>
                 <TableCell><strong>Created</strong></TableCell>
                 <TableCell><strong>Actions</strong></TableCell>
               </TableRow>
@@ -352,11 +425,11 @@ const PromoPricingManager = ({ hasPermission }) => {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={9} align="center">Loading...</TableCell>
+                  <TableCell colSpan={10} align="center">Loading...</TableCell>
                 </TableRow>
               ) : filteredRules.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} align="center">
+                  <TableCell colSpan={10} align="center">
                     {searchQuery ? 'No promo rules found matching your search' : 'No promo pricing rules configured'}
                   </TableCell>
                 </TableRow>
@@ -398,6 +471,31 @@ const PromoPricingManager = ({ hasPermission }) => {
                     <TableCell>{formatCurrency(rule.price_100_to_999mb)}</TableCell>
                     <TableCell>{formatCurrency(rule.price_1000_to_2999mb)}</TableCell>
                     <TableCell>{formatCurrency(rule.price_3000mb_plus)}</TableCell>
+                    <TableCell>
+                      {rule.required_circuit_ids && rule.required_circuit_ids.length > 0 ? (
+                        <Box display="flex" flexWrap="wrap" gap={0.5}>
+                          {rule.required_circuit_ids.slice(0, 3).map((circuitId, index) => (
+                            <Chip 
+                              key={index} 
+                              label={circuitId} 
+                              size="small" 
+                              variant="outlined"
+                              color="warning"
+                              icon={<RouteIcon />}
+                            />
+                          ))}
+                          {rule.required_circuit_ids.length > 3 && (
+                            <Chip 
+                              label={`+${rule.required_circuit_ids.length - 3} more`} 
+                              size="small" 
+                              variant="outlined"
+                            />
+                          )}
+                        </Box>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">Any route</Typography>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Typography variant="body2">
                         {formatDate(rule.created_at)}
@@ -620,6 +718,89 @@ const PromoPricingManager = ({ hasPermission }) => {
                       color="secondary"
                     />
                   ))
+                }
+              />
+            </Grid>
+
+            {/* Same-city validation warnings */}
+            {(sameCityWarning.source || sameCityWarning.destination) && (
+              <Grid item xs={12}>
+                {sameCityWarning.source && (
+                  <Alert severity="warning" sx={{ mb: 1 }} icon={<WarningIcon />}>
+                    {sameCityWarning.source}
+                  </Alert>
+                )}
+                {sameCityWarning.destination && (
+                  <Alert severity="warning" icon={<WarningIcon />}>
+                    {sameCityWarning.destination}
+                  </Alert>
+                )}
+              </Grid>
+            )}
+
+            {/* Required Circuit IDs */}
+            <Grid item xs={12}>
+              <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
+                <RouteIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
+                Required Circuit IDs (Optional)
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                If specified, this promo will only apply when the route includes at least ONE of these circuit IDs.
+                Leave empty to apply to any route between the source and destination locations.
+              </Typography>
+            </Grid>
+
+            <Grid item xs={12}>
+              <Autocomplete
+                multiple
+                options={circuitIds}
+                getOptionLabel={getCircuitOptionLabel}
+                value={formData.required_circuit_ids}
+                onChange={(event, newValue) => {
+                  // Store circuit IDs as strings
+                  const circuitIdStrings = newValue.map(item => getCircuitId(item));
+                  handleFormChange('required_circuit_ids', circuitIdStrings);
+                }}
+                onInputChange={(event, inputValue) => {
+                  // Only fetch circuit IDs when user starts typing
+                  if (inputValue && inputValue.length >= 2) {
+                    loadCircuitIds(inputValue);
+                  } else if (!inputValue) {
+                    // Clear options when input is cleared
+                    setCircuitIds([]);
+                  }
+                }}
+                isOptionEqualToValue={(option, value) => {
+                  // Compare circuit IDs
+                  const optionId = getCircuitId(option);
+                  const valueId = typeof value === 'string' ? value : getCircuitId(value);
+                  return optionId === valueId;
+                }}
+                noOptionsText="Type to search circuits or cable systems..."
+                loadingText="Loading circuits..."
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Required Circuit IDs"
+                    placeholder="Search by UCN or cable system..."
+                    helperText="Type at least 2 characters to search circuits by UCN or Cable System name"
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => {
+                    const { key, ...tagProps } = getTagProps({ index });
+                    const label = typeof option === 'string' ? option : getCircuitId(option);
+                    return (
+                      <Chip
+                        key={key}
+                        variant="outlined"
+                        label={label}
+                        {...tagProps}
+                        color="warning"
+                        icon={<RouteIcon />}
+                      />
+                    );
+                  })
                 }
               />
             </Grid>

@@ -12,6 +12,9 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import PersonIcon from '@mui/icons-material/Person';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import LockResetIcon from '@mui/icons-material/LockReset';
+import SearchIcon from '@mui/icons-material/Search';
+import ClearIcon from '@mui/icons-material/Clear';
+import InputAdornment from '@mui/material/InputAdornment';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { API_BASE_URL } from './config';
@@ -26,6 +29,7 @@ const UserManagement = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
   
   // Dialog states
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -543,7 +547,32 @@ const UserManagement = () => {
         <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} component="h2">
           User Management
         </Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+          <TextField
+            size="small"
+            placeholder="Search username..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            sx={{ width: 220 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" color="action" />
+                </InputAdornment>
+              ),
+              endAdornment: searchTerm && (
+                <InputAdornment position="end">
+                  <IconButton
+                    size="small"
+                    onClick={() => setSearchTerm('')}
+                    edge="end"
+                  >
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              )
+            }}
+          />
           <Button
             variant="contained"
             startIcon={<AddIcon />}
@@ -590,7 +619,11 @@ const UserManagement = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {users.map((user) => (
+              {users
+                .filter(user => 
+                  user.username.toLowerCase().includes(searchTerm.toLowerCase())
+                )
+                .map((user) => (
                 <TableRow key={user.id} hover>
                   <TableCell>
                     <Typography variant="body1" sx={{ fontSize: '0.875rem' }} fontWeight="bold">

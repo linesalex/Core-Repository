@@ -29,7 +29,7 @@ const SmallTextField = styled(TextField)(({ theme }) => ({
   },
 }));
 
-function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission, resetFilters }) {
+function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission, resetFilters, modulePermission }) {
   const [filters, setFilters] = useState(initialFilters);
   const debounceRef = useRef();
   const prevResetFilters = useRef(resetFilters);
@@ -202,11 +202,14 @@ function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission, resetFi
             Refresh
           </Button>
         </Grid>
-        <Grid item>
-          <Button variant="outlined" color="secondary" startIcon={<DownloadIcon />} onClick={onExport}>
-            Export CSV
-          </Button>
-        </Grid>
+        {/* Hide Export CSV button for Sales permission users */}
+        {modulePermission !== 'sales' && (
+          <Grid item>
+            <Button variant="outlined" color="secondary" startIcon={<DownloadIcon />} onClick={onExport}>
+              Export CSV
+            </Button>
+          </Grid>
+        )}
       </Grid>
     </Box>
   );

@@ -89,6 +89,7 @@ const AllocatedCostCalculator = () => {
   });
   const [currentTab, setCurrentTab] = useState(0);
   const [expandedLogs, setExpandedLogs] = useState(new Set());
+  const [logViewModes, setLogViewModes] = useState({}); // Track view mode per log: { logId: 'readable' | 'json' }
   
   // Helper function to toggle accordion state
   const toggleAccordion = (accordionName) => {
@@ -1079,6 +1080,339 @@ const AllocatedCostCalculator = () => {
       }
       return newSet;
     });
+  };
+
+  // Get view mode for a log (default to 'readable')
+  const getLogViewMode = (logId) => {
+    return logViewModes[logId] || 'readable';
+  };
+
+  // Set view mode for a log
+  const setLogViewMode = (logId, mode) => {
+    setLogViewModes(prev => ({ ...prev, [logId]: mode }));
+  };
+
+  // Render human-readable log details for Allocated Cost Calculator
+  const renderHumanReadableLogDetails = (log) => {
+    let logData;
+    try {
+      logData = log.new_values ? JSON.parse(log.new_values) : null;
+    } catch (e) {
+      return <Alert severity="error">Unable to parse log data</Alert>;
+    }
+
+    if (!logData) {
+      return <Alert severity="info">No data available for this log</Alert>;
+    }
+
+    const params = logData.inputParameters || logData;
+    const results = logData.calculationResults || logData.results;
+
+    // Extract path data
+    const primaryPath = results?.searchResults?.primaryPath || logData.searchResults?.primaryPath;
+    const diversePath = results?.searchResults?.diversePath || logData.searchResults?.diversePath;
+    const pricingResults = results?.individual || results?.results;
+    // Protection pricing is stored at results.protection (not results.protection.pricing)
+    const protectionPricing = results?.protection;
+    
+    // Determine pricing type from params
+    const pricingType = params?.protection_required ? 'protected' : 
+                        (diversePath ? 'primary_secondary' : 'primary');
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {/* Input Parameters Summary */}
+        {params && (
+          <Card variant="outlined">
+            <CardHeader 
+              title="Request Parameters" 
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Customer</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.customerName || params.customer_name || 'N/A'}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Quote ID</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.quoteRequestId || params.quote_request_id || 'N/A'}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Route</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.source} → {params.destination}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Bandwidth</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.bandwidth} Mbps</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Contract Term</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.contract_term || params.contractTerm || 12} months</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Currency</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.output_currency || params.outputCurrency || 'USD'}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Pricing Type</Typography>
+                  <Typography variant="body2" fontWeight="500">
+                    {pricingType === 'protected' ? 'Protected' : 
+                     pricingType === 'primary_secondary' ? 'Primary + Secondary' : 'Primary'}
+                  </Typography>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Primary Path Route Table */}
+        {primaryPath && primaryPath.route && (
+          <Card variant="outlined">
+            <CardHeader 
+              title="Primary Path" 
+              subheader={primaryPath.path ? primaryPath.path.join(' → ') : ''}
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                      <TableCell><strong>Circuit ID</strong></TableCell>
+                      <TableCell><strong>Segment</strong></TableCell>
+                      <TableCell><strong>Latency</strong></TableCell>
+                      <TableCell><strong>Bandwidth</strong></TableCell>
+                      <TableCell><strong>Carrier</strong></TableCell>
+                      <TableCell><strong>Cable System</strong></TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {primaryPath.route.map((segment, index) => (
+                      <TableRow 
+                        key={index}
+                        sx={{ bgcolor: (segment.isVirtual || segment.isUpgraded) ? '#90EE90' : 'inherit' }}
+                      >
+                        <TableCell>{segment.circuit_id_display || segment.circuit_id || 'N/A'}</TableCell>
+                        <TableCell>{segment.from} → {segment.to}</TableCell>
+                        <TableCell>{segment.isVirtual ? 'New' : `${formatLatency(segment.latency)}ms`}</TableCell>
+                        <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
+                        <TableCell>{segment.carrier || 'N/A'}</TableCell>
+                        <TableCell>{segment.cable_system || 'N/A'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+              <Box sx={{ mt: 1.5, display: 'flex', gap: 3 }}>
+                <Typography variant="body2"><strong>Total Latency:</strong> {formatLatency(primaryPath.totalLatency)}ms</Typography>
+                <Typography variant="body2"><strong>Hops:</strong> {primaryPath.hops || primaryPath.route?.length}</Typography>
+              </Box>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Secondary/Diverse Path Route Table */}
+        {diversePath && diversePath.route && (
+          <Card variant="outlined">
+            <CardHeader 
+              title="Secondary Path" 
+              subheader={diversePath.path ? diversePath.path.join(' → ') : ''}
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                      <TableCell><strong>Circuit ID</strong></TableCell>
+                      <TableCell><strong>Segment</strong></TableCell>
+                      <TableCell><strong>Latency</strong></TableCell>
+                      <TableCell><strong>Bandwidth</strong></TableCell>
+                      <TableCell><strong>Carrier</strong></TableCell>
+                      <TableCell><strong>Cable System</strong></TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {diversePath.route.map((segment, index) => (
+                      <TableRow 
+                        key={index}
+                        sx={{ bgcolor: (segment.isVirtual || segment.isUpgraded) ? '#90EE90' : 'inherit' }}
+                      >
+                        <TableCell>{segment.circuit_id_display || segment.circuit_id || 'N/A'}</TableCell>
+                        <TableCell>{segment.from} → {segment.to}</TableCell>
+                        <TableCell>{segment.isVirtual ? 'New' : `${formatLatency(segment.latency)}ms`}</TableCell>
+                        <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
+                        <TableCell>{segment.carrier || 'N/A'}</TableCell>
+                        <TableCell>{segment.cable_system || 'N/A'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+              <Box sx={{ mt: 1.5, display: 'flex', gap: 3 }}>
+                <Typography variant="body2"><strong>Total Latency:</strong> {formatLatency(diversePath.totalLatency)}ms</Typography>
+                <Typography variant="body2"><strong>Hops:</strong> {diversePath.hops || diversePath.route?.length}</Typography>
+              </Box>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Pricing Summary Cards */}
+        {pricingResults && pricingResults.length > 0 && (
+          <Box>
+            <Typography variant="subtitle1" fontWeight="600" sx={{ mb: 2 }}>Pricing Results</Typography>
+            <Grid container spacing={2}>
+              {pricingResults.map((result, index) => {
+                const pricing = result.pricing;
+                if (!pricing) return null;
+                
+                return (
+                  <Grid item xs={12} md={4} key={index}>
+                    <Card sx={{ height: '100%', bgcolor: result.pathType === 'primary' ? 'grey.50' : (result.pathType === 'protected' ? 'primary.50' : 'info.50') }}>
+                      <CardHeader 
+                        title={result.pathType === 'primary' ? 'Primary Path' : (result.pathType === 'protected' ? 'Protected Service' : 'Secondary Path')}
+                        subheader={`${pricing.contractTerm || 12}-Month Contract`}
+                        sx={{ pb: 0, '& .MuiCardHeader-title': { fontSize: '0.95rem', fontWeight: 600 } }}
+                      />
+                      <CardContent sx={{ pt: 1 }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">Minimum Price ({pricing.minimumMargin}% margin)</Typography>
+                            <Typography variant="body1" color="error.main" fontWeight="600">
+                              {formatCurrency(pricing.minimumPrice, pricing.currency)}
+                            </Typography>
+                          </Box>
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">Suggested Price ({pricing.suggestedMargin}% margin)</Typography>
+                            <Typography variant="body1" color="success.main" fontWeight="600">
+                              {formatCurrency(pricing.suggestedPrice, pricing.currency)}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                );
+              })}
+
+              {/* Protected Service Pricing from separate field */}
+              {protectionPricing && protectionPricing.minimumPrice && (
+                <Grid item xs={12} md={4}>
+                  <Card sx={{ height: '100%', bgcolor: 'primary.50' }}>
+                    <CardHeader 
+                      title="Protected Service"
+                      subheader={`${protectionPricing.contractTerm || 12}-Month Contract`}
+                      sx={{ pb: 0, '& .MuiCardHeader-title': { fontSize: '0.95rem', fontWeight: 600 } }}
+                    />
+                    <CardContent sx={{ pt: 1 }}>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">Minimum Price ({protectionPricing.minimumMargin}% margin)</Typography>
+                          <Typography variant="body1" color="error.main" fontWeight="600">
+                            {formatCurrency(protectionPricing.minimumPrice, protectionPricing.currency)}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">Suggested Price ({protectionPricing.suggestedMargin}% margin)</Typography>
+                          <Typography variant="body1" color="success.main" fontWeight="600">
+                            {formatCurrency(protectionPricing.suggestedPrice, protectionPricing.currency)}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              )}
+            </Grid>
+          </Box>
+        )}
+
+        {/* Detailed Calculation Breakdown */}
+        {pricingResults && pricingResults.length > 0 && (
+          <Box>
+            <Typography variant="subtitle1" fontWeight="600" sx={{ mb: 2 }}>Detailed Calculation Breakdown</Typography>
+            {pricingResults.map((result, index) => {
+              const detailedCalcs = result.pricing?.detailedCalculations;
+              if (!detailedCalcs || !detailedCalcs.allocatedCostBreakdown) return null;
+              
+              return (
+                <Accordion key={index} defaultExpanded>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ bgcolor: 'grey.50' }}>
+                    <Typography variant="subtitle2" fontWeight="600">
+                      📊 {result.pathType === 'primary' ? 'Primary' : result.pathType === 'protection' ? 'Secondary' : 'Protected'} Path - Allocated Cost Calculation
+                    </Typography>
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ p: 2 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      Customer Bandwidth: <strong>{params?.bandwidth} Mbps</strong>
+                    </Typography>
+                    
+                    <TableContainer component={Paper} sx={{ borderRadius: 1 }}>
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow sx={{ bgcolor: 'primary.main' }}>
+                            <TableCell sx={{ color: 'white', fontWeight: '600', fontSize: '0.75rem' }}>Circuit</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: '600', fontSize: '0.75rem' }}>Route</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: '600', fontSize: '0.75rem' }}>Carrier</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: '600', fontSize: '0.75rem' }}>Segment BW</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: '600', fontSize: '0.75rem' }}>Original Cost</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: '600', fontSize: '0.75rem' }}>Utilization</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: '600', fontSize: '0.75rem' }}>Allocation</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: '600', fontSize: '0.75rem' }}>Allocated Cost</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {detailedCalcs.allocatedCostBreakdown.segments.map((segment, idx) => (
+                            <TableRow key={idx} sx={{ 
+                              '&:nth-of-type(odd)': { bgcolor: segment.isIncrementalCost ? 'rgba(144, 238, 144, 0.2)' : 'action.hover' },
+                              bgcolor: segment.isIncrementalCost ? 'rgba(144, 238, 144, 0.15)' : 'inherit'
+                            }}>
+                              <TableCell sx={{ fontWeight: '600', fontSize: '0.75rem' }}>{segment.circuit}</TableCell>
+                              <TableCell sx={{ fontSize: '0.7rem' }}>{segment.location}</TableCell>
+                              <TableCell sx={{ fontSize: '0.7rem' }}>{segment.carrier}</TableCell>
+                              <TableCell sx={{ fontSize: '0.75rem' }}>
+                                {segment.segmentBandwidth ? `${segment.segmentBandwidth} Mbps` : 'N/A'}
+                              </TableCell>
+                              <TableCell sx={{ fontSize: '0.75rem' }}>
+                                {segment.originalCost?.toFixed(2)} {segment.originalCurrency}
+                              </TableCell>
+                              <TableCell sx={{ fontSize: '0.7rem' }}>
+                                {segment.utilizationFactor || 'N/A'}
+                              </TableCell>
+                              <TableCell sx={{ fontSize: '0.7rem' }}>
+                                {segment.allocationRatio?.toFixed(4) || 'N/A'}
+                              </TableCell>
+                              <TableCell sx={{ fontWeight: '600', fontSize: '0.75rem', color: 'success.main' }}>
+                                {segment.allocatedCost?.toFixed(2)} {params?.outputCurrency || 'USD'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          <TableRow sx={{ bgcolor: 'primary.light' }}>
+                            <TableCell colSpan={7} sx={{ fontWeight: 'bold', fontSize: '0.85rem' }}>
+                              Total Allocated Cost:
+                            </TableCell>
+                            <TableCell sx={{ fontWeight: 'bold', fontSize: '0.9rem', color: 'primary.main' }}>
+                              {(() => {
+                                const total = detailedCalcs.allocatedCostBreakdown.segments.reduce((sum, seg) => {
+                                  return sum + (parseFloat(seg.allocatedCost) || 0);
+                                }, 0);
+                                return formatCurrency(total, params?.outputCurrency || 'USD');
+                              })()}
+                            </TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </AccordionDetails>
+                </Accordion>
+              );
+            })}
+
+          </Box>
+        )}
+      </Box>
+    );
   };
   
   const handleClearLogs = async () => {
@@ -2751,30 +3085,53 @@ const AllocatedCostCalculator = () => {
                       <TableRow>
                         <TableCell colSpan={7} sx={{ backgroundColor: '#f8f9fa', border: 'none' }}>
                           <Box sx={{ p: 2 }}>
-                            <Grid container spacing={2}>
-                              <Grid item xs={12}>
-                                <Typography variant="subtitle2" gutterBottom>
-                                  <strong>Complete Log Data:</strong>
-                                </Typography>
-                                <Box 
-                                  component="pre" 
-                                  sx={{ 
-                                    fontSize: '0.75rem', 
-                                    fontFamily: 'Courier New, monospace',
-                                    whiteSpace: 'pre-wrap',
-                                    wordBreak: 'break-word',
-                                    maxHeight: '400px',
-                                    overflow: 'auto',
-                                    backgroundColor: '#f5f5f5',
-                                    padding: 2,
-                                    borderRadius: 1,
-                                    border: '1px solid #ddd'
-                                  }}
+                            {/* View Mode Toggle */}
+                            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+                              <FormControl size="small" sx={{ minWidth: 180 }}>
+                                <InputLabel>View Mode</InputLabel>
+                                <Select
+                                  value={getLogViewMode(log.id)}
+                                  label="View Mode"
+                                  onChange={(e) => setLogViewMode(log.id, e.target.value)}
                                 >
-                                  {log.new_values ? JSON.stringify(JSON.parse(log.new_values), null, 2) : 'No data available'}
-                                </Box>
+                                  <MenuItem value="readable">Visual View</MenuItem>
+                                  <MenuItem value="json">JSON Data</MenuItem>
+                                </Select>
+                              </FormControl>
+                            </Box>
+
+                            {/* Human Readable View */}
+                            {getLogViewMode(log.id) === 'readable' && (
+                              renderHumanReadableLogDetails(log)
+                            )}
+
+                            {/* JSON View */}
+                            {getLogViewMode(log.id) === 'json' && (
+                              <Grid container spacing={2}>
+                                <Grid item xs={12}>
+                                  <Typography variant="subtitle2" gutterBottom>
+                                    <strong>Complete Log Data:</strong>
+                                  </Typography>
+                                  <Box 
+                                    component="pre" 
+                                    sx={{ 
+                                      fontSize: '0.75rem', 
+                                      fontFamily: 'Courier New, monospace',
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-word',
+                                      maxHeight: '400px',
+                                      overflow: 'auto',
+                                      backgroundColor: '#f5f5f5',
+                                      padding: 2,
+                                      borderRadius: 1,
+                                      border: '1px solid #ddd'
+                                    }}
+                                  >
+                                    {log.new_values ? JSON.stringify(JSON.parse(log.new_values), null, 2) : 'No data available'}
+                                  </Box>
+                                </Grid>
                               </Grid>
-                            </Grid>
+                            )}
                           </Box>
                         </TableCell>
                       </TableRow>

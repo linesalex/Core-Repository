@@ -17,7 +17,7 @@ export const fetchRoute = (id) => api.get(`${API_BASE_URL}/network_routes/${id}`
 export const getRouteTracking = (circuitId) => api.get(`${API_BASE_URL}/network_routes/${circuitId}/tracking`).then(res => res.data);
 
 // KMZ Viewer
-export const fetchRoutesByBandwidth = (filters) => api.get(`${API_BASE_URL}/kmz_viewer/routes_by_bandwidth`, { params: { filters } }).then(res => res.data);
+export const fetchRoutesByBandwidth = (filters, regions) => api.get(`${API_BASE_URL}/kmz_viewer/routes_by_bandwidth`, { params: { filters, regions } }).then(res => res.data);
 export const fetchRouteCounts = () => api.get(`${API_BASE_URL}/kmz_viewer/route_counts`).then(res => res.data);
 export const searchKMZRoutes = (query) => api.get(`${API_BASE_URL}/kmz_viewer/search_routes`, { params: { query } }).then(res => res.data);
 
@@ -569,6 +569,27 @@ export const exportNetworkDesignKMZ = (data) => {
   return api.post(`${API_BASE_URL}/network_design/export_kmz`, data, {
     responseType: 'blob'
   });
+};
+
+// ====================================
+// ROUTE FINDER - PROMO PRICING APIs
+// ====================================
+
+// Get promo pricing rules for sales (sanitized view - no rule names, no margin info)
+export const getPromoRulesForSales = (locationFilter = '') => {
+  const params = locationFilter ? `?location_filter=${encodeURIComponent(locationFilter)}` : '';
+  return api.get(`${API_BASE_URL}/route_finder/promo-pricing${params}`).then(res => res.data);
+};
+
+// Check if a route matches promo pricing and validate margins
+export const checkPromoMatch = (source, destination, bandwidth, primaryCircuitIds = [], secondaryCircuitIds = []) => {
+  return api.post(`${API_BASE_URL}/route_finder/check-promo-match`, {
+    source,
+    destination,
+    bandwidth,
+    primary_circuit_ids: primaryCircuitIds,
+    secondary_circuit_ids: secondaryCircuitIds
+  }).then(res => res.data);
 };
 
 // Export the base api object for direct use

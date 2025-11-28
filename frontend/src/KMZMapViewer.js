@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Box, Typography, Button, CircularProgress, Alert, Checkbox, FormControlLabel,
+  Box, Typography, Button, CircularProgress, Checkbox, FormControlLabel, Alert,
   FormGroup, Divider, IconButton, TextField, Autocomplete, Accordion, AccordionSummary,
   AccordionDetails, Chip, Paper, List, ListItem, ListItemText, ListItemIcon, Menu, MenuItem
 } from '@mui/material';
@@ -24,7 +24,7 @@ window.CESIUM_BASE_URL = '/cesium/';
 // Disable Cesium Ion completely - we're using CartoDB Light
 Ion.defaultAccessToken = '';
 
-function KMZMapViewer({ onClose }) {
+function KMZMapViewer({ onClose, routeFinderData }) {
   const cesiumContainer = useRef(null);
   const viewerRef = useRef(null);
   
@@ -32,21 +32,24 @@ function KMZMapViewer({ onClose }) {
   const [error, setError] = useState(null);
   const [viewerReady, setViewerReady] = useState(false);
   
-  // Primary filters state
+  // Primary filters state - nested regional structure
   const [filters, setFilters] = useState({
-    dark_fiber: true,  // Auto-load Dark Fiber only
-    gb_100: false,     // Don't auto-load (too many routes)
-    gb_10: false,
-    lt_10gb: false
+    dark_fiber: { EMEA: true, AMERs: false, APAC: false, INTER: false },  // Auto-load EMEA only
+    gb_100: { EMEA: false, AMERs: false, APAC: false, INTER: false },
+    gb_10: { EMEA: false, AMERs: false, APAC: false, INTER: false },
+    lt_10gb: { EMEA: false, AMERs: false, APAC: false, INTER: false }
   });
   
-  // Available route counts per filter
+  // Available route counts per filter (nested by region)
   const [availableCounts, setAvailableCounts] = useState({
-    dark_fiber: 0,
-    gb_100: 0,
-    gb_10: 0,
-    lt_10gb: 0
+    dark_fiber: { EMEA: 0, AMERs: 0, APAC: 0, INTER: 0, total: 0 },
+    gb_100: { EMEA: 0, AMERs: 0, APAC: 0, INTER: 0, total: 0 },
+    gb_10: { EMEA: 0, AMERs: 0, APAC: 0, INTER: 0, total: 0 },
+    lt_10gb: { EMEA: 0, AMERs: 0, APAC: 0, INTER: 0, total: 0 }
   });
+  
+  // Regions list
+  const REGIONS = ['EMEA', 'AMERs', 'APAC', 'INTER'];
   
   // Loaded routes by category
   const [loadedRoutes, setLoadedRoutes] = useState({
@@ -54,7 +57,9 @@ function KMZMapViewer({ onClose }) {
     gb_100: [],
     gb_10: [],
     lt_10gb: [],
-    advanced: []
+    advanced: [],
+    route_finder_primary: [],
+    route_finder_secondary: []
   });
   
   // Route visibility toggles
@@ -68,17 +73,28 @@ function KMZMapViewer({ onClose }) {
   const [colorMenuAnchor, setColorMenuAnchor] = useState(null);
   const [colorMenuRoute, setColorMenuRoute] = useState(null);
   
-  // Preset colors with Cesium ABGR format
+  // Preset colors with Cesium ABGR format (16 colors for better differentiation)
   const PRESET_COLORS = [
     { name: 'Red', hex: '#FF0000', cesium: 'ff0000ff' },
-    { name: 'Blue', hex: '#0000FF', cesium: 'ffff0000' },
-    { name: 'Green', hex: '#00FF00', cesium: 'ff00ff00' },
-    { name: 'Yellow', hex: '#FFFF00', cesium: 'ff00ffff' },
-    { name: 'Orange', hex: '#FF8800', cesium: 'ff0088ff' },
-    { name: 'Purple', hex: '#9C27B0', cesium: 'ffb0279c' },
-    { name: 'Pink', hex: '#E91E63', cesium: 'ff631ee9' },
-    { name: 'Cyan', hex: '#00FFFF', cesium: 'ffffff00' }
+    { name: 'Blue', hex: '#0066FF', cesium: 'ffff6600' },
+    { name: 'Green', hex: '#00CC00', cesium: 'ff00cc00' },
+    { name: 'Yellow', hex: '#FFCC00', cesium: 'ff00ccff' },
+    { name: 'Orange', hex: '#FF6600', cesium: 'ff0066ff' },
+    { name: 'Purple', hex: '#9933FF', cesium: 'ffff3399' },
+    { name: 'Pink', hex: '#FF3399', cesium: 'ff9933ff' },
+    { name: 'Cyan', hex: '#00CCCC', cesium: 'ffcccc00' },
+    { name: 'Magenta', hex: '#CC0099', cesium: 'ff9900cc' },
+    { name: 'Lime', hex: '#99FF00', cesium: 'ff00ff99' },
+    { name: 'Teal', hex: '#009999', cesium: 'ff999900' },
+    { name: 'Coral', hex: '#FF6666', cesium: 'ff6666ff' },
+    { name: 'Gold', hex: '#FFD700', cesium: 'ff00d7ff' },
+    { name: 'Navy', hex: '#000099', cesium: 'ff990000' },
+    { name: 'Olive', hex: '#669900', cesium: 'ff009966' },
+    { name: 'Maroon', hex: '#990033', cesium: 'ff330099' }
   ];
+  
+  // Track last used color index to avoid consecutive repetition
+  const lastColorIndexRef = useRef(-1);
   
   // Advanced filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -87,6 +103,18 @@ function KMZMapViewer({ onClose }) {
   
   // Selected route info (for popup)
   const [selectedRoute, setSelectedRoute] = useState(null);
+  
+  // Route Finder mode state
+  const [routeFinderMode, setRouteFinderMode] = useState(false);
+  const [routeFinderWarnings, setRouteFinderWarnings] = useState([]);
+  
+  // Filter accordion expanded states (controlled for route finder mode)
+  const [filterAccordionExpanded, setFilterAccordionExpanded] = useState({
+    dark_fiber: true, // Default expanded when not in route finder mode
+    gb_100: false,
+    gb_10: false,
+    lt_10gb: false
+  });
   
   // DataSource references
   const dataSourcesRef = useRef({});
@@ -192,18 +220,18 @@ function KMZMapViewer({ onClose }) {
     loadCounts();
   }, []);
 
-  // Auto-load Dark Fiber and 100Gb routes on startup
+  // Auto-load EMEA Dark Fiber only on startup (but NOT when coming from Route Finder)
   useEffect(() => {
     if (!viewerReady) return;
     
-    const autoLoadFilters = [];
-    if (filters.dark_fiber) autoLoadFilters.push('dark_fiber');
-    if (filters.gb_100) autoLoadFilters.push('100gb');
+    // Skip auto-loading Dark Fiber if we're in Route Finder mode
+    if (routeFinderData) return;
     
-    if (autoLoadFilters.length > 0) {
-      loadRoutesByFilter(autoLoadFilters.join(','));
+    // Only load EMEA Dark Fiber on startup
+    if (filters.dark_fiber.EMEA) {
+      loadRoutesByFilter('dark_fiber', ['EMEA']);
     }
-  }, [viewerReady]);
+  }, [viewerReady, routeFinderData]);
 
   // Load permanent locations.kmz template when viewer is ready
   useEffect(() => {
@@ -295,30 +323,140 @@ function KMZMapViewer({ onClose }) {
     }
   }, [showLocations]);
 
-  // Load routes by bandwidth filter
-  const loadRoutesByFilter = async (filterString) => {
+  // Handle Route Finder data when provided
+  useEffect(() => {
+    if (!viewerReady || !viewerRef.current || !routeFinderData) return;
+    
+    const loadRouteFinderRoutes = async () => {
+      console.log('Route Finder Mode: Loading routes from Route Finder');
+      setRouteFinderMode(true);
+      setLoading(true);
+      
+      // Collapse all filter accordions in route finder mode
+      setFilterAccordionExpanded({
+        dark_fiber: false,
+        gb_100: false,
+        gb_10: false,
+        lt_10gb: false
+      });
+      
+      const warnings = [];
+      
+      // Clear all existing routes first
+      Object.keys(dataSourcesRef.current).forEach(circuitId => {
+        try {
+          const viewer = viewerRef.current;
+          const { dataSource } = dataSourcesRef.current[circuitId];
+          viewer.dataSources.remove(dataSource);
+          delete dataSourcesRef.current[circuitId];
+        } catch (err) {
+          console.warn('Error removing route:', err);
+        }
+      });
+      
+      // Reset state
+      setLoadedRoutes({
+        dark_fiber: [],
+        gb_100: [],
+        gb_10: [],
+        lt_10gb: [],
+        advanced: [],
+        route_finder_primary: [],
+        route_finder_secondary: []
+      });
+      setRouteVisibility({});
+      setRouteColors({});
+      setFilters({
+        dark_fiber: { EMEA: false, AMERs: false, APAC: false, INTER: false },
+        gb_100: { EMEA: false, AMERs: false, APAC: false, INTER: false },
+        gb_10: { EMEA: false, AMERs: false, APAC: false, INTER: false },
+        lt_10gb: { EMEA: false, AMERs: false, APAC: false, INTER: false }
+      });
+      
+      const { primaryPath, diversePath, source, locations } = routeFinderData;
+      
+      // Define colors for primary (red) and secondary (blue)
+      const primaryColor = { hex: '#FF0000', cesium: 'ff0000ff' }; // Red (ABGR)
+      const secondaryColor = { hex: '#0066FF', cesium: 'ffff6600' }; // Blue (ABGR)
+      
+      // Load primary path routes
+      if (primaryPath && primaryPath.route) {
+        console.log(`Loading ${primaryPath.route.length} primary path segments`);
+        for (const segment of primaryPath.route) {
+          if (segment.circuit_id) {
+            try {
+              await loadKMZRouteWithColor(segment, 'route_finder_primary', primaryColor);
+            } catch (err) {
+              console.warn(`Failed to load primary segment ${segment.circuit_id}:`, err);
+              warnings.push(`Primary: ${segment.from} → ${segment.to} (${segment.circuit_id})`);
+            }
+          }
+        }
+      }
+      
+      // Load secondary/diverse path routes
+      if (diversePath && diversePath.route) {
+        console.log(`Loading ${diversePath.route.length} secondary path segments`);
+        for (const segment of diversePath.route) {
+          if (segment.circuit_id) {
+            try {
+              await loadKMZRouteWithColor(segment, 'route_finder_secondary', secondaryColor);
+            } catch (err) {
+              console.warn(`Failed to load secondary segment ${segment.circuit_id}:`, err);
+              warnings.push(`Secondary: ${segment.from} → ${segment.to} (${segment.circuit_id})`);
+            }
+          }
+        }
+      }
+      
+      // Zoom to source location
+      if (source && locations) {
+        const sourceLocation = locations.find(loc => loc.location_code === source);
+        if (sourceLocation && sourceLocation.latitude && sourceLocation.longitude) {
+          const lat = parseFloat(sourceLocation.latitude);
+          const lon = parseFloat(sourceLocation.longitude);
+          console.log(`Zooming to source: ${source} at lat=${lat}, lon=${lon}`);
+          viewerRef.current.camera.flyTo({
+            destination: Cartesian3.fromDegrees(lon, lat, 500000),
+            duration: 2
+          });
+        }
+      }
+      
+      setRouteFinderWarnings(warnings);
+      setLoading(false);
+    };
+    
+    loadRouteFinderRoutes();
+  }, [viewerReady, routeFinderData]);
+
+  // Load routes by bandwidth filter and regions
+  const loadRoutesByFilter = async (bandwidth, regions) => {
     if (!viewerRef.current) return;
     
     setLoading(true);
     try {
-      const data = await fetchRoutesByBandwidth(filterString);
-      
-      // Load each category
-      const categories = {
-        dark_fiber: data.dark_fiber || [],
-        gb_100: data.gb_100 || [],
-        gb_10: data.gb_10 || [],
-        lt_10gb: data.lt_10gb || []
+      const filterMap = {
+        dark_fiber: 'dark_fiber',
+        gb_100: '100gb',
+        gb_10: '10gb',
+        lt_10gb: 'lt10gb'
       };
+      
+      const data = await fetchRoutesByBandwidth(filterMap[bandwidth], regions.join(','));
+      
+      // Get routes for this bandwidth
+      const routes = data[bandwidth] || [];
+      
+      console.log(`Loading ${routes.length} routes for ${bandwidth} in ${regions.join(', ')}`);
       
       const newLoadedRoutes = { ...loadedRoutes };
       
-      for (const [category, routes] of Object.entries(categories)) {
-        if (routes.length > 0) {
-          for (const route of routes) {
-            await loadKMZRoute(route, category);
-            newLoadedRoutes[category].push(route);
-          }
+      for (const route of routes) {
+        // Skip if already loaded
+        if (!dataSourcesRef.current[route.circuit_id]) {
+          await loadKMZRoute(route, bandwidth);
+          newLoadedRoutes[bandwidth] = [...newLoadedRoutes[bandwidth], route];
         }
       }
       
@@ -404,6 +542,24 @@ function KMZMapViewer({ onClose }) {
 
       await viewer.dataSources.add(cleanDataSource);
       
+      // Assign a random color to this route
+      const randomColor = getRandomColor();
+      const colorEntities = cleanDataSource.entities.values;
+      colorEntities.forEach(entity => {
+        if (entity.polyline && entity.polyline.material) {
+          try {
+            // Convert cesium hex color (ABGR) to Cesium.Color
+            const a = parseInt(randomColor.cesium.substring(0, 2), 16) / 255;
+            const b = parseInt(randomColor.cesium.substring(2, 4), 16) / 255;
+            const g = parseInt(randomColor.cesium.substring(4, 6), 16) / 255;
+            const r = parseInt(randomColor.cesium.substring(6, 8), 16) / 255;
+            entity.polyline.material = new Color(r, g, b, a);
+          } catch (err) {
+            console.warn('Failed to set initial polyline color:', err);
+          }
+        }
+      });
+      
       // Store dataSource reference
       dataSourcesRef.current[route.circuit_id] = {
         dataSource: cleanDataSource,
@@ -412,8 +568,9 @@ function KMZMapViewer({ onClose }) {
         route: route
       };
       
-      // Set visibility
+      // Set visibility and store initial color
       setRouteVisibility(prev => ({ ...prev, [route.circuit_id]: true }));
+      setRouteColors(prev => ({ ...prev, [route.circuit_id]: randomColor.hex }));
       
       // Cleanup temp blob
       URL.revokeObjectURL(blobUrl);
@@ -423,28 +580,183 @@ function KMZMapViewer({ onClose }) {
     }
   };
 
-  // Handle filter checkbox changes
-  const handleFilterChange = async (filterKey) => {
-    const newFilters = { ...filters, [filterKey]: !filters[filterKey] };
-    setFilters(newFilters);
+  // Load a single KMZ route with a specific color (for Route Finder)
+  const loadKMZRouteWithColor = async (segment, category, colorObj) => {
+    if (!viewerRef.current) return;
     
-    const filterMap = {
-      dark_fiber: 'dark_fiber',
-      gb_100: '100gb',
-      gb_10: '10gb',
-      lt_10gb: 'lt10gb'
+    const viewer = viewerRef.current;
+    const token = localStorage.getItem('authToken');
+    
+    // First, fetch the route details to get the kmz_file_path
+    const routeResponse = await fetch(`${API_BASE_URL}/network_routes?circuit_id=${encodeURIComponent(segment.circuit_id)}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    
+    if (!routeResponse.ok) {
+      throw new Error(`Failed to fetch route details for ${segment.circuit_id}`);
+    }
+    
+    const routeData = await routeResponse.json();
+    const route = routeData.find(r => r.circuit_id === segment.circuit_id);
+    
+    if (!route || !route.kmz_file_path) {
+      throw new Error(`No KMZ file available for ${segment.circuit_id}`);
+    }
+    
+    // Fetch the KMZ file
+    const response = await fetch(`${API_BASE_URL}/download_kmz/${route.kmz_file_path}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch KMZ for ${segment.circuit_id}`);
+    }
+
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    const tempDataSource = await KmlDataSource.load(blobUrl, {
+      camera: viewer.camera,
+      canvas: viewer.canvas,
+      clampToGround: true
+    });
+
+    // Create a BRAND NEW clean CustomDataSource
+    const cleanDataSource = new CustomDataSource(`${segment.circuit_id}_clean`);
+    
+    const entities = tempDataSource.entities.values;
+    
+    // Copy entities to NEW dataSource with guaranteed valid IDs
+    entities.forEach((entity, index) => {
+      try {
+        // Skip entities that are points/pins/placemarks (don't have polylines)
+        if (!entity.polyline && (entity.point || entity.billboard || (entity.position && !entity.polyline))) {
+          return; // Skip this entity - it's a pin/placemark
+        }
+        
+        const newId = `${segment.circuit_id}_${index}`;
+        cleanDataSource.entities.add({
+          id: newId,
+          name: entity.name || segment.circuit_id,
+          description: entity.description,
+          position: entity.position,
+          polyline: entity.polyline,
+          polygon: entity.polygon,
+          model: entity.model,
+          path: entity.path,
+          wall: entity.wall,
+          corridor: entity.corridor,
+          cylinder: entity.cylinder,
+          ellipse: entity.ellipse,
+          ellipsoid: entity.ellipsoid,
+          rectangle: entity.rectangle,
+          orientation: entity.orientation,
+          viewFrom: entity.viewFrom,
+          properties: entity.properties
+        });
+      } catch (err) {
+        console.warn(`Could not copy entity ${index}:`, err);
+      }
+    });
+
+    await viewer.dataSources.add(cleanDataSource);
+    
+    // Apply the specified color to all polylines
+    const colorEntities = cleanDataSource.entities.values;
+    colorEntities.forEach(entity => {
+      if (entity.polyline && entity.polyline.material) {
+        try {
+          // Convert cesium hex color (ABGR) to Cesium.Color
+          const a = parseInt(colorObj.cesium.substring(0, 2), 16) / 255;
+          const b = parseInt(colorObj.cesium.substring(2, 4), 16) / 255;
+          const g = parseInt(colorObj.cesium.substring(4, 6), 16) / 255;
+          const r = parseInt(colorObj.cesium.substring(6, 8), 16) / 255;
+          entity.polyline.material = new Color(r, g, b, a);
+        } catch (err) {
+          console.warn('Failed to set polyline color:', err);
+        }
+      }
+    });
+    
+    // Build route object for state
+    const routeObj = {
+      circuit_id: segment.circuit_id,
+      location_a: segment.from,
+      location_b: segment.to,
+      ...route
     };
     
-    if (newFilters[filterKey]) {
-      // Load routes for this filter
-      await loadRoutesByFilter(filterMap[filterKey]);
+    // Store dataSource reference
+    dataSourcesRef.current[segment.circuit_id] = {
+      dataSource: cleanDataSource,
+      blobUrl: blobUrl,
+      category: category,
+      route: routeObj
+    };
+    
+    // Set visibility and store color
+    setRouteVisibility(prev => ({ ...prev, [segment.circuit_id]: true }));
+    setRouteColors(prev => ({ ...prev, [segment.circuit_id]: colorObj.hex }));
+    setLoadedRoutes(prev => ({
+      ...prev,
+      [category]: [...(prev[category] || []), routeObj]
+    }));
+    
+    // Cleanup temp blob
+    URL.revokeObjectURL(blobUrl);
+  };
+
+  // Handle parent filter checkbox (toggles all regions)
+  const handleParentFilterChange = async (bandwidth) => {
+    const allChecked = REGIONS.every(r => filters[bandwidth][r]);
+    const newState = !allChecked;
+    
+    // Update all regions for this bandwidth
+    const newFilters = {
+      ...filters,
+      [bandwidth]: REGIONS.reduce((acc, r) => ({ ...acc, [r]: newState }), {})
+    };
+    setFilters(newFilters);
+    
+    if (newState) {
+      // Load all regions for this bandwidth
+      await loadRoutesByFilter(bandwidth, REGIONS);
     } else {
-      // Remove routes for this filter
-      const routesToRemove = loadedRoutes[filterKey];
+      // Remove all routes for this bandwidth
+      const routesToRemove = loadedRoutes[bandwidth];
       routesToRemove.forEach(route => {
         removeRoute(route.circuit_id);
       });
-      setLoadedRoutes(prev => ({ ...prev, [filterKey]: [] }));
+      setLoadedRoutes(prev => ({ ...prev, [bandwidth]: [] }));
+    }
+  };
+  
+  // Handle individual region checkbox
+  const handleRegionFilterChange = async (bandwidth, region) => {
+    const newState = !filters[bandwidth][region];
+    
+    const newFilters = {
+      ...filters,
+      [bandwidth]: {
+        ...filters[bandwidth],
+        [region]: newState
+      }
+    };
+    setFilters(newFilters);
+    
+    if (newState) {
+      // Load routes for this bandwidth/region
+      await loadRoutesByFilter(bandwidth, [region]);
+    } else {
+      // Remove routes for this bandwidth/region
+      const routesToRemove = loadedRoutes[bandwidth].filter(route => route.region === region);
+      routesToRemove.forEach(route => {
+        removeRoute(route.circuit_id);
+      });
+      setLoadedRoutes(prev => ({
+        ...prev,
+        [bandwidth]: prev[bandwidth].filter(route => route.region !== region)
+      }));
     }
   };
 
@@ -703,15 +1015,46 @@ function KMZMapViewer({ onClose }) {
       gb_100: [],
       gb_10: [],
       lt_10gb: [],
-      advanced: []
+      advanced: [],
+      route_finder_primary: [],
+      route_finder_secondary: []
     });
     
     setFilters({
-      dark_fiber: false,
-      gb_100: false,
-      gb_10: false,
-      lt_10gb: false
+      dark_fiber: { EMEA: false, AMERs: false, APAC: false, INTER: false },
+      gb_100: { EMEA: false, AMERs: false, APAC: false, INTER: false },
+      gb_10: { EMEA: false, AMERs: false, APAC: false, INTER: false },
+      lt_10gb: { EMEA: false, AMERs: false, APAC: false, INTER: false }
     });
+    
+    // Clear route finder mode
+    setRouteFinderMode(false);
+    setRouteFinderWarnings([]);
+  };
+  
+  // Helper: Get count of loaded routes for a bandwidth/region
+  const getLoadedCount = (bandwidth, region) => {
+    return loadedRoutes[bandwidth].filter(r => r.region === region).length;
+  };
+  
+  // Get a random color, avoiding the last used color
+  const getRandomColor = () => {
+    let newIndex;
+    do {
+      newIndex = Math.floor(Math.random() * PRESET_COLORS.length);
+    } while (newIndex === lastColorIndexRef.current && PRESET_COLORS.length > 1);
+    lastColorIndexRef.current = newIndex;
+    return PRESET_COLORS[newIndex];
+  };
+  
+  // Helper: Check if any regions are checked for a bandwidth
+  const hasAnyRegionChecked = (bandwidth) => {
+    return REGIONS.some(r => filters[bandwidth][r]);
+  };
+  
+  // Helper: Check if all regions are checked for a bandwidth
+  const hasAllRegionsChecked = (bandwidth) => {
+    return REGIONS.every(r => filters[bandwidth][r]);
   };
 
   // Calculate total loaded routes
@@ -744,72 +1087,230 @@ function KMZMapViewer({ onClose }) {
         {/* Header */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h6">
-            KMZ Route Viewer
+            {routeFinderMode ? 'Route Finder Map' : 'KMZ Route Viewer'}
           </Typography>
           <IconButton onClick={onClose} size="small">
             <CloseIcon />
           </IconButton>
         </Box>
 
+        {/* Route Finder Mode Info */}
+        {routeFinderMode && (
+          <Box sx={{ mb: 2 }}>
+            <Alert severity="info" sx={{ mb: 1 }}>
+              Showing Route Finder results. Primary path is <strong style={{ color: '#FF0000' }}>RED</strong>, Secondary path is <strong style={{ color: '#0066FF' }}>BLUE</strong>.
+            </Alert>
+            {routeFinderWarnings.length > 0 && (
+              <Alert severity="warning" sx={{ mb: 1 }}>
+                <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                  Some segments could not be displayed (no KMZ file available):
+                </Typography>
+                {routeFinderWarnings.map((warning, idx) => (
+                  <Typography key={idx} variant="caption" display="block">
+                    • {warning}
+                  </Typography>
+                ))}
+              </Alert>
+            )}
+          </Box>
+        )}
+
         <Divider sx={{ mb: 2 }} />
 
         {/* Primary Filters */}
         <Box sx={{ mb: 3 }}>
           <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1 }}>
-            Primary Filters:
+            Primary Filters
           </Typography>
-          <FormGroup>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={showLocations}
-                  onChange={() => setShowLocations(!showLocations)}
-                />
-              }
-              label="Show Location Pins"
-              sx={{ mb: 1, borderBottom: '1px solid #e0e0e0', pb: 1 }}
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={filters.dark_fiber}
-                  onChange={() => handleFilterChange('dark_fiber')}
-                  disabled={loading}
-                />
-              }
-              label={`Dark Fiber (${loadedRoutes.dark_fiber.length}/${availableCounts.dark_fiber})`}
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={filters.gb_100}
-                  onChange={() => handleFilterChange('gb_100')}
-                  disabled={loading}
-                />
-              }
-              label={`100Gb (${loadedRoutes.gb_100.length}/${availableCounts.gb_100})`}
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={filters.gb_10}
-                  onChange={() => handleFilterChange('gb_10')}
-                  disabled={loading}
-                />
-              }
-              label={`10Gb - 99Gb (${loadedRoutes.gb_10.length}/${availableCounts.gb_10})`}
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={filters.lt_10gb}
-                  onChange={() => handleFilterChange('lt_10gb')}
-                  disabled={loading}
-                />
-              }
-              label={`Less than 10Gb (${loadedRoutes.lt_10gb.length}/${availableCounts.lt_10gb})`}
-            />
-          </FormGroup>
+          
+          {/* Show Location Pins */}
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={showLocations}
+                onChange={() => setShowLocations(!showLocations)}
+                size="small"
+              />
+            }
+            label="Show Location Pins"
+            sx={{ mb: 1, borderBottom: '1px solid #e0e0e0', pb: 1 }}
+          />
+          
+          {/* Dark Fiber - Expanded by default (but collapsed in route finder mode) */}
+          <Accordion 
+            expanded={filterAccordionExpanded.dark_fiber}
+            onChange={() => setFilterAccordionExpanded(prev => ({ ...prev, dark_fiber: !prev.dark_fiber }))}
+            sx={{ boxShadow: 'none', '&:before': { display: 'none' }, bgcolor: 'transparent' }}
+          >
+            <AccordionSummary 
+              expandIcon={<ExpandMoreIcon />}
+              sx={{ minHeight: 40, py: 0, '& .MuiAccordionSummary-content': { my: 0.5 } }}
+            >
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={hasAllRegionsChecked('dark_fiber')}
+                    indeterminate={hasAnyRegionChecked('dark_fiber') && !hasAllRegionsChecked('dark_fiber')}
+                    onChange={() => handleParentFilterChange('dark_fiber')}
+                    onClick={(e) => e.stopPropagation()}
+                    disabled={loading}
+                    size="small"
+                  />
+                }
+                label={`Dark Fiber (${loadedRoutes.dark_fiber.length}/${availableCounts.dark_fiber.total})`}
+                onClick={(e) => e.stopPropagation()}
+                sx={{ m: 0, '& .MuiFormControlLabel-label': { fontWeight: 'bold', fontSize: '0.8125rem' } }}
+              />
+            </AccordionSummary>
+            <AccordionDetails sx={{ pt: 0, pb: 1, pl: 4 }}>
+              <FormGroup>
+                {REGIONS.map(region => (
+                  <FormControlLabel
+                    key={region}
+                    control={
+                      <Checkbox
+                        checked={filters.dark_fiber[region]}
+                        onChange={() => handleRegionFilterChange('dark_fiber', region)}
+                        disabled={loading}
+                        size="small"
+                      />
+                    }
+                    label={`${region} (${getLoadedCount('dark_fiber', region)}/${availableCounts.dark_fiber[region]})`}
+                    sx={{ '& .MuiFormControlLabel-label': { fontSize: '0.8125rem' } }}
+                  />
+                ))}
+              </FormGroup>
+            </AccordionDetails>
+          </Accordion>
+          
+          {/* 100Gb - Collapsed by default */}
+          <Accordion sx={{ boxShadow: 'none', '&:before': { display: 'none' }, bgcolor: 'transparent' }}>
+            <AccordionSummary 
+              expandIcon={<ExpandMoreIcon />}
+              sx={{ minHeight: 40, py: 0, '& .MuiAccordionSummary-content': { my: 0.5 } }}
+            >
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={hasAllRegionsChecked('gb_100')}
+                    indeterminate={hasAnyRegionChecked('gb_100') && !hasAllRegionsChecked('gb_100')}
+                    onChange={() => handleParentFilterChange('gb_100')}
+                    onClick={(e) => e.stopPropagation()}
+                    disabled={loading}
+                    size="small"
+                  />
+                }
+                label={`100Gb (${loadedRoutes.gb_100.length}/${availableCounts.gb_100.total})`}
+                onClick={(e) => e.stopPropagation()}
+                sx={{ m: 0, '& .MuiFormControlLabel-label': { fontWeight: 'bold', fontSize: '0.8125rem' } }}
+              />
+            </AccordionSummary>
+            <AccordionDetails sx={{ pt: 0, pb: 1, pl: 4 }}>
+              <FormGroup>
+                {REGIONS.map(region => (
+                  <FormControlLabel
+                    key={region}
+                    control={
+                      <Checkbox
+                        checked={filters.gb_100[region]}
+                        onChange={() => handleRegionFilterChange('gb_100', region)}
+                        disabled={loading}
+                        size="small"
+                      />
+                    }
+                    label={`${region} (${getLoadedCount('gb_100', region)}/${availableCounts.gb_100[region]})`}
+                    sx={{ '& .MuiFormControlLabel-label': { fontSize: '0.8125rem' } }}
+                  />
+                ))}
+              </FormGroup>
+            </AccordionDetails>
+          </Accordion>
+          
+          {/* 10-99Gb - Collapsed by default */}
+          <Accordion sx={{ boxShadow: 'none', '&:before': { display: 'none' }, bgcolor: 'transparent' }}>
+            <AccordionSummary 
+              expandIcon={<ExpandMoreIcon />}
+              sx={{ minHeight: 40, py: 0, '& .MuiAccordionSummary-content': { my: 0.5 } }}
+            >
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={hasAllRegionsChecked('gb_10')}
+                    indeterminate={hasAnyRegionChecked('gb_10') && !hasAllRegionsChecked('gb_10')}
+                    onChange={() => handleParentFilterChange('gb_10')}
+                    onClick={(e) => e.stopPropagation()}
+                    disabled={loading}
+                    size="small"
+                  />
+                }
+                label={`10-99Gb (${loadedRoutes.gb_10.length}/${availableCounts.gb_10.total})`}
+                onClick={(e) => e.stopPropagation()}
+                sx={{ m: 0, '& .MuiFormControlLabel-label': { fontWeight: 'bold', fontSize: '0.8125rem' } }}
+              />
+            </AccordionSummary>
+            <AccordionDetails sx={{ pt: 0, pb: 1, pl: 4 }}>
+              <FormGroup>
+                {REGIONS.map(region => (
+                  <FormControlLabel
+                    key={region}
+                    control={
+                      <Checkbox
+                        checked={filters.gb_10[region]}
+                        onChange={() => handleRegionFilterChange('gb_10', region)}
+                        disabled={loading}
+                        size="small"
+                      />
+                    }
+                    label={`${region} (${getLoadedCount('gb_10', region)}/${availableCounts.gb_10[region]})`}
+                    sx={{ '& .MuiFormControlLabel-label': { fontSize: '0.8125rem' } }}
+                  />
+                ))}
+              </FormGroup>
+            </AccordionDetails>
+          </Accordion>
+          
+          {/* <10Gb - Collapsed by default */}
+          <Accordion sx={{ boxShadow: 'none', '&:before': { display: 'none' }, bgcolor: 'transparent' }}>
+            <AccordionSummary 
+              expandIcon={<ExpandMoreIcon />}
+              sx={{ minHeight: 40, py: 0, '& .MuiAccordionSummary-content': { my: 0.5 } }}
+            >
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={hasAllRegionsChecked('lt_10gb')}
+                    indeterminate={hasAnyRegionChecked('lt_10gb') && !hasAllRegionsChecked('lt_10gb')}
+                    onChange={() => handleParentFilterChange('lt_10gb')}
+                    onClick={(e) => e.stopPropagation()}
+                    disabled={loading}
+                    size="small"
+                  />
+                }
+                label={`<10Gb (${loadedRoutes.lt_10gb.length}/${availableCounts.lt_10gb.total})`}
+                onClick={(e) => e.stopPropagation()}
+                sx={{ m: 0, '& .MuiFormControlLabel-label': { fontWeight: 'bold', fontSize: '0.8125rem' } }}
+              />
+            </AccordionSummary>
+            <AccordionDetails sx={{ pt: 0, pb: 1, pl: 4 }}>
+              <FormGroup>
+                {REGIONS.map(region => (
+                  <FormControlLabel
+                    key={region}
+                    control={
+                      <Checkbox
+                        checked={filters.lt_10gb[region]}
+                        onChange={() => handleRegionFilterChange('lt_10gb', region)}
+                        disabled={loading}
+                        size="small"
+                      />
+                    }
+                    label={`${region} (${getLoadedCount('lt_10gb', region)}/${availableCounts.lt_10gb[region]})`}
+                    sx={{ '& .MuiFormControlLabel-label': { fontSize: '0.8125rem' } }}
+                  />
+                ))}
+              </FormGroup>
+            </AccordionDetails>
+          </Accordion>
         </Box>
 
         <Divider sx={{ mb: 2 }} />
@@ -817,7 +1318,7 @@ function KMZMapViewer({ onClose }) {
         {/* Advanced Filter */}
         <Box sx={{ mb: 3 }}>
           <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1 }}>
-            Advanced Filter:
+            Advanced Filter
           </Typography>
           <Autocomplete
             freeSolo
@@ -911,7 +1412,9 @@ function KMZMapViewer({ onClose }) {
               gb_100: '100Gb',
               gb_10: '10-99Gb',
               lt_10gb: '<10Gb',
-              advanced: 'Custom Routes'
+              advanced: 'Custom Routes',
+              route_finder_primary: 'Primary Path (Red)',
+              route_finder_secondary: 'Secondary Path (Blue)'
             };
             
             return (
@@ -942,7 +1445,7 @@ function KMZMapViewer({ onClose }) {
                         </ListItemIcon>
                         <ListItemText
                           primary={
-                            <Typography variant="caption" sx={{ fontWeight: 'bold', display: 'block' }}>
+                            <Typography variant="body2" sx={{ fontWeight: 'bold', display: 'block' }}>
                               {route.circuit_id}
                             </Typography>
                           }
