@@ -32,7 +32,12 @@ const defaultValues = {
   equipment_type: '',
   carrier_protected: 0,
   carrier_protection_route: '',
-  region: ''
+  region: '',
+  route_status: 'Active',
+  replaced_by: '',
+  replaces: '',
+  expected_go_live_date: '',
+  decommission_date: ''
 };
 
 function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit = false, onFileDeleted }) {
@@ -69,7 +74,7 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
         }
         return null;
       }
-    }
+    },
   };
   
   // Validation function
@@ -92,6 +97,11 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
   const [selectedLocationB, setSelectedLocationB] = useState(null);
   const [locationInputValueA, setLocationInputValueA] = useState('');
   const [locationInputValueB, setLocationInputValueB] = useState('');
+  
+  // Route lifecycle state
+  const [circuitOptions, setCircuitOptions] = useState([]);
+  const [replacedByInputValue, setReplacedByInputValue] = useState('');
+  const [replacesInputValue, setReplacesInputValue] = useState('');
 
   // Load locations on component mount
   useEffect(() => {
@@ -155,6 +165,14 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
         });
         setLocationInputValueB(initialValues.location_b);
       }
+
+      // Set lifecycle fields
+      if (initialValues.replaced_by) {
+        setReplacedByInputValue(initialValues.replaced_by);
+      }
+      if (initialValues.replaces) {
+        setReplacesInputValue(initialValues.replaces);
+      }
       
       // Load existing test results files
       loadExistingFiles(initialValues.circuit_id);
@@ -172,6 +190,10 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
       setSelectedLocationB(null);
       setLocationInputValueA('');
       setLocationInputValueB('');
+      // Clear lifecycle states
+      setReplacedByInputValue('');
+      setReplacesInputValue('');
+      setCircuitOptions([]);
     }
     setFile(null);
     setTestResultsFiles([]);
@@ -221,6 +243,33 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
     } catch (error) {
       console.error('Error loading locations:', error);
       setLocationOptions([]);
+    }
+  };
+
+  // Search circuits for replaced_by and replaces fields
+  const searchCircuits = async (inputValue) => {
+    if (inputValue.length < 3) {
+      setCircuitOptions([]);
+      return;
+    }
+    
+    try {
+      const response = await axios.get(`${API_BASE_URL}/network_routes`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      // Filter circuits that match the input (case-insensitive) and exclude current circuit
+      const filtered = response.data
+        .filter(route => 
+          route.circuit_id.toLowerCase().includes(inputValue.toLowerCase()) &&
+          route.circuit_id !== values.circuit_id
+        )
+        .slice(0, 20); // Limit to 20 results
+      setCircuitOptions(filtered);
+    } catch (error) {
+      console.error('Error searching circuits:', error);
+      setCircuitOptions([]);
     }
   };
 
@@ -802,15 +851,8 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
               required
               field="region"
               errors={formErrors}
-              displayEmpty
-              renderValue={(selected) => {
-                if (!selected) {
-                  return <em style={{ color: '#9e9e9e' }}>Select a region</em>;
-                }
-                return selected;
-              }}
             >
-              <MenuItem value="" disabled>
+              <MenuItem value="">
                 <em>Select a region</em>
               </MenuItem>
               <MenuItem value="APAC">APAC</MenuItem>
@@ -819,6 +861,163 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
               <MenuItem value="INTER">INTER</MenuItem>
             </ValidatedSelect>
           </Grid>
+
+          {/* Route Lifecycle Section */}
+          <Grid item xs={12}>
+            <Divider sx={{ my: 1 }} />
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+              Route Lifecycle
+            </Typography>
+          </Grid>
+          <Grid item xs={12}>
+            <ValidatedSelect
+              fullWidth
+              label="Route Status"
+              value={values.route_status}
+              onChange={(e) => {
+                handleChange(e);
+                // Clear related fields when status changes
+                if (e.target.value !== 'Under Decommission') {
+                  setValues(prev => ({ ...prev, replaced_by: '', decommission_date: '' }));
+                  setReplacedByInputValue('');
+                }
+                if (e.target.value !== 'Provisioning') {
+                  setValues(prev => ({ ...prev, expected_go_live_date: '' }));
+                }
+              }}
+              name="route_status"
+              field="route_status"
+              errors={formErrors}
+            >
+              <MenuItem value="Active">Active</MenuItem>
+              <MenuItem value="Provisioning">Provisioning</MenuItem>
+              <MenuItem value="Under Decommission">Under Decommission</MenuItem>
+            </ValidatedSelect>
+          </Grid>
+          
+          {/* Replaced By - only show for Under Decommission */}
+          {values.route_status === 'Under Decommission' && (
+            <>
+              <Grid item xs={12}>
+                <Autocomplete
+                  options={circuitOptions}
+                  getOptionLabel={(option) => {
+                    if (typeof option === 'string') return option;
+                    if (option.location_a && option.location_b) {
+                      return `${option.circuit_id} (${option.location_a} - ${option.location_b})`;
+                    }
+                    return option.circuit_id || '';
+                  }}
+                  value={values.replaced_by ? { circuit_id: values.replaced_by } : null}
+                  onChange={(event, newValue) => {
+                    const circuitId = newValue ? (typeof newValue === 'string' ? newValue : newValue.circuit_id) : '';
+                    setValues(prev => ({ ...prev, replaced_by: circuitId }));
+                    setReplacedByInputValue(circuitId);
+                  }}
+                  inputValue={replacedByInputValue}
+                  onInputChange={(event, newInputValue) => {
+                    setReplacedByInputValue(newInputValue);
+                    searchCircuits(newInputValue);
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Replaced By (Circuit ID)"
+                      placeholder="Search for replacement circuit..."
+                      fullWidth
+                      helperText="Optional: The circuit that will replace this one"
+                    />
+                  )}
+                  freeSolo
+                  clearOnBlur={false}
+                  selectOnFocus={false}
+                  noOptionsText="Type at least 3 characters to search circuits"
+                  isOptionEqualToValue={(option, value) => 
+                    (typeof option === 'string' ? option : option.circuit_id) === 
+                    (typeof value === 'string' ? value : value.circuit_id)
+                  }
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  label="Decommission Date"
+                  name="decommission_date"
+                  type="date"
+                  value={values.decommission_date || ''}
+                  onChange={handleChange}
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                  helperText="Expected date when this route will be decommissioned (informational)"
+                />
+              </Grid>
+            </>
+          )}
+          
+          {/* Replaces - only show for Provisioning status */}
+          {values.route_status === 'Provisioning' && (
+            <Grid item xs={12}>
+              <Autocomplete
+                options={circuitOptions}
+                getOptionLabel={(option) => {
+                  if (typeof option === 'string') return option;
+                  if (option.location_a && option.location_b) {
+                    return `${option.circuit_id} (${option.location_a} - ${option.location_b})`;
+                  }
+                  return option.circuit_id || '';
+                }}
+                value={values.replaces ? { circuit_id: values.replaces } : null}
+                onChange={(event, newValue) => {
+                  const circuitId = newValue ? (typeof newValue === 'string' ? newValue : newValue.circuit_id) : '';
+                  setValues(prev => ({ ...prev, replaces: circuitId }));
+                  setReplacesInputValue(circuitId);
+                }}
+                inputValue={replacesInputValue}
+                onInputChange={(event, newInputValue) => {
+                  setReplacesInputValue(newInputValue);
+                  searchCircuits(newInputValue);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Replaces (Circuit ID)"
+                    placeholder="Search for circuit being replaced..."
+                    fullWidth
+                    helperText="Optional: The circuit that this new route is replacing"
+                  />
+                )}
+                freeSolo
+                clearOnBlur={false}
+                selectOnFocus={false}
+                noOptionsText="Type at least 3 characters to search circuits"
+                isOptionEqualToValue={(option, value) => 
+                  (typeof option === 'string' ? option : option.circuit_id) === 
+                  (typeof value === 'string' ? value : value.circuit_id)
+                }
+              />
+            </Grid>
+          )}
+          
+          {/* Expected Go-Live Date - only show for Provisioning */}
+          {values.route_status === 'Provisioning' && (
+            <Grid item xs={12}>
+              <TextField
+                label="Expected Go-Live Date"
+                name="expected_go_live_date"
+                type="date"
+                value={values.expected_go_live_date || ''}
+                onChange={handleChange}
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+                helperText="Expected date when this route will be active (informational)"
+              />
+            </Grid>
+          )}
+          
+          <Grid item xs={12}>
+            <Divider sx={{ my: 1 }} />
+          </Grid>
+          {/* End Route Lifecycle Section */}
+
           <Grid item xs={12}>
             <Autocomplete
               options={locationOptions}

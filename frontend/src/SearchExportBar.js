@@ -11,6 +11,7 @@ const initialFilters = {
   bandwidth: '',
   is_special: '', // Default to blank (null) - shows all routes
   regions: [], // Multi-select region filter
+  route_status: 'All', // Route lifecycle status filter
 };
 
 const REGION_OPTIONS = ['APAC', 'EMEA', 'AMERs', 'INTER'];
@@ -47,7 +48,8 @@ function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission, resetFi
         cable_system: '',
         bandwidth: '',
         is_special: '',
-        regions: []
+        regions: [],
+        route_status: 'All'
       });
     }
     prevResetFilters.current = resetFilters;
@@ -195,6 +197,23 @@ function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission, resetFi
             <MenuItem value="">All</MenuItem>
             <MenuItem value="1">Yes</MenuItem>
             <MenuItem value="0">No</MenuItem>
+          </SmallTextField>
+        </Grid>
+        <Grid item>
+          <SmallTextField
+            select
+            size="small"
+            label="Status"
+            name="route_status"
+            value={filters.route_status}
+            onChange={handleChange}
+            variant="outlined"
+            sx={{ minWidth: 160 }}
+          >
+            <MenuItem value="All">All Statuses</MenuItem>
+            <MenuItem value="Active">Active</MenuItem>
+            <MenuItem value="Provisioning">Provisioning</MenuItem>
+            <MenuItem value="Under Decommission">Under Decommission</MenuItem>
           </SmallTextField>
         </Grid>
         <Grid item>

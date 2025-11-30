@@ -46,6 +46,7 @@ const ALL_COLUMNS = [
   { id: 'local_loop_carriers_b', label: 'Local Loop\nCarrier B', vertical: true, category: 'carrier', defaultVisible: false },
   { id: 'test_results_link', label: 'Test Results\nLink', vertical: true, category: 'files', defaultVisible: false },
   { id: 'region', label: 'Region', category: 'identity', defaultVisible: false },
+  { id: 'route_status', label: 'Status', category: 'identity', defaultVisible: true },
   { id: 'more_details', label: 'More\nDetails', vertical: true, align: 'center', category: 'actions', defaultVisible: true },
 ];
 
@@ -352,6 +353,19 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
 
   // Apply sorting to rows
   const sortedRows = getSortedRows(rows);
+
+  // Get row background color based on route status
+  const getRowBackgroundColor = (row) => {
+    const status = row.route_status || 'Active';
+    switch (status) {
+      case 'Provisioning':
+        return 'rgba(76, 175, 80, 0.1)'; // Light green
+      case 'Under Decommission':
+        return 'rgba(244, 67, 54, 0.1)'; // Light red
+      default:
+        return 'transparent';
+    }
+  };
 
   // Live latency functions
   const handleRefreshLiveLatency = async () => {
@@ -688,7 +702,17 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
                 hover
                 selected={selectedRow && selectedRow.circuit_id === row.circuit_id}
                 onClick={() => onSelectRow && onSelectRow(row)}
-                style={{ cursor: onSelectRow ? 'pointer' : 'default' }}
+                sx={{ 
+                  cursor: onSelectRow ? 'pointer' : 'default',
+                  backgroundColor: getRowBackgroundColor(row),
+                  '&:hover': {
+                    backgroundColor: row.route_status === 'Provisioning' 
+                      ? 'rgba(76, 175, 80, 0.2)' 
+                      : row.route_status === 'Under Decommission'
+                        ? 'rgba(244, 67, 54, 0.2)'
+                        : undefined
+                  }
+                }}
               >
                 {visibleColumns.map(col => {
                 if (col.id === 'more_details') {
@@ -765,6 +789,23 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
                       >
                         {value}
                       </span>
+                    </SmallTableCell>
+                  );
+                }
+                if (col.id === 'route_status') {
+                  const status = row.route_status || 'Active';
+                  const statusColor = status === 'Provisioning' ? 'success' 
+                    : status === 'Under Decommission' ? 'error' 
+                    : 'default';
+                  return (
+                    <SmallTableCell key={col.id} style={textCellStyle} align={col.align || 'left'}>
+                      <Chip 
+                        label={status} 
+                        size="small" 
+                        color={statusColor}
+                        variant={status === 'Active' ? 'outlined' : 'filled'}
+                        sx={{ fontSize: '0.7rem', height: 20 }}
+                      />
                     </SmallTableCell>
                   );
                 }

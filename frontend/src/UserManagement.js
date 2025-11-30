@@ -71,6 +71,7 @@ const UserManagement = () => {
     { key: 'cnx_colocation', label: 'CNX Colocation' },
     { key: 'exchange_rates', label: 'Manage Exchange Rates' },
     { key: 'exchange_data', label: 'Exchange Data' },
+    { key: 'extranet_data', label: 'Extranet Data' },
     { key: 'change_logs', label: 'Change Logs' },
     { key: 'core_outages', label: 'Core Outages' }
     // Admin-only modules excluded: user_management, bulk_upload, 

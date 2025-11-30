@@ -15,6 +15,7 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckIcon from '@mui/icons-material/Check';
 import WarningIcon from '@mui/icons-material/Warning';
+import InfoIcon from '@mui/icons-material/Info';
 import axios from 'axios';
 import { API_BASE_URL } from './config';
 import { useAuth } from './AuthContext';
@@ -38,6 +39,8 @@ const CarriersManager = ({ hasPermission }) => {
   const [contactDialogOpen, setContactDialogOpen] = useState(false);
   const [carrierDialogMode, setCarrierDialogMode] = useState('add');
   const [contactDialogMode, setContactDialogMode] = useState('add');
+  const [moreInfoDialogOpen, setMoreInfoDialogOpen] = useState(false);
+  const [moreInfoContent, setMoreInfoContent] = useState('');
   const [selectedCarrier, setSelectedCarrier] = useState(null);
   const [selectedContact, setSelectedContact] = useState(null);
   const [deleteCarrierDialogOpen, setDeleteCarrierDialogOpen] = useState(false);
@@ -253,6 +256,11 @@ const CarriersManager = ({ hasPermission }) => {
     });
     setContactErrors({});
     setContactDialogOpen(true);
+  };
+
+  const handleMoreInfo = (content) => {
+    setMoreInfoContent(content);
+    setMoreInfoDialogOpen(true);
   };
 
   const handleDeleteContact = (carrier, contact) => {
@@ -663,7 +671,15 @@ const CarriersManager = ({ hasPermission }) => {
                                         </Typography>
                                       </Box>
                                     </TableCell>
-                                    <TableCell>{contact.notes}</TableCell>
+                                    <TableCell>
+                                      {contact.notes ? (
+                                        <Tooltip title="View Notes">
+                                          <IconButton size="small" onClick={() => handleMoreInfo(contact.notes)}>
+                                            <InfoIcon />
+                                          </IconButton>
+                                        </Tooltip>
+                                      ) : '-'}
+                                    </TableCell>
                                     <TableCell align="center">
                                       <Tooltip title="Edit">
                                         <IconButton 
@@ -989,6 +1005,19 @@ const CarriersManager = ({ hasPermission }) => {
         <DialogActions>
           <Button onClick={() => setDeleteContactDialogOpen(false)}>Cancel</Button>
           <Button onClick={handleContactDeleteConfirm} color="error" variant="contained">Delete</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* More Info Dialog */}
+      <Dialog open={moreInfoDialogOpen} onClose={() => setMoreInfoDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Notes</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+            {moreInfoContent}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setMoreInfoDialogOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
 

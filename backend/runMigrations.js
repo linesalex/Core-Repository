@@ -140,3 +140,14 @@ function runAllMigrations(callback) {
 
 module.exports = { runAllMigrations };
 
+// Run migrations if script is called directly
+if (require.main === module) {
+  runAllMigrations((err) => {
+    if (err) {
+      console.error('Migration failed:', err);
+      process.exit(1);
+    }
+    console.log('Migrations completed');
+    process.exit(0);
+  });
+}

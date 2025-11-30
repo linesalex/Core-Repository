@@ -256,15 +256,19 @@ export const AuthProvider = ({ children }) => {
 
   // Check if user has permission for a specific action on a module
   const hasPermission = useCallback((module, action) => {
+    // Administrators have full access to all modules
+    if (user && user.role === 'administrator') {
+      return true;
+    }
     if (!permissions[module]) return false;
     return permissions[module][`can_${action}`] || false;
-  }, [permissions]);
+  }, [permissions, user]);
 
   // Check if a module is visible to the user
   const isModuleVisible = useCallback((module) => {
-    // For admin users, all modules are visible by default
+    // For admin users, ALL modules are always visible
     if (user && user.role === 'administrator') {
-      return moduleVisibility[module] !== false;
+      return true;
     }
     
     // For non-admin users, modules are hidden by default unless explicitly set to true

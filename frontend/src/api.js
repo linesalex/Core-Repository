@@ -251,7 +251,12 @@ export const getBulkUploadModules = () => {
     { id: 'exchanges', name: 'Exchange Providers', description: 'Bulk upload exchange provider information and details' },
     { id: 'users', name: 'User Management', description: 'Bulk upload user accounts with roles and permissions' },
     { id: 'live_latency_config', name: 'Live Latency Config', description: 'Bulk upload live latency API configurations for circuit monitoring' },
-    { id: 'promo_pricing', name: 'Promo Pricing', description: 'Bulk upload promotional pricing rules with location-based routing' }
+    { id: 'promo_pricing', name: 'Promo Pricing', description: 'Bulk upload promotional pricing rules with location-based routing' },
+    { id: 'extranet_providers', name: 'Extranet Providers', description: 'Bulk upload extranet provider information with resiliency and availability' },
+    { id: 'extranet_products', name: 'Extranet Products', description: 'Bulk upload extranet products with ISF and datacenter information' },
+    { id: 'extranet_contacts', name: 'Extranet Contacts', description: 'Bulk upload extranet provider contact information' },
+    { id: 'extranet_pricing_cities', name: 'Extranet Pricing Cities', description: 'Bulk upload pricing tier city assignments for extranet pricing' },
+    { id: 'extranet_rate_card', name: 'Extranet Rate Card', description: 'Bulk upload extranet pricing rate card with bandwidth and tier pricing' }
   ]);
 };
 
@@ -524,6 +529,13 @@ export const getAnalyticsRouteFinder = (startDate, endDate) => {
   if (startDate) params.start_date = startDate;
   if (endDate) params.end_date = endDate;
   return api.get(`${API_BASE_URL}/analytics/route-finder`, { params }).then(res => res.data);
+};
+
+export const getAnalyticsExtranetPricing = (startDate, endDate) => {
+  const params = {};
+  if (startDate) params.start_date = startDate;
+  if (endDate) params.end_date = endDate;
+  return api.get(`${API_BASE_URL}/analytics/extranet-pricing`, { params }).then(res => res.data);
 };
 
 // System Settings

@@ -20,7 +20,8 @@ import {
   getAnalyticsAllocatedCost,
   getAnalyticsUsers,
   getAnalyticsPerformance,
-  getAnalyticsRouteFinder
+  getAnalyticsRouteFinder,
+  getAnalyticsExtranetPricing
 } from './api';
 
 // Color palette for charts
@@ -92,6 +93,7 @@ const AnalyticsDashboard = () => {
   const [userDateRange, setUserDateRange] = useState('all');
   const [performanceDateRange, setPerformanceDateRange] = useState('all');
   const [routeFinderDateRange, setRouteFinderDateRange] = useState('all');
+  const [extranetPricingDateRange, setExtranetPricingDateRange] = useState('all');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
 
@@ -102,6 +104,7 @@ const AnalyticsDashboard = () => {
   const [userData, setUserData] = useState(null);
   const [performanceData, setPerformanceData] = useState(null);
   const [routeFinderData, setRouteFinderData] = useState(null);
+  const [extranetPricingData, setExtranetPricingData] = useState(null);
 
   // Get date range based on selection
   const getDateRange = (rangeType, customStart, customEnd) => {
@@ -227,6 +230,21 @@ const AnalyticsDashboard = () => {
     }
   };
 
+  const loadExtranetPricingData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { startDate, endDate } = getDateRange(extranetPricingDateRange, customStartDate, customEndDate);
+      const data = await getAnalyticsExtranetPricing(startDate, endDate);
+      setExtranetPricingData(data);
+    } catch (err) {
+      console.error('Error loading extranet pricing data:', err);
+      setError('Failed to load extranet pricing analytics: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Load data when tab changes or date range changes
   useEffect(() => {
     if (currentTab === 0) loadOverviewData();
@@ -257,6 +275,11 @@ const AnalyticsDashboard = () => {
     if (currentTab === 5) loadRouteFinderData();
     // eslint-disable-next-line
   }, [currentTab, routeFinderDateRange, customStartDate, customEndDate]);
+
+  useEffect(() => {
+    if (currentTab === 6) loadExtranetPricingData();
+    // eslint-disable-next-line
+  }, [currentTab, extranetPricingDateRange, customStartDate, customEndDate]);
 
   const handleTabChange = (event, newValue) => {
     setCurrentTab(newValue);
@@ -358,6 +381,7 @@ const AnalyticsDashboard = () => {
           <Tab label="User Analytics" />
           <Tab label="Performance" />
           <Tab label="Route Finder" />
+          <Tab label="Extranet Pricing" />
         </Tabs>
       </Box>
 
@@ -1394,6 +1418,199 @@ const AnalyticsDashboard = () => {
                       </TableHead>
                       <TableBody>
                         {routeFinderData.topUsers.map((user, index) => (
+                          <TableRow key={index}>
+                            <TableCell>{user.username}</TableCell>
+                            <TableCell align="right">{user.count}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
+            )}
+          </>
+        ) : null}
+      </TabPanel>
+
+      {/* Extranet Pricing Tab */}
+      <TabPanel value={currentTab} index={6}>
+        {renderDateRangeSelector(extranetPricingDateRange, setExtranetPricingDateRange)}
+        
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : extranetPricingData ? (
+          <>
+            {/* Summary Cards */}
+            <Grid container spacing={3} sx={{ mb: 3 }}>
+              <Grid item xs={12} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography color="textSecondary" gutterBottom>Total Lookups</Typography>
+                    <Typography variant="h4">{extranetPricingData.totalLookups?.toLocaleString() || 0}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+
+            {/* Region Distribution */}
+            {extranetPricingData.regionDistribution && extranetPricingData.regionDistribution.length > 0 && (
+              <Grid container spacing={3}>
+                <Grid item xs={12} md={6}>
+                  <Card>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom>Lookups by Region</Typography>
+                      <ResponsiveContainer width="100%" height={300}>
+                        <PieChart>
+                          <Pie
+                            data={extranetPricingData.regionDistribution}
+                            cx="50%"
+                            cy="50%"
+                            labelLine={false}
+                            label={({ region, percent }) => `${region} (${(percent * 100).toFixed(0)}%)`}
+                            outerRadius={100}
+                            fill="#8884d8"
+                            dataKey="count"
+                          >
+                            {extranetPricingData.regionDistribution.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </CardContent>
+                  </Card>
+                </Grid>
+
+                <Grid item xs={12} md={6}>
+                  <Card>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom>Lookups by Tier</Typography>
+                      <ResponsiveContainer width="100%" height={300}>
+                        <BarChart data={extranetPricingData.tierDistribution}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="tier" />
+                          <YAxis />
+                          <Tooltip />
+                          <Bar dataKey="count" fill="#82ca9d" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              </Grid>
+            )}
+
+            {/* Bandwidth Distribution */}
+            {extranetPricingData.bandwidthDistribution && extranetPricingData.bandwidthDistribution.length > 0 && (
+              <Card sx={{ mt: 3 }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="h6">Bandwidth Distribution</Typography>
+                    <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.bandwidthDistribution, 'extranet_bandwidth_distribution')}>
+                      <DownloadIcon />
+                    </IconButton>
+                  </Box>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={extranetPricingData.bandwidthDistribution}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="bandwidth" angle={-45} textAnchor="end" height={80} />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="#8884d8" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Top Providers */}
+            {extranetPricingData.topProviders && extranetPricingData.topProviders.length > 0 && (
+              <Card sx={{ mt: 3 }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="h6">Most Searched Providers</Typography>
+                    <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.topProviders, 'extranet_top_providers')}>
+                      <DownloadIcon />
+                    </IconButton>
+                  </Box>
+                  <TableContainer sx={{ maxHeight: 400 }}>
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Provider</TableCell>
+                          <TableCell align="right">Searches</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {extranetPricingData.topProviders.map((provider, index) => (
+                          <TableRow key={index}>
+                            <TableCell>{provider.provider}</TableCell>
+                            <TableCell align="right">{provider.count}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Top Cities */}
+            {extranetPricingData.topCities && extranetPricingData.topCities.length > 0 && (
+              <Card sx={{ mt: 3 }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="h6">Most Searched Cities</Typography>
+                    <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.topCities, 'extranet_top_cities')}>
+                      <DownloadIcon />
+                    </IconButton>
+                  </Box>
+                  <TableContainer sx={{ maxHeight: 400 }}>
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>City</TableCell>
+                          <TableCell align="right">Searches</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {extranetPricingData.topCities.map((city, index) => (
+                          <TableRow key={index}>
+                            <TableCell>{city.city}</TableCell>
+                            <TableCell align="right">{city.count}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Top Users */}
+            {extranetPricingData.topUsers && extranetPricingData.topUsers.length > 0 && (
+              <Card sx={{ mt: 3 }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="h6">Most Active Users</Typography>
+                    <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.topUsers, 'extranet_pricing_users')}>
+                      <DownloadIcon />
+                    </IconButton>
+                  </Box>
+                  <TableContainer sx={{ maxHeight: 400 }}>
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Username</TableCell>
+                          <TableCell align="right">Lookups</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {extranetPricingData.topUsers.map((user, index) => (
                           <TableRow key={index}>
                             <TableCell>{user.username}</TableCell>
                             <TableCell align="right">{user.count}</TableCell>

@@ -16,6 +16,7 @@ import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import InfoIcon from '@mui/icons-material/Info';
 import LoadingButton from '@mui/lab/LoadingButton';
 import { API_BASE_URL } from './config';
 import { getPromoRulesForSales, checkPromoMatch } from './api';
@@ -116,7 +117,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
         const primaryResult = await checkPromoMatch(
           formData.source,
           formData.destination,
-          formData.bandwidth || 100,
+          formData.bandwidth || 10,
           primaryCircuitIds,
           [] // Empty secondary - checking primary only
         );
@@ -142,7 +143,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
         const secondaryResult = await checkPromoMatch(
           formData.source,
           formData.destination,
-          formData.bandwidth || 100,
+          formData.bandwidth || 10,
           secondaryCircuitIds,
           [] // Empty - checking this path only
         );
@@ -621,6 +622,26 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
               )}
             </Box>
 
+            {/* Route Lifecycle Notes - Display provisioning route warnings */}
+            {searchResults.routeLifecycleNotes?.provisioningRoutesUsed?.length > 0 && (
+              <Alert 
+                severity="info" 
+                sx={{ mb: 2 }}
+                icon={<InfoIcon />}
+              >
+                <Typography variant="body2" fontWeight="bold" sx={{ mb: 1 }}>
+                  {searchResults.routeLifecycleNotes.message}
+                </Typography>
+                <Box component="ul" sx={{ m: 0, pl: 2 }}>
+                  {searchResults.routeLifecycleNotes.provisioningRoutesUsed.map((note, idx) => (
+                    <Typography component="li" variant="body2" key={idx}>
+                      {note.message}
+                    </Typography>
+                  ))}
+                </Box>
+              </Alert>
+            )}
+
             <Grid container spacing={3}>
               {/* Primary Path */}
               <Grid item xs={12}>
@@ -676,12 +697,15 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
                     {/* Primary Path Promo Pricing */}
                     {primaryPromo ? (
                       <Box sx={{ mt: 3, p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
-                        <Box display="flex" alignItems="center" gap={1} mb={2}>
+                        <Box display="flex" alignItems="center" gap={1} mb={1}>
                           <LocalOfferIcon color="success" fontSize="small" />
                           <Typography variant="subtitle2" color="success.dark" fontWeight="bold">
                             Promo Pricing Available
                           </Typography>
                         </Box>
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 2 }}>
+                          $1,000 NRC applicable for each option - X/Cs Excluded - Full Terms available from Pricing Team
+                        </Typography>
                         <Grid container spacing={1}>
                           <Grid item xs={3}>
                             <Typography variant="caption" color="text.secondary" display="block">10 Mbps</Typography>
@@ -767,12 +791,15 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
                       {/* Secondary Path Promo Pricing */}
                       {secondaryPromo ? (
                         <Box sx={{ mt: 3, p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
-                          <Box display="flex" alignItems="center" gap={1} mb={2}>
+                          <Box display="flex" alignItems="center" gap={1} mb={1}>
                             <LocalOfferIcon color="success" fontSize="small" />
                             <Typography variant="subtitle2" color="success.dark" fontWeight="bold">
                               Promo Pricing Available
                             </Typography>
                           </Box>
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 2 }}>
+                            $1,000 NRC applicable for each option - X/Cs Excluded - Full Terms available from Pricing Team
+                          </Typography>
                           <Grid container spacing={1}>
                             <Grid item xs={3}>
                               <Typography variant="caption" color="text.secondary" display="block">10 Mbps</Typography>
@@ -983,6 +1010,54 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
               Go to Route Search tab and search for a route to check if promo pricing applies.
             </Typography>
           </Alert>
+
+          {/* Pricing Caveats */}
+          <Paper variant="outlined" sx={{ mt: 3, p: 2, bgcolor: 'grey.50' }}>
+            <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
+              Ethernet backhaul between IPC fibre / high capacity connected DC's:
+            </Typography>
+            <Box component="ul" sx={{ m: 0, pl: 2, '& li': { mb: 0.5 } }}>
+              <Typography component="li" variant="body2">
+                Ethernet Promo BW: 10Mb, 100Mb, 1Gb, 10Gb* [* Subject to capacity checks]
+              </Typography>
+              <Typography component="li" variant="body2">
+                Pricing is for Unprotected Ethernet services with a defined path.
+              </Typography>
+              <Typography component="li" variant="body2">
+                Pricing excludes X/C's, Cloud Provider Port Charges, Exchange Charges and Applicable Taxes
+              </Typography>
+              <Typography component="li" variant="body2">
+                Standard IPC Pricing caveats apply. Please see Pricing Team if unclear
+              </Typography>
+            </Box>
+
+            <Typography variant="subtitle2" fontWeight="bold" sx={{ mt: 2 }} gutterBottom>
+              Term Discounts
+            </Typography>
+            <Box component="ul" sx={{ m: 0, pl: 2, '& li': { mb: 0.5 } }}>
+              <Typography component="li" variant="body2">
+                24 Months - 50% NRC Discount - 5% MRC Discount
+              </Typography>
+              <Typography component="li" variant="body2">
+                36 Months - 100% NRC Discount - 10% MRC Discount
+              </Typography>
+            </Box>
+
+            <Typography variant="subtitle2" fontWeight="bold" sx={{ mt: 2 }} gutterBottom>
+              Additional Discount on Displacement Services
+            </Typography>
+            <Box component="ul" sx={{ m: 0, pl: 2, '& li': { mb: 0.5 } }}>
+              <Typography component="li" variant="body2">
+                12 Months - NRC Waived - 1 Month FOC
+              </Typography>
+              <Typography component="li" variant="body2">
+                24 Months - NRC Waived - 2 Months FOC
+              </Typography>
+              <Typography component="li" variant="body2">
+                36 Months - NRC Waived - 3 Months FOC
+              </Typography>
+            </Box>
+          </Paper>
         </Paper>
       )}
 

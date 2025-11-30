@@ -36,6 +36,7 @@ import BusinessCenterIcon from '@mui/icons-material/BusinessCenter';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import PublicIcon from '@mui/icons-material/Public';
 import SearchIcon from '@mui/icons-material/Search';
+import LanIcon from '@mui/icons-material/Lan';
 import { AuthProvider, useAuth } from './AuthContext';
 import { TextSizeProvider, useTextSize } from './TextSizeContext';
 import LoginForm from './LoginForm';
@@ -55,6 +56,9 @@ import ChangeLogsViewer from './ChangeLogsViewer';
 import CoreOutagesTable from './CoreOutagesTable';
 import CarriersManager from './CarriersManager';
 import ExchangeDataManager from './ExchangeDataManager';
+import ExtranetDataManager from './ExtranetDataManager';
+import ExtranetPricingAdmin from './ExtranetPricingAdmin';
+import ExtranetPricingTool from './ExtranetPricingTool';
 import FeedbackManager from './FeedbackManager';
 import BulkUpload from './BulkUpload';
 import LiveLatencyAdminManager from './LiveLatencyAdminManager';
@@ -69,6 +73,7 @@ import RouteFormDialog from './RouteFormDialog';
 import DarkFiberModal from './DarkFiberModal';
 import KMZMapViewer from './KMZMapViewer';
 import RouteFinder from './RouteFinder';
+import RouteChanges from './RouteChanges';
 import ForcedPasswordChange from './ForcedPasswordChange';
 
 const drawerWidth = 280;
@@ -106,6 +111,7 @@ function AuthenticatedApp() {
   const [currentTab, setCurrentTab] = useState('welcome');
   const [networkDesignOpen, setNetworkDesignOpen] = useState(false);
   const [exchangeDataOpen, setExchangeDataOpen] = useState(false);
+  const [extranetDataOpen, setExtranetDataOpen] = useState(false);
   const [exchangeRatesOpen, setExchangeRatesOpen] = useState(false);
   const [networkDataOpen, setNetworkDataOpen] = useState(false);
   const [cnxColocationOpen, setCnxColocationOpen] = useState(false);
@@ -142,6 +148,7 @@ function AuthenticatedApp() {
     cable_system: '',
     bandwidth: '',
     is_special: '',
+    route_status: 'All',
     regions: []
   });
   const [isServerSideFiltered, setIsServerSideFiltered] = useState(false);
@@ -191,6 +198,7 @@ function AuthenticatedApp() {
         cable_system: '',
         bandwidth: '',
         is_special: '',
+        route_status: 'All',
         regions: []
       });
       setIsServerSideFiltered(false);
@@ -327,7 +335,11 @@ function AuthenticatedApp() {
     const matchesRegion = !routeFilters.regions || routeFilters.regions.length === 0 || 
       routeFilters.regions.includes(route.region);
     
-    return matchesCircuitId && matchesLocation && matchesCableSystem && matchesBandwidth && matchesSpecial && matchesRegion;
+    // Route status filter - 'All' shows all, otherwise match exact status
+    const routeStatus = route.route_status || 'Active';
+    const matchesStatus = routeFilters.route_status === 'All' || routeStatus === routeFilters.route_status;
+    
+    return matchesCircuitId && matchesLocation && matchesCableSystem && matchesBandwidth && matchesSpecial && matchesRegion && matchesStatus;
   });
 
   const handleMoreDetails = async (row) => {
@@ -383,7 +395,8 @@ function AuthenticatedApp() {
           cable_system: filters.cable_system || '',
           bandwidth: filters.bandwidth || '',
           is_special: filters.is_special || '',
-          regions: filters.regions || []
+          regions: filters.regions || [],
+          route_status: filters.route_status || 'All'
         });
       } else {
         // No server-side filters - load all routes and do client-side filtering
@@ -396,7 +409,8 @@ function AuthenticatedApp() {
           cable_system: '',
           bandwidth: '',
           is_special: '',
-          regions: filters.regions || []
+          regions: filters.regions || [],
+          route_status: filters.route_status || 'All'
         });
       }
     } catch (error) {
@@ -515,7 +529,8 @@ function AuthenticatedApp() {
         cable_system: '',
         bandwidth: '',
         is_special: '',
-        regions: []
+        regions: [],
+        route_status: 'All'
       });
       
       // Trigger SearchExportBar reset by incrementing the trigger
@@ -738,6 +753,34 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'extranet-providers':
+        return hasModuleAccess('extranet_data') ? (
+          <ExtranetDataManager hasPermission={hasPermission} initialTab={0} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'extranet-contacts':
+        return hasModuleAccess('extranet_data') ? (
+          <ExtranetDataManager hasPermission={hasPermission} initialTab={1} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'extranet-pricing':
+        return hasModuleAccess('extranet_data') ? (
+          <ExtranetPricingTool />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'extranet-pricing-admin':
+        return (hasModuleAccess('extranet_data') && (hasRole('administrator') || hasPermission('extranet_data', 'edit'))) ? (
+          <ExtranetPricingAdmin hasPermission={hasPermission} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'change-logs':
         return hasModuleAccess('change_logs') ? (
           <ChangeLogsViewer />
@@ -808,6 +851,13 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'route-changes':
+        return hasModuleAccess('network_routes') ? (
+          <RouteChanges />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'feedback':
         return <FeedbackManager initialTab={feedbackInitialTab} />;
       
@@ -836,7 +886,7 @@ function AuthenticatedApp() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.4.1
+              v3.4.2
             </Typography>
           </Typography>
           
@@ -1018,6 +1068,16 @@ function AuthenticatedApp() {
                       </ListItem>
                     )}
 
+                    {/* Route Updates - nested under Network Routes */}
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('route-changes')} 
+                      sx={{ pl: 6, backgroundColor: currentTab === 'route-changes' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><WarningIcon /></ListItemIcon>
+                      <ListItemText primary="Route Updates" />
+                    </ListItem>
+
                     {/* CNX Ethernet (Route Finder & Promos) */}
                     {isModuleVisible('route_finder') && (
                       <ListItem 
@@ -1158,6 +1218,55 @@ function AuthenticatedApp() {
                       <ListItemIcon><CalculateIcon /></ListItemIcon>
                       <ListItemText primary="Pricing Tool" />
                     </ListItem>
+                  </List>
+                </Collapse>
+              </>
+            )}
+
+            {/* Extranet Data */}
+            {hasModuleAccess('extranet_data') && (
+              <>
+                <ListItem button onClick={() => setExtranetDataOpen(!extranetDataOpen)}>
+                  <ListItemIcon><LanIcon /></ListItemIcon>
+                  <ListItemText primary="Extranet Data" />
+                  {extranetDataOpen ? <ExpandLess /> : <ExpandMore />}
+                </ListItem>
+                <Collapse in={extranetDataOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('extranet-providers')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'extranet-providers' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><TableRowsIcon /></ListItemIcon>
+                      <ListItemText primary="Extranet Providers" />
+                    </ListItem>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('extranet-contacts')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'extranet-contacts' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><ContactsIcon /></ListItemIcon>
+                      <ListItemText primary="Extranet Contacts" />
+                    </ListItem>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('extranet-pricing')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'extranet-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><CalculateIcon /></ListItemIcon>
+                      <ListItemText primary="Pricing Tool" />
+                    </ListItem>
+                    {(hasRole('administrator') || hasPermission('extranet_data', 'edit')) && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('extranet-pricing-admin')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'extranet-pricing-admin' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><SettingsIcon /></ListItemIcon>
+                        <ListItemText primary="Pricing Admin" />
+                      </ListItem>
+                    )}
                   </List>
                 </Collapse>
               </>

@@ -72,6 +72,7 @@ const NetworkDesignTool = () => {
     includeULL: false,
     useCiscoOnlyRoutes: true, // Default to true (enabled by default)
     use100GbAndDFOnly: false,
+    includeProvisioningRoutes: true, // Default to true - include routes in provisioning status
     protectionRequired: false,
     mtuRequired: '', // Changed from maxLatency to mtuRequired
     carrierAvoidance: [],
@@ -709,7 +710,8 @@ const NetworkDesignTool = () => {
         // Pass Auto Design rules to Find Suggestions
         include_ull: formData.includeULL,
         use_cisco_only_routes: formData.useCiscoOnlyRoutes,
-        mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500
+        mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500,
+        include_provisioning_routes: formData.includeProvisioningRoutes
       };
 
       console.log('Complete request data:', JSON.stringify(requestData, null, 2));
@@ -869,7 +871,8 @@ const NetworkDesignTool = () => {
         },
         include_ull: formData.includeULL,
         use_cisco_only_routes: formData.useCiscoOnlyRoutes,
-        use_100gb_and_df_only: formData.use100GbAndDFOnly
+        use_100gb_and_df_only: formData.use100GbAndDFOnly,
+        include_provisioning_routes: formData.includeProvisioningRoutes
       };
 
       console.log('Request body:', JSON.stringify(requestBody, null, 2));
@@ -1057,6 +1060,7 @@ const NetworkDesignTool = () => {
           include_ull: formData.includeULL,
           use_cisco_only_routes: formData.useCiscoOnlyRoutes,
           use_100gb_and_df_only: formData.use100GbAndDFOnly,
+          include_provisioning_routes: formData.includeProvisioningRoutes,
           quoteRequestId: formData.quoteRequestId,
           customerName: formData.customerName,
           constraints: {
@@ -1194,6 +1198,7 @@ const NetworkDesignTool = () => {
       includeULL: false,
       useCiscoOnlyRoutes: false,
       use100GbAndDFOnly: false,
+      includeProvisioningRoutes: true,
       protectionRequired: false,
       mtuRequired: '',
       carrierAvoidance: [],
@@ -2313,6 +2318,7 @@ const NetworkDesignTool = () => {
         includeULL: params.include_ull || params.includeULL || false,
         useCiscoOnlyRoutes: params.use_cisco_only_routes || params.useCiscoOnlyRoutes || false,
         use100GbAndDFOnly: params.use_100gb_and_df_only || params.use100GbAndDFOnly || false,
+        includeProvisioningRoutes: params.include_provisioning_routes ?? params.includeProvisioningRoutes ?? true,
         protectionRequired: params.protection_required || params.protectionRequired || false,
         mtuRequired: params.mtu_required || params.mtuRequired || '',
         carrierAvoidance: params.carrier_avoidance || params.carrierAvoidance || [],
@@ -3154,8 +3160,19 @@ const NetworkDesignTool = () => {
                 </Grid>
               )}
 
-              {/* Empty space for proper alignment */}
+              {/* Include Routes in Provisioning Status */}
               <Grid item xs={12} md={6}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.includeProvisioningRoutes}
+                      onChange={(e) => handleInputChange('includeProvisioningRoutes', e.target.checked)}
+                      disabled={parametersLocked}
+                      color="success"
+                    />
+                  }
+                  label="Include Routes in Provisioning Status"
+                />
               </Grid>
 
               {/* Use 100Gb and DF routes only - hide when manual mode */}
@@ -3213,6 +3230,22 @@ const NetworkDesignTool = () => {
                   Export KMZ
                 </Button>
               </Box>
+
+              {/* Provisioning Route Notes - Display when provisioning routes are used in the path */}
+              {searchResults.routeLifecycleNotes?.provisioningRoutesUsed?.length > 0 && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  <Typography variant="body2" fontWeight="bold" sx={{ mb: 1 }}>
+                    {searchResults.routeLifecycleNotes.message}
+                  </Typography>
+                  <Box component="ul" sx={{ m: 0, pl: 2 }}>
+                    {searchResults.routeLifecycleNotes.provisioningRoutesUsed.map((note, idx) => (
+                      <Typography component="li" variant="body2" key={idx} sx={{ fontSize: '0.75rem' }}>
+                        {note.message}
+                      </Typography>
+                    ))}
+                  </Box>
+                </Alert>
+              )}
 
               <Grid container spacing={3}>
                 {/* Primary Path - Full Width */}
@@ -3472,9 +3505,20 @@ const NetworkDesignTool = () => {
                                     (Use 100Gb and DF routes only enabled)
                                   </Typography>
                                 )}
+                                {searchResults.exclusionReasons.route_decommission?.count > 0 && (
+                                  <Typography component="li" variant="body2" sx={{ fontSize: '0.75rem' }} color="warning.main">
+                                    {searchResults.exclusionReasons.route_decommission.count} routes excluded (Under Decommission status)
+                                  </Typography>
+                                )}
+                                {searchResults.exclusionReasons.route_provisioning?.count > 0 && (
+                                  <Typography component="li" variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
+                                    {searchResults.exclusionReasons.route_provisioning.count} routes excluded (Provisioning status - toggle disabled)
+                                  </Typography>
+                                )}
                               </Box>
                             </Box>
                           )}
+                          
                         </Box>
                       )}
                     </CardContent>

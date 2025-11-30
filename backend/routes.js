@@ -232,7 +232,7 @@ router.post('/login', async (req, res) => {
         const moduleVisibility = {};
         const allModules = [
           'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
-          'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
+          'exchange_rates', 'exchange_data', 'extranet_data', 'change_logs', 'user_management', 
           'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
           'allocated_cost_calculator', 'kmz_viewer', 'route_finder'
         ];
@@ -295,14 +295,17 @@ router.get('/me', authenticateToken, (req, res) => {
       const moduleVisibility = {};
       const allModules = [
         'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
-        'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
+        'exchange_rates', 'exchange_data', 'extranet_data', 'change_logs', 'user_management', 
         'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
         'allocated_cost_calculator', 'kmz_viewer', 'route_finder'
       ];
       
+      // For administrators, all modules are visible
+      const isAdmin = user.user_role === 'administrator';
+      
       allModules.forEach(module => {
-        // Module is visible if user has any permission level for it
-        moduleVisibility[module] = !!modulePermissions[module];
+        // Module is visible if user is admin OR has any permission level for it
+        moduleVisibility[module] = isAdmin || !!modulePermissions[module];
       });
       
       // Convert per-module permissions to legacy format for frontend compatibility
@@ -2508,6 +2511,61 @@ router.get('/network_routes', authenticateToken, authorizeModulePermission('netw
   });
 });
 
+// Get route changes - grouped view of routes under decommission and provisioning
+router.get('/network_routes/route_changes', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
+  // Get routes under decommission WITH replacement (direct replacement)
+  const directReplacementQuery = `
+    SELECT 
+      nr.*,
+      replacement.circuit_id as replacement_circuit_id,
+      replacement.location_a as replacement_location_a,
+      replacement.location_b as replacement_location_b,
+      replacement.route_status as replacement_status,
+      replacement.expected_go_live_date as replacement_go_live_date,
+      replacement.underlying_carrier as replacement_carrier,
+      replacement.cable_system as replacement_cable_system
+    FROM network_routes nr
+    LEFT JOIN network_routes replacement ON nr.replaced_by = replacement.circuit_id
+    WHERE nr.route_status = 'Under Decommission'
+    AND nr.replaced_by IS NOT NULL AND nr.replaced_by != ''
+    ORDER BY nr.decommission_date ASC, nr.circuit_id ASC
+  `;
+  
+  // Get routes under decommission WITHOUT replacement
+  const decommissionOnlyQuery = `
+    SELECT * FROM network_routes 
+    WHERE route_status = 'Under Decommission'
+    AND (replaced_by IS NULL OR replaced_by = '')
+    ORDER BY decommission_date ASC, circuit_id ASC
+  `;
+  
+  // Get provisioning routes that are NOT replacing another route (new routes)
+  const provisioningQuery = `
+    SELECT * FROM network_routes 
+    WHERE route_status = 'Provisioning' 
+    AND (replaces IS NULL OR replaces = '')
+    ORDER BY expected_go_live_date ASC, circuit_id ASC
+  `;
+  
+  db.all(directReplacementQuery, [], (err, directReplacementRoutes) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    db.all(decommissionOnlyQuery, [], (err, decommissionOnlyRoutes) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      db.all(provisioningQuery, [], (err, provisioningRoutes) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        res.json({
+          underDirectReplacement: directReplacementRoutes,
+          underDecommission: decommissionOnlyRoutes,
+          newProvisioning: provisioningRoutes
+        });
+      });
+    });
+  });
+});
+
 // Get routes with KMZ files only (for KMZ Map Viewer)
 router.get('/network_routes_with_kmz', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   const query = 'SELECT circuit_id, location_a, location_b, kmz_file_path, underlying_carrier, cable_system FROM network_routes WHERE kmz_file_path IS NOT NULL AND kmz_file_path != ""';
@@ -2891,6 +2949,91 @@ async function validateRowForeignKeys(row, module) {
         errors.push(`Database error validating exchange_id: ${err.message}`);
       }
     }
+  } else if (module === 'extranet_providers') {
+    // Validate region
+    const validRegions = ['AMERs', 'APAC', 'EMEA'];
+    if (row.region && !validRegions.includes(row.region.trim())) {
+      errors.push(`Invalid region: "${row.region}". Must be one of: ${validRegions.join(', ')}`);
+    }
+    // Validate provider_resiliency
+    const validProviderResiliency = ['Multi-Site Resilient', 'Split-Site Resilient', 'Single-Site Resilient', 'Single-Site Non-Resilient'];
+    if (row.provider_resiliency && row.provider_resiliency.trim() !== '' && !validProviderResiliency.includes(row.provider_resiliency.trim())) {
+      errors.push(`Invalid provider_resiliency: "${row.provider_resiliency}". Must be one of: ${validProviderResiliency.join(', ')}`);
+    }
+  } else if (module === 'extranet_products') {
+    if (row.provider_id) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get('SELECT id FROM extranet_providers WHERE id = ?', [row.provider_id], (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          });
+        });
+        if (!result) {
+          errors.push(`Invalid provider_id: ${row.provider_id} does not exist`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating provider_id: ${err.message}`);
+      }
+    }
+    // Validate isf_resiliency
+    const validIsfResiliency = ['Single-Site Resilient', 'Multi-Site Resilient', 'Split-Site Resilient', 'Non-Resilient', 'Multi-Region Resilient'];
+    if (row.isf_resiliency && row.isf_resiliency.trim() !== '' && !validIsfResiliency.includes(row.isf_resiliency.trim())) {
+      errors.push(`Invalid isf_resiliency: "${row.isf_resiliency}". Must be one of: ${validIsfResiliency.join(', ')}`);
+    }
+    // Validate source_datacenters format if provided
+    if (row.source_datacenters && row.source_datacenters.trim() !== '') {
+      const datacenters = row.source_datacenters.split(',').map(dc => dc.trim());
+      const externalDcRegex = /^[A-Z]{6}[0-9]+$/;
+      for (const dc of datacenters) {
+        if (dc && !dc.startsWith('IPC') && !externalDcRegex.test(dc)) {
+          errors.push(`Invalid datacenter format: "${dc}". External datacenters must be 6 uppercase letters followed by numbers (e.g., EQXLON4)`);
+        }
+      }
+    }
+  } else if (module === 'extranet_contacts') {
+    if (row.provider_id) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get('SELECT id FROM extranet_providers WHERE id = ?', [row.provider_id], (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          });
+        });
+        if (!result) {
+          errors.push(`Invalid provider_id: ${row.provider_id} does not exist`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating provider_id: ${err.message}`);
+      }
+    }
+  } else if (module === 'extranet_pricing_cities') {
+    const validRegions = ['AMERs', 'APAC', 'EMEA'];
+    const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+    if (row.region && !validRegions.includes(row.region.trim())) {
+      errors.push(`Invalid region: "${row.region}". Must be one of: ${validRegions.join(', ')}`);
+    }
+    if (row.tier && !validTiers.includes(row.tier.trim())) {
+      errors.push(`Invalid tier: "${row.tier}". Must be one of: ${validTiers.join(', ')}`);
+    }
+  } else if (module === 'extranet_rate_card') {
+    const validBandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '50Mb', '100Mb'];
+    const validRegions = ['AMERs', 'APAC', 'EMEA'];
+    const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+    if (row.bandwidth && !validBandwidths.includes(row.bandwidth.trim())) {
+      errors.push(`Invalid bandwidth: "${row.bandwidth}". Must be one of: ${validBandwidths.join(', ')}`);
+    }
+    if (row.region && !validRegions.includes(row.region.trim())) {
+      errors.push(`Invalid region: "${row.region}". Must be one of: ${validRegions.join(', ')}`);
+    }
+    if (row.tier && !validTiers.includes(row.tier.trim())) {
+      errors.push(`Invalid tier: "${row.tier}". Must be one of: ${validTiers.join(', ')}`);
+    }
+    // Allow POA or non-negative numbers
+    const isPOAPrice = typeof row.price_usd === 'string' && row.price_usd.toUpperCase() === 'POA';
+    if (row.price_usd !== undefined && !isPOAPrice && (isNaN(parseFloat(row.price_usd)) || parseFloat(row.price_usd) < 0)) {
+      errors.push(`Invalid price_usd: "${row.price_usd}". Must be a non-negative number or "POA"`);
+    }
   } else if (module === 'network_routes') {
     // Validate underlying carrier
     if (row.underlying_carrier && row.underlying_carrier.trim() !== '') {
@@ -3004,14 +3147,22 @@ router.post('/network_routes', authenticateToken, authorizeModulePermission('net
       return res.status(400).json({ error: 'Invalid underlying carrier. Please select a valid carrier from the database.' });
     }
     
+    // Validate route_status if provided
+    const validStatuses = ['Active', 'Provisioning', 'Under Decommission'];
+    const routeStatus = data.route_status || 'Active';
+    if (!validStatuses.includes(routeStatus)) {
+      return res.status(400).json({ error: 'Invalid route_status. Must be Active, Provisioning, or Under Decommission' });
+    }
+    
     const fields = [
-      'circuit_id','repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source','updated_by','updated_date','region'
+      'circuit_id','repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source','updated_by','updated_date','region','route_status','replaced_by','replaces','expected_go_live_date','decommission_date'
     ];
     const placeholders = fields.map(() => '?').join(',');
     const values = fields.map(f => {
       if (f === 'repository_type_id') return data[f] ?? 1;
       if (f === 'updated_by') return req.user.id;
       if (f === 'updated_date') return new Date().toISOString();
+      if (f === 'route_status') return routeStatus;
       return data[f] ?? null;
     });
     db.run(
@@ -3050,18 +3201,26 @@ router.put('/network_routes/:circuit_id', authenticateToken, authorizeModulePerm
         return res.status(400).json({ error: 'Invalid underlying carrier. Please select a valid carrier from the database.' });
       }
       
+      // Validate route_status if provided
+      const validStatuses = ['Active', 'Provisioning', 'Under Decommission'];
+      const routeStatus = data.route_status || 'Active';
+      if (!validStatuses.includes(routeStatus)) {
+        return res.status(400).json({ error: 'Invalid route_status. Must be Active, Provisioning, or Under Decommission' });
+      }
+      
       // Get old values for change logging
       db.get('SELECT * FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, oldRoute) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!oldRoute) return res.status(404).json({ error: 'Route not found' });
         
         const fields = [
-          'repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source','updated_by','updated_date','region'
+          'repository_type_id','kmz_file_path','live_latency','expected_latency','test_results_link','cable_system','is_special','underlying_carrier','cost','currency','location_a','location_b','bandwidth','more_details','mtu','sla_latency','capacity_usage_percent','local_loop_carriers_a','local_loop_carriers_b','equipment_type','carrier_protected','carrier_protection_route','live_latency_last_updated','live_latency_source','updated_by','updated_date','region','route_status','replaced_by','replaces','expected_go_live_date','decommission_date'
         ];
         const setClause = fields.map(f => `${f} = ?`).join(', ');
         const values = fields.map(f => {
           if (f === 'updated_by') return req.user.id;
           if (f === 'updated_date') return new Date().toISOString();
+          if (f === 'route_status') return routeStatus;
           return data[f] ?? null;
         });
         values.push(circuit_id);
@@ -3135,7 +3294,16 @@ router.delete('/network_routes/:circuit_id', authenticateToken, authorizeModuleP
         // Log the deletion
         logChange(req.user.id, 'network_routes', circuit_id, 'DELETE', oldRoute, null, req);
         
-        res.json({ message: 'Deleted' });
+        // Auto-clear 'replaces' field on any route that referenced the deleted route
+        // This keeps the replacement route clean after the old route is removed
+        db.run('UPDATE network_routes SET replaces = NULL WHERE replaces = ?', [circuit_id], function(cleanupErr) {
+          if (cleanupErr) {
+            console.error('Warning: Failed to cleanup replaces references:', cleanupErr);
+            // Don't fail the request, just log the warning
+          }
+          
+          res.json({ message: 'Deleted' });
+        });
       });
     });
   });
@@ -4201,8 +4369,13 @@ router.get('/exchange-currencies', (req, res) => {
 });
 // Network Design Path Finding with Dijkstra Algorithm
 router.post('/network_design/find_path', authenticateToken, (req, res) => {
-  const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false, use_cisco_only_routes = false, use_100gb_and_df_only = false, customerName, quoteRequestId, manualPrimaryPath = null } = req.body;
+  const { source, destination, bandwidth, bandwidth_unit, constraints = {}, include_ull = false, use_cisco_only_routes = false, use_100gb_and_df_only = false, customerName, quoteRequestId, manualPrimaryPath = null, include_provisioning_routes = true } = req.body;
   const startTime = Date.now();
+  
+  // Track route lifecycle substitutions for response notes
+  const routeSubstitutions = [];
+  // Track provisioning routes used in path for response notes
+  const provisioningRoutes = {};
   
   console.log(`\n========================================`);
   console.log(`FIND_PATH REQUEST - ${new Date().toISOString()}`);
@@ -4403,6 +4576,59 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
           routesSkipped++;
           return;
         }
+      }
+
+      // Skip routes based on route lifecycle status
+      const routeStatus = route.route_status || 'Active';
+      
+      // Always exclude 'Under Decommission' routes - they should use their replacement
+      if (routeStatus === 'Under Decommission') {
+        if (isRelevant) console.log(`  SKIPPED: Route under decommission (status: ${routeStatus}, replaced_by: ${route.replaced_by || 'N/A'})`);
+        if (!exclusionReasons.route_decommission) {
+          exclusionReasons.route_decommission = { count: 0, routes: [] };
+        }
+        exclusionReasons.route_decommission.count++;
+        exclusionReasons.route_decommission.routes.push({
+          circuit_id,
+          route: `${location_a} <-> ${location_b}`,
+          replaced_by: route.replaced_by,
+          decommission_date: route.decommission_date
+        });
+        // Track substitution for response notes
+        if (route.replaced_by) {
+          routeSubstitutions.push({
+            old_circuit: circuit_id,
+            replacement_circuit: route.replaced_by,
+            reason: 'Route under decommission'
+          });
+        }
+        routesSkipped++;
+        return;
+      }
+      
+      // Optionally skip 'Provisioning' routes if toggle is off
+      if (routeStatus === 'Provisioning' && !include_provisioning_routes) {
+        if (isRelevant) console.log(`  SKIPPED: Route in provisioning status (include_provisioning_routes is disabled)`);
+        if (!exclusionReasons.route_provisioning) {
+          exclusionReasons.route_provisioning = { count: 0, routes: [] };
+        }
+        exclusionReasons.route_provisioning.count++;
+        exclusionReasons.route_provisioning.routes.push({
+          circuit_id,
+          route: `${location_a} <-> ${location_b}`,
+          expected_go_live_date: route.expected_go_live_date
+        });
+        routesSkipped++;
+        return;
+      }
+      
+      // Track provisioning routes for response notes (when they ARE included)
+      if (routeStatus === 'Provisioning') {
+        provisioningRoutes[circuit_id] = {
+          circuit_id,
+          expected_go_live_date: route.expected_go_live_date,
+          replaces: route.replaces
+        };
       }
 
       // Skip routes based on equipment type filtering
@@ -4912,6 +5138,40 @@ router.post('/network_design/find_path', authenticateToken, (req, res) => {
         message: 'Protection not requested',
         diversityEnforced: false
       },
+      routeLifecycleNotes: (() => {
+        // Build provisioning route notes for routes used in the path
+        const provisioningNotes = [];
+        const checkRouteForProvisioning = (routeDetailsList) => {
+          if (!routeDetailsList) return;
+          routeDetailsList.forEach(segment => {
+            if (provisioningRoutes[segment.circuit_id]) {
+              const provRoute = provisioningRoutes[segment.circuit_id];
+              provisioningNotes.push({
+                circuit_id: segment.circuit_id,
+                expected_go_live_date: provRoute.expected_go_live_date,
+                replaces: provRoute.replaces,
+                message: provRoute.expected_go_live_date 
+                  ? `Route ${segment.circuit_id} is in Provisioning status. Expected go-live date: ${new Date(provRoute.expected_go_live_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`
+                  : `Route ${segment.circuit_id} is in Provisioning status. Go-live date not specified.`
+              });
+            }
+          });
+        };
+        
+        checkRouteForProvisioning(routeDetails);
+        if (diversePath && diversePath.route) {
+          checkRouteForProvisioning(diversePath.route);
+        }
+        
+        return {
+          includeProvisioningRoutes: include_provisioning_routes,
+          substitutions: routeSubstitutions,
+          provisioningRoutesUsed: provisioningNotes,
+          message: provisioningNotes.length > 0 
+            ? `Note: ${provisioningNotes.length} route(s) in the result are in Provisioning status.`
+            : null
+        };
+      })(),
       executionTime,
       timestamp: new Date().toISOString()
     };
@@ -4940,7 +5200,8 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
     constraints = {},
     include_ull = false,
     use_cisco_only_routes = false,
-    mtu_required = 1500
+    mtu_required = 1500,
+    include_provisioning_routes = true
   } = req.body;
 
   if (!currentLocation || !destination || !bandwidth) {
@@ -4999,6 +5260,15 @@ router.post('/network_design/suggest_routes', authenticateToken, (req, res) => {
       // Skip excluded locations (but keep in routeDetails for latency lookup)
       if (excludedLocations.includes(location_a) || excludedLocations.includes(location_b)) {
         return;
+      }
+
+      // Skip routes based on route lifecycle status
+      const routeStatus = route.route_status || 'Active';
+      if (routeStatus === 'Under Decommission') {
+        return; // Always exclude decommissioned routes
+      }
+      if (routeStatus === 'Provisioning' && !include_provisioning_routes) {
+        return; // Skip provisioning routes if toggle is off
       }
 
       // Parse route bandwidth
@@ -5937,28 +6207,150 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       // Protection pricing = 100% primary + 100% secondary (full redundancy cost)
       const protectedAllocatedCost = primaryPricing.allocatedCost + secondaryPricing.allocatedCost;
       
-      // Calculate base prices with 12-month protected margins
-      // Formula: Price = Allocated Cost / (1 - Margin%)
-      const protectedMinPriceBase = protectedAllocatedCost / (1 - (minMarginPercent / 100));
-      const protectedSuggestedPriceBase = protectedAllocatedCost / (1 - (suggestedMarginPercent / 100));
+      // Check if promo pricing was used on either path (v3.4.2+)
+      const primaryUsedPromo = primaryPricing.promoPricing?.used === true;
+      const secondaryUsedPromo = secondaryPricing.promoPricing?.used === true;
+      const promoMinMargin = pricingConfig.promoPricing?.minimumMarginPercent || 35;
       
-      // Apply contract term discount for 24/36 months
-      const termConfig = pricingConfig.protectedServiceMargins[contract_term];
-      let contractDiscount = 0;
-      if ((contract_term === 24 || contract_term === 36) && termConfig && termConfig.discountPercent !== undefined) {
-        contractDiscount = termConfig.discountPercent;
+      let protectedMinPrice, protectedSuggestedPrice;
+      let protectedPricingMethod = 'margin_based'; // Track which method was used
+      let promoProtectedCalculation = null; // Store promo-specific calculation details
+      
+      // Scenario 1: Both paths used promo pricing
+      if (primaryUsedPromo && secondaryUsedPromo) {
+        // Calculate protected price as Max(Primary Promo, Secondary Promo) × 1.7
+        const maxPromoPrice = Math.max(primaryPricing.minimumPrice, secondaryPricing.minimumPrice);
+        const promoBasedProtectedPrice = maxPromoPrice * 1.7;
+        
+        // Check if this meets the minimum promo margin requirement (35%)
+        const promoProtectedMargin = ((promoBasedProtectedPrice - protectedAllocatedCost) / promoBasedProtectedPrice) * 100;
+        
+        if (promoProtectedMargin >= promoMinMargin) {
+          // Use promo-based calculation
+          protectedMinPrice = promoBasedProtectedPrice;
+          protectedSuggestedPrice = promoBasedProtectedPrice;
+          protectedPricingMethod = 'both_promo_1.7x';
+          
+          promoProtectedCalculation = {
+            method: 'both_promo_1.7x',
+            primaryPromoPrice: primaryPricing.minimumPrice,
+            secondaryPromoPrice: secondaryPricing.minimumPrice,
+            maxPromoPrice: maxPromoPrice,
+            multiplier: 1.7,
+            formula: `Max(Primary Promo, Secondary Promo) × 1.7`,
+            calculation: `Max(${primaryPricing.minimumPrice.toFixed(2)}, ${secondaryPricing.minimumPrice.toFixed(2)}) × 1.7 = ${maxPromoPrice.toFixed(2)} × 1.7 = ${promoBasedProtectedPrice.toFixed(2)} ${output_currency}`,
+            marginCheck: {
+              calculatedMargin: promoProtectedMargin,
+              requiredMargin: promoMinMargin,
+              passed: true
+            }
+          };
+        } else {
+          // Promo-based price doesn't meet margin requirements, fall back to margin-based
+          const marginBasedMinPrice = protectedAllocatedCost / (1 - (minMarginPercent / 100));
+          const marginBasedSuggestedPrice = protectedAllocatedCost / (1 - (suggestedMarginPercent / 100));
+          protectedMinPrice = marginBasedMinPrice;
+          protectedSuggestedPrice = marginBasedSuggestedPrice;
+          protectedPricingMethod = 'margin_based_fallback';
+          
+          promoProtectedCalculation = {
+            method: 'margin_based_fallback',
+            reason: 'Promo-based 1.7x calculation did not meet minimum margin requirement',
+            primaryPromoPrice: primaryPricing.minimumPrice,
+            secondaryPromoPrice: secondaryPricing.minimumPrice,
+            maxPromoPrice: maxPromoPrice,
+            promoBasedPrice: promoBasedProtectedPrice,
+            marginCheck: {
+              calculatedMargin: promoProtectedMargin,
+              requiredMargin: promoMinMargin,
+              passed: false
+            },
+            fallbackToMarginBased: true
+          };
+        }
       }
-      const protectedMinPrice = protectedMinPriceBase * (1 - contractDiscount / 100);
-      const protectedSuggestedPrice = protectedSuggestedPriceBase * (1 - contractDiscount / 100);
+      // Scenario 2: Only Primary used promo pricing
+      else if (primaryUsedPromo && !secondaryUsedPromo) {
+        // Protected = Primary Promo Price + Secondary Regular Price
+        protectedMinPrice = primaryPricing.minimumPrice + secondaryPricing.minimumPrice;
+        protectedSuggestedPrice = primaryPricing.suggestedPrice + secondaryPricing.suggestedPrice;
+        protectedPricingMethod = 'primary_promo_only';
+        
+        promoProtectedCalculation = {
+          method: 'primary_promo_only',
+          primaryPromoPrice: primaryPricing.minimumPrice,
+          secondaryRegularPrice: secondaryPricing.minimumPrice,
+          formula: 'Primary Promo Price + Secondary Regular Price',
+          calculation: `${primaryPricing.minimumPrice.toFixed(2)} + ${secondaryPricing.minimumPrice.toFixed(2)} = ${protectedMinPrice.toFixed(2)} ${output_currency}`
+        };
+      }
+      // Scenario 3: Only Secondary used promo pricing
+      else if (!primaryUsedPromo && secondaryUsedPromo) {
+        // Protected = Primary Regular Price + Secondary Promo Price
+        protectedMinPrice = primaryPricing.minimumPrice + secondaryPricing.minimumPrice;
+        protectedSuggestedPrice = primaryPricing.suggestedPrice + secondaryPricing.suggestedPrice;
+        protectedPricingMethod = 'secondary_promo_only';
+        
+        promoProtectedCalculation = {
+          method: 'secondary_promo_only',
+          primaryRegularPrice: primaryPricing.minimumPrice,
+          secondaryPromoPrice: secondaryPricing.minimumPrice,
+          formula: 'Primary Regular Price + Secondary Promo Price',
+          calculation: `${primaryPricing.minimumPrice.toFixed(2)} + ${secondaryPricing.minimumPrice.toFixed(2)} = ${protectedMinPrice.toFixed(2)} ${output_currency}`
+        };
+      }
+      // Scenario 4: Neither path used promo pricing - use standard margin-based calculation
+      else {
+        // Calculate base prices with 12-month protected margins
+        // Formula: Price = Allocated Cost / (1 - Margin%)
+        const protectedMinPriceBase = protectedAllocatedCost / (1 - (minMarginPercent / 100));
+        const protectedSuggestedPriceBase = protectedAllocatedCost / (1 - (suggestedMarginPercent / 100));
+        
+        // Apply contract term discount for 24/36 months
+        const termConfig = pricingConfig.protectedServiceMargins[contract_term];
+        let contractDiscount = 0;
+        if ((contract_term === 24 || contract_term === 36) && termConfig && termConfig.discountPercent !== undefined) {
+          contractDiscount = termConfig.discountPercent;
+        }
+        protectedMinPrice = protectedMinPriceBase * (1 - contractDiscount / 100);
+        protectedSuggestedPrice = protectedSuggestedPriceBase * (1 - contractDiscount / 100);
+        protectedPricingMethod = 'margin_based';
+      }
       
-      // Calculate actual margins achieved (should match target margins)
+      // For promo-based scenarios (1, 2, 3), apply contract term discount if applicable
+      if (protectedPricingMethod !== 'margin_based' && protectedPricingMethod !== 'margin_based_fallback') {
+        const termConfig = pricingConfig.protectedServiceMargins[contract_term];
+        let contractDiscount = 0;
+        if ((contract_term === 24 || contract_term === 36) && termConfig && termConfig.discountPercent !== undefined) {
+          contractDiscount = termConfig.discountPercent;
+        }
+        if (contractDiscount > 0) {
+          const preDiscountMin = protectedMinPrice;
+          const preDiscountSuggested = protectedSuggestedPrice;
+          protectedMinPrice = protectedMinPrice * (1 - contractDiscount / 100);
+          protectedSuggestedPrice = protectedSuggestedPrice * (1 - contractDiscount / 100);
+          
+          if (promoProtectedCalculation) {
+            promoProtectedCalculation.contractTermDiscount = {
+              term: contract_term,
+              discountPercent: contractDiscount,
+              preDiscountMinPrice: preDiscountMin,
+              preDiscountSuggestedPrice: preDiscountSuggested,
+              postDiscountMinPrice: protectedMinPrice,
+              postDiscountSuggestedPrice: protectedSuggestedPrice
+            };
+          }
+        }
+      }
+      
+      // Calculate actual margins achieved
       const actualProtectedMinMargin = ((protectedMinPrice - protectedAllocatedCost) / protectedMinPrice) * 100;
       const actualProtectedSuggestedMargin = ((protectedSuggestedPrice - protectedAllocatedCost) / protectedSuggestedPrice) * 100;
       
       // NRC charge for protection is only charged once (from primary path)
       const protectionNrcCharge = primaryPricing.nrcCharge;
 
-      // Detailed protection pricing calculation breakdown (v3.4.0+ includes bandwidth tier info)
+      // Detailed protection pricing calculation breakdown (v3.4.2+ includes promo pricing handling)
       const protectionCalculations = {
         bandwidthTierInfo: {
           requestedBandwidth: bandwidth,
@@ -5969,10 +6361,21 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           baseMinMargin: minMarginPercent,
           baseSuggestedMargin: suggestedMarginPercent
         },
+        pricingMethod: {
+          method: protectedPricingMethod,
+          primaryUsedPromo: primaryUsedPromo,
+          secondaryUsedPromo: secondaryUsedPromo,
+          description: protectedPricingMethod === 'both_promo_1.7x' ? 'Both paths used promo pricing - Protected = Max(Primary, Secondary) × 1.7' :
+                       protectedPricingMethod === 'primary_promo_only' ? 'Only primary path used promo pricing - Protected = Primary Promo + Secondary Regular' :
+                       protectedPricingMethod === 'secondary_promo_only' ? 'Only secondary path used promo pricing - Protected = Primary Regular + Secondary Promo' :
+                       protectedPricingMethod === 'margin_based_fallback' ? 'Promo calculation did not meet margin requirements - fell back to margin-based' :
+                       'Standard margin-based protected pricing calculation'
+        },
+        promoProtectedCalculation: promoProtectedCalculation,
         marginEnforcement: {
           targetMinMargin: minMarginPercent,
           targetSuggestedMargin: suggestedMarginPercent,
-          description: 'Protected service margins applied based on bandwidth tier'
+          description: protectedPricingMethod.includes('promo') ? 'Promo pricing applied to protected service' : 'Protected service margins applied based on bandwidth tier'
         },
         allocatedCostBreakdown: {
           primaryAllocatedCost: primaryPricing.allocatedCost,
@@ -5985,29 +6388,19 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
         },
         minimumPriceBreakdown: {
           allocatedCost: protectedAllocatedCost,
-          targetMargin: minMarginPercent,
-          formula: `Allocated Cost / (1 - ${minMarginPercent}%)`,
-          calculation: `${protectedAllocatedCost.toFixed(2)} / (1 - ${(minMarginPercent / 100).toFixed(2)}) = ${protectedAllocatedCost.toFixed(2)} / ${(1 - (minMarginPercent / 100)).toFixed(2)} = ${protectedMinPriceBase.toFixed(2)} ${output_currency}`,
-          priceByMargin: protectedMinPriceBase,
-          contractDiscount: contractDiscount,
-          discountFormula: contractDiscount > 0 ? `${protectedMinPriceBase.toFixed(2)} × (1 - ${contractDiscount}/100) = ${protectedMinPrice.toFixed(2)} ${output_currency}` : 'No discount for 12-month term',
-          priceAfterDiscount: protectedMinPrice,
-          totalBeforeRounding: protectedMinPrice,
+          calculatedPrice: protectedMinPrice,
           roundedToNearest10: roundUpToNearest10(protectedMinPrice),
-          description: `Minimum price calculated to achieve ${minMarginPercent}% margin with ${contract_term}-month contract`
+          description: protectedPricingMethod.includes('promo') ? 
+            `Minimum price calculated using ${protectedPricingMethod} method` :
+            `Minimum price calculated to achieve ${minMarginPercent}% margin with ${contract_term}-month contract`
         },
         suggestedPriceBreakdown: {
           allocatedCost: protectedAllocatedCost,
-          targetMargin: suggestedMarginPercent,
-          formula: `Allocated Cost / (1 - ${suggestedMarginPercent}%)`,
-          calculation: `${protectedAllocatedCost.toFixed(2)} / (1 - ${(suggestedMarginPercent / 100).toFixed(2)}) = ${protectedAllocatedCost.toFixed(2)} / ${(1 - (suggestedMarginPercent / 100)).toFixed(2)} = ${protectedSuggestedPriceBase.toFixed(2)} ${output_currency}`,
-          priceByMargin: protectedSuggestedPriceBase,
-          contractDiscount: contractDiscount,
-          discountFormula: contractDiscount > 0 ? `${protectedSuggestedPriceBase.toFixed(2)} × (1 - ${contractDiscount}/100) = ${protectedSuggestedPrice.toFixed(2)} ${output_currency}` : 'No discount for 12-month term',
-          priceAfterDiscount: protectedSuggestedPrice,
-          totalBeforeRounding: protectedSuggestedPrice,
+          calculatedPrice: protectedSuggestedPrice,
           roundedToNearest10: roundUpToNearest10(protectedSuggestedPrice),
-          description: `Suggested price calculated to achieve ${suggestedMarginPercent}% margin with ${contract_term}-month contract`
+          description: protectedPricingMethod.includes('promo') ? 
+            `Suggested price calculated using ${protectedPricingMethod} method` :
+            `Suggested price calculated to achieve ${suggestedMarginPercent}% margin with ${contract_term}-month contract`
         },
         marginVerification: {
           actualMinMargin: actualProtectedMinMargin,
@@ -6016,7 +6409,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           actualSuggestedMargin: actualProtectedSuggestedMargin,
           actualSuggestedMarginFormula: `((Protected Suggested - Protected Allocated) / Protected Suggested) × 100 = ((${protectedSuggestedPrice.toFixed(2)} - ${protectedAllocatedCost.toFixed(2)}) / ${protectedSuggestedPrice.toFixed(2)}) × 100 = ${actualProtectedSuggestedMargin.toFixed(2)}%`,
           targetSuggestedMargin: suggestedMarginPercent,
-          description: 'Margins are enforced and should match targets exactly'
+          description: 'Actual margins achieved with final protected pricing'
         },
         nrcCharge: {
           chargedOnce: true,
@@ -6036,17 +6429,20 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
         contractTerm: contract_term,
         currency: output_currency,
         serviceType: 'protected',
+        pricingMethod: protectedPricingMethod,
         composition: {
           primary: {
             minimumPrice: primaryPricing.minimumPrice,
             suggestedPrice: primaryPricing.suggestedPrice,
             allocatedCost: primaryPricing.allocatedCost,
+            usedPromo: primaryUsedPromo,
             weight: '100%'
           },
           secondary: {
             minimumPrice: secondaryPricing.minimumPrice,
             suggestedPrice: secondaryPricing.suggestedPrice,
             allocatedCost: secondaryPricing.allocatedCost,
+            usedPromo: secondaryUsedPromo,
             weight: '100%'
           }
         },
@@ -8768,6 +9164,80 @@ const bulkUploadModules = {
       price_100_to_999mb: '500',
       price_1000_to_2999mb: '1500',
       price_3000mb_plus: '3000'
+    }
+  },
+  extranet_providers: {
+    table: 'extranet_providers',
+    templateFields: [
+      'provider_name', 'region', 'salesperson_assigned', 'provider_resiliency',
+      'website_link', 'available', 'more_info'
+    ],
+    requiredFields: ['provider_name', 'region'],
+    sampleData: {
+      provider_name: 'Sample Provider',
+      region: 'APAC',
+      salesperson_assigned: 'John Smith',
+      provider_resiliency: 'Resilient',
+      website_link: 'https://example.com',
+      available: 'true',
+      more_info: 'Sample extranet provider for data feeds'
+    }
+  },
+  extranet_products: {
+    table: 'extranet_products',
+    templateFields: [
+      'provider_id', 'product_name', 'isf', 'suggested_bandwidth',
+      'source_datacenters', 'isf_resiliency', 'more_info'
+    ],
+    requiredFields: ['provider_id', 'product_name'],
+    sampleData: {
+      provider_id: '1',
+      product_name: 'Sample Feed Product',
+      isf: 'ISF001',
+      suggested_bandwidth: '10',
+      source_datacenters: 'EQXLON4,CYXTOK2',
+      isf_resiliency: 'Resilient',
+      more_info: 'Sample extranet product for market data'
+    }
+  },
+  extranet_contacts: {
+    table: 'extranet_contacts',
+    templateFields: [
+      'provider_id', 'contact_name', 'job_title', 'country', 'phone_number',
+      'email', 'contact_type', 'daily_contact', 'more_info'
+    ],
+    requiredFields: ['provider_id', 'contact_name'],
+    sampleData: {
+      provider_id: '1',
+      contact_name: 'Jane Doe',
+      job_title: 'Account Manager',
+      country: 'United Kingdom',
+      phone_number: '+44-20-1234-5678',
+      email: 'jane.doe@provider.com',
+      contact_type: 'Sales',
+      daily_contact: 'true',
+      more_info: 'Primary sales contact for EMEA region'
+    }
+  },
+  extranet_pricing_cities: {
+    table: 'extranet_pricing_cities',
+    templateFields: ['city_name', 'region', 'tier'],
+    requiredFields: ['city_name', 'region', 'tier'],
+    sampleData: {
+      city_name: 'London',
+      region: 'EMEA',
+      tier: 'Metro'
+    }
+  },
+  extranet_rate_card: {
+    table: 'extranet_rate_card',
+    templateFields: ['bandwidth', 'region', 'tier', 'price_usd'],
+    requiredFields: ['bandwidth', 'region', 'tier', 'price_usd'],
+    sampleData: {
+      bandwidth: '1Mb',
+      region: 'APAC',
+      tier: 'Tier 1',
+      price_usd: '500'
     }
   },
 };
@@ -12724,6 +13194,1060 @@ router.delete('/feedback/:id', authenticateToken, authorizeRole('administrator')
 });
 
 // ====================================
+// EXTRANET DATA ENDPOINTS
+// ====================================
+
+// Configure multer for extranet file uploads (PDF design and template)
+const extranetStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadDir = path.join(__dirname, 'extranet_files');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    if (file.fieldname === 'design_file') {
+      cb(null, 'extranet_design_' + uniqueSuffix + '.pdf');
+    } else if (file.fieldname === 'design_template') {
+      cb(null, 'extranet_template_' + uniqueSuffix + ext);
+    } else {
+      cb(null, 'extranet_' + uniqueSuffix + ext);
+    }
+  }
+});
+
+const extranetUpload = multer({ 
+  storage: extranetStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit for templates
+  fileFilter: function (req, file, cb) {
+    if (file.fieldname === 'design_file') {
+      // PDF only for design file
+      if (file.mimetype === 'application/pdf') {
+        cb(null, true);
+      } else {
+        cb(new Error('Design file must be PDF'), false);
+      }
+    } else if (file.fieldname === 'design_template') {
+      // Any file type for template
+      cb(null, true);
+    } else {
+      cb(null, true);
+    }
+  }
+});
+
+// Configure upload fields for extranet products
+const extranetProductUpload = extranetUpload.fields([
+  { name: 'design_file', maxCount: 1 },
+  { name: 'design_template', maxCount: 1 }
+]);
+
+// Get all extranet providers
+router.get('/extranets', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const { search, region, available } = req.query;
+  
+  let sql = 'SELECT * FROM extranet_providers WHERE 1=1';
+  let params = [];
+  
+  if (search) {
+    sql += ' AND (provider_name LIKE ? OR previously_known_as LIKE ?)';
+    params.push(`%${search}%`, `%${search}%`);
+  }
+  
+  if (region) {
+    sql += ' AND region = ?';
+    params.push(region);
+  }
+  
+  if (available !== undefined) {
+    sql += ' AND available = ?';
+    params.push(available === 'true' ? 1 : 0);
+  }
+  
+  sql += ' ORDER BY region, provider_name';
+  
+  db.all(sql, params, (err, providers) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(providers);
+  });
+});
+
+// Create extranet provider
+router.post('/extranets', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const { provider_name, region, salesperson_assigned, provider_resiliency, website_link, available, more_info, previously_known_as } = req.body;
+  
+  if (!provider_name || !region) {
+    return res.status(400).json({ error: 'Provider name and region are required' });
+  }
+  
+  const validRegions = ['AMERs', 'APAC', 'EMEA'];
+  if (!validRegions.includes(region)) {
+    return res.status(400).json({ error: 'Invalid region. Must be one of: AMERs, APAC, EMEA' });
+  }
+  
+  const validProviderResiliency = ['Multi-Site Resilient', 'Split-Site Resilient', 'Single-Site Resilient', 'Single-Site Non-Resilient'];
+  if (provider_resiliency && !validProviderResiliency.includes(provider_resiliency)) {
+    return res.status(400).json({ error: 'Invalid provider resiliency value' });
+  }
+  
+  db.run(
+    `INSERT INTO extranet_providers (provider_name, region, salesperson_assigned, provider_resiliency, website_link, available, more_info, previously_known_as, created_by) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [provider_name, region, salesperson_assigned || null, provider_resiliency || null, website_link || null, available !== false ? 1 : 0, more_info || null, previously_known_as || null, req.user.id],
+    function(err) {
+      if (err) {
+        if (err.message.includes('UNIQUE constraint failed')) {
+          return res.status(400).json({ error: `Provider '${provider_name}' already exists in region '${region}'` });
+        }
+        return res.status(500).json({ error: err.message });
+      }
+      
+      const recordId = this.lastID;
+      
+      try {
+        logChange(req.user.id, 'extranet_providers', recordId, 'CREATE', null, { 
+          provider_name, region, salesperson_assigned, provider_resiliency, website_link, available, more_info 
+        }, req);
+      } catch (logError) {
+        console.error('Failed to log extranet provider creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId, provider_name, message: 'Extranet provider created successfully' });
+    }
+  );
+});
+
+// Update extranet provider
+router.put('/extranets/:id', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const { provider_name, region, salesperson_assigned, provider_resiliency, website_link, available, more_info, previously_known_as } = req.body;
+  const providerId = req.params.id;
+  
+  const validRegions = ['AMERs', 'APAC', 'EMEA'];
+  if (region && !validRegions.includes(region)) {
+    return res.status(400).json({ error: 'Invalid region. Must be one of: AMERs, APAC, EMEA' });
+  }
+  
+  const validProviderResiliency = ['Multi-Site Resilient', 'Split-Site Resilient', 'Single-Site Resilient', 'Single-Site Non-Resilient'];
+  if (provider_resiliency && !validProviderResiliency.includes(provider_resiliency)) {
+    return res.status(400).json({ error: 'Invalid provider resiliency value' });
+  }
+  
+  // Get current provider data for change logging
+  db.get('SELECT * FROM extranet_providers WHERE id = ?', [providerId], (err, oldProvider) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldProvider) return res.status(404).json({ error: 'Provider not found' });
+    
+    db.run(
+      `UPDATE extranet_providers SET provider_name = ?, region = ?, salesperson_assigned = ?, provider_resiliency = ?, 
+       website_link = ?, available = ?, more_info = ?, previously_known_as = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [provider_name, region, salesperson_assigned || null, provider_resiliency || null, website_link || null, 
+       available !== false ? 1 : 0, more_info || null, previously_known_as || null, req.user.id, providerId],
+      function(err) {
+        if (err) {
+          if (err.message.includes('UNIQUE constraint failed')) {
+            return res.status(400).json({ error: `Provider '${provider_name}' already exists in region '${region}'` });
+          }
+          return res.status(500).json({ error: err.message });
+        }
+        if (this.changes === 0) return res.status(404).json({ error: 'Provider not found' });
+        
+        logChange(req.user.id, 'extranet_providers', providerId, 'UPDATE', oldProvider, { 
+          provider_name, region, salesperson_assigned, provider_resiliency, website_link, available, more_info, previously_known_as 
+        }, req);
+        
+        res.json({ message: 'Extranet provider updated successfully' });
+      }
+    );
+  });
+});
+
+// Delete extranet provider (only if no products or contacts)
+router.delete('/extranets/:id', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const providerId = req.params.id;
+  
+  // Check if provider has products or contacts
+  db.get('SELECT COUNT(*) as product_count FROM extranet_products WHERE provider_id = ?', [providerId], (err, productResult) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    db.get('SELECT COUNT(*) as contact_count FROM extranet_contacts WHERE provider_id = ?', [providerId], (err, contactResult) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      if (productResult.product_count > 0 || contactResult.contact_count > 0) {
+        return res.status(400).json({ 
+          error: 'Cannot delete provider with existing products or contacts',
+          details: `Provider has ${productResult.product_count} products and ${contactResult.contact_count} contacts`
+        });
+      }
+      
+      // Get current provider data for change logging
+      db.get('SELECT * FROM extranet_providers WHERE id = ?', [providerId], (err, oldProvider) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!oldProvider) return res.status(404).json({ error: 'Provider not found' });
+        
+        db.run('DELETE FROM extranet_providers WHERE id = ?', [providerId], function(err) {
+          if (err) return res.status(500).json({ error: err.message });
+          if (this.changes === 0) return res.status(404).json({ error: 'Provider not found' });
+          
+          logChange(req.user.id, 'extranet_providers', providerId, 'DELETE', oldProvider, null, req);
+          
+          res.json({ message: 'Extranet provider deleted successfully' });
+        });
+      });
+    });
+  });
+});
+
+// Get extranet products for a specific provider
+router.get('/extranets/:id/products', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const providerId = req.params.id;
+  const { search } = req.query;
+  
+  let sql = 'SELECT * FROM extranet_products WHERE provider_id = ?';
+  let params = [providerId];
+  
+  if (search) {
+    sql += ' AND product_name LIKE ?';
+    params.push(`%${search}%`);
+  }
+  
+  sql += ' ORDER BY product_name';
+  
+  db.all(sql, params, (err, products) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(products);
+  });
+});
+
+// Create extranet product
+router.post('/extranets/:id/products', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), extranetProductUpload, async (req, res) => {
+  const providerId = req.params.id;
+  const { product_name, isf, suggested_bandwidth, source_datacenters, isf_resiliency, more_info } = req.body;
+  
+  if (!product_name) {
+    return res.status(400).json({ error: 'Product name is required' });
+  }
+  
+  if (!isf) {
+    return res.status(400).json({ error: 'ISF is required' });
+  }
+  
+  const validIsfResiliency = ['Single-Site Resilient', 'Multi-Site Resilient', 'Split-Site Resilient', 'Non-Resilient', 'Multi-Region Resilient'];
+  if (isf_resiliency && !validIsfResiliency.includes(isf_resiliency)) {
+    return res.status(400).json({ error: 'Invalid ISF resiliency value' });
+  }
+  
+  // Validate source_datacenters - allow existing locations OR valid external format
+  const validateDatacenters = async () => {
+    if (!source_datacenters) return { valid: true };
+    
+    const datacenters = source_datacenters.split(',').map(dc => dc.trim()).filter(dc => dc);
+    const externalDcRegex = /^[A-Z]{6}[0-9]+$/;
+    
+    for (const dc of datacenters) {
+      // Check if it exists in location_reference
+      const existsInDb = await new Promise((resolve, reject) => {
+        db.get('SELECT location_code FROM location_reference WHERE location_code = ?', [dc], (err, row) => {
+          if (err) reject(err);
+          else resolve(!!row);
+        });
+      });
+      
+      if (existsInDb) continue; // Valid - exists in database
+      
+      // Check if it matches external datacenter format
+      if (externalDcRegex.test(dc)) continue; // Valid - matches format
+      
+      // Invalid
+      return { 
+        valid: false, 
+        error: `Invalid datacenter: ${dc}. Must be an existing location or match format (6 uppercase letters + numbers, e.g., EQXLON4)` 
+      };
+    }
+    
+    return { valid: true };
+  };
+  
+  try {
+    const dcValidation = await validateDatacenters();
+    if (!dcValidation.valid) {
+      return res.status(400).json({ error: dcValidation.error });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: 'Error validating datacenters: ' + err.message });
+  }
+  
+  const designFilePath = req.files?.design_file?.[0]?.filename || null;
+  const designTemplatePath = req.files?.design_template?.[0]?.filename || null;
+  
+  db.run(
+    `INSERT INTO extranet_products (provider_id, product_name, isf, suggested_bandwidth, source_datacenters, isf_resiliency, design_file_path, design_template_path, more_info, created_by) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [providerId, product_name, isf || null, suggested_bandwidth || null, source_datacenters || null, 
+     isf_resiliency || null, designFilePath, designTemplatePath, more_info || null, req.user.id],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      const recordId = this.lastID;
+      
+      try {
+        logChange(req.user.id, 'extranet_products', recordId, 'CREATE', null, { 
+          provider_id: providerId, product_name, isf, suggested_bandwidth, source_datacenters, isf_resiliency, design_file_path: designFilePath, design_template_path: designTemplatePath, more_info 
+        }, req);
+      } catch (logError) {
+        console.error('Failed to log extranet product creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId, product_name, message: 'Extranet product created successfully' });
+    }
+  );
+});
+
+// Update extranet product
+router.put('/extranets/:providerId/products/:productId', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), extranetProductUpload, async (req, res) => {
+  const { providerId, productId } = req.params;
+  const { product_name, isf, suggested_bandwidth, source_datacenters, isf_resiliency, more_info } = req.body;
+  
+  const validIsfResiliency = ['Single-Site Resilient', 'Multi-Site Resilient', 'Split-Site Resilient', 'Non-Resilient', 'Multi-Region Resilient'];
+  if (isf_resiliency && !validIsfResiliency.includes(isf_resiliency)) {
+    return res.status(400).json({ error: 'Invalid ISF resiliency value' });
+  }
+  
+  // Validate source_datacenters - allow existing locations OR valid external format
+  const validateDatacenters = async () => {
+    if (!source_datacenters) return { valid: true };
+    
+    const datacenters = source_datacenters.split(',').map(dc => dc.trim()).filter(dc => dc);
+    const externalDcRegex = /^[A-Z]{6}[0-9]+$/;
+    
+    for (const dc of datacenters) {
+      // Check if it exists in location_reference
+      const existsInDb = await new Promise((resolve, reject) => {
+        db.get('SELECT location_code FROM location_reference WHERE location_code = ?', [dc], (err, row) => {
+          if (err) reject(err);
+          else resolve(!!row);
+        });
+      });
+      
+      if (existsInDb) continue; // Valid - exists in database
+      
+      // Check if it matches external datacenter format
+      if (externalDcRegex.test(dc)) continue; // Valid - matches format
+      
+      // Invalid
+      return { 
+        valid: false, 
+        error: `Invalid datacenter: ${dc}. Must be an existing location or match format (6 uppercase letters + numbers, e.g., EQXLON4)` 
+      };
+    }
+    
+    return { valid: true };
+  };
+  
+  try {
+    const dcValidation = await validateDatacenters();
+    if (!dcValidation.valid) {
+      return res.status(400).json({ error: dcValidation.error });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: 'Error validating datacenters: ' + err.message });
+  }
+  
+  // Get current product data for change logging
+  db.get('SELECT * FROM extranet_products WHERE id = ? AND provider_id = ?', [productId, providerId], (err, oldProduct) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldProduct) return res.status(404).json({ error: 'Product not found' });
+    
+    const designFilePath = req.files?.design_file?.[0]?.filename || oldProduct.design_file_path;
+    const designTemplatePath = req.files?.design_template?.[0]?.filename || oldProduct.design_template_path;
+    
+    db.run(
+      `UPDATE extranet_products SET product_name = ?, isf = ?, suggested_bandwidth = ?, source_datacenters = ?, 
+       isf_resiliency = ?, design_file_path = ?, design_template_path = ?, more_info = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = ? AND provider_id = ?`,
+      [product_name, isf || null, suggested_bandwidth || null, source_datacenters || null, 
+       isf_resiliency || null, designFilePath, designTemplatePath, more_info || null, req.user.id, productId, providerId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Product not found' });
+        
+        logChange(req.user.id, 'extranet_products', productId, 'UPDATE', oldProduct, { 
+          product_name, isf, suggested_bandwidth, source_datacenters, isf_resiliency, design_file_path: designFilePath, design_template_path: designTemplatePath, more_info 
+        }, req);
+        
+        res.json({ message: 'Extranet product updated successfully' });
+      }
+    );
+  });
+});
+
+// Delete extranet product
+router.delete('/extranets/:providerId/products/:productId', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const { providerId, productId } = req.params;
+  
+  // Get current product data for change logging and file cleanup
+  db.get('SELECT * FROM extranet_products WHERE id = ? AND provider_id = ?', [productId, providerId], (err, oldProduct) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldProduct) return res.status(404).json({ error: 'Product not found' });
+    
+    db.run('DELETE FROM extranet_products WHERE id = ? AND provider_id = ?', [productId, providerId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Product not found' });
+      
+      // Delete design file if exists
+      if (oldProduct.design_file_path) {
+        const filePath = path.join(__dirname, 'extranet_files', oldProduct.design_file_path);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      }
+      
+      // Delete design template if exists
+      if (oldProduct.design_template_path) {
+        const templatePath = path.join(__dirname, 'extranet_files', oldProduct.design_template_path);
+        if (fs.existsSync(templatePath)) {
+          fs.unlinkSync(templatePath);
+        }
+      }
+      
+      logChange(req.user.id, 'extranet_products', productId, 'DELETE', oldProduct, null, req);
+      
+      res.json({ message: 'Extranet product deleted successfully' });
+    });
+  });
+});
+
+// Download extranet product design file (PDF)
+router.get('/extranets/:providerId/products/:productId/download', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const { providerId, productId } = req.params;
+  
+  // Get product with provider info for filename
+  db.get(`
+    SELECT ep.design_file_path, ep.isf, pr.region, pr.provider_name 
+    FROM extranet_products ep 
+    JOIN extranet_providers pr ON ep.provider_id = pr.id 
+    WHERE ep.id = ? AND ep.provider_id = ?`, 
+    [productId, providerId], (err, product) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!product || !product.design_file_path) return res.status(404).json({ error: 'Design file not found' });
+    
+    // Format filename: Region_Provider_ISF.pdf
+    const safeProviderName = (product.provider_name || 'Provider').replace(/[^a-zA-Z0-9]/g, '_');
+    const safeIsf = (product.isf || 'ISF').replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `${product.region}_${safeProviderName}_${safeIsf}.pdf`;
+    
+    const filePath = path.join(__dirname, 'extranet_files', product.design_file_path);
+    res.download(filePath, filename);
+  });
+});
+
+// Download extranet product design template
+router.get('/extranets/:providerId/products/:productId/download-template', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const { providerId, productId } = req.params;
+  
+  // Get product with provider info for filename
+  db.get(`
+    SELECT ep.design_template_path, ep.isf, pr.region, pr.provider_name 
+    FROM extranet_products ep 
+    JOIN extranet_providers pr ON ep.provider_id = pr.id 
+    WHERE ep.id = ? AND ep.provider_id = ?`, 
+    [productId, providerId], (err, product) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!product || !product.design_template_path) return res.status(404).json({ error: 'Design template not found' });
+    
+    // Format filename: Region_Provider_ISF + original extension
+    const ext = path.extname(product.design_template_path);
+    const safeProviderName = (product.provider_name || 'Provider').replace(/[^a-zA-Z0-9]/g, '_');
+    const safeIsf = (product.isf || 'ISF').replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `${product.region}_${safeProviderName}_${safeIsf}_template${ext}`;
+    
+    const filePath = path.join(__dirname, 'extranet_files', product.design_template_path);
+    res.download(filePath, filename);
+  });
+});
+
+// Delete extranet product design file only
+router.delete('/extranets/:providerId/products/:productId/design-file', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const { providerId, productId } = req.params;
+  
+  db.get('SELECT design_file_path FROM extranet_products WHERE id = ? AND provider_id = ?', [productId, providerId], (err, product) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!product || !product.design_file_path) return res.status(404).json({ error: 'Design file not found' });
+    
+    const filePath = path.join(__dirname, 'extranet_files', product.design_file_path);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    
+    db.run('UPDATE extranet_products SET design_file_path = NULL WHERE id = ?', [productId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      res.json({ message: 'Design file deleted successfully' });
+    });
+  });
+});
+
+// Delete extranet product design template only
+router.delete('/extranets/:providerId/products/:productId/design-template', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const { providerId, productId } = req.params;
+  
+  db.get('SELECT design_template_path FROM extranet_products WHERE id = ? AND provider_id = ?', [productId, providerId], (err, product) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!product || !product.design_template_path) return res.status(404).json({ error: 'Design template not found' });
+    
+    const filePath = path.join(__dirname, 'extranet_files', product.design_template_path);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    
+    db.run('UPDATE extranet_products SET design_template_path = NULL WHERE id = ?', [productId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      res.json({ message: 'Design template deleted successfully' });
+    });
+  });
+});
+
+// Get extranet product tracking details
+router.get('/extranets/:providerId/products/:productId/tracking', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const { providerId, productId } = req.params;
+  
+  const sql = `
+    SELECT 
+      ep.updated_at as updated_date,
+      u.username
+    FROM extranet_products ep
+    LEFT JOIN users u ON ep.updated_by = u.id
+    WHERE ep.id = ? AND ep.provider_id = ?
+  `;
+  
+  db.get(sql, [productId, providerId], (err, tracking) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!tracking) return res.status(404).json({ error: 'Product not found' });
+    res.json(tracking);
+  });
+});
+
+// Get extranet contacts for a specific provider
+router.get('/extranets/:id/contacts', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const providerId = req.params.id;
+  
+  const sql = `
+    SELECT ec.*, 
+           COALESCE(u_updated.username, u_created.username) as username
+    FROM extranet_contacts ec
+    LEFT JOIN users u_updated ON ec.updated_by = u_updated.id
+    LEFT JOIN users u_created ON ec.created_by = u_created.id
+    WHERE ec.provider_id = ?
+    ORDER BY ec.contact_name
+  `;
+  
+  db.all(sql, [providerId], (err, contacts) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(contacts);
+  });
+});
+
+// Create extranet contact
+router.post('/extranets/:id/contacts', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const providerId = req.params.id;
+  const { contact_name, job_title, phone_number, email, contact_type, contact_level, notes } = req.body;
+  
+  if (!contact_name) {
+    return res.status(400).json({ error: 'Contact name is required' });
+  }
+  
+  db.run(
+    `INSERT INTO extranet_contacts (provider_id, contact_name, job_title, phone_number, email, contact_type, contact_level, notes, last_contact_updated, created_by) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
+    [providerId, contact_name, job_title || null, phone_number || null, email || null, 
+     contact_type || null, contact_level || null, notes || null, req.user.id],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      const recordId = this.lastID;
+      
+      try {
+        logChange(req.user.id, 'extranet_contacts', recordId, 'CREATE', null, { 
+          provider_id: providerId, contact_name, job_title, phone_number, email, contact_type, contact_level, notes 
+        }, req);
+      } catch (logError) {
+        console.error('Failed to log extranet contact creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId, contact_name, message: 'Extranet contact created successfully' });
+    }
+  );
+});
+
+// Update extranet contact
+router.put('/extranets/:providerId/contacts/:contactId', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const { providerId, contactId } = req.params;
+  const { contact_name, job_title, phone_number, email, contact_type, contact_level, notes } = req.body;
+  
+  // Get current contact data for change logging
+  db.get('SELECT * FROM extranet_contacts WHERE id = ? AND provider_id = ?', [contactId, providerId], (err, oldContact) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldContact) return res.status(404).json({ error: 'Contact not found' });
+    
+    db.run(
+      `UPDATE extranet_contacts SET contact_name = ?, job_title = ?, phone_number = ?, email = ?, 
+       contact_type = ?, contact_level = ?, notes = ?, last_contact_updated = CURRENT_TIMESTAMP, 
+       updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND provider_id = ?`,
+      [contact_name, job_title || null, phone_number || null, email || null, 
+       contact_type || null, contact_level || null, notes || null, req.user.id, contactId, providerId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
+        
+        logChange(req.user.id, 'extranet_contacts', contactId, 'UPDATE', oldContact, { 
+          contact_name, job_title, phone_number, email, contact_type, contact_level, notes 
+        }, req);
+        
+        res.json({ message: 'Extranet contact updated successfully' });
+      }
+    );
+  });
+});
+
+// Delete extranet contact
+router.delete('/extranets/:providerId/contacts/:contactId', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const { providerId, contactId } = req.params;
+  
+  // Get current contact data for change logging
+  db.get('SELECT * FROM extranet_contacts WHERE id = ? AND provider_id = ?', [contactId, providerId], (err, oldContact) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldContact) return res.status(404).json({ error: 'Contact not found' });
+    
+    db.run('DELETE FROM extranet_contacts WHERE id = ? AND provider_id = ?', [contactId, providerId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
+      
+      logChange(req.user.id, 'extranet_contacts', contactId, 'DELETE', oldContact, null, req);
+      
+      res.json({ message: 'Extranet contact deleted successfully' });
+    });
+  });
+});
+
+// Get overdue extranet contacts (365+ days without update)
+router.get('/extranets/overdue-contacts', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const sql = `
+    SELECT 
+      ec.id, ec.contact_name, ec.email, ec.phone_number as phone, ec.contact_type as role,
+      ec.last_contact_updated,
+      ep.provider_name,
+      CAST((julianday('now') - julianday(ec.last_contact_updated)) AS INTEGER) as days_overdue
+    FROM extranet_contacts ec
+    JOIN extranet_providers ep ON ec.provider_id = ep.id
+    WHERE julianday('now') - julianday(ec.last_contact_updated) >= 365
+    ORDER BY days_overdue DESC
+  `;
+  
+  db.all(sql, [], (err, contacts) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(contacts);
+  });
+});
+
+// Approve extranet contact yearly update
+router.post('/extranets/contacts/:contactId/approve', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const { contactId } = req.params;
+  
+  db.run(
+    'UPDATE extranet_contacts SET last_contact_updated = CURRENT_TIMESTAMP, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [req.user.id, contactId],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
+      
+      res.json({ message: 'Contact approved successfully' });
+    }
+  );
+});
+
+// ====================================
+// EXTRANET PRICING ENDPOINTS
+// ====================================
+
+// Get available cities from location_reference for dropdown
+router.get('/extranet-pricing/available-cities', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const { search } = req.query;
+  
+  let sql = `SELECT DISTINCT city, country FROM location_reference WHERE city IS NOT NULL AND country IS NOT NULL`;
+  let params = [];
+  
+  if (search) {
+    sql += ` AND (city LIKE ? OR country LIKE ?)`;
+    params.push(`%${search}%`, `%${search}%`);
+  }
+  
+  sql += ` ORDER BY city, country`;
+  
+  db.all(sql, params, (err, cities) => {
+    if (err) return res.status(500).json({ error: err.message });
+    // Format as "City, Country"
+    const formatted = cities.map(c => ({
+      label: `${c.city}, ${c.country}`,
+      city: c.city,
+      country: c.country
+    }));
+    res.json(formatted);
+  });
+});
+
+// Get all pricing cities
+router.get('/extranet-pricing/cities', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const { region } = req.query;
+  
+  let sql = 'SELECT * FROM extranet_pricing_cities';
+  let params = [];
+  
+  if (region) {
+    sql += ' WHERE region = ?';
+    params.push(region);
+  }
+  
+  sql += ' ORDER BY region, tier, city_name';
+  
+  db.all(sql, params, (err, cities) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(cities);
+  });
+});
+
+// Create pricing city
+router.post('/extranet-pricing/cities', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const { city_name, region, tier, country } = req.body;
+  
+  if (!city_name || !region || !tier) {
+    return res.status(400).json({ error: 'City name, region, and tier are required' });
+  }
+  
+  const validRegions = ['AMERs', 'APAC', 'EMEA'];
+  const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+  
+  if (!validRegions.includes(region)) {
+    return res.status(400).json({ error: 'Invalid region' });
+  }
+  
+  if (!validTiers.includes(tier)) {
+    return res.status(400).json({ error: 'Invalid tier' });
+  }
+  
+  db.run(
+    'INSERT INTO extranet_pricing_cities (city_name, region, tier, country, created_by) VALUES (?, ?, ?, ?, ?)',
+    [city_name, region, tier, country || null, req.user.id],
+    function(err) {
+      if (err) {
+        if (err.message.includes('UNIQUE constraint failed')) {
+          return res.status(400).json({ error: `City '${city_name}' already exists in region '${region}'` });
+        }
+        return res.status(500).json({ error: err.message });
+      }
+      
+      const recordId = this.lastID;
+      
+      try {
+        logChange(req.user.id, 'extranet_pricing_cities', recordId, 'CREATE', null, { city_name, region, tier }, req);
+      } catch (logError) {
+        console.error('Failed to log city creation:', logError);
+      }
+      
+      res.status(201).json({ id: recordId, city_name, message: 'City added successfully' });
+    }
+  );
+});
+
+// Update pricing city
+router.put('/extranet-pricing/cities/:id', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const cityId = req.params.id;
+  const { city_name, region, tier, country } = req.body;
+  
+  const validRegions = ['AMERs', 'APAC', 'EMEA'];
+  const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+  
+  if (region && !validRegions.includes(region)) {
+    return res.status(400).json({ error: 'Invalid region' });
+  }
+  
+  if (tier && !validTiers.includes(tier)) {
+    return res.status(400).json({ error: 'Invalid tier' });
+  }
+  
+  db.get('SELECT * FROM extranet_pricing_cities WHERE id = ?', [cityId], (err, oldCity) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldCity) return res.status(404).json({ error: 'City not found' });
+    
+    db.run(
+      'UPDATE extranet_pricing_cities SET city_name = ?, region = ?, tier = ?, country = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [city_name, region, tier, country || null, req.user.id, cityId],
+      function(err) {
+        if (err) {
+          if (err.message.includes('UNIQUE constraint failed')) {
+            return res.status(400).json({ error: `City '${city_name}' already exists in region '${region}'` });
+          }
+          return res.status(500).json({ error: err.message });
+        }
+        if (this.changes === 0) return res.status(404).json({ error: 'City not found' });
+        
+        logChange(req.user.id, 'extranet_pricing_cities', cityId, 'UPDATE', oldCity, { city_name, region, tier }, req);
+        
+        res.json({ message: 'City updated successfully' });
+      }
+    );
+  });
+});
+
+// Delete pricing city
+router.delete('/extranet-pricing/cities/:id', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const cityId = req.params.id;
+  
+  db.get('SELECT * FROM extranet_pricing_cities WHERE id = ?', [cityId], (err, oldCity) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldCity) return res.status(404).json({ error: 'City not found' });
+    
+    db.run('DELETE FROM extranet_pricing_cities WHERE id = ?', [cityId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'City not found' });
+      
+      logChange(req.user.id, 'extranet_pricing_cities', cityId, 'DELETE', oldCity, null, req);
+      
+      res.json({ message: 'City deleted successfully' });
+    });
+  });
+});
+
+// Get rate card
+router.get('/extranet-pricing/rate-card', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  db.all('SELECT * FROM extranet_rate_card ORDER BY bandwidth, region, tier', [], (err, rates) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rates);
+  });
+});
+
+// Update rate card entry
+router.put('/extranet-pricing/rate-card/:id', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const rateId = req.params.id;
+  const { price_usd } = req.body;
+  
+  // Allow POA or non-negative numbers
+  const isPOA = typeof price_usd === 'string' && price_usd.toUpperCase() === 'POA';
+  if (price_usd === undefined || (!isPOA && parseFloat(price_usd) < 0)) {
+    return res.status(400).json({ error: 'Valid price is required (number or POA)' });
+  }
+  
+  db.get('SELECT * FROM extranet_rate_card WHERE id = ?', [rateId], (err, oldRate) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldRate) return res.status(404).json({ error: 'Rate card entry not found' });
+    
+    db.run(
+      'UPDATE extranet_rate_card SET price_usd = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [price_usd, req.user.id, rateId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Rate card entry not found' });
+        
+        logChange(req.user.id, 'extranet_rate_card', rateId, 'UPDATE', oldRate, { 
+          bandwidth: oldRate.bandwidth, region: oldRate.region, tier: oldRate.tier, price_usd 
+        }, req);
+        
+        res.json({ message: 'Rate card updated successfully' });
+      }
+    );
+  });
+});
+
+// Bulk update rate card (for CSV import)
+router.post('/extranet-pricing/rate-card/bulk', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+  const { rates } = req.body;
+  
+  if (!Array.isArray(rates) || rates.length === 0) {
+    return res.status(400).json({ error: 'Rates array is required' });
+  }
+  
+  const validBandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '50Mb', '100Mb'];
+  const validRegions = ['AMERs', 'APAC', 'EMEA'];
+  const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+  
+  let updatedCount = 0;
+  let errorCount = 0;
+  const errors = [];
+  
+  const processRate = (index) => {
+    if (index >= rates.length) {
+      return res.json({ 
+        message: `Bulk update completed. Updated: ${updatedCount}, Errors: ${errorCount}`,
+        errors: errors.length > 0 ? errors : undefined
+      });
+    }
+    
+    const rate = rates[index];
+    
+    if (!validBandwidths.includes(rate.bandwidth)) {
+      errors.push(`Invalid bandwidth: ${rate.bandwidth}`);
+      errorCount++;
+      return processRate(index + 1);
+    }
+    
+    if (!validRegions.includes(rate.region)) {
+      errors.push(`Invalid region: ${rate.region}`);
+      errorCount++;
+      return processRate(index + 1);
+    }
+    
+    if (!validTiers.includes(rate.tier)) {
+      errors.push(`Invalid tier: ${rate.tier}`);
+      errorCount++;
+      return processRate(index + 1);
+    }
+    
+    // Allow POA or non-negative numbers
+    const isPOA = typeof rate.price_usd === 'string' && rate.price_usd.toUpperCase() === 'POA';
+    if (rate.price_usd === undefined || (!isPOA && parseFloat(rate.price_usd) < 0)) {
+      errors.push(`Invalid price for ${rate.bandwidth}/${rate.region}/${rate.tier}`);
+      errorCount++;
+      return processRate(index + 1);
+    }
+    
+    const priceValue = isPOA ? 'POA' : rate.price_usd;
+    
+    db.run(
+      `UPDATE extranet_rate_card SET price_usd = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP 
+       WHERE bandwidth = ? AND region = ? AND tier = ?`,
+      [priceValue, req.user.id, rate.bandwidth, rate.region, rate.tier],
+      function(err) {
+        if (err) {
+          errors.push(`Error updating ${rate.bandwidth}/${rate.region}/${rate.tier}: ${err.message}`);
+          errorCount++;
+        } else if (this.changes > 0) {
+          updatedCount++;
+        }
+        processRate(index + 1);
+      }
+    );
+  };
+  
+  processRate(0);
+});
+
+// Price lookup endpoint
+router.get('/extranet-pricing/lookup', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const { city_name, bandwidth, provider_id, product_id } = req.query;
+  
+  if (!city_name || !bandwidth) {
+    return res.status(400).json({ error: 'City name and bandwidth are required' });
+  }
+  
+  // First, get the city's region and tier
+  db.get('SELECT * FROM extranet_pricing_cities WHERE city_name = ?', [city_name], (err, city) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!city) return res.status(404).json({ error: 'City not found in pricing database' });
+    
+    // Get the price from rate card
+    db.get(
+      'SELECT price_usd FROM extranet_rate_card WHERE bandwidth = ? AND region = ? AND tier = ?',
+      [bandwidth, city.region, city.tier],
+      (err, rateCard) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!rateCard) return res.status(404).json({ error: 'Price not found for this bandwidth and tier combination' });
+        
+        // Get provider and product names for logging
+        let providerName = null;
+        let productName = null;
+        
+        const logLookup = () => {
+          // Log the lookup for analytics
+          db.run(
+            `INSERT INTO extranet_pricing_lookups (user_id, city_name, region, tier, provider_id, provider_name, product_id, product_name, bandwidth, price_usd) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [req.user.id, city_name, city.region, city.tier, provider_id || null, providerName, product_id || null, productName, bandwidth, rateCard.price_usd],
+            (err) => {
+              if (err) console.error('Failed to log pricing lookup:', err);
+            }
+          );
+          
+          res.json({
+            city_name,
+            region: city.region,
+            tier: city.tier,
+            bandwidth,
+            price_usd: rateCard.price_usd,
+            provider_id: provider_id || null,
+            provider_name: providerName,
+            product_id: product_id || null,
+            product_name: productName
+          });
+        };
+        
+        if (provider_id) {
+          db.get('SELECT provider_name FROM extranet_providers WHERE id = ?', [provider_id], (err, provider) => {
+            if (!err && provider) providerName = provider.provider_name;
+            
+            if (product_id) {
+              db.get('SELECT product_name FROM extranet_products WHERE id = ?', [product_id], (err, product) => {
+                if (!err && product) productName = product.product_name;
+                logLookup();
+              });
+            } else {
+              logLookup();
+            }
+          });
+        } else {
+          logLookup();
+        }
+      }
+    );
+  });
+});
+
+// Get providers by region (for pricing tool filtering)
+router.get('/extranet-pricing/providers/:region', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const { region } = req.params;
+  
+  db.all(
+    'SELECT id, provider_name FROM extranet_providers WHERE region = ? AND available = 1 ORDER BY provider_name',
+    [region],
+    (err, providers) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(providers);
+    }
+  );
+});
+
+// Get products for provider (for pricing tool)
+router.get('/extranet-pricing/products/:providerId', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const { providerId } = req.params;
+  
+  db.all(
+    'SELECT id, product_name, suggested_bandwidth FROM extranet_products WHERE provider_id = ? ORDER BY product_name',
+    [providerId],
+    (err, products) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(products);
+    }
+  );
+});
+
+// Get available bandwidths
+router.get('/extranet-pricing/bandwidths', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  db.all('SELECT DISTINCT bandwidth FROM extranet_rate_card ORDER BY id', [], (err, bandwidths) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(bandwidths.map(b => b.bandwidth));
+  });
+});
+
+// Get locations for datacenter autocomplete
+router.get('/extranet-data/locations', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  db.all('SELECT location_code FROM location_reference ORDER BY location_code', [], (err, locations) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(locations.map(l => l.location_code));
+  });
+});
+
+// ====================================
 // ANALYTICS ENDPOINTS (Admin Only)
 // ====================================
 
@@ -13377,6 +14901,115 @@ router.get('/analytics/route-finder', authenticateToken, authorizeRole('administ
   }
 });
 
+// Get Extranet Pricing analytics
+router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    
+    let dateFilter = '';
+    let params = [];
+    if (start_date && end_date) {
+      dateFilter = ' WHERE lookup_timestamp >= ? AND lookup_timestamp <= ?';
+      params = [start_date, end_date];
+    }
+    
+    // Get all pricing lookups
+    const lookups = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT * FROM extranet_pricing_lookups${dateFilter} ORDER BY lookup_timestamp DESC`,
+        params,
+        (err, rows) => err ? reject(err) : resolve(rows || [])
+      );
+    });
+    
+    // Process data
+    const providerSearches = {};
+    const bandwidthSearches = {};
+    const tierSearches = {};
+    const regionSearches = {};
+    const citySearches = {};
+    const userActivity = {};
+    
+    lookups.forEach(lookup => {
+      // Provider searches
+      if (lookup.provider_name) {
+        providerSearches[lookup.provider_name] = (providerSearches[lookup.provider_name] || 0) + 1;
+      }
+      
+      // Bandwidth searches
+      if (lookup.bandwidth) {
+        bandwidthSearches[lookup.bandwidth] = (bandwidthSearches[lookup.bandwidth] || 0) + 1;
+      }
+      
+      // Tier searches
+      if (lookup.tier) {
+        tierSearches[lookup.tier] = (tierSearches[lookup.tier] || 0) + 1;
+      }
+      
+      // Region searches
+      if (lookup.region) {
+        regionSearches[lookup.region] = (regionSearches[lookup.region] || 0) + 1;
+      }
+      
+      // City searches
+      if (lookup.city_name) {
+        citySearches[lookup.city_name] = (citySearches[lookup.city_name] || 0) + 1;
+      }
+      
+      // User activity
+      if (lookup.user_id) {
+        if (!userActivity[lookup.user_id]) {
+          userActivity[lookup.user_id] = { user_id: lookup.user_id, count: 0 };
+        }
+        userActivity[lookup.user_id].count++;
+      }
+    });
+    
+    // Get user names for activity
+    const userIds = Object.keys(userActivity);
+    if (userIds.length > 0) {
+      const users = await new Promise((resolve, reject) => {
+        db.all(
+          `SELECT id, username FROM users WHERE id IN (${userIds.map(() => '?').join(',')})`,
+          userIds,
+          (err, rows) => err ? reject(err) : resolve(rows || [])
+        );
+      });
+      
+      users.forEach(user => {
+        if (userActivity[user.id]) {
+          userActivity[user.id].username = user.username;
+        }
+      });
+    }
+    
+    res.json({
+      totalLookups: lookups.length,
+      topProviders: Object.entries(providerSearches)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([provider, count]) => ({ provider, count })),
+      bandwidthDistribution: Object.entries(bandwidthSearches)
+        .map(([bandwidth, count]) => ({ bandwidth, count })),
+      tierDistribution: Object.entries(tierSearches)
+        .map(([tier, count]) => ({ tier, count })),
+      regionDistribution: Object.entries(regionSearches)
+        .map(([region, count]) => ({ region, count })),
+      topCities: Object.entries(citySearches)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([city, count]) => ({ city, count })),
+      topUsers: Object.values(userActivity)
+        .filter(u => u.username)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 20)
+    });
+  } catch (error) {
+    console.error('Error fetching extranet pricing analytics:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ====================================
 // SYSTEM SETTINGS ENDPOINTS
 // ====================================
@@ -13476,6 +15109,7 @@ router.post('/route_finder/find_routes', authenticateToken, authorizeModulePermi
       // Build graph from routes
       const graph = {};
       let routesProcessed = 0;
+      const provisioningRoutes = {}; // Track provisioning routes for response notes
       
       routes.forEach(route => {
         const { location_a, location_b, expected_latency, bandwidth: routeBandwidth, underlying_carrier, circuit_id, cable_system, equipment_type, is_special } = route;
@@ -13495,6 +15129,22 @@ router.post('/route_finder/find_routes', authenticateToken, authorizeModulePermi
           if (parseFloat(routeBandwidthMbps) < requiredBandwidth) {
             return; // Skip this route
           }
+        }
+        
+        // Apply route lifecycle filter - always exclude decommissioned routes
+        // Route Finder always includes provisioning routes
+        const routeStatus = route.route_status || 'Active';
+        if (routeStatus === 'Under Decommission') {
+          return; // Skip decommissioned routes
+        }
+        
+        // Track provisioning routes for response notes
+        if (routeStatus === 'Provisioning') {
+          provisioningRoutes[circuit_id] = {
+            circuit_id,
+            expected_go_live_date: route.expected_go_live_date,
+            replaces: route.replaces
+          };
         }
         
         // Apply equipment type filter (Standard mode excludes Cisco)
@@ -13756,10 +15406,38 @@ router.post('/route_finder/find_routes', authenticateToken, authorizeModulePermi
         }
       );
       
+      // Build provisioning route notes for routes used in paths
+      const provisioningNotes = [];
+      const checkRouteForProvisioning = (routeDetails) => {
+        if (!routeDetails) return;
+        routeDetails.forEach(segment => {
+          if (provisioningRoutes[segment.circuit_id]) {
+            const provRoute = provisioningRoutes[segment.circuit_id];
+            provisioningNotes.push({
+              circuit_id: segment.circuit_id,
+              expected_go_live_date: provRoute.expected_go_live_date,
+              replaces: provRoute.replaces,
+              message: provRoute.expected_go_live_date 
+                ? `Route ${segment.circuit_id} is in Provisioning status. Expected go-live date: ${new Date(provRoute.expected_go_live_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`
+                : `Route ${segment.circuit_id} is in Provisioning status. Go-live date not specified.`
+            });
+          }
+        });
+      };
+      
+      if (primaryPath) checkRouteForProvisioning(primaryPath.route);
+      if (diversePath) checkRouteForProvisioning(diversePath.route);
+      
       res.json({
         primaryPath,
         diversePath,
-        executionTime
+        executionTime,
+        routeLifecycleNotes: {
+          provisioningRoutesUsed: provisioningNotes,
+          message: provisioningNotes.length > 0 
+            ? `Note: ${provisioningNotes.length} route(s) in the result are in Provisioning status.`
+            : null
+        }
       });
     });
 
@@ -14048,7 +15726,7 @@ router.post('/route_finder/check-promo-match', authenticateToken, authorizeModul
             
             // Calculate total allocated cost
             let totalAllocatedCost = 0;
-            const requestedBandwidth = parseFloat(bandwidth) || 100; // Default to 100 Mbps
+            const requestedBandwidth = parseFloat(bandwidth) || 10; // Default to 10 Mbps (under 100Mb tier)
             
             routeCosts.forEach(route => {
               let routeCost = parseFloat(route.cost) || 0;
