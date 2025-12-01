@@ -1431,6 +1431,180 @@ const AllocatedCostCalculator = () => {
       setLoading(false);
     }
   };
+
+  const handleReloadFromLog = (log) => {
+    try {
+      let logData;
+      try {
+        logData = log.new_values ? JSON.parse(log.new_values) : null;
+      } catch (e) {
+        setError('Unable to parse log data');
+        return;
+      }
+
+      if (!logData) {
+        setError('Unable to reload - missing data in log');
+        return;
+      }
+
+      const params = logData.inputParameters || logData;
+      const results = logData.calculationResults;
+      
+      if (!params) {
+        setError('Unable to reload - missing parameters in log');
+        return;
+      }
+
+      // Extract path routes from stored params or reconstruct from results
+      let primaryPathRoutes = params.primaryPathRoutes || '';
+      let secondaryPathRoutes = params.secondaryPathRoutes || '';
+      
+      // Debug: Log the data structure to help diagnose issues
+      console.log('Reload log data structure:', {
+        hasParams: !!params,
+        hasPrimaryPathRoutes: !!params.primaryPathRoutes,
+        hasResults: !!results,
+        hasIndividual: !!results?.individual,
+        individualLength: results?.individual?.length,
+        hasDetailedBreakdowns: !!logData.detailedCalculationBreakdowns
+      });
+      
+      // If path routes weren't stored, try to reconstruct from calculation results
+      // Try multiple data sources in order of preference
+      
+      // Source 1: Direct from individual results' route array (if stored)
+      if (!primaryPathRoutes && results?.individual?.[0]?.route) {
+        primaryPathRoutes = results.individual[0].route
+          .filter(seg => seg.circuit_id && !seg.isVirtual)
+          .map(seg => seg.circuit_id)
+          .join(', ');
+        console.log('Extracted primary routes from individual[0].route:', primaryPathRoutes);
+      }
+      
+      // Source 2: From detailed calculation breakdowns' segment calculations
+      // Note: property is 'circuit' not 'circuitId', and filter out incremental costs
+      if (!primaryPathRoutes && logData.detailedCalculationBreakdowns?.primaryPath?.segmentCalculations) {
+        primaryPathRoutes = logData.detailedCalculationBreakdowns.primaryPath.segmentCalculations
+          .filter(seg => seg.circuit && !seg.isIncrementalCost && !seg.circuit.includes('New Core') && !seg.circuit.includes('Upgrade') && !seg.circuit.includes('Aggregate'))
+          .map(seg => seg.circuit)
+          .join(', ');
+        console.log('Extracted primary routes from detailedBreakdowns:', primaryPathRoutes);
+      }
+      
+      // Source 3: From individual pricing results' detailedCalculations
+      if (!primaryPathRoutes && results?.individual?.[0]?.pricing?.detailedCalculations?.segmentCalculations) {
+        primaryPathRoutes = results.individual[0].pricing.detailedCalculations.segmentCalculations
+          .filter(seg => seg.circuit && !seg.isIncrementalCost && !seg.circuit.includes('New Core') && !seg.circuit.includes('Upgrade') && !seg.circuit.includes('Aggregate'))
+          .map(seg => seg.circuit)
+          .join(', ');
+        console.log('Extracted primary routes from individual[0].pricing.detailedCalculations:', primaryPathRoutes);
+      }
+      
+      // Secondary path - try same sources
+      if (!secondaryPathRoutes && results?.individual?.[1]?.route) {
+        secondaryPathRoutes = results.individual[1].route
+          .filter(seg => seg.circuit_id && !seg.isVirtual)
+          .map(seg => seg.circuit_id)
+          .join(', ');
+        console.log('Extracted secondary routes from individual[1].route:', secondaryPathRoutes);
+      }
+      
+      if (!secondaryPathRoutes && logData.detailedCalculationBreakdowns?.secondaryPath?.segmentCalculations) {
+        secondaryPathRoutes = logData.detailedCalculationBreakdowns.secondaryPath.segmentCalculations
+          .filter(seg => seg.circuit && !seg.isIncrementalCost && !seg.circuit.includes('New Core') && !seg.circuit.includes('Upgrade') && !seg.circuit.includes('Aggregate'))
+          .map(seg => seg.circuit)
+          .join(', ');
+        console.log('Extracted secondary routes from detailedBreakdowns:', secondaryPathRoutes);
+      }
+      
+      if (!secondaryPathRoutes && results?.individual?.[1]?.pricing?.detailedCalculations?.segmentCalculations) {
+        secondaryPathRoutes = results.individual[1].pricing.detailedCalculations.segmentCalculations
+          .filter(seg => seg.circuit && !seg.isIncrementalCost && !seg.circuit.includes('New Core') && !seg.circuit.includes('Upgrade') && !seg.circuit.includes('Aggregate'))
+          .map(seg => seg.circuit)
+          .join(', ');
+        console.log('Extracted secondary routes from individual[1].pricing.detailedCalculations:', secondaryPathRoutes);
+      }
+      
+      console.log('Final path routes:', { primaryPathRoutes, secondaryPathRoutes });
+
+      // Determine pricing type
+      let pricingType = 'primary';
+      if (params.protection_required) {
+        pricingType = 'protected';
+      } else if (secondaryPathRoutes) {
+        pricingType = 'primary_secondary';
+      }
+
+      // Set form data from log parameters
+      setFormData({
+        source: params.source || '',
+        destination: params.destination || '',
+        bandwidth: params.bandwidth?.toString() || '',
+        primaryPathRoutes: primaryPathRoutes,
+        secondaryPathRoutes: secondaryPathRoutes,
+        pricingType: pricingType,
+        outputCurrency: params.output_currency || params.outputCurrency || 'USD',
+        contractTerm: params.contract_term || params.contractTerm || 12,
+        quoteRequestId: params.quoteRequestId || params.quote_request_id || '',
+        customerName: params.customerName || params.customer_name || ''
+      });
+
+      // Restore incremental costs from log - mark as UNSAVED so user can review and save them
+      const restoredIncrementalCosts = params.incrementalCosts || [];
+      if (restoredIncrementalCosts.length > 0) {
+        // Ensure each cost has all required fields and a unique id
+        // Mark as saved: false so user must save them to push into routes
+        const processedCosts = restoredIncrementalCosts.map((cost, index) => ({
+          id: cost.id || `reloaded_${Date.now()}_${index}`,
+          costType: cost.costType || 'core_incremental_upgrade',
+          sourceLocation: cost.sourceLocation || '',
+          destinationLocation: cost.destinationLocation || '',
+          selectedCircuit: cost.selectedCircuit || '',
+          newBandwidth: cost.newBandwidth || '',
+          incrementalCost: cost.incrementalCost || '',
+          currency: cost.currency || 'USD',
+          pathAllocation: cost.pathAllocation || 'primary',
+          allocationFactor: cost.allocationFactor || '',
+          notes: cost.notes || '',
+          saved: false // Mark as unsaved so user can review and save to push into routes
+        }));
+        setIncrementalCosts(processedCosts);
+      } else {
+        setIncrementalCosts([]);
+      }
+
+      // Clear previous results - user needs to recalculate
+      setSearchResults(null);
+      setPricingResults(null);
+
+      // Trigger validation for the loaded routes
+      if (primaryPathRoutes) {
+        setTimeout(() => {
+          validateRoutes(primaryPathRoutes, params.source, params.destination, 'primary');
+        }, 100);
+      }
+      if (secondaryPathRoutes) {
+        setTimeout(() => {
+          validateRoutes(secondaryPathRoutes, params.source, params.destination, 'secondary');
+        }, 150);
+      }
+
+      // Switch to the Calculator tab and expand relevant sections
+      setCurrentTab(0);
+      setExpandedAccordion({
+        input: true,
+        incremental: restoredIncrementalCosts.length > 0,
+        results: false,
+        pricing: false
+      });
+      
+      setSuccess(`Search parameters loaded from pricing log${restoredIncrementalCosts.length > 0 ? ` (including ${restoredIncrementalCosts.length} incremental cost${restoredIncrementalCosts.length !== 1 ? 's' : ''} - please save them to push into routes)` : ''}. You can modify and re-run the calculation.`);
+      
+    } catch (error) {
+      console.error('Reload from log error:', error);
+      setError('Failed to reload search: ' + error.message);
+    }
+  };
   
   const handleExportOpen = () => {
     setExportDialogOpen(true);
@@ -1450,43 +1624,81 @@ const AllocatedCostCalculator = () => {
   };
   
   const generateEmailBody = () => {
-    let emailBody = `Network Design Results - Allocated Cost Calculator\n\n`;
-    emailBody += `Customer Name: ${formData.customerName}\n`;
-    emailBody += `Quote Request ID: ${formData.quoteRequestId}\n`;
-    emailBody += `Source Location: ${formData.source}\n`;
-    emailBody += `Destination Location: ${formData.destination}\n`;
-    emailBody += `Bandwidth: ${formData.bandwidth} Mbps\n`;
-    emailBody += `Quote Time & Date: ${new Date().toLocaleString()}\n\n`;
-    
-    // Helper function to generate route table
+    // Helper function to get location display as "Datacenter Name (POP_CODE)"
+    const getLocationDisplay = (locationCode) => {
+      const location = locations.find(loc => loc.location_code === locationCode);
+      if (location && location.datacenter_name) {
+        return `${location.datacenter_name} (${locationCode})`;
+      }
+      return locationCode;
+    };
+
+    // Common HTML styles
+    const tableStyle = 'border-collapse: collapse; width: 100%; margin-bottom: 20px; font-family: Arial, sans-serif;';
+    const thStyle = 'border: 1px solid #ddd; padding: 10px; background-color: #4472C4; color: white; text-align: left; font-weight: bold;';
+    const tdStyle = 'border: 1px solid #ddd; padding: 8px; text-align: left;';
+    const headerStyle = 'color: #2E5090; margin-top: 20px; margin-bottom: 10px; font-family: Arial, sans-serif;';
+
+    // Helper function to generate route table in HTML
     const generateRouteTable = (pathData, pathType) => {
       if (!pathData || !pathData.route) return '';
       
-      let table = `${pathType} Route:\n`;
-      table += `Circuit ID\tRoute Segment\tLatency\tCarrier\tCable System\n`;
-      table += `${'='.repeat(70)}\n`;
+      let tableHtml = `<h3 style="${headerStyle}">${pathType} Route</h3>`;
+      tableHtml += `<table style="${tableStyle}">`;
+      tableHtml += `<thead><tr>`;
+      tableHtml += `<th style="${thStyle}">Circuit ID</th>`;
+      tableHtml += `<th style="${thStyle}">Route Segment</th>`;
+      tableHtml += `<th style="${thStyle}">Latency</th>`;
+      tableHtml += `<th style="${thStyle}">Carrier</th>`;
+      tableHtml += `<th style="${thStyle}">Cable System</th>`;
+      tableHtml += `</tr></thead>`;
+      tableHtml += `<tbody>`;
       
-      pathData.route.forEach(segment => {
-        table += `${segment.circuit_id || 'N/A'}\t${segment.from} → ${segment.to}\t${formatLatency(segment.latency)}ms\t${segment.carrier || 'N/A'}\t${segment.cable_system || 'N/A'}\n`;
+      pathData.route.forEach((segment, index) => {
+        const rowBg = index % 2 === 0 ? '#ffffff' : '#f9f9f9';
+        tableHtml += `<tr style="background-color: ${rowBg};">`;
+        tableHtml += `<td style="${tdStyle}">${segment.circuit_id || 'N/A'}</td>`;
+        tableHtml += `<td style="${tdStyle}">${segment.from} → ${segment.to}</td>`;
+        tableHtml += `<td style="${tdStyle}">${formatLatency(segment.latency)}ms</td>`;
+        tableHtml += `<td style="${tdStyle}">${segment.carrier || 'N/A'}</td>`;
+        tableHtml += `<td style="${tdStyle}">${segment.cable_system || 'N/A'}</td>`;
+        tableHtml += `</tr>`;
       });
       
-      table += `${'='.repeat(70)}\n`;
-      table += `Total Latency: ${formatLatency(pathData.totalLatency)}ms\n\n`;
+      tableHtml += `</tbody></table>`;
+      tableHtml += `<p style="font-family: Arial, sans-serif; margin-bottom: 20px;"><strong>Total Latency:</strong> ${formatLatency(pathData.totalLatency)}ms</p>`;
       
-      return table;
+      return tableHtml;
     };
     
-    // Helper function to format pricing
+    // Helper function to format pricing in HTML
     const formatPricingSection = (pricing, pathType) => {
-      let section = `${pathType} Pricing:\n`;
-      section += `NRC: ${pricing.nrcCharge > 0 ? formatCurrency(pricing.nrcCharge, pricing.currency) : 'FREE'}\n`;
-      section += `MRC (Minimum): ${formatCurrency(pricing.minimumPrice, pricing.currency)}\n`;
-      section += `MRC (Suggested): ${formatCurrency(pricing.suggestedPrice, pricing.currency)}\n`;
-      section += `Allocated Cost: ${formatCurrency(pricing.allocatedCost, pricing.currency)}\n`;
-      section += `Currency: ${pricing.currency}\n`;
-      section += `Contract Term: ${pricing.contractTerm} months\n\n`;
-      return section;
+      let html = `<h4 style="color: #228B22; margin-top: 15px; margin-bottom: 10px; font-family: Arial, sans-serif;">${pathType} Pricing</h4>`;
+      html += `<table style="${tableStyle}">`;
+      html += `<tbody>`;
+      html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>NRC</strong></td><td style="${tdStyle}">${pricing.nrcCharge > 0 ? formatCurrency(pricing.nrcCharge, pricing.currency) : 'FREE'}</td></tr>`;
+      html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>MRC (Minimum)</strong></td><td style="${tdStyle}">${formatCurrency(pricing.minimumPrice, pricing.currency)}</td></tr>`;
+      html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>MRC (Suggested)</strong></td><td style="${tdStyle}">${formatCurrency(pricing.suggestedPrice, pricing.currency)}</td></tr>`;
+      html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>Allocated Cost</strong></td><td style="${tdStyle}">${formatCurrency(pricing.allocatedCost, pricing.currency)}</td></tr>`;
+      html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>Currency</strong></td><td style="${tdStyle}">${pricing.currency}</td></tr>`;
+      html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>Contract Term</strong></td><td style="${tdStyle}">${pricing.contractTerm} months</td></tr>`;
+      html += `</tbody></table>`;
+      return html;
     };
+
+    // Build HTML email body
+    let emailBody = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family: Arial, sans-serif; padding: 20px;">`;
+    
+    // Header information
+    emailBody += `<h2 style="color: #2E5090; border-bottom: 2px solid #4472C4; padding-bottom: 10px;">Allocated Cost Calculator Results</h2>`;
+    emailBody += `<table style="margin-bottom: 20px; font-family: Arial, sans-serif;">`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Customer Name:</td><td>${formData.customerName || 'Not Specified'}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Quote Request ID:</td><td>${formData.quoteRequestId || 'Not Specified'}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Source Location:</td><td>${getLocationDisplay(formData.source)}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Destination Location:</td><td>${getLocationDisplay(formData.destination)}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Bandwidth:</td><td>${formData.bandwidth} Mbps</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Quote Time & Date:</td><td>${new Date().toLocaleString()}</td></tr>`;
+    emailBody += `</table>`;
     
     // Add route and pricing data
     if (exportOptions.primaryPricing && searchResults.primaryPath) {
@@ -1508,10 +1720,23 @@ const AllocatedCostCalculator = () => {
     if (exportOptions.protectedPricing) {
       const protectedResult = pricingResults.results.find(r => r.pathType === 'protected');
       if (protectedResult) {
-        emailBody += `\nProtected Service Pricing:\n`;
-        emailBody += formatPricingSection(protectedResult.pricing, 'Protected');
+        emailBody += formatPricingSection(protectedResult.pricing, 'Protected Service');
       }
     }
+
+    // Pricing Disclaimer in HTML
+    emailBody += `<hr style="margin-top: 30px; margin-bottom: 20px; border: none; border-top: 1px solid #ccc;">`;
+    emailBody += `<div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; font-family: Arial, sans-serif;">`;
+    emailBody += `<h3 style="color: #333; margin-top: 0;">PRICING DISCLAIMER</h3>`;
+    emailBody += `<ul style="color: #444; line-height: 1.6;">`;
+    emailBody += `<li>This quotation is valid for 90 days.</li>`;
+    emailBody += `<li>All Pricing is subject to IPC standard terms and conditions.</li>`;
+    emailBody += `<li>All Pricing is budgetary and subject to survey and facility/feasibility checks.</li>`;
+    emailBody += `<li>All Pricing is exclusive of any applicable Taxes and Surcharges.</li>`;
+    emailBody += `</ul>`;
+    emailBody += `</div>`;
+
+    emailBody += `</body></html>`;
     
     return emailBody;
   };
@@ -1528,16 +1753,42 @@ const AllocatedCostCalculator = () => {
   
   const handleDownloadText = () => {
     const emailBody = generateEmailBody();
-    const blob = new Blob([emailBody], { type: 'text/plain' });
+    
+    // Generate subject line
+    const today = new Date().toLocaleDateString();
+    const subject = `Allocated Cost - ${formData.quoteRequestId || 'Quote'} - ${formData.customerName || 'Customer'} - ${today}`;
+    
+    // Create .eml file with HTML content
+    const timestamp = new Date().toISOString();
+    const emailContent = [
+      `From: Allocated Cost Calculator <noreply@ipc.com>`,
+      `To: `,
+      `Subject: ${subject}`,
+      `Date: ${timestamp}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/html; charset=utf-8`,
+      `Content-Transfer-Encoding: 8bit`,
+      ``,
+      emailBody
+    ].join('\r\n');
+    
+    // Create blob as .eml file
+    const blob = new Blob([emailContent], { type: 'message/rfc822' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `allocated_cost_pricing_${formData.quoteRequestId || 'quote'}.txt`;
+    
+    // Generate filename with timestamp
+    const fileTimestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+    const customerName = (formData.customerName || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
+    const quoteId = (formData.quoteRequestId || 'Quote').replace(/[^a-zA-Z0-9]/g, '_');
+    link.download = `AllocatedCost_${quoteId}_${customerName}_${fileTimestamp}.eml`;
+    
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    setSuccess('Results downloaded');
+    setSuccess('Email file (.eml) downloaded - double-click to open in your email client');
     handleExportClose();
   };
   
@@ -3067,7 +3318,7 @@ const AllocatedCostCalculator = () => {
                           {log.changes_summary || 'Allocated Cost Pricing Calculation'}
                         </Typography>
                       </TableCell>
-                      <TableCell align="center" sx={{ width: 150 }}>
+                      <TableCell align="center" sx={{ width: 180 }}>
                         <Box sx={{ display: 'flex', gap: 1, flexDirection: 'column', alignItems: 'center' }}>
                           {/* View Details - available for all users */}
                           <Button
@@ -3077,6 +3328,17 @@ const AllocatedCostCalculator = () => {
                             onClick={() => toggleLogExpansion(log.id)}
                           >
                             {expandedLogs.has(log.id) ? 'Hide Details' : 'View Details'}
+                          </Button>
+                          {/* Reload Search - available for all users */}
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            fullWidth
+                            startIcon={<HistoryIcon />}
+                            onClick={() => handleReloadFromLog(log)}
+                            color="secondary"
+                          >
+                            Reload Search
                           </Button>
                         </Box>
                       </TableCell>

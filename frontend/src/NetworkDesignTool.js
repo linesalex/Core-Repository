@@ -1703,47 +1703,82 @@ const NetworkDesignTool = () => {
   const generateEmailBody = () => {
     if (!pricingResults || !searchResults) return '';
 
-    let emailBody = '';
-    
-    // Header information - always shown
-    emailBody += `Customer Name: ${formData.customerName || 'Not Specified'}\n`;
-    emailBody += `Quote Request ID: ${formData.quoteRequestId || 'Not Specified'}\n`;
-    emailBody += `Source Location: ${formData.source}\n`;
-    emailBody += `Destination Location: ${formData.destination}\n`;
-    emailBody += `Bandwidth: ${formData.bandwidth} Mbps\n`;
-    emailBody += `Quote Time & Date: ${new Date().toLocaleString()}\n\n`;
+    // Helper function to get location display as "Datacenter Name (POP_CODE)"
+    const getLocationDisplay = (locationCode) => {
+      const location = locations.find(loc => loc.location_code === locationCode);
+      if (location && location.datacenter_name) {
+        return `${location.datacenter_name} (${locationCode})`;
+      }
+      return locationCode;
+    };
 
-    // Helper function to generate route table
+    // Common HTML styles
+    const tableStyle = 'border-collapse: collapse; width: 100%; margin-bottom: 20px; font-family: Arial, sans-serif;';
+    const thStyle = 'border: 1px solid #ddd; padding: 10px; background-color: #4472C4; color: white; text-align: left; font-weight: bold;';
+    const tdStyle = 'border: 1px solid #ddd; padding: 8px; text-align: left;';
+    const headerStyle = 'color: #2E5090; margin-top: 20px; margin-bottom: 10px; font-family: Arial, sans-serif;';
+
+    // Helper function to generate route table in HTML
     const generateRouteTable = (pathData, pathType) => {
       if (!pathData || !pathData.route) return '';
       
-      let table = `${pathType} Route:\n`;
-      table += `Circuit ID\tRoute Segment\tLatency\tCarrier\tCable System\n`;
-      table += `${'='.repeat(70)}\n`;
+      let tableHtml = `<h3 style="${headerStyle}">${pathType} Route</h3>`;
+      tableHtml += `<table style="${tableStyle}">`;
+      tableHtml += `<thead><tr>`;
+      tableHtml += `<th style="${thStyle}">Circuit ID</th>`;
+      tableHtml += `<th style="${thStyle}">Route Segment</th>`;
+      tableHtml += `<th style="${thStyle}">Latency</th>`;
+      tableHtml += `<th style="${thStyle}">Carrier</th>`;
+      tableHtml += `<th style="${thStyle}">Cable System</th>`;
+      tableHtml += `</tr></thead>`;
+      tableHtml += `<tbody>`;
       
-      pathData.route.forEach(segment => {
-        table += `${segment.circuit_id || 'N/A'}\t${segment.from} → ${segment.to}\t${formatLatency(segment.latency)}ms\t${segment.carrier || 'N/A'}\t${segment.cable_system || 'N/A'}\n`;
+      pathData.route.forEach((segment, index) => {
+        const rowBg = index % 2 === 0 ? '#ffffff' : '#f9f9f9';
+        tableHtml += `<tr style="background-color: ${rowBg};">`;
+        tableHtml += `<td style="${tdStyle}">${segment.circuit_id || 'N/A'}</td>`;
+        tableHtml += `<td style="${tdStyle}">${segment.from} → ${segment.to}</td>`;
+        tableHtml += `<td style="${tdStyle}">${formatLatency(segment.latency)}ms</td>`;
+        tableHtml += `<td style="${tdStyle}">${segment.carrier || 'N/A'}</td>`;
+        tableHtml += `<td style="${tdStyle}">${segment.cable_system || 'N/A'}</td>`;
+        tableHtml += `</tr>`;
       });
       
-      table += `${'='.repeat(70)}\n`;
-      table += `Total Latency: ${formatLatency(pathData.totalLatency)}ms\n\n`;
+      tableHtml += `</tbody></table>`;
+      tableHtml += `<p style="font-family: Arial, sans-serif; margin-bottom: 20px;"><strong>Total Latency:</strong> ${formatLatency(pathData.totalLatency)}ms</p>`;
       
-      return table;
+      return tableHtml;
     };
 
-    // Helper function to format pricing
+    // Helper function to format pricing in HTML
     const formatPricingSection = (pricing, pathType) => {
-      let section = `${pathType} Pricing:\n`;
-      section += `NRC: ${pricing.nrcCharge > 0 ? formatCurrency(pricing.nrcCharge, pricing.currency) : 'FREE'}\n`;
-      section += `MRC (Minimum): ${formatCurrency(pricing.minimumPrice, pricing.currency)}\n`;
-      section += `MRC (Suggested): ${formatCurrency(pricing.suggestedPrice, pricing.currency)}\n`;
-      section += `Currency: ${pricing.currency}\n`;
-      section += `Contract Term: ${pricing.contractTerm} months\n\n`;
-      return section;
+      let html = `<h4 style="color: #228B22; margin-top: 15px; margin-bottom: 10px; font-family: Arial, sans-serif;">${pathType} Pricing</h4>`;
+      html += `<table style="${tableStyle}">`;
+      html += `<tbody>`;
+      html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>NRC</strong></td><td style="${tdStyle}">${pricing.nrcCharge > 0 ? formatCurrency(pricing.nrcCharge, pricing.currency) : 'FREE'}</td></tr>`;
+      html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>MRC (Minimum)</strong></td><td style="${tdStyle}">${formatCurrency(pricing.minimumPrice, pricing.currency)}</td></tr>`;
+      html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>MRC (Suggested)</strong></td><td style="${tdStyle}">${formatCurrency(pricing.suggestedPrice, pricing.currency)}</td></tr>`;
+      html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>Currency</strong></td><td style="${tdStyle}">${pricing.currency}</td></tr>`;
+      html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>Contract Term</strong></td><td style="${tdStyle}">${pricing.contractTerm} months</td></tr>`;
+      html += `</tbody></table>`;
+      return html;
     };
+
+    // Build HTML email body
+    let emailBody = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family: Arial, sans-serif; padding: 20px;">`;
+    
+    // Header information
+    emailBody += `<h2 style="color: #2E5090; border-bottom: 2px solid #4472C4; padding-bottom: 10px;">Network Design Pricing Results</h2>`;
+    emailBody += `<table style="margin-bottom: 20px; font-family: Arial, sans-serif;">`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Customer Name:</td><td>${formData.customerName || 'Not Specified'}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Quote Request ID:</td><td>${formData.quoteRequestId || 'Not Specified'}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Source Location:</td><td>${getLocationDisplay(formData.source)}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Destination Location:</td><td>${getLocationDisplay(formData.destination)}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Bandwidth:</td><td>${formData.bandwidth} Mbps</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Quote Time & Date:</td><td>${new Date().toLocaleString()}</td></tr>`;
+    emailBody += `</table>`;
 
     // Generate content based on selected options
-    const hasMultipleSelections = Object.values(exportOptions).filter(Boolean).length > 1;
     const hasAllThreeSelected = exportOptions.primaryPricing && exportOptions.secondaryPricing && exportOptions.protectedPricing;
 
     // Primary Path
@@ -1785,49 +1820,70 @@ const NetworkDesignTool = () => {
       }
     }
 
-    // Cross Connect Information
-    if (crossConnectResults.source) {
-      emailBody += `Source Cross Connect${crossConnectResults.source.mandatory ? ' (Mandatory)' : ''}${crossConnectResults.source.customerOwned ? ' (Customer Owned)' : ''}\n`;
-      emailBody += `POP Name: ${crossConnectResults.source.locationCode} - ${crossConnectResults.source.datacenterName}\n`;
-      emailBody += `NRC: ${crossConnectResults.source.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.source.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.nrc, crossConnectResults.source.currency))}\n`;
-      emailBody += `MRC: ${crossConnectResults.source.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.source.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.mrc, crossConnectResults.source.currency))}\n`;
-      if (crossConnectResults.source.notes) {
-        emailBody += `Notes: ${crossConnectResults.source.notes}\n`;
+    // Cross Connect Information in HTML
+    if (crossConnectResults.source || crossConnectResults.destination) {
+      emailBody += `<h3 style="${headerStyle}">Cross Connect Information</h3>`;
+      
+      if (crossConnectResults.source) {
+        const srcTags = [];
+        if (crossConnectResults.source.mandatory) srcTags.push('Mandatory');
+        if (crossConnectResults.source.customerOwned) srcTags.push('Customer Owned');
+        const srcTagStr = srcTags.length > 0 ? ` (${srcTags.join(', ')})` : '';
+        
+        emailBody += `<h4 style="color: #666; margin-top: 15px; font-family: Arial, sans-serif;">Source Cross Connect${srcTagStr}</h4>`;
+        emailBody += `<table style="${tableStyle}">`;
+        emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>POP Name</strong></td><td style="${tdStyle}">${crossConnectResults.source.datacenterName} (${crossConnectResults.source.locationCode})</td></tr>`;
+        emailBody += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>NRC</strong></td><td style="${tdStyle}">${crossConnectResults.source.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.source.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.nrc, crossConnectResults.source.currency))}</td></tr>`;
+        emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>MRC</strong></td><td style="${tdStyle}">${crossConnectResults.source.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.source.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.source.mrc, crossConnectResults.source.currency))}</td></tr>`;
+        if (crossConnectResults.source.notes) {
+          emailBody += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>Notes</strong></td><td style="${tdStyle}">${crossConnectResults.source.notes}</td></tr>`;
+        }
+        if (!crossConnectResults.source.customerOwned) {
+          emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>Currency</strong></td><td style="${tdStyle}">${crossConnectResults.source.currency}</td></tr>`;
+        }
+        emailBody += `</table>`;
       }
-      if (!crossConnectResults.source.customerOwned) {
-        emailBody += `Currency: ${crossConnectResults.source.currency}\n`;
+
+      if (crossConnectResults.destination) {
+        const destTags = [];
+        if (crossConnectResults.destination.mandatory) destTags.push('Mandatory');
+        if (crossConnectResults.destination.customerOwned) destTags.push('Customer Owned');
+        const destTagStr = destTags.length > 0 ? ` (${destTags.join(', ')})` : '';
+        
+        emailBody += `<h4 style="color: #666; margin-top: 15px; font-family: Arial, sans-serif;">Destination Cross Connect${destTagStr}</h4>`;
+        emailBody += `<table style="${tableStyle}">`;
+        emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>POP Name</strong></td><td style="${tdStyle}">${crossConnectResults.destination.datacenterName} (${crossConnectResults.destination.locationCode})</td></tr>`;
+        emailBody += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>NRC</strong></td><td style="${tdStyle}">${crossConnectResults.destination.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.destination.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.nrc, crossConnectResults.destination.currency))}</td></tr>`;
+        emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>MRC</strong></td><td style="${tdStyle}">${crossConnectResults.destination.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.destination.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.mrc, crossConnectResults.destination.currency))}</td></tr>`;
+        if (crossConnectResults.destination.notes) {
+          emailBody += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>Notes</strong></td><td style="${tdStyle}">${crossConnectResults.destination.notes}</td></tr>`;
+        }
+        if (!crossConnectResults.destination.customerOwned) {
+          emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>Currency</strong></td><td style="${tdStyle}">${crossConnectResults.destination.currency}</td></tr>`;
+        }
+        emailBody += `</table>`;
       }
-      emailBody += `\n`;
     }
 
-    if (crossConnectResults.destination) {
-      emailBody += `Destination Cross Connect${crossConnectResults.destination.mandatory ? ' (Mandatory)' : ''}${crossConnectResults.destination.customerOwned ? ' (Customer Owned)' : ''}\n`;
-      emailBody += `POP Name: ${crossConnectResults.destination.locationCode} - ${crossConnectResults.destination.datacenterName}\n`;
-      emailBody += `NRC: ${crossConnectResults.destination.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.destination.nrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.nrc, crossConnectResults.destination.currency))}\n`;
-      emailBody += `MRC: ${crossConnectResults.destination.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (crossConnectResults.destination.mrc === 'POA' ? 'POA' : formatCurrency(crossConnectResults.destination.mrc, crossConnectResults.destination.currency))}\n`;
-      if (crossConnectResults.destination.notes) {
-        emailBody += `Notes: ${crossConnectResults.destination.notes}\n`;
-      }
-      if (!crossConnectResults.destination.customerOwned) {
-        emailBody += `Currency: ${crossConnectResults.destination.currency}\n`;
-      }
-      emailBody += `\n`;
-    }
+    // Pricing Disclaimer in HTML
+    emailBody += `<hr style="margin-top: 30px; margin-bottom: 20px; border: none; border-top: 1px solid #ccc;">`;
+    emailBody += `<div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; font-family: Arial, sans-serif;">`;
+    emailBody += `<h3 style="color: #333; margin-top: 0;">PRICING DISCLAIMER</h3>`;
+    emailBody += `<ul style="color: #444; line-height: 1.6;">`;
+    emailBody += `<li>This quotation is valid for 90 days.</li>`;
+    emailBody += `<li>All Pricing is subject to IPC standard terms and conditions.</li>`;
+    emailBody += `<li>All Pricing is budgetary and subject to survey and facility/feasibility checks.</li>`;
+    emailBody += `<li>All Pricing is exclusive of any applicable Taxes and Surcharges.</li>`;
+    emailBody += `<li>Any additional 3rd Party costs incurred on order of the service will be chargeable to the customer, including but not limited to cross connects, additional cabling, out of hours charges, etc</li>`;
+    emailBody += `<li>Unless otherwise stated any additional costs incurred for out of hours work will be chargeable to the customer.</li>`;
+    emailBody += `<li>Customer must provide all necessary rack space and power supply.</li>`;
+    emailBody += `<li>Pricing is for connectivity only, and does not include any fees associated with data feeds unless specified otherwise within the quotation.</li>`;
+    emailBody += `<li>IPC reserves the right to correct any computational errors in this quote.</li>`;
+    emailBody += `<li>Where Pricing is associated with a network or multi circuit design, individual element pricing is indicative, and cannot be ordered as individual elements.</li>`;
+    emailBody += `</ul>`;
+    emailBody += `</div>`;
 
-    // Pricing Disclaimer
-    emailBody += `${'='.repeat(80)}\n`;
-    emailBody += `PRICING DISCLAIMER\n`;
-    emailBody += `${'='.repeat(80)}\n`;
-    emailBody += `This quotation is valid for 90 days.\n`;
-    emailBody += `All Pricing is subject to IPC standard terms and conditions.\n`;
-    emailBody += `All Pricing is budgetary and subject to survey and facility/feasibility checks.\n`;
-    emailBody += `All Pricing is exclusive of any applicable Taxes and Surcharges.\n`;
-    emailBody += `Any additional 3rd Party costs incurred on order of the service will be chargeable to the customer, including but not limited to cross connects, additional cabling, out of hours charges, etc\n`;
-    emailBody += `Unless otherwise stated any additional costs incurred for out of hours work will be chargeable to the customer.\n`;
-    emailBody += `Customer must provide all necessary rack space and power supply.\n`;
-    emailBody += `Pricing is for connectivity only, and does not include any fees associated with data feeds unless specified otherwise within the quotation.\n`;
-    emailBody += `IPC reserves the right to correct any computational errors in this quote.\n`;
-    emailBody += `Where Pricing is associated with a network or multi circuit design, individual element pricing is indicative, and cannot be ordered as individual elements.\n`;
+    emailBody += `</body></html>`;
 
     return emailBody;
   };
@@ -1865,7 +1921,7 @@ const NetworkDesignTool = () => {
 
   const handleDownloadEmailFile = (emailBody, subject) => {
     try {
-      // Create proper .eml email file content
+      // Create proper .eml email file content with HTML
       const timestamp = new Date().toISOString();
       const emailContent = [
         `From: Network Design Tool <noreply@ipc.com>`,
@@ -1873,7 +1929,7 @@ const NetworkDesignTool = () => {
         `Subject: ${subject}`,
         `Date: ${timestamp}`,
         `MIME-Version: 1.0`,
-        `Content-Type: text/plain; charset=utf-8`,
+        `Content-Type: text/html; charset=utf-8`,
         `Content-Transfer-Encoding: 8bit`,
         ``,
         emailBody
@@ -2365,177 +2421,145 @@ const NetworkDesignTool = () => {
   };
 
   const generatePricingLogEmailBody = (params, results) => {
-    let emailBody = '';
-    
-    // Header information - always shown
-    emailBody += `Customer Name: ${params.customerName || params.customer_name || 'Not Specified'}\n`;
-    emailBody += `Quote Request ID: ${params.quoteRequestId || params.quote_request_id || 'Not Specified'}\n`;
-    emailBody += `Source Location: ${params.source || 'Not Specified'}\n`;
-    emailBody += `Destination Location: ${params.destination || 'Not Specified'}\n`;
-    emailBody += `Bandwidth: ${params.bandwidth || 'Not Specified'} Mbps\n`;
-    emailBody += `Quote Time & Date: ${new Date().toLocaleString()}\n\n`;
+    // Helper function to get location display as "Datacenter Name (POP_CODE)"
+    const getLocationDisplay = (locationCode) => {
+      const location = locations.find(loc => loc.location_code === locationCode);
+      if (location && location.datacenter_name) {
+        return `${location.datacenter_name} (${locationCode})`;
+      }
+      return locationCode || 'Not Specified';
+    };
 
-    // Helper function to generate route table from log data with better structure mapping
+    // Common HTML styles
+    const tableStyle = 'border-collapse: collapse; width: 100%; margin-bottom: 20px; font-family: Arial, sans-serif;';
+    const thStyle = 'border: 1px solid #ddd; padding: 10px; background-color: #4472C4; color: white; text-align: left; font-weight: bold;';
+    const tdStyle = 'border: 1px solid #ddd; padding: 8px; text-align: left;';
+    const headerStyle = 'color: #2E5090; margin-top: 20px; margin-bottom: 10px; font-family: Arial, sans-serif;';
+
+    // Helper function to generate route table from log data in HTML
     const generateRouteTableFromLog = (pathData, pathType) => {
-      // Try different possible route data structures
-      const routeData = pathData?.route || pathData?.routes || pathData?.path;
+      const routeData = pathData?.route || pathData?.routes || pathData?.path || pathData?.hops;
       
       if (!routeData || (!Array.isArray(routeData) && !routeData.length)) {
-        // Try alternative data structure
-        if (pathData?.hops && Array.isArray(pathData.hops)) {
-          const routes = pathData.hops;
-          let table = `${pathType} Route:\n`;
-          table += `Circuit ID\tRoute Segment\tLatency\tCarrier\tCable System\n`;
-          table += `${'='.repeat(70)}\n`;
-          
-          routes.forEach(segment => {
-            const circuitId = segment.circuit_id || segment.circuitId || 'N/A';
-            const from = segment.from || segment.location_a || segment.source || 'N/A';
-            const to = segment.to || segment.location_b || segment.destination || 'N/A';
-            const latency = segment.latency || 0;
-            const carrier = segment.carrier || segment.underlying_carrier || 'N/A';
-            const cableSystem = segment.cable_system || segment.cableSystem || 'N/A';
-            table += `${circuitId}\t${from} → ${to}\t${formatLatency(latency)}ms\t${carrier}\t${cableSystem}\n`;
-          });
-          
-          table += `${'='.repeat(70)}\n`;
-          table += `Total Latency: ${formatLatency(pathData.totalLatency || pathData.total_latency || 0)}ms\n\n`;
-          return table;
-        }
         return '';
       }
       
-      let table = `${pathType} Route:\n`;
-      table += `Circuit ID\tRoute Segment\tLatency\tCarrier\tCable System\n`;
-      table += `${'='.repeat(70)}\n`;
-      
       const routes = Array.isArray(routeData) ? routeData : [routeData];
-      routes.forEach(segment => {
-        const circuitId = segment.circuit_id || segment.circuitId || 'N/A';
+      
+      let tableHtml = `<h3 style="${headerStyle}">${pathType} Route</h3>`;
+      tableHtml += `<table style="${tableStyle}">`;
+      tableHtml += `<thead><tr>`;
+      tableHtml += `<th style="${thStyle}">Circuit ID</th>`;
+      tableHtml += `<th style="${thStyle}">Route Segment</th>`;
+      tableHtml += `<th style="${thStyle}">Latency</th>`;
+      tableHtml += `<th style="${thStyle}">Carrier</th>`;
+      tableHtml += `<th style="${thStyle}">Cable System</th>`;
+      tableHtml += `</tr></thead>`;
+      tableHtml += `<tbody>`;
+      
+      routes.forEach((segment, index) => {
+        const rowBg = index % 2 === 0 ? '#ffffff' : '#f9f9f9';
+        const circuitId = segment.circuit_id || segment.circuitId || segment.circuit || 'N/A';
         const from = segment.from || segment.location_a || segment.source || 'N/A';
         const to = segment.to || segment.location_b || segment.destination || 'N/A';
+        const location = segment.location || `${from} → ${to}`;
         const latency = segment.latency || 0;
         const carrier = segment.carrier || segment.underlying_carrier || 'N/A';
         const cableSystem = segment.cable_system || segment.cableSystem || 'N/A';
-        table += `${circuitId}\t${from} → ${to}\t${formatLatency(latency)}ms\t${carrier}\t${cableSystem}\n`;
+        
+        tableHtml += `<tr style="background-color: ${rowBg};">`;
+        tableHtml += `<td style="${tdStyle}">${circuitId}</td>`;
+        tableHtml += `<td style="${tdStyle}">${location}</td>`;
+        tableHtml += `<td style="${tdStyle}">${formatLatency(latency)}ms</td>`;
+        tableHtml += `<td style="${tdStyle}">${carrier}</td>`;
+        tableHtml += `<td style="${tdStyle}">${cableSystem}</td>`;
+        tableHtml += `</tr>`;
       });
       
-      table += `${'='.repeat(70)}\n`;
-      table += `Total Latency: ${formatLatency(pathData.totalLatency || pathData.total_latency || 0)}ms\n\n`;
+      tableHtml += `</tbody></table>`;
+      tableHtml += `<p style="font-family: Arial, sans-serif; margin-bottom: 20px;"><strong>Total Latency:</strong> ${formatLatency(pathData.totalLatency || pathData.total_latency || 0)}ms</p>`;
       
-      return table;
+      return tableHtml;
     };
 
-    // Helper function to format pricing section from log data
+    // Helper function to format pricing section from log data in HTML
     const formatPricingSectionFromLog = (pricing, pathType) => {
       if (!pricing) return '';
       
-      let section = `${pathType} Pricing:\n`;
-      section += `NRC: ${pricing.nrcCharge > 0 ? formatCurrency(pricing.nrcCharge, pricing.currency) : 'FREE'}\n`;
-      section += `MRC (Minimum): ${formatCurrency(pricing.minimumPrice, pricing.currency)}\n`;
-      section += `MRC (Suggested): ${formatCurrency(pricing.suggestedPrice, pricing.currency)}\n`;
-      section += `Currency: ${pricing.currency}\n`;
-      section += `Contract Term: ${pricing.contractTerm} months\n`;
-      section += `Bandwidth: ${pricing.bandwidth} Mbps\n`;
-      
-      // Margins removed - not included in exports per user requirement
+      let html = `<h4 style="color: #228B22; margin-top: 15px; margin-bottom: 10px; font-family: Arial, sans-serif;">${pathType} Pricing</h4>`;
+      html += `<table style="${tableStyle}">`;
+      html += `<tbody>`;
+      html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>NRC</strong></td><td style="${tdStyle}">${pricing.nrcCharge > 0 ? formatCurrency(pricing.nrcCharge, pricing.currency) : 'FREE'}</td></tr>`;
+      html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>MRC (Minimum)</strong></td><td style="${tdStyle}">${formatCurrency(pricing.minimumPrice, pricing.currency)}</td></tr>`;
+      html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>MRC (Suggested)</strong></td><td style="${tdStyle}">${formatCurrency(pricing.suggestedPrice, pricing.currency)}</td></tr>`;
+      html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>Currency</strong></td><td style="${tdStyle}">${pricing.currency}</td></tr>`;
+      html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>Contract Term</strong></td><td style="${tdStyle}">${pricing.contractTerm} months</td></tr>`;
+      html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>Bandwidth</strong></td><td style="${tdStyle}">${pricing.bandwidth} Mbps</td></tr>`;
+      html += `</tbody></table>`;
       
       // Add promo pricing information if used
       if (pricing.promoPricing && pricing.promoPricing.used) {
-        section += `\nPromo Pricing Applied:\n`;
-        section += `Rule: ${pricing.promoPricing.ruleName} (ID: ${pricing.promoPricing.ruleId})\n`;
-        section += `Original Price: ${formatCurrency(pricing.promoPricing.originalPriceUSD, 'USD')}\n`;
-        section += `Price Field: ${pricing.promoPricing.priceField}\n`;
+        html += `<div style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; margin-top: 10px;">`;
+        html += `<p style="margin: 0; font-weight: bold; color: #2e7d32;">Promo Pricing Applied</p>`;
+        html += `<p style="margin: 5px 0 0 0; font-size: 0.9em;">Rule: ${pricing.promoPricing.ruleName} (ID: ${pricing.promoPricing.ruleId})</p>`;
+        html += `</div>`;
       }
       
-      section += `\n`;
-      return section;
+      return html;
     };
 
-    console.log('Export Debug - Results structure:', results); // Debug log
-
-    // Process all available pricing results from the log with improved data extraction
+    // Build HTML email body
+    let emailBody = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family: Arial, sans-serif; padding: 20px;">`;
     
+    // Header information
+    emailBody += `<h2 style="color: #2E5090; border-bottom: 2px solid #4472C4; padding-bottom: 10px;">Network Design Pricing Results (from Log)</h2>`;
+    emailBody += `<table style="margin-bottom: 20px; font-family: Arial, sans-serif;">`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Customer Name:</td><td>${params.customerName || params.customer_name || 'Not Specified'}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Quote Request ID:</td><td>${params.quoteRequestId || params.quote_request_id || 'Not Specified'}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Source Location:</td><td>${getLocationDisplay(params.source)}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Destination Location:</td><td>${getLocationDisplay(params.destination)}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Bandwidth:</td><td>${params.bandwidth || 'Not Specified'} Mbps</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Quote Time & Date:</td><td>${new Date().toLocaleString()}</td></tr>`;
+    emailBody += `</table>`;
+
+    console.log('Export Debug - Results structure:', results);
+
     // Handle "individual" array structure (new format)
     if (results && results.individual && Array.isArray(results.individual)) {
-      console.log('Export Debug - Found individual array:', results.individual);
-      
       results.individual.forEach((result, index) => {
         const pathType = result.pathType === 'primary' ? 'Primary' : 
                         result.pathType === 'protection' ? 'Secondary' : 
                         `Path ${index + 1}`;
         
-        console.log(`Export Debug - Processing ${pathType}:`, result);
-        
-        // Generate route table - check if we have detailed route info
-        if (result.pricing && result.pricing.detailedCalculations && result.pricing.detailedCalculations.allocatedCostBreakdown && result.pricing.detailedCalculations.allocatedCostBreakdown.segments) {
-          // Use detailed calculations which have all circuit info
+        // Generate route table
+        if (result.pricing?.detailedCalculations?.allocatedCostBreakdown?.segments) {
           const segments = result.pricing.detailedCalculations.allocatedCostBreakdown.segments;
-          let table = `${pathType} Route:\n`;
-          table += `Circuit ID\tRoute Segment\tLatency\tCarrier\tCable System\n`;
-          table += `${'='.repeat(70)}\n`;
-          
-          segments.forEach(segment => {
-            const circuitId = segment.circuit || 'N/A';
-            const location = segment.location || 'N/A';
-            const latency = segment.latency || 0;
-            const carrier = segment.carrier || 'N/A';
-            const cableSystem = segment.cable_system || segment.cableSystem || 'N/A';
-            table += `${circuitId}\t${location}\t${formatLatency(latency)}ms\t${carrier}\t${cableSystem}\n`;
-          });
-          
-          table += `${'='.repeat(70)}\n`;
-          table += `Total Latency: ${formatLatency(result.totalLatency || 0)}ms\n`;
-          table += `Hops: ${result.hops || segments.length}\n\n`;
-          
-          emailBody += table;
+          emailBody += generateRouteTableFromLog({ route: segments, totalLatency: result.totalLatency }, pathType);
         } else if (result.path && Array.isArray(result.path)) {
-          // Fallback to path array if detailed calculations not available
-          let table = `${pathType} Route:\n`;
-          table += `Route Segment\tLatency\n`;
-          table += `${'='.repeat(70)}\n`;
-          
-          // Convert path array to route segments
-          for (let i = 0; i < result.path.length - 1; i++) {
-            const from = result.path[i];
-            const to = result.path[i + 1];
-            table += `${from} → ${to}\t${formatLatency(result.totalLatency || 0)}ms\n`;
-          }
-          
-          table += `${'='.repeat(70)}\n`;
-          table += `Total Latency: ${formatLatency(result.totalLatency || 0)}ms\n`;
-          table += `Hops: ${result.hops || 'N/A'}\n\n`;
-          
-          emailBody += table;
+          emailBody += `<h3 style="${headerStyle}">${pathType} Route</h3>`;
+          emailBody += `<p style="font-family: Arial, sans-serif;">${result.path.join(' → ')}</p>`;
+          emailBody += `<p style="font-family: Arial, sans-serif;"><strong>Total Latency:</strong> ${formatLatency(result.totalLatency || 0)}ms | <strong>Hops:</strong> ${result.hops || 'N/A'}</p>`;
         }
         
-        // Add pricing information
         if (result.pricing) {
           emailBody += formatPricingSectionFromLog(result.pricing, pathType);
         }
       });
     }
-    
     // Handle legacy "results" or "paths" array structure
     else if (results && (results.results || results.paths)) {
       const pathResults = results.results || results.paths || [];
-      
-      // Find primary and protection paths
       const primaryResult = pathResults.find(r => r.pathType === 'primary' || r.type === 'primary');
       const protectionResult = pathResults.find(r => r.pathType === 'protection' || r.type === 'protection');
       
-      // Add primary path and pricing
       if (primaryResult) {
-        console.log('Export Debug - Primary result:', primaryResult); // Debug log
         emailBody += generateRouteTableFromLog(primaryResult, 'Primary');
         if (primaryResult.pricing) {
           emailBody += formatPricingSectionFromLog(primaryResult.pricing, 'Primary');
         }
       }
       
-      // Add protection/secondary path and pricing
       if (protectionResult) {
-        console.log('Export Debug - Protection result:', protectionResult); // Debug log
         emailBody += generateRouteTableFromLog(protectionResult, 'Secondary');
         if (protectionResult.pricing) {
           emailBody += formatPricingSectionFromLog(protectionResult.pricing, 'Secondary');
@@ -2543,71 +2567,81 @@ const NetworkDesignTool = () => {
       }
     }
 
-    // Also check for search results structure (when exporting from path search logs)
-    if (results.searchResults && results.searchResults.primary) {
-      const primaryPath = results.searchResults.primary;
-      emailBody += generateRouteTableFromLog(primaryPath, 'Primary');
+    // Check for search results structure
+    if (results.searchResults?.primary) {
+      emailBody += generateRouteTableFromLog(results.searchResults.primary, 'Primary');
+    }
+    if (results.searchResults?.protection) {
+      emailBody += generateRouteTableFromLog(results.searchResults.protection, 'Secondary');
     }
 
-    if (results.searchResults && results.searchResults.protection) {
-      const protectionPath = results.searchResults.protection;
-      emailBody += generateRouteTableFromLog(protectionPath, 'Secondary');
-    }
-
-    // Handle protection pricing separately if it exists
-    if (results.protection && results.protection.pricing) {
+    // Handle protection pricing
+    if (results.protection?.pricing) {
       emailBody += formatPricingSectionFromLog(results.protection.pricing, 'Protected Service');
     }
-
-    // Add protected service pricing if available
     if (results.protectionPricing) {
       emailBody += formatPricingSectionFromLog(results.protectionPricing, 'Protected Service');
     }
 
-    // Handle cross connect information from multiple possible locations
+    // Handle cross connect information in HTML
     const logCrossConnect = params.crossConnect || results.crossConnect || {};
-    if (logCrossConnect.source) {
-      emailBody += `Source Cross Connect${logCrossConnect.source.mandatory ? ' (Mandatory)' : ''}${logCrossConnect.source.customerOwned ? ' (Customer Owned)' : ''}\n`;
-      emailBody += `POP Name: ${logCrossConnect.source.locationCode} - ${logCrossConnect.source.datacenterName}\n`;
-      emailBody += `NRC: ${logCrossConnect.source.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.source.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.nrc, logCrossConnect.source.currency))}\n`;
-      emailBody += `MRC: ${logCrossConnect.source.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.source.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.mrc, logCrossConnect.source.currency))}\n`;
-      if (logCrossConnect.source.notes) {
-        emailBody += `Notes: ${logCrossConnect.source.notes}\n`;
+    if (logCrossConnect.source || logCrossConnect.destination) {
+      emailBody += `<h3 style="${headerStyle}">Cross Connect Information</h3>`;
+      
+      if (logCrossConnect.source) {
+        const srcTags = [];
+        if (logCrossConnect.source.mandatory) srcTags.push('Mandatory');
+        if (logCrossConnect.source.customerOwned) srcTags.push('Customer Owned');
+        const srcTagStr = srcTags.length > 0 ? ` (${srcTags.join(', ')})` : '';
+        
+        emailBody += `<h4 style="color: #666; margin-top: 15px; font-family: Arial, sans-serif;">Source Cross Connect${srcTagStr}</h4>`;
+        emailBody += `<table style="${tableStyle}">`;
+        emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>POP Name</strong></td><td style="${tdStyle}">${logCrossConnect.source.datacenterName} (${logCrossConnect.source.locationCode})</td></tr>`;
+        emailBody += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>NRC</strong></td><td style="${tdStyle}">${logCrossConnect.source.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.source.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.nrc, logCrossConnect.source.currency))}</td></tr>`;
+        emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>MRC</strong></td><td style="${tdStyle}">${logCrossConnect.source.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.source.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.source.mrc, logCrossConnect.source.currency))}</td></tr>`;
+        if (logCrossConnect.source.notes) {
+          emailBody += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>Notes</strong></td><td style="${tdStyle}">${logCrossConnect.source.notes}</td></tr>`;
+        }
+        emailBody += `</table>`;
       }
-      if (!logCrossConnect.source.customerOwned) {
-        emailBody += `Currency: ${logCrossConnect.source.currency}\n`;
+
+      if (logCrossConnect.destination) {
+        const destTags = [];
+        if (logCrossConnect.destination.mandatory) destTags.push('Mandatory');
+        if (logCrossConnect.destination.customerOwned) destTags.push('Customer Owned');
+        const destTagStr = destTags.length > 0 ? ` (${destTags.join(', ')})` : '';
+        
+        emailBody += `<h4 style="color: #666; margin-top: 15px; font-family: Arial, sans-serif;">Destination Cross Connect${destTagStr}</h4>`;
+        emailBody += `<table style="${tableStyle}">`;
+        emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>POP Name</strong></td><td style="${tdStyle}">${logCrossConnect.destination.datacenterName} (${logCrossConnect.destination.locationCode})</td></tr>`;
+        emailBody += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>NRC</strong></td><td style="${tdStyle}">${logCrossConnect.destination.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.destination.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.nrc, logCrossConnect.destination.currency))}</td></tr>`;
+        emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}"><strong>MRC</strong></td><td style="${tdStyle}">${logCrossConnect.destination.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.destination.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.mrc, logCrossConnect.destination.currency))}</td></tr>`;
+        if (logCrossConnect.destination.notes) {
+          emailBody += `<tr style="background-color: #ffffff;"><td style="${tdStyle}"><strong>Notes</strong></td><td style="${tdStyle}">${logCrossConnect.destination.notes}</td></tr>`;
+        }
+        emailBody += `</table>`;
       }
-      emailBody += `\n`;
     }
 
-    if (logCrossConnect.destination) {
-      emailBody += `Destination Cross Connect${logCrossConnect.destination.mandatory ? ' (Mandatory)' : ''}${logCrossConnect.destination.customerOwned ? ' (Customer Owned)' : ''}\n`;
-      emailBody += `POP Name: ${logCrossConnect.destination.locationCode} - ${logCrossConnect.destination.datacenterName}\n`;
-      emailBody += `NRC: ${logCrossConnect.destination.nrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.destination.nrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.nrc, logCrossConnect.destination.currency))}\n`;
-      emailBody += `MRC: ${logCrossConnect.destination.mrc === 'Customer must provide X/C' ? 'Customer must provide X/C' : (logCrossConnect.destination.mrc === 'POA' ? 'POA' : formatCurrency(logCrossConnect.destination.mrc, logCrossConnect.destination.currency))}\n`;
-      if (logCrossConnect.destination.notes) {
-        emailBody += `Notes: ${logCrossConnect.destination.notes}\n`;
-      }
-      if (!logCrossConnect.destination.customerOwned) {
-        emailBody += `Currency: ${logCrossConnect.destination.currency}\n`;
-      }
-      emailBody += `\n`;
-    }
+    // Pricing Disclaimer in HTML
+    emailBody += `<hr style="margin-top: 30px; margin-bottom: 20px; border: none; border-top: 1px solid #ccc;">`;
+    emailBody += `<div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; font-family: Arial, sans-serif;">`;
+    emailBody += `<h3 style="color: #333; margin-top: 0;">PRICING DISCLAIMER</h3>`;
+    emailBody += `<ul style="color: #444; line-height: 1.6;">`;
+    emailBody += `<li>This quotation is valid for 90 days.</li>`;
+    emailBody += `<li>All Pricing is subject to IPC standard terms and conditions.</li>`;
+    emailBody += `<li>All Pricing is budgetary and subject to survey and facility/feasibility checks.</li>`;
+    emailBody += `<li>All Pricing is exclusive of any applicable Taxes and Surcharges.</li>`;
+    emailBody += `<li>Any additional 3rd Party costs incurred on order of the service will be chargeable to the customer, including but not limited to cross connects, additional cabling, out of hours charges, etc</li>`;
+    emailBody += `<li>Unless otherwise stated any additional costs incurred for out of hours work will be chargeable to the customer.</li>`;
+    emailBody += `<li>Customer must provide all necessary rack space and power supply.</li>`;
+    emailBody += `<li>Pricing is for connectivity only, and does not include any fees associated with data feeds unless specified otherwise within the quotation.</li>`;
+    emailBody += `<li>IPC reserves the right to correct any computational errors in this quote.</li>`;
+    emailBody += `<li>Where Pricing is associated with a network or multi circuit design, individual element pricing is indicative, and cannot be ordered as individual elements.</li>`;
+    emailBody += `</ul>`;
+    emailBody += `</div>`;
 
-    // Pricing Disclaimer
-    emailBody += `${'='.repeat(80)}\n`;
-    emailBody += `PRICING DISCLAIMER\n`;
-    emailBody += `${'='.repeat(80)}\n`;
-    emailBody += `This quotation is valid for 90 days.\n`;
-    emailBody += `All Pricing is subject to IPC standard terms and conditions.\n`;
-    emailBody += `All Pricing is budgetary and subject to survey and facility/feasibility checks.\n`;
-    emailBody += `All Pricing is exclusive of any applicable Taxes and Surcharges.\n`;
-    emailBody += `Any additional 3rd Party costs incurred on order of the service will be chargeable to the customer, including but not limited to cross connects, additional cabling, out of hours charges, etc\n`;
-    emailBody += `Unless otherwise stated any additional costs incurred for out of hours work will be chargeable to the customer.\n`;
-    emailBody += `Customer must provide all necessary rack space and power supply.\n`;
-    emailBody += `Pricing is for connectivity only, and does not include any fees associated with data feeds unless specified otherwise within the quotation.\n`;
-    emailBody += `IPC reserves the right to correct any computational errors in this quote.\n`;
-    emailBody += `Where Pricing is associated with a network or multi circuit design, individual element pricing is indicative, and cannot be ordered as individual elements.\n`;
+    emailBody += `</body></html>`;
 
     return emailBody;
   };

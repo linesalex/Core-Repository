@@ -41,12 +41,12 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
   const [success, setSuccess] = useState(null);
   const [expandedAccordion, setExpandedAccordion] = useState(savedState?.searchResults ? 'results' : 'search');
 
-  // Promo pricing state
+  // Promo pricing state - restore from savedState if available
   const [promoRules, setPromoRules] = useState([]);
   const [promoLoading, setPromoLoading] = useState(false);
   const [promoLocationFilter, setPromoLocationFilter] = useState('');
-  const [primaryPromo, setPrimaryPromo] = useState(null); // Promo for primary path
-  const [secondaryPromo, setSecondaryPromo] = useState(null); // Promo for secondary path
+  const [primaryPromo, setPrimaryPromo] = useState(savedState?.primaryPromo || null); // Promo for primary path
+  const [secondaryPromo, setSecondaryPromo] = useState(savedState?.secondaryPromo || null); // Promo for secondary path
   const [expandedPromoRows, setExpandedPromoRows] = useState({});
   
   // Tab state
@@ -60,16 +60,18 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     loadPromoRules();
   }, []);
 
-  // Save state to parent whenever key state changes
+  // Save state to parent whenever key state changes (including promo pricing)
   useEffect(() => {
     if (onStateChange) {
       onStateChange({
         formData,
         searchResults,
-        locations
+        locations,
+        primaryPromo,
+        secondaryPromo
       });
     }
-  }, [formData, searchResults, locations, onStateChange]);
+  }, [formData, searchResults, locations, primaryPromo, secondaryPromo, onStateChange]);
 
   const loadLocations = async () => {
     try {
@@ -289,38 +291,91 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     return Math.round(latency * 1000) / 1000; // Round to 3 decimal places
   };
 
+  // Helper function to get location display as "Datacenter Name (POP_CODE)"
+  const getLocationDisplay = (locationCode) => {
+    const location = locations.find(loc => loc.location_code === locationCode);
+    if (location && location.datacenter_name) {
+      return `${location.datacenter_name} (${locationCode})`;
+    }
+    return locationCode;
+  };
+
   const handleExport = () => {
     if (!searchResults) return;
 
     try {
-      let emailBody = '';
-      
-      // Header information
-      emailBody += `Route Finder Results\n`;
-      emailBody += `Source Location: ${formData.source}\n`;
-      emailBody += `Destination Location: ${formData.destination}\n`;
-      emailBody += `Bandwidth: ${formData.bandwidth} Mbps\n`;
-      emailBody += `Route Mode: ${formData.routeMode === 'fastest' ? 'Fastest Route' : 'Standard Route'}\n`;
-      emailBody += `Search Date: ${new Date().toLocaleString()}\n\n`;
+      // Common table styles for HTML email
+      const tableStyle = 'border-collapse: collapse; width: 100%; margin-bottom: 20px; font-family: Arial, sans-serif;';
+      const thStyle = 'border: 1px solid #ddd; padding: 10px; background-color: #4472C4; color: white; text-align: left; font-weight: bold;';
+      const tdStyle = 'border: 1px solid #ddd; padding: 8px; text-align: left;';
+      const headerStyle = 'color: #2E5090; margin-top: 20px; margin-bottom: 10px; font-family: Arial, sans-serif;';
+      const promoHeaderStyle = 'color: #228B22; margin-top: 15px; margin-bottom: 10px; font-family: Arial, sans-serif;';
+      const noPromoStyle = 'color: #666; font-style: italic; margin-bottom: 20px; font-family: Arial, sans-serif;';
 
-      // Helper function to generate route table
+      // Helper function to generate route table in HTML
       const generateRouteTable = (pathData, pathType) => {
         if (!pathData || !pathData.route) return '';
         
-        let table = `${pathType} Route:\n`;
-        table += `Circuit ID\tRoute Segment\tLatency\tCable System\n`;
-        table += `${'='.repeat(70)}\n`;
+        let tableHtml = `<h3 style="${headerStyle}">${pathType} Route</h3>`;
+        tableHtml += `<table style="${tableStyle}">`;
+        tableHtml += `<thead><tr>`;
+        tableHtml += `<th style="${thStyle}">Circuit ID</th>`;
+        tableHtml += `<th style="${thStyle}">Route Segment</th>`;
+        tableHtml += `<th style="${thStyle}">Latency</th>`;
+        tableHtml += `<th style="${thStyle}">Cable System</th>`;
+        tableHtml += `</tr></thead>`;
+        tableHtml += `<tbody>`;
         
-        pathData.route.forEach(segment => {
-          table += `${segment.circuit_id || 'N/A'}\t${segment.from} → ${segment.to}\t${formatLatency(segment.latency)}ms\t${segment.cable_system || 'N/A'}\n`;
+        pathData.route.forEach((segment, index) => {
+          const rowBg = index % 2 === 0 ? '#ffffff' : '#f9f9f9';
+          tableHtml += `<tr style="background-color: ${rowBg};">`;
+          tableHtml += `<td style="${tdStyle}">${segment.circuit_id || 'N/A'}</td>`;
+          tableHtml += `<td style="${tdStyle}">${segment.from} → ${segment.to}</td>`;
+          tableHtml += `<td style="${tdStyle}">${formatLatency(segment.latency)}ms</td>`;
+          tableHtml += `<td style="${tdStyle}">${segment.cable_system || 'N/A'}</td>`;
+          tableHtml += `</tr>`;
         });
         
-        table += `${'='.repeat(70)}\n`;
-        table += `Total Latency: ${formatLatency(pathData.totalLatency)}ms RTD\n`;
-        table += `Total Hops: ${pathData.hops}\n\n`;
+        tableHtml += `</tbody></table>`;
+        tableHtml += `<p style="font-family: Arial, sans-serif; margin-bottom: 5px;"><strong>Total Latency:</strong> ${formatLatency(pathData.totalLatency)}ms RTD</p>`;
+        tableHtml += `<p style="font-family: Arial, sans-serif; margin-bottom: 20px;"><strong>Total Hops:</strong> ${pathData.hops}</p>`;
         
-        return table;
+        return tableHtml;
       };
+
+      // Helper function to generate promo pricing table
+      const generatePromoPricingTable = (promo, pathType) => {
+        if (!promo) return '';
+        
+        let html = `<h4 style="${promoHeaderStyle}">${pathType} - PROMO PRICING AVAILABLE</h4>`;
+        html += `<p style="font-family: Arial, sans-serif; font-size: 13px; color: #555; margin-top: 0; margin-bottom: 10px;"><strong>12 Month Contract - $1,000 NRC Applies to each option</strong></p>`;
+        html += `<table style="${tableStyle}">`;
+        html += `<thead><tr>`;
+        html += `<th style="${thStyle}">Bandwidth</th>`;
+        html += `<th style="${thStyle}">Price (USD/month)</th>`;
+        html += `</tr></thead>`;
+        html += `<tbody>`;
+        html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}">10 Mbps</td><td style="${tdStyle}">${formatCurrency(promo.price_10mb)}</td></tr>`;
+        html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}">100 Mbps</td><td style="${tdStyle}">${formatCurrency(promo.price_100mb)}</td></tr>`;
+        html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}">1000 Mbps</td><td style="${tdStyle}">${formatCurrency(promo.price_1000mb)}</td></tr>`;
+        html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}">10 Gbps</td><td style="${tdStyle}">${formatCurrency(promo.price_10gb)}</td></tr>`;
+        html += `</tbody></table>`;
+        
+        return html;
+      };
+
+      // Build HTML email body
+      let emailBody = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family: Arial, sans-serif; padding: 20px;">`;
+      
+      // Header information
+      emailBody += `<h2 style="color: #2E5090; border-bottom: 2px solid #4472C4; padding-bottom: 10px;">Route Finder Results</h2>`;
+      emailBody += `<table style="margin-bottom: 20px; font-family: Arial, sans-serif;">`;
+      emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Source Location:</td><td>${getLocationDisplay(formData.source)}</td></tr>`;
+      emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Destination Location:</td><td>${getLocationDisplay(formData.destination)}</td></tr>`;
+      emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Bandwidth:</td><td>${formData.bandwidth || 'Not specified'} Mbps</td></tr>`;
+      emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Route Mode:</td><td>${formData.routeMode === 'fastest' ? 'Fastest Route' : 'Standard Route'}</td></tr>`;
+      emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Search Date:</td><td>${new Date().toLocaleString()}</td></tr>`;
+      emailBody += `</table>`;
 
       // Primary Path
       if (searchResults.primaryPath) {
@@ -329,14 +384,9 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
 
       // Primary Path Promo Pricing
       if (primaryPromo) {
-        emailBody += `PRIMARY PATH - PROMO PRICING AVAILABLE:\n`;
-        emailBody += `${'-'.repeat(40)}\n`;
-        emailBody += `10 Mbps:\t${formatCurrency(primaryPromo.price_10mb)}\n`;
-        emailBody += `100 Mbps:\t${formatCurrency(primaryPromo.price_100mb)}\n`;
-        emailBody += `1000 Mbps:\t${formatCurrency(primaryPromo.price_1000mb)}\n`;
-        emailBody += `10 Gbps:\t${formatCurrency(primaryPromo.price_10gb)}\n\n`;
+        emailBody += generatePromoPricingTable(primaryPromo, 'PRIMARY PATH');
       } else {
-        emailBody += `PRIMARY PATH - Route not available for automatic promo pricing\n\n`;
+        emailBody += `<p style="${noPromoStyle}">PRIMARY PATH - Route not available for automatic promo pricing</p>`;
       }
 
       // Secondary Path
@@ -345,26 +395,48 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
         
         // Secondary Path Promo Pricing
         if (secondaryPromo) {
-          emailBody += `SECONDARY PATH - PROMO PRICING AVAILABLE:\n`;
-          emailBody += `${'-'.repeat(40)}\n`;
-          emailBody += `10 Mbps:\t${formatCurrency(secondaryPromo.price_10mb)}\n`;
-          emailBody += `100 Mbps:\t${formatCurrency(secondaryPromo.price_100mb)}\n`;
-          emailBody += `1000 Mbps:\t${formatCurrency(secondaryPromo.price_1000mb)}\n`;
-          emailBody += `10 Gbps:\t${formatCurrency(secondaryPromo.price_10gb)}\n\n`;
+          emailBody += generatePromoPricingTable(secondaryPromo, 'SECONDARY PATH');
         } else {
-          emailBody += `SECONDARY PATH - Route not available for automatic promo pricing\n\n`;
+          emailBody += `<p style="${noPromoStyle}">SECONDARY PATH - Route not available for automatic promo pricing</p>`;
         }
       } else {
-        emailBody += `Secondary Route: No diverse path available\n\n`;
+        emailBody += `<p style="${noPromoStyle}">Secondary Route: No diverse path available</p>`;
       }
 
-      emailBody += `Note: Promo pricing is subject to availability and margin requirements.\n\n`;
+      emailBody += `<p style="font-family: Arial, sans-serif; color: #666; margin-top: 20px;"><em>Note: Promo pricing is budgetary and subject to capacity confirmation.</em></p>`;
+
+      // Add Promo Pricing Terms and Conditions
+      emailBody += `<hr style="margin-top: 30px; margin-bottom: 20px; border: none; border-top: 1px solid #ccc;">`;
+      emailBody += `<div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; font-family: Arial, sans-serif;">`;
+      emailBody += `<h3 style="color: #333; margin-top: 0;">Ethernet backhaul between IPC fibre / high capacity connected DC's:</h3>`;
+      emailBody += `<ul style="color: #444; line-height: 1.6;">`;
+      emailBody += `<li>Ethernet Promo BW: 10Mb, 100Mb, 1Gb, 10Gb* [* Subject to capacity checks]</li>`;
+      emailBody += `<li>Pricing is for Unprotected Ethernet services with a defined path.</li>`;
+      emailBody += `<li>Pricing excludes X/C's, Cloud Provider Port Charges, Exchange Charges and Applicable Taxes</li>`;
+      emailBody += `<li>Standard IPC Pricing caveats apply. Please see Pricing Team if unclear</li>`;
+      emailBody += `</ul>`;
+      
+      emailBody += `<h4 style="color: #333; margin-top: 20px;">Term Discounts</h4>`;
+      emailBody += `<ul style="color: #444; line-height: 1.6;">`;
+      emailBody += `<li>24 Months - 50% NRC Discount - 5% MRC Discount</li>`;
+      emailBody += `<li>36 Months - 100% NRC Discount - 10% MRC Discount</li>`;
+      emailBody += `</ul>`;
+      
+      emailBody += `<h4 style="color: #333; margin-top: 20px;">Additional Discount on Displacement Services</h4>`;
+      emailBody += `<ul style="color: #444; line-height: 1.6;">`;
+      emailBody += `<li>12 Months - NRC Waived - 1 Month FOC</li>`;
+      emailBody += `<li>24 Months - NRC Waived - 2 Months FOC</li>`;
+      emailBody += `<li>36 Months - NRC Waived - 3 Months FOC</li>`;
+      emailBody += `</ul>`;
+      emailBody += `</div>`;
+
+      emailBody += `</body></html>`;
 
       // Generate subject line
       const today = new Date().toLocaleDateString();
       const subject = `Route Finder - ${formData.source} to ${formData.destination} - ${today}`;
       
-      // Create .eml file
+      // Create .eml file with HTML content
       const timestamp = new Date().toISOString();
       const emailContent = [
         `From: Route Finder <noreply@ipc.com>`,
@@ -372,7 +444,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
         `Subject: ${subject}`,
         `Date: ${timestamp}`,
         `MIME-Version: 1.0`,
-        `Content-Type: text/plain; charset=utf-8`,
+        `Content-Type: text/html; charset=utf-8`,
         `Content-Transfer-Encoding: 8bit`,
         ``,
         emailBody

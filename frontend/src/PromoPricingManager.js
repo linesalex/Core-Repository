@@ -150,11 +150,12 @@ const PromoPricingManager = ({ hasPermission }) => {
   };
 
   // Update same-city warnings when locations change
+  // Note: Only source locations must be in the same city. Destinations can span multiple cities.
   useEffect(() => {
     if (dialogOpen) {
       setSameCityWarning({
         source: checkSameCity(formData.source_locations, 'Source'),
-        destination: checkSameCity(formData.destination_locations, 'Destination')
+        destination: '' // Destinations can span multiple cities - no validation needed
       });
     }
   }, [formData.source_locations, formData.destination_locations, dialogOpen, locations]);

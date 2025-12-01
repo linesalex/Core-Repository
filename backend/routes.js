@@ -6453,6 +6453,10 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
     // Log pricing calculation with enhanced details
     // Save to different tables based on calling module
     if (calling_module === 'allocated_cost_calculator') {
+      // Extract circuit ID strings from paths for reload functionality
+      const primaryPathRoutes = paths[0]?.route?.map(seg => seg.circuit_id).filter(id => id).join(', ') || '';
+      const secondaryPathRoutes = paths[1]?.route?.map(seg => seg.circuit_id).filter(id => id).join(', ') || '';
+      
       // Save to allocated_cost_pricing_logs table with complete pricing data
       db.run(
         'INSERT INTO allocated_cost_pricing_logs (user_id, table_name, record_id, action, old_values, new_values, changes_summary, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -6472,6 +6476,9 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
               protection_required,
               customerName: customerName || '',
               quoteRequestId: quoteRequestId || '',
+              // Include path route strings for reload functionality
+              primaryPathRoutes: primaryPathRoutes,
+              secondaryPathRoutes: secondaryPathRoutes,
               incrementalCosts: incrementalCosts || [],
               timestamp: new Date().toISOString()
             },
@@ -9063,7 +9070,9 @@ const bulkUploadModules = {
     templateFields: [
       'carrier_id', 'contact_type', 'contact_level', 'contact_name', 'contact_function', 'contact_email', 'contact_phone', 'notes'
     ],
-    requiredFields: ['carrier_id', 'contact_type', 'contact_name', 'contact_function'],
+    requiredFields: ['carrier_id', 'contact_type'],
+    // At least one of contact_name or contact_function is required
+    oneOfRequired: [['contact_name', 'contact_function']],
     validContactTypes: [
       'Primary Support Contact',
       'Primary Order Contact',
@@ -9518,6 +9527,20 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
           });
           if (missingFields.length > 0) {
             allRowErrors.push(`Missing required fields: ${missingFields.join(', ')}`);
+          }
+          
+          // Step 1b: One-of-required fields validation (at least one field in each group must be provided)
+          if (config.oneOfRequired && Array.isArray(config.oneOfRequired)) {
+            config.oneOfRequired.forEach(fieldGroup => {
+              const hasAtLeastOne = fieldGroup.some(field => {
+                if (!row[field]) return false;
+                const value = typeof row[field] === 'string' ? row[field].trim() : String(row[field]);
+                return value !== '';
+              });
+              if (!hasAtLeastOne) {
+                allRowErrors.push(`At least one of these fields is required: ${fieldGroup.join(' or ')}`);
+              }
+            });
           }
           
           // Step 2: Clean and prepare data
@@ -11259,17 +11282,14 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
     return res.status(400).json({ error: 'Destination locations must be a non-empty array' });
   }
   
-  // Validate same-city constraint for source locations
+  // Validate same-city constraint for source locations only (destinations can span multiple cities)
   try {
     const sourceValidation = await validateSameCityLocations(source_locations, 'Source');
     if (!sourceValidation.valid) {
       return res.status(400).json({ error: sourceValidation.error });
     }
-    
-    const destValidation = await validateSameCityLocations(destination_locations, 'Destination');
-    if (!destValidation.valid) {
-      return res.status(400).json({ error: destValidation.error });
-    }
+    // Note: Destination locations are NOT validated for same-city constraint
+    // Destinations can span multiple cities for promo pricing flexibility
   } catch (validationErr) {
     console.error('Location validation error:', validationErr);
     return res.status(500).json({ error: 'Failed to validate locations' });
@@ -11390,17 +11410,14 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
     required_circuit_ids
   } = req.body;
   
-  // Validate same-city constraint for source locations
+  // Validate same-city constraint for source locations only (destinations can span multiple cities)
   try {
     const sourceValidation = await validateSameCityLocations(source_locations, 'Source');
     if (!sourceValidation.valid) {
       return res.status(400).json({ error: sourceValidation.error });
     }
-    
-    const destValidation = await validateSameCityLocations(destination_locations, 'Destination');
-    if (!destValidation.valid) {
-      return res.status(400).json({ error: destValidation.error });
-    }
+    // Note: Destination locations are NOT validated for same-city constraint
+    // Destinations can span multiple cities for promo pricing flexibility
   } catch (validationErr) {
     console.error('Location validation error:', validationErr);
     return res.status(500).json({ error: 'Failed to validate locations' });

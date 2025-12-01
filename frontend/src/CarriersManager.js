@@ -75,8 +75,16 @@ const CarriersManager = ({ hasPermission }) => {
   // Validation rules for Carrier contact form
   const carrierContactValidationRules = {
     contact_type: { type: 'required', message: 'Contact Type is required' },
-    contact_name: { type: 'required', message: 'Contact Name is required' },
-    contact_function: { type: 'required', message: 'Contact Job Title is required' },
+    contact_name: { 
+      type: 'oneOf', 
+      fields: ['contact_name', 'contact_function'], 
+      message: 'Either Contact Name or Contact Job Title is required' 
+    },
+    contact_function: { 
+      type: 'oneOf', 
+      fields: ['contact_name', 'contact_function'], 
+      message: 'Either Contact Name or Contact Job Title is required' 
+    },
     contact_email: { 
       type: 'oneOf', 
       fields: ['contact_email', 'contact_phone'], 
@@ -915,24 +923,24 @@ const CarriersManager = ({ hasPermission }) => {
               <ValidatedTextField
                 field="contact_name"
                 errors={contactErrors}
-                required
                 fullWidth
                 label="Contact Name"
                 name="contact_name"
                 value={contactFormData.contact_name}
                 onChange={(e) => handleContactInputChange('contact_name', e.target.value)}
+                helperText="Required if Job Title is not provided"
               />
             </Grid>
             <Grid item xs={12} sm={6}>
               <ValidatedTextField
                 field="contact_function"
                 errors={contactErrors}
-                required
                 fullWidth
                 label="Contact Job Title"
                 name="contact_function"
                 value={contactFormData.contact_function}
                 onChange={(e) => handleContactInputChange('contact_function', e.target.value)}
+                helperText="Required if Contact Name is not provided"
               />
             </Grid>
             <Grid item xs={12} sm={6}>

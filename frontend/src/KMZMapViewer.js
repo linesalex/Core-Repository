@@ -13,7 +13,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import RouteIcon from '@mui/icons-material/Route';
 import PaletteIcon from '@mui/icons-material/Palette';
-import { Viewer, Ion, KmlDataSource, Cartesian3, Cartographic, Math as CesiumMath, UrlTemplateImageryProvider, CustomDataSource, ScreenSpaceEventHandler, ScreenSpaceEventType, defined, Color, HeightReference, SceneMode, JulianDate, DistanceDisplayCondition } from 'cesium';
+import { Viewer, Ion, KmlDataSource, Cartesian3, Cartographic, Math as CesiumMath, UrlTemplateImageryProvider, CustomDataSource, ScreenSpaceEventHandler, ScreenSpaceEventType, defined, Color, HeightReference, SceneMode, JulianDate, DistanceDisplayCondition, VerticalOrigin, LabelStyle, Cartesian2 } from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { API_BASE_URL } from './config';
 import { fetchRoutesByBandwidth, fetchRouteCounts, searchKMZRoutes } from './api';
@@ -234,6 +234,7 @@ function KMZMapViewer({ onClose, routeFinderData }) {
   }, [viewerReady, routeFinderData]);
 
   // Load permanent locations.kmz template when viewer is ready
+  // In Route Finder mode, we'll load and then filter to show only source/destination
   useEffect(() => {
     if (!viewerReady || !viewerRef.current) return;
     
@@ -307,6 +308,45 @@ function KMZMapViewer({ onClose, routeFinderData }) {
         
         console.log('✓ Permanent locations loaded successfully with', entities.length, 'pins');
         
+        // If in Route Finder mode, zoom to source location (but show ALL pins)
+        if (routeFinderData) {
+          const { source } = routeFinderData;
+          console.log(`Route Finder mode: Showing all pins, zooming to source ${source}`);
+          
+          // Find source entity to zoom to it
+          let sourceEntity = null;
+          entities.forEach(entity => {
+            const entityName = entity.name || '';
+            const isSource = entityName.includes(source) || entityName === source;
+            if (isSource) {
+              sourceEntity = entity;
+              console.log(`  ✓ Found source for zoom: ${entityName}`);
+            }
+          });
+          
+          // Zoom to source location if found
+          if (sourceEntity && sourceEntity.position) {
+            const position = sourceEntity.position.getValue(JulianDate.now());
+            if (position) {
+              const cartographic = Cartographic.fromCartesian(position);
+              const lon = CesiumMath.toDegrees(cartographic.longitude);
+              const lat = CesiumMath.toDegrees(cartographic.latitude);
+              console.log(`Zooming to source: ${source} at lat=${lat.toFixed(4)}, lon=${lon.toFixed(4)}`);
+              
+              setTimeout(() => {
+                if (viewerRef.current) {
+                  viewerRef.current.camera.flyTo({
+                    destination: Cartesian3.fromDegrees(lon, lat, 1000000),
+                    duration: 2
+                  });
+                }
+              }, 500);
+            }
+          } else {
+            console.log(`  ⚠ Source ${source} not found in location pins`);
+          }
+        }
+        
       } catch (err) {
         console.error('Error loading locations template:', err);
         // Don't show error to user - locations template is optional enhancement
@@ -314,7 +354,7 @@ function KMZMapViewer({ onClose, routeFinderData }) {
     };
     
     loadLocationsTemplate();
-  }, [viewerReady]);
+  }, [viewerReady, routeFinderData]);
 
   // Toggle locations visibility
   useEffect(() => {
@@ -409,19 +449,10 @@ function KMZMapViewer({ onClose, routeFinderData }) {
         }
       }
       
-      // Zoom to source location
-      if (source && locations) {
-        const sourceLocation = locations.find(loc => loc.location_code === source);
-        if (sourceLocation && sourceLocation.latitude && sourceLocation.longitude) {
-          const lat = parseFloat(sourceLocation.latitude);
-          const lon = parseFloat(sourceLocation.longitude);
-          console.log(`Zooming to source: ${source} at lat=${lat}, lon=${lon}`);
-          viewerRef.current.camera.flyTo({
-            destination: Cartesian3.fromDegrees(lon, lat, 500000),
-            duration: 2
-          });
-        }
-      }
+      // Note: Location pins are loaded and filtered by the loadLocationsTemplate useEffect
+      // which handles showing only source/destination pins from the KMZ template
+      // The zoom to source is also handled there after the template loads
+      console.log('Route Finder mode: Location pins will be loaded from KMZ template and filtered');
       
       setRouteFinderWarnings(warnings);
       setLoading(false);

@@ -1,8 +1,42 @@
 # Network Inventory Management System
 
-## Current Version: **3.4.2**
+## Current Version: **3.4.3**
 
-**Release Date:** November 30, 2024
+**Release Date:** December 1, 2024
+
+---
+
+## What's New in v3.4.3
+
+### 🐛 **Bug Fixes & Improvements**
+
+**Promo Pricing Manager:**
+- Removed same-city validation restriction for destination locations
+- Destinations can now span multiple cities (displayed as "London, Paris, etc.")
+- Source locations still require same-city validation
+
+**Route Finder:**
+- Fixed promo pricing state preservation when navigating to/from KMZ Viewer
+- Updated promo pricing note: "Note: Promo pricing is budgetary and subject to capacity confirmation."
+- Email export now includes "12 Month Contract - $1,000 NRC Applies to each option" under promo pricing headers
+
+**KMZ Viewer:**
+- Fixed location pin display - now shows all pins when opened from Route Finder
+- Automatically zooms to source location when opened from Route Finder
+
+**Allocated Cost Calculator:**
+- Fixed "Reload Search" to properly restore incremental costs as editable (not locked)
+- Users can now review and save restored incremental costs to push them into routes
+- Improved success message guidance for reloaded searches
+
+**Route Updates:**
+- Circuit IDs are now clickable links
+- Clicking navigates to Network Routes table filtered by that circuit
+- Works for all sections: Under Direct Replacement, Under Decommission, New Provisioning
+
+**Carrier Contacts & Bulk Upload:**
+- Changed validation: Either Contact Name OR Contact Job Title is required (not both)
+- Updated bulk upload validation to match
 
 ---
 
@@ -201,6 +235,7 @@ For new installations or updates:
 
 ## Version History
 
+- **v3.4.3** (Dec 1, 2024): Bug fixes - Promo pricing, KMZ viewer, Route Updates clickable circuit IDs
 - **v3.4.2** (Nov 30, 2024): Extranet Data module - providers, products, contacts, and pricing
 - **v3.4.1** (Nov 28, 2024): Protected pricing promo fix - handles promo pricing scenarios correctly
 - **v3.4.0** (Nov 2024): Bandwidth-based pricing tiers

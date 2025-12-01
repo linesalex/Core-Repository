@@ -620,6 +620,19 @@ function AuthenticatedApp() {
     setCurrentTab('route-finder');
   };
 
+  // Handle navigation to Network Routes from Route Updates (clicking circuit ID)
+  const handleNavigateToRoute = (circuitId) => {
+    if (circuitId) {
+      // Set the circuit_id filter and navigate to network-routes
+      setRouteFilters(prev => ({
+        ...prev,
+        circuit_id: circuitId
+      }));
+      setFilterResetTrigger(prev => prev + 1); // Trigger SearchExportBar to show the filter
+      setCurrentTab('network-routes');
+    }
+  };
+
   const renderMainContent = () => {
     switch (currentTab) {
       case 'network-routes':
@@ -853,7 +866,7 @@ function AuthenticatedApp() {
       
       case 'route-changes':
         return hasModuleAccess('network_routes') ? (
-          <RouteChanges />
+          <RouteChanges onNavigateToRoute={handleNavigateToRoute} />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );

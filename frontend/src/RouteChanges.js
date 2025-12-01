@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, Paper, Typography, Table, TableBody, TableCell, TableContainer, 
   TableHead, TableRow, CircularProgress, Alert, Chip, Card, CardContent,
-  Divider, IconButton, Tooltip
+  Divider, IconButton, Tooltip, Link
 } from '@mui/material';
 import { styled } from '@mui/material/styles';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -23,7 +23,7 @@ const SmallTableHeaderCell = styled(TableCell)(({ theme }) => ({
   backgroundColor: theme.palette.grey[100],
 }));
 
-function RouteChanges() {
+function RouteChanges({ onNavigateToRoute }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [routeChanges, setRouteChanges] = useState({
@@ -181,9 +181,20 @@ function RouteChanges() {
                           }}
                         >
                           <SmallTableCell>
-                            <Typography variant="body2" fontWeight="500" sx={{ color: 'warning.dark' }}>
+                            <Link
+                              component="button"
+                              variant="body2"
+                              onClick={() => onNavigateToRoute && onNavigateToRoute(route.circuit_id)}
+                              sx={{ 
+                                fontWeight: 500,
+                                color: 'warning.dark',
+                                cursor: 'pointer',
+                                textDecoration: 'none',
+                                '&:hover': { textDecoration: 'underline' }
+                              }}
+                            >
                               {route.circuit_id}
-                            </Typography>
+                            </Link>
                           </SmallTableCell>
                           <SmallTableCell>
                             {route.location_a} → {route.location_b}
@@ -193,9 +204,26 @@ function RouteChanges() {
                             <SwapHorizIcon fontSize="small" color="action" />
                           </SmallTableCell>
                           <SmallTableCell>
-                            <Typography variant="body2" fontWeight="500" color="success.main">
-                              {route.replacement_circuit_id || 'Not specified'}
-                            </Typography>
+                            {route.replacement_circuit_id ? (
+                              <Link
+                                component="button"
+                                variant="body2"
+                                onClick={() => onNavigateToRoute && onNavigateToRoute(route.replacement_circuit_id)}
+                                sx={{ 
+                                  fontWeight: 500,
+                                  color: 'success.main',
+                                  cursor: 'pointer',
+                                  textDecoration: 'none',
+                                  '&:hover': { textDecoration: 'underline' }
+                                }}
+                              >
+                                {route.replacement_circuit_id}
+                              </Link>
+                            ) : (
+                              <Typography variant="body2" fontWeight="500" color="text.secondary">
+                                Not specified
+                              </Typography>
+                            )}
                           </SmallTableCell>
                           <SmallTableCell>
                             {route.replacement_location_a && route.replacement_location_b 
@@ -280,9 +308,20 @@ function RouteChanges() {
                           }}
                         >
                           <SmallTableCell>
-                            <Typography variant="body2" fontWeight="500" color="error.main">
+                            <Link
+                              component="button"
+                              variant="body2"
+                              onClick={() => onNavigateToRoute && onNavigateToRoute(route.circuit_id)}
+                              sx={{ 
+                                fontWeight: 500,
+                                color: 'error.main',
+                                cursor: 'pointer',
+                                textDecoration: 'none',
+                                '&:hover': { textDecoration: 'underline' }
+                              }}
+                            >
                               {route.circuit_id}
-                            </Typography>
+                            </Link>
                           </SmallTableCell>
                           <SmallTableCell>
                             {route.location_a} → {route.location_b}
@@ -354,9 +393,20 @@ function RouteChanges() {
                           }}
                         >
                           <SmallTableCell>
-                            <Typography variant="body2" fontWeight="500" color="success.main">
+                            <Link
+                              component="button"
+                              variant="body2"
+                              onClick={() => onNavigateToRoute && onNavigateToRoute(route.circuit_id)}
+                              sx={{ 
+                                fontWeight: 500,
+                                color: 'success.main',
+                                cursor: 'pointer',
+                                textDecoration: 'none',
+                                '&:hover': { textDecoration: 'underline' }
+                              }}
+                            >
                               {route.circuit_id}
-                            </Typography>
+                            </Link>
                           </SmallTableCell>
                           <SmallTableCell>
                             {route.location_a} → {route.location_b}
