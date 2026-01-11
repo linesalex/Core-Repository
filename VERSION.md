@@ -1,8 +1,130 @@
 # Network Inventory Management System
 
-## Current Version: **3.4.3**
+## Current Version: **3.4.5**
 
-**Release Date:** December 1, 2024
+**Release Date:** January 11, 2026
+
+---
+
+## What's New in v3.4.5
+
+### 🌐 **New Feature: Extranet Pricing Tool**
+
+A comprehensive pricing calculator for extranet member-to-provider connectivity.
+
+**User-Facing Pricing Tool:**
+- Calculate extranet connectivity pricing between member and provider locations
+- Provider Location: Primary and Secondary (optional) city selections
+- Member Location: Primary and Secondary (optional) city selections
+- Member Resiliency Types: Non-Resilient, Single Site Resilient, Split Site Resilient, Dual Site Resilient
+- Member On/Off Net: On Net or Off Net (minimum 10Mb for Off Net)
+- Member Cloud Option: Discount for members in AWS/GCP/Azure
+- Bandwidth Selection: From existing rate card bandwidths
+- Traffic Type: Live/Live or Live/Standby
+- IPSec Option: Optional surcharge based on bandwidth tier and resiliency
+- Contract Terms: 12, 24, or 36 months with configurable NRC and discounts
+- Currency Conversion: All currencies from Exchange Rates module supported
+- Discount Request: Users can request up to admin-configured maximum discount
+
+**Pricing Calculation Logic:**
+- Base price from rate card (higher tier of provider/member primary locations)
+- Resiliency multiplier applied (configurable, e.g., 70% for Non-Resilient)
+- Traffic type multiplier applied (e.g., 125% for Live/Live)
+- Discounts applied INDEPENDENTLY (not compounding): Cloud + Contract Term + User Discount
+- IPSec surcharge added as separate line item (not subject to discounts)
+- Currency conversion using exchange rates
+- NRC based on contract term
+
+**Admin Pricing Configuration:**
+- New "Parameters" tab in Extranet Pricing Admin
+  - Resiliency Percentages (4 types)
+  - Traffic Type Percentages (2 types)
+  - Cloud Discount %
+  - Contract Term Discounts and NRCs (12/24/36 month)
+  - Maximum User Discount %
+- New "IPSec Surcharges" tab
+  - Configure surcharges by bandwidth tier (Under 10Mb, 10-99Mb, 100Mb+)
+  - Separate rates for Non-Resilient vs Resilient connections
+
+**Analytics Dashboard Enhancements:**
+- Enhanced Extranet Pricing tab with new metrics:
+  - IPSec Required count
+  - Cloud Member count
+  - Discount request statistics (count + average %)
+  - Resiliency type distribution (pie chart)
+  - Contract term distribution (bar chart)
+  - Traffic type distribution (pie chart)
+  - Currency distribution (horizontal bar chart)
+  - Most searched city pairs (table)
+
+**Database Changes:**
+- New table: `extranet_pricing_parameters` (key-value pricing configuration)
+- New table: `extranet_ipsec_surcharges` (IPSec surcharge rates by tier)
+- Enhanced `extranet_pricing_lookups` with additional analytics columns
+
+**Files Added:**
+- `backend/migrations/022_extranet_pricing_tool.js`
+
+**Files Modified:**
+- `frontend/src/ExtranetPricingTool.js` - Complete rewrite with full pricing form
+- `frontend/src/ExtranetPricingAdmin.js` - Added Parameters and IPSec tabs
+- `frontend/src/AnalyticsDashboard.js` - Enhanced Extranet Pricing analytics
+- `frontend/src/api.js` - Added extranetPricingApi functions
+- `backend/routes.js` - Added pricing calculation and parameter endpoints
+
+---
+
+## What's New in v3.4.4
+
+### 🔐 **Security & Permissions**
+
+**Manage Carriers Module:**
+- Fixed visibility of edit/delete action buttons for read_only users
+- Contact edit and delete buttons now properly hidden for users without edit/delete permissions
+- Overdue contacts approve and delete buttons now properly hidden for users without edit/delete permissions
+- Previously, read_only users could see buttons but actions would fail - now buttons are hidden entirely
+
+**KMZ Viewer - Location Pins Access:**
+- Fixed 403 error for sales users when loading location pins
+- Location pins download endpoint now accessible to all users with KMZ Viewer module access
+- Previously restricted to administrators only - now uses module-based permissions
+
+### ✨ **Enhancements**
+
+**CNX Ethernet Route Finder - Route Results:**
+- Added Bandwidth column to Route Results table for both Primary and Secondary paths
+- Bandwidth displays in readable format (e.g., 10 Gbps, 100 Gbps, Dark Fiber)
+- Column order: Circuit ID | Segment | Bandwidth | Latency | Cable System
+
+**CNX ETH Design & Pricing Tool - Location Dropdowns:**
+- Changed Source and Destination location dropdown display format
+- Now shows: `POP Code - Datacenter Name` (e.g., "IPCSNG - Equinix SG1")
+- If no datacenter name available, shows only POP Code
+- Previously showed: `POP Code - City, Country`
+
+### 🐛 **Bug Fixes**
+
+**KMZ Viewer - AMERs Route Count:**
+- Fixed AMERs region displaying 0/0 routes in the route count filters
+- Added case-insensitive region normalization (AMERS → AMERs)
+- All region counts now display correctly regardless of database case formatting
+
+**CNX ETH Design & Pricing Tool - Pricing Logs Pagination:**
+- Fixed pagination not loading correctly on page 1 with stale data
+- Search and filter changes now properly reset pagination to page 1
+- Eliminated race condition where initial load and useEffect both triggered API calls
+- Fixed fallback case that left pagination in stale state when API returned unexpected format
+- Pagination now syncs page number from server response to prevent state drift
+
+**Allocated Cost Calculator - Pricing Logs Pagination:**
+- Fixed API function `getAllChangeLogs` that was stripping pagination data from responses
+- Applied same pagination fixes as Network Design Tool
+- Added proper `handleLogSearchChange` handler with page reset
+
+**Feedback Module - File Attachments:**
+- Fixed SQLITE_CONSTRAINT error when attaching files to bug reports/feature requests
+- Corrected SQLite callback pattern: `statement?.lastID` → `this.lastID` (SQLite3 Node.js API)
+- Also fixed same issue in CNX Colocation rack/client creation and feedback comments
 
 ---
 
@@ -235,6 +357,8 @@ For new installations or updates:
 
 ## Version History
 
+- **v3.4.5** (Jan 11, 2026): Extranet Pricing Tool - Full member-to-provider pricing calculator with configurable parameters, IPSec surcharges, resiliency types, traffic types, contract terms, and comprehensive analytics
+- **v3.4.4** (Jan 11, 2025): Carriers module - hide action buttons for read_only users; Route Finder - added Bandwidth column to route results; Fixed pricing logs pagination in Design & Pricing and Allocated Cost Calculator tools; Fixed feedback file attachment SQLITE_CONSTRAINT error
 - **v3.4.3** (Dec 1, 2024): Bug fixes - Promo pricing, KMZ viewer, Route Updates clickable circuit IDs
 - **v3.4.2** (Nov 30, 2024): Extranet Data module - providers, products, contacts, and pricing
 - **v3.4.1** (Nov 28, 2024): Protected pricing promo fix - handles promo pricing scenarios correctly

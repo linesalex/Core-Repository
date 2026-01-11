@@ -767,17 +767,17 @@ function AuthenticatedApp() {
         );
       
       case 'extranet-providers':
-        return hasModuleAccess('extranet_data') ? (
+        return (hasModuleAccess('extranet_data') && hasRole('administrator')) ? (
           <ExtranetDataManager hasPermission={hasPermission} initialTab={0} />
         ) : (
-          <Alert severity="error">You don't have permission to view this module</Alert>
+          <Alert severity="error">You don't have permission to view this module. Administrator access required.</Alert>
         );
       
       case 'extranet-contacts':
-        return hasModuleAccess('extranet_data') ? (
+        return (hasModuleAccess('extranet_data') && hasRole('administrator')) ? (
           <ExtranetDataManager hasPermission={hasPermission} initialTab={1} />
         ) : (
-          <Alert severity="error">You don't have permission to view this module</Alert>
+          <Alert severity="error">You don't have permission to view this module. Administrator access required.</Alert>
         );
       
       case 'extranet-pricing':
@@ -1246,30 +1246,38 @@ function AuthenticatedApp() {
                 </ListItem>
                 <Collapse in={extranetDataOpen} timeout="auto" unmountOnExit>
                   <List component="div" disablePadding>
-                    <ListItem 
-                      button 
-                      onClick={() => setCurrentTab('extranet-providers')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'extranet-providers' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                    >
-                      <ListItemIcon><TableRowsIcon /></ListItemIcon>
-                      <ListItemText primary="Extranet Providers" />
-                    </ListItem>
-                    <ListItem 
-                      button 
-                      onClick={() => setCurrentTab('extranet-contacts')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'extranet-contacts' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                    >
-                      <ListItemIcon><ContactsIcon /></ListItemIcon>
-                      <ListItemText primary="Extranet Contacts" />
-                    </ListItem>
+                    {/* Extranet Providers - Admin only */}
+                    {hasRole('administrator') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('extranet-providers')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'extranet-providers' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><TableRowsIcon /></ListItemIcon>
+                        <ListItemText primary="Extranet Providers" />
+                      </ListItem>
+                    )}
+                    {/* Extranet Contacts - Admin only */}
+                    {hasRole('administrator') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('extranet-contacts')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'extranet-contacts' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><ContactsIcon /></ListItemIcon>
+                        <ListItemText primary="Extranet Contacts" />
+                      </ListItem>
+                    )}
+                    {/* Extranet Pricing Tool - All users with extranet_data access */}
                     <ListItem 
                       button 
                       onClick={() => setCurrentTab('extranet-pricing')} 
                       sx={{ pl: 4, backgroundColor: currentTab === 'extranet-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
                     >
                       <ListItemIcon><CalculateIcon /></ListItemIcon>
-                      <ListItemText primary="Pricing Tool" />
+                      <ListItemText primary="Extranet Pricing Tool" />
                     </ListItem>
+                    {/* Pricing Admin - Admin or Edit permission */}
                     {(hasRole('administrator') || hasPermission('extranet_data', 'edit')) && (
                       <ListItem 
                         button 

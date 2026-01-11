@@ -220,12 +220,9 @@ export const networkDesignApi = {
   
   // Change logs (for allocated cost calculator)
   getAllChangeLogs: (params = {}) => api.get(`${API_BASE_URL}/change-logs`, { params }).then(res => {
-    // Handle new pagination response format
-    if (res.data && res.data.data) {
-      return res.data.data;
-    }
-    // Fallback for old format (backwards compatibility)
-    return res.data || [];
+    // Return full response including pagination data
+    // Response format: { data: [...], pagination: { total, limit, offset, page, totalPages } }
+    return res.data;
   }),
   clearChangeLogs: (tableName) => api.delete(`${API_BASE_URL}/change-logs/${tableName}`).then(res => res.data),
   
@@ -536,6 +533,41 @@ export const getAnalyticsExtranetPricing = (startDate, endDate) => {
   if (startDate) params.start_date = startDate;
   if (endDate) params.end_date = endDate;
   return api.get(`${API_BASE_URL}/analytics/extranet-pricing`, { params }).then(res => res.data);
+};
+
+// ====================================
+// EXTRANET PRICING TOOL API
+// ====================================
+
+export const extranetPricingApi = {
+  // Pricing Parameters
+  getParameters: () => api.get(`${API_BASE_URL}/extranet-pricing/parameters`).then(res => res.data),
+  updateParameters: (parameters) => api.put(`${API_BASE_URL}/extranet-pricing/parameters`, { parameters }).then(res => res.data),
+  
+  // IPSec Surcharges
+  getIpsecSurcharges: () => api.get(`${API_BASE_URL}/extranet-pricing/ipsec-surcharges`).then(res => res.data),
+  updateIpsecSurcharges: (surcharges) => api.put(`${API_BASE_URL}/extranet-pricing/ipsec-surcharges`, { surcharges }).then(res => res.data),
+  
+  // Cities
+  getCities: () => api.get(`${API_BASE_URL}/extranet-pricing/cities`).then(res => res.data),
+  addCity: (data) => api.post(`${API_BASE_URL}/extranet-pricing/cities`, data).then(res => res.data),
+  updateCity: (id, data) => api.put(`${API_BASE_URL}/extranet-pricing/cities/${id}`, data).then(res => res.data),
+  deleteCity: (id) => api.delete(`${API_BASE_URL}/extranet-pricing/cities/${id}`).then(res => res.data),
+  
+  // Rate Card
+  getRateCard: () => api.get(`${API_BASE_URL}/extranet-pricing/rate-card`).then(res => res.data),
+  updateRateCardBulk: (rates) => api.post(`${API_BASE_URL}/extranet-pricing/rate-card/bulk`, { rates }).then(res => res.data),
+  
+  // Bandwidths and Currencies
+  getBandwidths: () => api.get(`${API_BASE_URL}/extranet-pricing/bandwidths`).then(res => res.data),
+  getCurrencies: () => api.get(`${API_BASE_URL}/extranet-pricing/currencies`).then(res => res.data),
+  
+  // Calculate pricing
+  calculatePricing: (data) => api.post(`${API_BASE_URL}/extranet-pricing/calculate`, data).then(res => res.data),
+  
+  // Providers and Products
+  getProvidersByRegion: (region) => api.get(`${API_BASE_URL}/extranet-pricing/providers/${region}`).then(res => res.data),
+  getProductsByProvider: (providerId) => api.get(`${API_BASE_URL}/extranet-pricing/products/${providerId}`).then(res => res.data)
 };
 
 // System Settings

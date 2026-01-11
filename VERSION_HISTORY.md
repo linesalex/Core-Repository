@@ -63,6 +63,24 @@ Complete bug reporting and feature request system for all users.
 - API functions in `frontend/src/api.js`
 - Menu integration in `frontend/src/App.js`
 
+**Bug Fixes (v3.4.4):**
+- Fixed SQLITE_CONSTRAINT error when attaching files to feedback submissions
+- Root cause: Incorrect SQLite3 callback pattern (`statement?.lastID` instead of `this.lastID`)
+- Affected endpoints: POST /feedback (submissions), POST /feedback/:id/comment
+
+**Enhancements (v3.4.4):**
+- **Carriers Manager - Contact Search**: Added dedicated contact name search field
+  - Separate from carrier search for focused contact lookup
+  - Auto-expands carrier rows when matching contacts found
+  - Highlights matching contacts with blue border and bold text
+  - Shows count of carriers with matching contacts
+  - Clear button to reset search
+- **Carriers Manager - Contact Sorting**: Added sortable columns in contact details table
+  - Click Type header to sort alphabetically (A-Z / Z-A toggle)
+  - Click Level header to sort by logical order (General → 1st → 2nd → 3rd → 4th → 5th Level)
+  - Visual sort direction indicators (↑/↓ arrows)
+  - Default sort: Type (A-Z), then Level (logical order)
+
 ---
 
 #### 2. **Allocated Cost Calculator** ✅

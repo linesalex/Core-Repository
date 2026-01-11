@@ -396,17 +396,13 @@ const AnalyticsDashboard = () => {
         ) : overviewData ? (
           <>
             {/* Summary Cards */}
-            <Grid container spacing={3} sx={{ mb: 4 }}>
-              <Grid item xs={12} md={3}>
-                <Card>
-                  <CardContent>
-                    <Typography color="text.secondary" gutterBottom>
-                      Total Calculations
-                    </Typography>
-                    <Typography variant="h4">
-                      {overviewData.totalCalculations.toLocaleString()}
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Total Calculations</Typography>
+                    <Typography variant="h4" fontWeight="bold">{overviewData.totalCalculations.toLocaleString()}</Typography>
+                    <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
                       <Chip label={`Design: ${overviewData.designCalculations}`} size="small" color="primary" />
                       <Chip label={`Allocated: ${overviewData.allocatedCalculations}`} size="small" color="secondary" />
                     </Box>
@@ -414,57 +410,48 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               
-              <Grid item xs={12} md={3}>
-                <Card>
-                  <CardContent>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <PeopleIcon color="primary" />
-                      <Typography color="text.secondary" gutterBottom>
-                        Active Users
-                      </Typography>
+                      <PeopleIcon color="primary" fontSize="small" />
+                      <Typography color="textSecondary" variant="body2" gutterBottom>Active Users</Typography>
                     </Box>
-                    <Typography variant="h4">
-                      {overviewData.activeUsers}
+                    <Typography variant="h4" fontWeight="bold">{overviewData.activeUsers}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Design & Pricing</Typography>
+                    <Typography variant="h4" fontWeight="bold">{overviewData.designCalculations?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {overviewData.totalCalculations > 0 ? `${((overviewData.designCalculations / overviewData.totalCalculations) * 100).toFixed(1)}% of total` : ''}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Allocated Cost</Typography>
+                    <Typography variant="h4" fontWeight="bold">{overviewData.allocatedCalculations?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {overviewData.totalCalculations > 0 ? `${((overviewData.allocatedCalculations / overviewData.totalCalculations) * 100).toFixed(1)}% of total` : ''}
                     </Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
 
-            {/* Monthly Trends Chart */}
-            <Card sx={{ mb: 3 }}>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Month-to-Month Trends</Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() => {
-                      const { chartData } = processMonthlyTrends(overviewData.monthlyTrends);
-                      exportToCSV(chartData, 'monthly_trends');
-                    }}
-                  >
-                    <DownloadIcon />
-                  </IconButton>
-                </Box>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={processMonthlyTrends(overviewData.monthlyTrends).chartData.slice(-12)}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="design" stroke="#0088FE" name="Design & Pricing" />
-                    <Line type="monotone" dataKey="allocated" stroke="#00C49F" name="Allocated Cost" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Growth Table */}
+            {/* Monthly Growth Analysis Table */}
             <Card>
               <CardContent>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Monthly Growth Analysis</Typography>
+                  <Typography variant="h6">Monthly Activity Analysis</Typography>
                   <IconButton
                     size="small"
                     onClick={() => {
@@ -479,27 +466,35 @@ const AnalyticsDashboard = () => {
                   <Table size="small">
                     <TableHead>
                       <TableRow>
-                        <TableCell>Month</TableCell>
-                        <TableCell align="right">Design & Pricing</TableCell>
-                        <TableCell align="right">Allocated Cost</TableCell>
-                        <TableCell align="right">Total</TableCell>
-                        <TableCell align="right">Growth</TableCell>
+                        <TableCell sx={{ fontWeight: 'bold' }}>Month</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 'bold' }}>Design & Pricing</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 'bold' }}>Allocated Cost</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 'bold' }}>Total</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 'bold' }}>Growth</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {processMonthlyTrends(overviewData.monthlyTrends).growthData.slice(-12).reverse().map((row) => {
+                      {processMonthlyTrends(overviewData.monthlyTrends).growthData.slice(-12).reverse().map((row, index) => {
                         const total = row.design + row.allocated;
                         const isNegative = row.growthValue < 0;
                         const isPositive = row.growthValue > 0;
                         return (
-                          <TableRow key={row.month}>
+                          <TableRow key={row.month} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
                             <TableCell>{row.month}</TableCell>
                             <TableCell align="right">{row.design}</TableCell>
                             <TableCell align="right">{row.allocated}</TableCell>
                             <TableCell align="right"><strong>{total}</strong></TableCell>
                             <TableCell align="right">
                               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-                                {row.growth}
+                                <Typography 
+                                  variant="body2" 
+                                  sx={{ 
+                                    color: isPositive ? 'success.main' : isNegative ? 'error.main' : 'text.secondary',
+                                    fontWeight: 'bold'
+                                  }}
+                                >
+                                  {row.growth}
+                                </Typography>
                                 {isPositive && <TrendingUpIcon sx={{ color: 'success.main', fontSize: 18 }} />}
                                 {isNegative && <TrendingDownIcon sx={{ color: 'error.main', fontSize: 18 }} />}
                               </Box>
@@ -526,83 +521,89 @@ const AnalyticsDashboard = () => {
           </Box>
         ) : designData ? (
           <>
-            <Grid container spacing={3} sx={{ mb: 3 }}>
-              <Grid item xs={12} md={4}>
-                <Card>
-                  <CardContent>
-                    <Typography color="text.secondary" gutterBottom>
-                      Total Calculations
-                    </Typography>
-                    <Typography variant="h4">
-                      {designData.totalCalculations.toLocaleString()}
-                    </Typography>
+            {/* Summary Cards */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Total Calculations</Typography>
+                    <Typography variant="h4" fontWeight="bold">{designData.totalCalculations.toLocaleString()}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={12} md={4}>
-                <Card>
-                  <CardContent>
-                    <Typography color="text.secondary" gutterBottom>
-                      Avg Suggested Price (USD)
-                    </Typography>
-                    <Typography variant="h4">
-                      ${parseFloat(designData.averageSuggestedPrice || 0).toLocaleString()}
-                    </Typography>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Avg Suggested Price</Typography>
+                    <Typography variant="h4" fontWeight="bold">${parseFloat(designData.averageSuggestedPrice || 0).toLocaleString()}</Typography>
+                    <Typography variant="caption" color="textSecondary">USD</Typography>
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={12} md={4}>
-                <Card>
-                  <CardContent>
-                    <Typography color="text.secondary" gutterBottom>
-                      Avg Response Time
-                    </Typography>
-                    <Typography variant="h4">
-                      {designData.averageResponseTime}ms
-                    </Typography>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Avg Response Time</Typography>
+                    <Typography variant="h4" fontWeight="bold">{designData.averageResponseTime}ms</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Unique Routes</Typography>
+                    <Typography variant="h4" fontWeight="bold">{designData.routePairs?.length || 0}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
 
-            {/* Top Route Pairs */}
-            <Card sx={{ mb: 3 }}>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Most Searched Route Pairs</Typography>
-                  <IconButton size="small" onClick={() => exportToCSV(designData.routePairs, 'design_route_pairs')}>
-                    <DownloadIcon />
-                  </IconButton>
-                </Box>
-                <TableContainer sx={{ maxHeight: 400 }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Route Pair</TableCell>
-                        <TableCell align="right">Count</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {designData.routePairs.map((item, index) => (
-                        <TableRow key={index}>
-                          <TableCell>{item.route}</TableCell>
-                          <TableCell align="right">{item.count}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
+            {/* Main Data Tables in 2-Column Layout */}
+            <Grid container spacing={3}>
+              {/* Left Column */}
+              <Grid item xs={12} lg={6}>
+                {/* Top Route Pairs */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Top 10 Route Pairs</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(designData.routePairs, 'design_route_pairs')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 350 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Route Pair</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {designData.routePairs.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
+                              <TableCell>{item.route}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                              <TableCell align="right">
+                                {designData.totalCalculations > 0 ? `${((item.count / designData.totalCalculations) * 100).toFixed(1)}%` : '-'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
 
-            <Grid container spacing={3} sx={{ mb: 3 }}>
-              {/* City Codes */}
-              <Grid item xs={12} md={6}>
+                {/* Top Customers */}
                 <Card>
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h6">Top City Codes</Typography>
-                      <IconButton size="small" onClick={() => exportToCSV(designData.cityCodes, 'design_city_codes')}>
+                      <Typography variant="h6">Top 10 Customers</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(designData.topCustomers, 'design_customers')}>
                         <DownloadIcon />
                       </IconButton>
                     </Box>
@@ -610,13 +611,54 @@ const AnalyticsDashboard = () => {
                       <Table size="small" stickyHeader>
                         <TableHead>
                           <TableRow>
-                            <TableCell>City Code</TableCell>
-                            <TableCell align="right">Count</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Customer</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Quotes</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {designData.cityCodes.map((item, index) => (
-                            <TableRow key={index}>
+                          {designData.topCustomers.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
+                              <TableCell sx={{ textTransform: 'capitalize' }}>{item.customer}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                              <TableCell align="right">
+                                {designData.totalCalculations > 0 ? `${((item.count / designData.totalCalculations) * 100).toFixed(1)}%` : '-'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Right Column */}
+              <Grid item xs={12} lg={6}>
+                {/* City Codes */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Top City Codes</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(designData.cityCodes, 'design_city_codes')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 250 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>City Code</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {designData.cityCodes.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
                               <TableCell>{item.city}</TableCell>
                               <TableCell align="right">{item.count}</TableCell>
                             </TableRow>
@@ -626,10 +668,42 @@ const AnalyticsDashboard = () => {
                     </TableContainer>
                   </CardContent>
                 </Card>
-              </Grid>
 
-              {/* Individual Locations */}
-              <Grid item xs={12} md={6}>
+                {/* Bandwidth Distribution */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Bandwidth Distribution</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(designData.bandwidthRanges, 'design_bandwidth')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 200 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Bandwidth Range</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {designData.bandwidthRanges.map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{item.range}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                              <TableCell align="right">
+                                {designData.totalCalculations > 0 ? `${((item.count / designData.totalCalculations) * 100).toFixed(1)}%` : '-'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Individual Locations */}
                 <Card>
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -638,85 +712,20 @@ const AnalyticsDashboard = () => {
                         <DownloadIcon />
                       </IconButton>
                     </Box>
-                    <TableContainer sx={{ maxHeight: 300 }}>
+                    <TableContainer sx={{ maxHeight: 200 }}>
                       <Table size="small" stickyHeader>
                         <TableHead>
                           <TableRow>
-                            <TableCell>Location</TableCell>
-                            <TableCell align="right">Count</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Location</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {designData.individualLocations.map((item, index) => (
-                            <TableRow key={index}>
+                          {designData.individualLocations.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
                               <TableCell>{item.location}</TableCell>
-                              <TableCell align="right">{item.count}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  </CardContent>
-                </Card>
-              </Grid>
-            </Grid>
-
-            <Grid container spacing={3}>
-              {/* Bandwidth Distribution */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardContent>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h6">Bandwidth Distribution</Typography>
-                      <IconButton size="small" onClick={() => exportToCSV(designData.bandwidthRanges, 'design_bandwidth')}>
-                        <DownloadIcon />
-                      </IconButton>
-                    </Box>
-                    <ResponsiveContainer width="100%" height={250}>
-                      <PieChart>
-                        <Pie
-                          data={designData.bandwidthRanges}
-                          dataKey="count"
-                          nameKey="range"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={80}
-                          label
-                        >
-                          {designData.bandwidthRanges.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* Top Customers */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardContent>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h6">Top Customers</Typography>
-                      <IconButton size="small" onClick={() => exportToCSV(designData.topCustomers, 'design_customers')}>
-                        <DownloadIcon />
-                      </IconButton>
-                    </Box>
-                    <TableContainer sx={{ maxHeight: 250 }}>
-                      <Table size="small" stickyHeader>
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Customer</TableCell>
-                            <TableCell align="right">Quotes</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {designData.topCustomers.map((item, index) => (
-                            <TableRow key={index}>
-                              <TableCell sx={{ textTransform: 'capitalize' }}>{item.customer}</TableCell>
                               <TableCell align="right">{item.count}</TableCell>
                             </TableRow>
                           ))}
@@ -741,113 +750,53 @@ const AnalyticsDashboard = () => {
           </Box>
         ) : allocatedData ? (
           <>
-            <Grid container spacing={3} sx={{ mb: 3 }}>
-              <Grid item xs={12} md={3}>
-                <Card>
-                  <CardContent>
-                    <Typography color="text.secondary" gutterBottom>
-                      Total Calculations
-                    </Typography>
-                    <Typography variant="h4">
-                      {allocatedData.totalCalculations.toLocaleString()}
-                    </Typography>
+            {/* Summary Cards */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Total Calculations</Typography>
+                    <Typography variant="h4" fontWeight="bold">{allocatedData.totalCalculations.toLocaleString()}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={12} md={3}>
-                <Card>
-                  <CardContent>
-                    <Typography color="text.secondary" gutterBottom>
-                      Unique Quote IDs
-                    </Typography>
-                    <Typography variant="h4">
-                      {allocatedData.uniqueQuoteIds}
-                    </Typography>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Unique Quote IDs</Typography>
+                    <Typography variant="h4" fontWeight="bold">{allocatedData.uniqueQuoteIds}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={12} md={3}>
-                <Card>
-                  <CardContent>
-                    <Typography color="text.secondary" gutterBottom>
-                      Avg Suggested Price (USD)
-                    </Typography>
-                    <Typography variant="h4">
-                      ${parseFloat(allocatedData.averageSuggestedPrice || 0).toLocaleString()}
-                    </Typography>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Avg Suggested Price</Typography>
+                    <Typography variant="h4" fontWeight="bold">${parseFloat(allocatedData.averageSuggestedPrice || 0).toLocaleString()}</Typography>
+                    <Typography variant="caption" color="textSecondary">USD</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Unique Routes</Typography>
+                    <Typography variant="h4" fontWeight="bold">{allocatedData.routePairs?.length || 0}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
 
-            {/* Quote Request IDs */}
-            <Card sx={{ mb: 3 }}>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Quote Request IDs (Most Searched)</Typography>
-                  <IconButton size="small" onClick={() => exportToCSV(allocatedData.quoteRequestIds, 'quote_request_ids')}>
-                    <DownloadIcon />
-                  </IconButton>
-                </Box>
-                <TableContainer sx={{ maxHeight: 400 }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Quote Request ID</TableCell>
-                        <TableCell align="right">Search Count</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {allocatedData.quoteRequestIds.map((item, index) => (
-                        <TableRow key={index}>
-                          <TableCell>{item.quoteId}</TableCell>
-                          <TableCell align="right">{item.count}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
-
-            {/* Top Route Pairs */}
-            <Card sx={{ mb: 3 }}>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Most Searched Route Pairs</Typography>
-                  <IconButton size="small" onClick={() => exportToCSV(allocatedData.routePairs, 'allocated_route_pairs')}>
-                    <DownloadIcon />
-                  </IconButton>
-                </Box>
-                <TableContainer sx={{ maxHeight: 400 }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Route Pair</TableCell>
-                        <TableCell align="right">Count</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {allocatedData.routePairs.map((item, index) => (
-                        <TableRow key={index}>
-                          <TableCell>{item.route}</TableCell>
-                          <TableCell align="right">{item.count}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
-
-            <Grid container spacing={3} sx={{ mb: 3 }}>
-              {/* City Codes */}
-              <Grid item xs={12} md={6}>
-                <Card>
+            {/* Main Data Tables in 2-Column Layout */}
+            <Grid container spacing={3}>
+              {/* Left Column */}
+              <Grid item xs={12} lg={6}>
+                {/* Quote Request IDs */}
+                <Card sx={{ mb: 3 }}>
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h6">Top City Codes</Typography>
-                      <IconButton size="small" onClick={() => exportToCSV(allocatedData.cityCodes, 'allocated_city_codes')}>
+                      <Typography variant="h6">Top Quote Request IDs</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(allocatedData.quoteRequestIds, 'quote_request_ids')}>
                         <DownloadIcon />
                       </IconButton>
                     </Box>
@@ -855,13 +804,122 @@ const AnalyticsDashboard = () => {
                       <Table size="small" stickyHeader>
                         <TableHead>
                           <TableRow>
-                            <TableCell>City Code</TableCell>
-                            <TableCell align="right">Count</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Quote Request ID</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {allocatedData.cityCodes.map((item, index) => (
-                            <TableRow key={index}>
+                          {allocatedData.quoteRequestIds.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
+                              <TableCell>{item.quoteId}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Top Route Pairs */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Top 10 Route Pairs</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(allocatedData.routePairs, 'allocated_route_pairs')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 300 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Route Pair</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {allocatedData.routePairs.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
+                              <TableCell>{item.route}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                              <TableCell align="right">
+                                {allocatedData.totalCalculations > 0 ? `${((item.count / allocatedData.totalCalculations) * 100).toFixed(1)}%` : '-'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Top Customers */}
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Top 10 Customers</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(allocatedData.topCustomers, 'allocated_customers')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 250 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Customer</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Quotes</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {allocatedData.topCustomers.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
+                              <TableCell sx={{ textTransform: 'capitalize' }}>{item.customer}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                              <TableCell align="right">
+                                {allocatedData.totalCalculations > 0 ? `${((item.count / allocatedData.totalCalculations) * 100).toFixed(1)}%` : '-'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Right Column */}
+              <Grid item xs={12} lg={6}>
+                {/* City Codes */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Top City Codes</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(allocatedData.cityCodes, 'allocated_city_codes')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 250 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>City Code</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {allocatedData.cityCodes.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
                               <TableCell>{item.city}</TableCell>
                               <TableCell align="right">{item.count}</TableCell>
                             </TableRow>
@@ -871,10 +929,42 @@ const AnalyticsDashboard = () => {
                     </TableContainer>
                   </CardContent>
                 </Card>
-              </Grid>
 
-              {/* Individual Locations */}
-              <Grid item xs={12} md={6}>
+                {/* Bandwidth Distribution */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Bandwidth Distribution</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(allocatedData.bandwidthRanges, 'allocated_bandwidth')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 200 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Bandwidth Range</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {allocatedData.bandwidthRanges.map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{item.range}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                              <TableCell align="right">
+                                {allocatedData.totalCalculations > 0 ? `${((item.count / allocatedData.totalCalculations) * 100).toFixed(1)}%` : '-'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Individual Locations */}
                 <Card>
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -883,85 +973,20 @@ const AnalyticsDashboard = () => {
                         <DownloadIcon />
                       </IconButton>
                     </Box>
-                    <TableContainer sx={{ maxHeight: 300 }}>
+                    <TableContainer sx={{ maxHeight: 200 }}>
                       <Table size="small" stickyHeader>
                         <TableHead>
                           <TableRow>
-                            <TableCell>Location</TableCell>
-                            <TableCell align="right">Count</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Location</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {allocatedData.individualLocations.map((item, index) => (
-                            <TableRow key={index}>
+                          {allocatedData.individualLocations.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
                               <TableCell>{item.location}</TableCell>
-                              <TableCell align="right">{item.count}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  </CardContent>
-                </Card>
-              </Grid>
-            </Grid>
-
-            <Grid container spacing={3}>
-              {/* Bandwidth Distribution */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardContent>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h6">Bandwidth Distribution</Typography>
-                      <IconButton size="small" onClick={() => exportToCSV(allocatedData.bandwidthRanges, 'allocated_bandwidth')}>
-                        <DownloadIcon />
-                      </IconButton>
-                    </Box>
-                    <ResponsiveContainer width="100%" height={250}>
-                      <PieChart>
-                        <Pie
-                          data={allocatedData.bandwidthRanges}
-                          dataKey="count"
-                          nameKey="range"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={80}
-                          label
-                        >
-                          {allocatedData.bandwidthRanges.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* Top Customers */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardContent>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h6">Top Customers</Typography>
-                      <IconButton size="small" onClick={() => exportToCSV(allocatedData.topCustomers, 'allocated_customers')}>
-                        <DownloadIcon />
-                      </IconButton>
-                    </Box>
-                    <TableContainer sx={{ maxHeight: 250 }}>
-                      <Table size="small" stickyHeader>
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Customer</TableCell>
-                            <TableCell align="right">Quotes</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {allocatedData.topCustomers.map((item, index) => (
-                            <TableRow key={index}>
-                              <TableCell sx={{ textTransform: 'capitalize' }}>{item.customer}</TableCell>
                               <TableCell align="right">{item.count}</TableCell>
                             </TableRow>
                           ))}
@@ -986,107 +1011,159 @@ const AnalyticsDashboard = () => {
           </Box>
         ) : userData ? (
           <>
-            <Grid container spacing={3} sx={{ mb: 3 }}>
-              <Grid item xs={12} md={4}>
-                <Card>
-                  <CardContent>
-                    <Typography color="text.secondary" gutterBottom>
-                      Total Registered Users
+            {/* Summary Cards */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <PeopleIcon color="primary" fontSize="small" />
+                      <Typography color="textSecondary" variant="body2" gutterBottom>Total Registered Users</Typography>
+                    </Box>
+                    <Typography variant="h4" fontWeight="bold">{userData.totalUsers}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Active This Month</Typography>
+                    <Typography variant="h4" fontWeight="bold">{userData.mostActiveUsers?.length || 0}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>New Users (Last 12 Mo)</Typography>
+                    <Typography variant="h4" fontWeight="bold">
+                      {userData.userRegistrations?.slice(-12).reduce((sum, m) => sum + (m.count || 0), 0) || 0}
                     </Typography>
-                    <Typography variant="h4">
-                      {userData.totalUsers}
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Avg Logins (30 days)</Typography>
+                    <Typography variant="h4" fontWeight="bold">
+                      {userData.dailyLoginCounts?.length > 0 
+                        ? Math.round(userData.dailyLoginCounts.slice(-30).reduce((sum, d) => sum + (d.total_logins || 0), 0) / Math.min(userData.dailyLoginCounts.length, 30))
+                        : 0}
                     </Typography>
+                    <Typography variant="caption" color="textSecondary">per day</Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
 
-            <Grid container spacing={3} sx={{ mb: 3 }}>
-              {/* User Registrations Over Time */}
-              <Grid item xs={12} md={6}>
-                <Card>
+            {/* Main Data Tables in 2-Column Layout */}
+            <Grid container spacing={3}>
+              {/* Left Column */}
+              <Grid item xs={12} lg={6}>
+                {/* User Registrations Table */}
+                <Card sx={{ mb: 3 }}>
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h6">User Registrations Over Time</Typography>
+                      <Typography variant="h6">Monthly User Registrations</Typography>
                       <IconButton size="small" onClick={() => exportToCSV(userData.userRegistrations, 'user_registrations')}>
                         <DownloadIcon />
                       </IconButton>
                     </Box>
-                    <ResponsiveContainer width="100%" height={250}>
-                      <BarChart data={userData.userRegistrations.slice(-12).reverse()}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="month" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Bar dataKey="count" fill="#0088FE" name="New Users" />
-                      </BarChart>
-                    </ResponsiveContainer>
+                    <TableContainer sx={{ maxHeight: 300 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Month</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>New Users</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {userData.userRegistrations.slice(-12).reverse().map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{item.month}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
                   </CardContent>
                 </Card>
-              </Grid>
 
-              {/* Daily Login Counts */}
-              <Grid item xs={12} md={6}>
+                {/* Daily Login Activity Table */}
                 <Card>
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h6">Daily Login Activity (Last 30 Days)</Typography>
+                      <Typography variant="h6">Daily Login Activity (Last 14 Days)</Typography>
                       <IconButton size="small" onClick={() => exportToCSV(userData.dailyLoginCounts, 'daily_login_counts')}>
                         <DownloadIcon />
                       </IconButton>
                     </Box>
-                    <ResponsiveContainer width="100%" height={250}>
-                      <LineChart data={userData.dailyLoginCounts.slice(-30).reverse()}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="date" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Line type="monotone" dataKey="total_logins" stroke="#00C49F" name="Total Logins" />
-                        <Line type="monotone" dataKey="unique_users" stroke="#0088FE" name="Unique Users" />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    <TableContainer sx={{ maxHeight: 350 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Date</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Total Logins</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Unique Users</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {userData.dailyLoginCounts.slice(-14).reverse().map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{item.date}</TableCell>
+                              <TableCell align="right">{item.total_logins}</TableCell>
+                              <TableCell align="right">{item.unique_users}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Right Column - Most Active Users */}
+              <Grid item xs={12} lg={6}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Most Active Users</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(userData.mostActiveUsers, 'most_active_users')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 600 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Username</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Full Name</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Design</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Allocated</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Total</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {userData.mostActiveUsers.map((user, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
+                              <TableCell>{user.username}</TableCell>
+                              <TableCell>{user.fullName || '-'}</TableCell>
+                              <TableCell align="right">{user.designCalculations}</TableCell>
+                              <TableCell align="right">{user.allocatedCalculations}</TableCell>
+                              <TableCell align="right"><strong>{user.totalCalculations}</strong></TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
-
-            {/* Most Active Users */}
-            <Card>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Most Active Users</Typography>
-                  <IconButton size="small" onClick={() => exportToCSV(userData.mostActiveUsers, 'most_active_users')}>
-                    <DownloadIcon />
-                  </IconButton>
-                </Box>
-                <TableContainer sx={{ maxHeight: 500 }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Username</TableCell>
-                        <TableCell>Full Name</TableCell>
-                        <TableCell align="right">Design & Pricing</TableCell>
-                        <TableCell align="right">Allocated Cost</TableCell>
-                        <TableCell align="right">Total</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {userData.mostActiveUsers.map((user, index) => (
-                        <TableRow key={index}>
-                          <TableCell>{user.username}</TableCell>
-                          <TableCell>{user.fullName || '-'}</TableCell>
-                          <TableCell align="right">{user.designCalculations}</TableCell>
-                          <TableCell align="right">{user.allocatedCalculations}</TableCell>
-                          <TableCell align="right"><strong>{user.totalCalculations}</strong></TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
           </>
         ) : null}
       </TabPanel>
@@ -1101,107 +1178,173 @@ const AnalyticsDashboard = () => {
           </Box>
         ) : performanceData ? (
           <>
-            <Grid container spacing={3} sx={{ mb: 3 }}>
-              <Grid item xs={12} md={4}>
-                <Card>
-                  <CardContent>
-                    <Typography color="text.secondary" gutterBottom>
-                      Average Response Time
+            {/* Summary Cards */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Avg Response Time</Typography>
+                    <Typography variant="h4" fontWeight="bold">{performanceData.averageResponseTime}ms</Typography>
+                    <Typography variant="caption" color="textSecondary">Design & Pricing</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Total Calculations</Typography>
+                    <Typography variant="h4" fontWeight="bold">
+                      {performanceData.calculationsPerDay?.reduce((sum, d) => sum + (d.count || 0), 0) || 0}
                     </Typography>
-                    <Typography variant="h4">
-                      {performanceData.averageResponseTime}ms
+                    <Typography variant="caption" color="textSecondary">in period</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Daily Average</Typography>
+                    <Typography variant="h4" fontWeight="bold">
+                      {performanceData.calculationsPerDay?.length > 0 
+                        ? Math.round(performanceData.calculationsPerDay.reduce((sum, d) => sum + (d.count || 0), 0) / performanceData.calculationsPerDay.length)
+                        : 0}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Design & Pricing calculations
+                    <Typography variant="caption" color="textSecondary">calculations/day</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Peak Day</Typography>
+                    <Typography variant="h4" fontWeight="bold">
+                      {performanceData.calculationsPerDay?.length > 0 
+                        ? Math.max(...performanceData.calculationsPerDay.map(d => d.count || 0))
+                        : 0}
                     </Typography>
+                    <Typography variant="caption" color="textSecondary">max calculations</Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
 
-            {/* Daily Average Response Times */}
-            <Card sx={{ mb: 3 }}>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Daily Average Response Times (Last 30 Days)</Typography>
-                  <IconButton size="small" onClick={() => exportToCSV(performanceData.dailyAverageResponseTimes, 'daily_response_times')}>
-                    <DownloadIcon />
-                  </IconButton>
-                </Box>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={performanceData.dailyAverageResponseTimes.slice(-30).reverse()}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="avgTime" stroke="#0088FE" name="Avg Response Time (ms)" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Calculations Per Day */}
-            <Card sx={{ mb: 3 }}>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Calculations Per Day (Last 90 Days)</Typography>
-                  <IconButton size="small" onClick={() => exportToCSV(performanceData.calculationsPerDay, 'calculations_per_day')}>
-                    <DownloadIcon />
-                  </IconButton>
-                </Box>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={performanceData.calculationsPerDay.slice(-90).reverse()}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="count" fill="#00C49F" name="Calculations" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Usage by Time of Day Heatmap */}
-            <Card>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Usage by Day of Week and Hour</Typography>
-                  <IconButton size="small" onClick={() => exportToCSV(performanceData.calculationsByTimeOfDay, 'usage_by_time')}>
-                    <DownloadIcon />
-                  </IconButton>
-                </Box>
-                <TableContainer sx={{ maxHeight: 500 }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Day of Week</TableCell>
-                        <TableCell>Hour</TableCell>
-                        <TableCell align="right">Calculations</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {performanceData.calculationsByTimeOfDay
-                        .sort((a, b) => {
-                          if (a.day_of_week !== b.day_of_week) return a.day_of_week - b.day_of_week;
-                          return a.hour - b.hour;
-                        })
-                        .map((row, index) => {
-                          const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-                          return (
-                            <TableRow key={index}>
-                              <TableCell>{days[row.day_of_week]}</TableCell>
-                              <TableCell>{row.hour}:00</TableCell>
-                              <TableCell align="right">{row.count}</TableCell>
+            {/* Main Data Tables in 2-Column Layout */}
+            <Grid container spacing={3}>
+              {/* Left Column */}
+              <Grid item xs={12} lg={6}>
+                {/* Daily Response Times */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Daily Response Times (Last 14 Days)</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(performanceData.dailyAverageResponseTimes, 'daily_response_times')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 350 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Date</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Avg Response Time</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {performanceData.dailyAverageResponseTimes.slice(-14).reverse().map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{item.date}</TableCell>
+                              <TableCell align="right">
+                                <Typography 
+                                  variant="body2" 
+                                  sx={{ 
+                                    color: item.avgTime > 500 ? 'error.main' : item.avgTime > 200 ? 'warning.main' : 'success.main',
+                                    fontWeight: 'bold'
+                                  }}
+                                >
+                                  {item.avgTime}ms
+                                </Typography>
+                              </TableCell>
                             </TableRow>
-                          );
-                        })}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Calculations Per Day */}
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Calculations Per Day (Last 14 Days)</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(performanceData.calculationsPerDay, 'calculations_per_day')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 350 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Date</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Calculations</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {performanceData.calculationsPerDay.slice(-14).reverse().map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{item.date}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Right Column - Usage by Time */}
+              <Grid item xs={12} lg={6}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Usage by Day of Week and Hour</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(performanceData.calculationsByTimeOfDay, 'usage_by_time')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 600 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Day</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Hour</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {performanceData.calculationsByTimeOfDay
+                            .sort((a, b) => {
+                              if (a.day_of_week !== b.day_of_week) return a.day_of_week - b.day_of_week;
+                              return a.hour - b.hour;
+                            })
+                            .map((row, index) => {
+                              const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                              return (
+                                <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                  <TableCell>{days[row.day_of_week]}</TableCell>
+                                  <TableCell>{String(row.hour).padStart(2, '0')}:00</TableCell>
+                                  <TableCell align="right">{row.count}</TableCell>
+                                </TableRow>
+                              );
+                            })}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
           </>
         ) : null}
       </TabPanel>
@@ -1216,67 +1359,125 @@ const AnalyticsDashboard = () => {
           </Box>
         ) : routeFinderData ? (
           <>
-            <Grid container spacing={3} sx={{ mb: 3 }}>
-              <Grid item xs={12} md={4}>
-                <Card>
-                  <CardContent>
-                    <Typography color="text.secondary" gutterBottom>
-                      Total Searches
-                    </Typography>
-                    <Typography variant="h4">
-                      {routeFinderData.totalSearches.toLocaleString()}
-                    </Typography>
+            {/* Summary Cards */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Total Searches</Typography>
+                    <Typography variant="h4" fontWeight="bold">{routeFinderData.totalSearches.toLocaleString()}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={12} md={4}>
-                <Card>
-                  <CardContent>
-                    <Typography color="text.secondary" gutterBottom>
-                      Avg Response Time
-                    </Typography>
-                    <Typography variant="h4">
-                      {routeFinderData.averageResponseTime}ms
-                    </Typography>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Avg Response Time</Typography>
+                    <Typography variant="h4" fontWeight="bold">{routeFinderData.averageResponseTime}ms</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Unique Routes</Typography>
+                    <Typography variant="h4" fontWeight="bold">{routeFinderData.routePairs?.length || 0}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={3}>
+                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Active Users</Typography>
+                    <Typography variant="h4" fontWeight="bold">{routeFinderData.topUsers?.length || 0}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
 
-            {/* Top Route Pairs */}
-            <Card sx={{ mb: 3 }}>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Most Searched Route Pairs</Typography>
-                  <IconButton size="small" onClick={() => exportToCSV(routeFinderData.routePairs, 'route_finder_route_pairs')}>
-                    <DownloadIcon />
-                  </IconButton>
-                </Box>
-                <TableContainer sx={{ maxHeight: 400 }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Route Pair</TableCell>
-                        <TableCell align="right">Count</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {routeFinderData.routePairs.map((item, index) => (
-                        <TableRow key={index}>
-                          <TableCell>{item.route}</TableCell>
-                          <TableCell align="right">{item.count}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
+            {/* Main Data Tables in 2-Column Layout */}
+            <Grid container spacing={3}>
+              {/* Left Column */}
+              <Grid item xs={12} lg={6}>
+                {/* Top Route Pairs */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Top 10 Route Pairs</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(routeFinderData.routePairs, 'route_finder_route_pairs')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 350 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Route Pair</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {routeFinderData.routePairs.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
+                              <TableCell>{item.route}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                              <TableCell align="right">
+                                {routeFinderData.totalSearches > 0 ? `${((item.count / routeFinderData.totalSearches) * 100).toFixed(1)}%` : '-'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
 
-            <Grid container spacing={3} sx={{ mb: 3 }}>
-              {/* City Codes */}
-              <Grid item xs={12} md={6}>
-                <Card>
+                {/* Top Users */}
+                {routeFinderData.topUsers && routeFinderData.topUsers.length > 0 && (
+                  <Card>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">Top Users</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(routeFinderData.topUsers, 'route_finder_users')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 300 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Username</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Searches</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {routeFinderData.topUsers.slice(0, 10).map((user, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{index + 1}</TableCell>
+                                <TableCell>{user.username}</TableCell>
+                                <TableCell align="right">{user.count}</TableCell>
+                                <TableCell align="right">
+                                  {routeFinderData.totalSearches > 0 ? `${((user.count / routeFinderData.totalSearches) * 100).toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </CardContent>
+                  </Card>
+                )}
+              </Grid>
+
+              {/* Right Column */}
+              <Grid item xs={12} lg={6}>
+                {/* City Codes */}
+                <Card sx={{ mb: 3 }}>
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                       <Typography variant="h6">Top City Codes</Typography>
@@ -1284,17 +1485,19 @@ const AnalyticsDashboard = () => {
                         <DownloadIcon />
                       </IconButton>
                     </Box>
-                    <TableContainer sx={{ maxHeight: 300 }}>
+                    <TableContainer sx={{ maxHeight: 250 }}>
                       <Table size="small" stickyHeader>
                         <TableHead>
                           <TableRow>
-                            <TableCell>City Code</TableCell>
-                            <TableCell align="right">Count</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>City Code</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {routeFinderData.cityCodes.map((item, index) => (
-                            <TableRow key={index}>
+                          {routeFinderData.cityCodes.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
                               <TableCell>{item.city}</TableCell>
                               <TableCell align="right">{item.count}</TableCell>
                             </TableRow>
@@ -1304,10 +1507,76 @@ const AnalyticsDashboard = () => {
                     </TableContainer>
                   </CardContent>
                 </Card>
-              </Grid>
 
-              {/* Individual Locations */}
-              <Grid item xs={12} md={6}>
+                {/* Bandwidth Distribution */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Bandwidth Distribution</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(routeFinderData.bandwidthRanges, 'route_finder_bandwidth')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 200 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Bandwidth Range</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {routeFinderData.bandwidthRanges.map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{item.range}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                              <TableCell align="right">
+                                {routeFinderData.totalSearches > 0 ? `${((item.count / routeFinderData.totalSearches) * 100).toFixed(1)}%` : '-'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Route Mode Distribution */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Route Mode Distribution</Typography>
+                      <IconButton size="small" onClick={() => exportToCSV(routeFinderData.routeModes, 'route_finder_modes')}>
+                        <DownloadIcon />
+                      </IconButton>
+                    </Box>
+                    <TableContainer sx={{ maxHeight: 200 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Route Mode</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {routeFinderData.routeModes.map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{item.mode}</TableCell>
+                              <TableCell align="right">{item.count}</TableCell>
+                              <TableCell align="right">
+                                {routeFinderData.totalSearches > 0 ? `${((item.count / routeFinderData.totalSearches) * 100).toFixed(1)}%` : '-'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Individual Locations */}
                 <Card>
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -1316,17 +1585,19 @@ const AnalyticsDashboard = () => {
                         <DownloadIcon />
                       </IconButton>
                     </Box>
-                    <TableContainer sx={{ maxHeight: 300 }}>
+                    <TableContainer sx={{ maxHeight: 200 }}>
                       <Table size="small" stickyHeader>
                         <TableHead>
                           <TableRow>
-                            <TableCell>Location</TableCell>
-                            <TableCell align="right">Count</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold' }}>Location</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {routeFinderData.individualLocations.map((item, index) => (
-                            <TableRow key={index}>
+                          {routeFinderData.individualLocations.slice(0, 10).map((item, index) => (
+                            <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                              <TableCell>{index + 1}</TableCell>
                               <TableCell>{item.location}</TableCell>
                               <TableCell align="right">{item.count}</TableCell>
                             </TableRow>
@@ -1338,97 +1609,6 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
             </Grid>
-
-            <Grid container spacing={3}>
-              {/* Bandwidth Distribution */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardContent>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h6">Bandwidth Distribution</Typography>
-                      <IconButton size="small" onClick={() => exportToCSV(routeFinderData.bandwidthRanges, 'route_finder_bandwidth')}>
-                        <DownloadIcon />
-                      </IconButton>
-                    </Box>
-                    <ResponsiveContainer width="100%" height={250}>
-                      <PieChart>
-                        <Pie
-                          data={routeFinderData.bandwidthRanges}
-                          dataKey="count"
-                          nameKey="range"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={80}
-                          label
-                        >
-                          {routeFinderData.bandwidthRanges.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* Route Mode Distribution */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardContent>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h6">Route Mode Distribution</Typography>
-                      <IconButton size="small" onClick={() => exportToCSV(routeFinderData.routeModes, 'route_finder_modes')}>
-                        <DownloadIcon />
-                      </IconButton>
-                    </Box>
-                    <ResponsiveContainer width="100%" height={250}>
-                      <BarChart data={routeFinderData.routeModes}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="mode" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Bar dataKey="count" fill="#0088FE" name="Searches" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
-              </Grid>
-            </Grid>
-
-            {/* Top Users */}
-            {routeFinderData.topUsers && routeFinderData.topUsers.length > 0 && (
-              <Card sx={{ mt: 3 }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="h6">Most Active Users</Typography>
-                    <IconButton size="small" onClick={() => exportToCSV(routeFinderData.topUsers, 'route_finder_users')}>
-                      <DownloadIcon />
-                    </IconButton>
-                  </Box>
-                  <TableContainer sx={{ maxHeight: 400 }}>
-                    <Table size="small" stickyHeader>
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>Username</TableCell>
-                          <TableCell align="right">Searches</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {routeFinderData.topUsers.map((user, index) => (
-                          <TableRow key={index}>
-                            <TableCell>{user.username}</TableCell>
-                            <TableCell align="right">{user.count}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </CardContent>
-              </Card>
-            )}
           </>
         ) : null}
       </TabPanel>
@@ -1443,182 +1623,388 @@ const AnalyticsDashboard = () => {
           </Box>
         ) : extranetPricingData ? (
           <>
-            {/* Summary Cards */}
-            <Grid container spacing={3} sx={{ mb: 3 }}>
-              <Grid item xs={12} md={3}>
-                <Card>
-                  <CardContent>
-                    <Typography color="textSecondary" gutterBottom>Total Lookups</Typography>
-                    <Typography variant="h4">{extranetPricingData.totalLookups?.toLocaleString() || 0}</Typography>
+            {/* Key Metrics Summary Cards */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Total Lookups</Typography>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.totalLookups?.toLocaleString() || 0}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>IPSec Requests</Typography>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.ipsecStats?.required?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {extranetPricingData.totalLookups > 0 ? `${((extranetPricingData.ipsecStats?.required / extranetPricingData.totalLookups) * 100).toFixed(1)}% of total` : ''}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Cloud Members</Typography>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.cloudMemberCount?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {extranetPricingData.totalLookups > 0 ? `${((extranetPricingData.cloudMemberCount / extranetPricingData.totalLookups) * 100).toFixed(1)}% of total` : ''}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#fce4ec', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Discounts Requested</Typography>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.discountStats?.requestedCount?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      Avg: {extranetPricingData.discountStats?.averageDiscount || 0}%
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Active Users</Typography>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.topUsers?.length || 0}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#e0f7fa', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Off-Net Requests</Typography>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.offNetCount?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {extranetPricingData.totalLookups > 0 ? `${((extranetPricingData.offNetCount / extranetPricingData.totalLookups) * 100).toFixed(1)}% of total` : ''}
+                    </Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
 
-            {/* Region Distribution */}
-            {extranetPricingData.regionDistribution && extranetPricingData.regionDistribution.length > 0 && (
-              <Grid container spacing={3}>
-                <Grid item xs={12} md={6}>
-                  <Card>
+            {/* Main Data Tables in 2-Column Layout */}
+            <Grid container spacing={3}>
+              {/* Left Column */}
+              <Grid item xs={12} lg={6}>
+                {/* Top Providers */}
+                {extranetPricingData.topProviders && extranetPricingData.topProviders.length > 0 && (
+                  <Card sx={{ mb: 3 }}>
                     <CardContent>
-                      <Typography variant="h6" gutterBottom>Lookups by Region</Typography>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <PieChart>
-                          <Pie
-                            data={extranetPricingData.regionDistribution}
-                            cx="50%"
-                            cy="50%"
-                            labelLine={false}
-                            label={({ region, percent }) => `${region} (${(percent * 100).toFixed(0)}%)`}
-                            outerRadius={100}
-                            fill="#8884d8"
-                            dataKey="count"
-                          >
-                            {extranetPricingData.regionDistribution.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">Top 10 Providers</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.topProviders, 'extranet_top_providers')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 350 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Provider</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Searches</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>% of Total</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {extranetPricingData.topProviders.slice(0, 10).map((provider, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{index + 1}</TableCell>
+                                <TableCell>{provider.provider}</TableCell>
+                                <TableCell align="right">{provider.count}</TableCell>
+                                <TableCell align="right">
+                                  {extranetPricingData.totalLookups > 0 ? `${((provider.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </TableRow>
                             ))}
-                          </Pie>
-                          <Tooltip />
-                        </PieChart>
-                      </ResponsiveContainer>
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
                     </CardContent>
                   </Card>
-                </Grid>
+                )}
 
-                <Grid item xs={12} md={6}>
+                {/* Top City Pairs */}
+                {extranetPricingData.topCityPairs && extranetPricingData.topCityPairs.length > 0 && (
+                  <Card sx={{ mb: 3 }}>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">Top 10 City Pairs (Provider → Member)</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.topCityPairs, 'extranet_city_pairs')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 350 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                              <TableCell sx={{ fontWeight: 'bold' }}>City Pair</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Searches</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {extranetPricingData.topCityPairs.slice(0, 10).map((pair, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{index + 1}</TableCell>
+                                <TableCell>{pair.pair}</TableCell>
+                                <TableCell align="right">{pair.count}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* User Activity */}
+                {extranetPricingData.topUsers && extranetPricingData.topUsers.length > 0 && (
                   <Card>
                     <CardContent>
-                      <Typography variant="h6" gutterBottom>Lookups by Tier</Typography>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={extranetPricingData.tierDistribution}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="tier" />
-                          <YAxis />
-                          <Tooltip />
-                          <Bar dataKey="count" fill="#82ca9d" />
-                        </BarChart>
-                      </ResponsiveContainer>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">User Activity</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.topUsers, 'extranet_pricing_users')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 300 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Username</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Lookups</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>% of Total</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {extranetPricingData.topUsers.map((user, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{index + 1}</TableCell>
+                                <TableCell>{user.username}</TableCell>
+                                <TableCell align="right">{user.count}</TableCell>
+                                <TableCell align="right">
+                                  {extranetPricingData.totalLookups > 0 ? `${((user.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
                     </CardContent>
                   </Card>
-                </Grid>
+                )}
               </Grid>
-            )}
 
-            {/* Bandwidth Distribution */}
-            {extranetPricingData.bandwidthDistribution && extranetPricingData.bandwidthDistribution.length > 0 && (
-              <Card sx={{ mt: 3 }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="h6">Bandwidth Distribution</Typography>
-                    <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.bandwidthDistribution, 'extranet_bandwidth_distribution')}>
-                      <DownloadIcon />
-                    </IconButton>
-                  </Box>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={extranetPricingData.bandwidthDistribution}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="bandwidth" angle={-45} textAnchor="end" height={80} />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="count" fill="#8884d8" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-            )}
+              {/* Right Column */}
+              <Grid item xs={12} lg={6}>
+                {/* Breakdown Summary Tables */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>Request Breakdown Summary</Typography>
+                    
+                    {/* Resiliency Breakdown */}
+                    {extranetPricingData.resiliencyDistribution && extranetPricingData.resiliencyDistribution.length > 0 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" color="textSecondary" gutterBottom>By Resiliency Type</Typography>
+                        <TableContainer>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell sx={{ fontWeight: 'bold' }}>Type</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {extranetPricingData.resiliencyDistribution.map((item, index) => (
+                                <TableRow key={index}>
+                                  <TableCell>{item.resiliency || 'Unknown'}</TableCell>
+                                  <TableCell align="right">{item.count}</TableCell>
+                                  <TableCell align="right">
+                                    {extranetPricingData.totalLookups > 0 ? `${((item.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </Box>
+                    )}
 
-            {/* Top Providers */}
-            {extranetPricingData.topProviders && extranetPricingData.topProviders.length > 0 && (
-              <Card sx={{ mt: 3 }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="h6">Most Searched Providers</Typography>
-                    <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.topProviders, 'extranet_top_providers')}>
-                      <DownloadIcon />
-                    </IconButton>
-                  </Box>
-                  <TableContainer sx={{ maxHeight: 400 }}>
-                    <Table size="small" stickyHeader>
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>Provider</TableCell>
-                          <TableCell align="right">Searches</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {extranetPricingData.topProviders.map((provider, index) => (
-                          <TableRow key={index}>
-                            <TableCell>{provider.provider}</TableCell>
-                            <TableCell align="right">{provider.count}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </CardContent>
-              </Card>
-            )}
+                    {/* Contract Term Breakdown */}
+                    {extranetPricingData.contractTermDistribution && extranetPricingData.contractTermDistribution.length > 0 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" color="textSecondary" gutterBottom>By Contract Term</Typography>
+                        <TableContainer>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell sx={{ fontWeight: 'bold' }}>Term</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {extranetPricingData.contractTermDistribution.map((item, index) => (
+                                <TableRow key={index}>
+                                  <TableCell>{item.term} months</TableCell>
+                                  <TableCell align="right">{item.count}</TableCell>
+                                  <TableCell align="right">
+                                    {extranetPricingData.totalLookups > 0 ? `${((item.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </Box>
+                    )}
 
-            {/* Top Cities */}
+                    {/* Traffic Type Breakdown */}
+                    {extranetPricingData.trafficTypeDistribution && extranetPricingData.trafficTypeDistribution.length > 0 && (
+                      <Box>
+                        <Typography variant="subtitle2" color="textSecondary" gutterBottom>By Traffic Type</Typography>
+                        <TableContainer>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell sx={{ fontWeight: 'bold' }}>Type</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {extranetPricingData.trafficTypeDistribution.map((item, index) => (
+                                <TableRow key={index}>
+                                  <TableCell>{item.type || 'Unknown'}</TableCell>
+                                  <TableCell align="right">{item.count}</TableCell>
+                                  <TableCell align="right">
+                                    {extranetPricingData.totalLookups > 0 ? `${((item.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </Box>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Bandwidth Distribution */}
+                {extranetPricingData.bandwidthDistribution && extranetPricingData.bandwidthDistribution.length > 0 && (
+                  <Card sx={{ mb: 3 }}>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">Bandwidth Distribution</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.bandwidthDistribution, 'extranet_bandwidth_distribution')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 250 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Bandwidth</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {extranetPricingData.bandwidthDistribution.map((item, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{item.bandwidth}</TableCell>
+                                <TableCell align="right">{item.count}</TableCell>
+                                <TableCell align="right">
+                                  {extranetPricingData.totalLookups > 0 ? `${((item.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Currency Distribution */}
+                {extranetPricingData.currencyDistribution && extranetPricingData.currencyDistribution.length > 0 && (
+                  <Card>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">Currency Distribution</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.currencyDistribution, 'extranet_currencies')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 200 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Currency</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {extranetPricingData.currencyDistribution.map((item, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{item.currency}</TableCell>
+                                <TableCell align="right">{item.count}</TableCell>
+                                <TableCell align="right">
+                                  {extranetPricingData.totalLookups > 0 ? `${((item.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </CardContent>
+                  </Card>
+                )}
+              </Grid>
+            </Grid>
+
+            {/* Top Cities - Full Width */}
             {extranetPricingData.topCities && extranetPricingData.topCities.length > 0 && (
               <Card sx={{ mt: 3 }}>
                 <CardContent>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="h6">Most Searched Cities</Typography>
+                    <Typography variant="h6">Top Searched Cities</Typography>
                     <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.topCities, 'extranet_top_cities')}>
                       <DownloadIcon />
                     </IconButton>
                   </Box>
-                  <TableContainer sx={{ maxHeight: 400 }}>
-                    <Table size="small" stickyHeader>
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>City</TableCell>
-                          <TableCell align="right">Searches</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {extranetPricingData.topCities.map((city, index) => (
-                          <TableRow key={index}>
-                            <TableCell>{city.city}</TableCell>
-                            <TableCell align="right">{city.count}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Top Users */}
-            {extranetPricingData.topUsers && extranetPricingData.topUsers.length > 0 && (
-              <Card sx={{ mt: 3 }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="h6">Most Active Users</Typography>
-                    <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.topUsers, 'extranet_pricing_users')}>
-                      <DownloadIcon />
-                    </IconButton>
-                  </Box>
-                  <TableContainer sx={{ maxHeight: 400 }}>
-                    <Table size="small" stickyHeader>
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>Username</TableCell>
-                          <TableCell align="right">Lookups</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {extranetPricingData.topUsers.map((user, index) => (
-                          <TableRow key={index}>
-                            <TableCell>{user.username}</TableCell>
-                            <TableCell align="right">{user.count}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
+                  <Grid container spacing={2}>
+                    {extranetPricingData.topCities.slice(0, 20).map((city, index) => (
+                      <Grid item xs={6} sm={4} md={3} lg={2} key={index}>
+                        <Box sx={{ 
+                          p: 1.5, 
+                          border: '1px solid', 
+                          borderColor: 'divider', 
+                          borderRadius: 1,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          bgcolor: index < 3 ? 'primary.50' : 'transparent'
+                        }}>
+                          <Typography variant="body2" noWrap title={city.city} sx={{ flex: 1, mr: 1 }}>
+                            {index + 1}. {city.city}
+                          </Typography>
+                          <Typography variant="body2" fontWeight="bold" color="primary">
+                            {city.count}
+                          </Typography>
+                        </Box>
+                      </Grid>
+                    ))}
+                  </Grid>
                 </CardContent>
               </Card>
             )}

@@ -2585,6 +2585,19 @@ router.get('/kmz_viewer/route_counts', authenticateToken, authorizeModulePermiss
     lt_10gb: { EMEA: 0, AMERs: 0, APAC: 0, INTER: 0, total: 0 }
   };
   
+  // Normalize region names from DB (uppercase) to expected format
+  const normalizeRegion = (region) => {
+    if (!region) return null;
+    const upper = region.toUpperCase();
+    const regionMap = {
+      'EMEA': 'EMEA',
+      'AMERS': 'AMERs',
+      'APAC': 'APAC',
+      'INTER': 'INTER'
+    };
+    return regionMap[upper] || null;
+  };
+  
   const queries = [
     // Dark Fiber counts by region
     new Promise((resolve) => {
@@ -2597,8 +2610,9 @@ router.get('/kmz_viewer/route_counts', authenticateToken, authorizeModulePermiss
         (err, rows) => {
           if (!err && rows) {
             rows.forEach(row => {
-              if (row.region && counts.dark_fiber[row.region] !== undefined) {
-                counts.dark_fiber[row.region] = row.count;
+              const normalizedRegion = normalizeRegion(row.region);
+              if (normalizedRegion && counts.dark_fiber[normalizedRegion] !== undefined) {
+                counts.dark_fiber[normalizedRegion] = row.count;
                 counts.dark_fiber.total += row.count;
               }
             });
@@ -2618,8 +2632,9 @@ router.get('/kmz_viewer/route_counts', authenticateToken, authorizeModulePermiss
         (err, rows) => {
           if (!err && rows) {
             rows.forEach(row => {
-              if (row.region && counts.gb_100[row.region] !== undefined) {
-                counts.gb_100[row.region] = row.count;
+              const normalizedRegion = normalizeRegion(row.region);
+              if (normalizedRegion && counts.gb_100[normalizedRegion] !== undefined) {
+                counts.gb_100[normalizedRegion] = row.count;
                 counts.gb_100.total += row.count;
               }
             });
@@ -2639,8 +2654,9 @@ router.get('/kmz_viewer/route_counts', authenticateToken, authorizeModulePermiss
         (err, rows) => {
           if (!err && rows) {
             rows.forEach(row => {
-              if (row.region && counts.gb_10[row.region] !== undefined) {
-                counts.gb_10[row.region] = row.count;
+              const normalizedRegion = normalizeRegion(row.region);
+              if (normalizedRegion && counts.gb_10[normalizedRegion] !== undefined) {
+                counts.gb_10[normalizedRegion] = row.count;
                 counts.gb_10.total += row.count;
               }
             });
@@ -2660,8 +2676,9 @@ router.get('/kmz_viewer/route_counts', authenticateToken, authorizeModulePermiss
         (err, rows) => {
           if (!err && rows) {
             rows.forEach(row => {
-              if (row.region && counts.lt_10gb[row.region] !== undefined) {
-                counts.lt_10gb[row.region] = row.count;
+              const normalizedRegion = normalizeRegion(row.region);
+              if (normalizedRegion && counts.lt_10gb[normalizedRegion] !== undefined) {
+                counts.lt_10gb[normalizedRegion] = row.count;
                 counts.lt_10gb.total += row.count;
               }
             });
@@ -7356,13 +7373,13 @@ router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, au
         created_by, updated_by, updated_date) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       insertValues,
-      function(err, statement) {
+      function(err) {
         if (err) {
           console.log('❌ Database INSERT error:', err);
           return res.status(500).json({ error: err.message });
         }
         
-        const rackRecordId = statement?.lastID;
+        const rackRecordId = this.lastID;
         console.log('✅ Rack inserted successfully, ID:', rackRecordId);
         
         // Log rack creation
@@ -7651,10 +7668,10 @@ router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authoriz
          (rack_id, client_name, power_purchased, ru_purchased, space_power_ucn, design_sharepoint_link, more_info, created_by, updated_by, updated_date) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [rackId, client_name, parseFloat(power_purchased), finalRuPurchased, space_power_ucn, design_sharepoint_link || null, more_info || null, req.user.id, req.user.id, new Date().toISOString()],
-        function(err, statement) {
+        function(err) {
           if (err) return res.status(500).json({ error: err.message });
           
-          const recordId = statement?.lastID;
+          const recordId = this.lastID;
           
           try {
             logChange(req.user.id, 'cnx_colocation_clients', recordId || client_name, 'CREATE', null, 
@@ -12595,10 +12612,10 @@ router.post('/feedback', authenticateToken, feedbackUpload.array('attachments', 
     `INSERT INTO feedback_submissions (user_id, type, priority, description, status) 
      VALUES (?, ?, ?, ?, 'New')`,
     [userId, type, parseInt(priority), description],
-    function(err, statement) {
+    function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
-      const feedbackId = statement?.lastID;
+      const feedbackId = this.lastID;
       
       // Insert attachments if any
       if (req.files && req.files.length > 0) {
@@ -13031,14 +13048,16 @@ router.post('/feedback/:id/comment', authenticateToken, (req, res) => {
       `INSERT INTO feedback_comments (feedback_id, user_id, comment, is_admin_note) 
        VALUES (?, ?, ?, ?)`,
       [feedbackId, userId, comment.trim(), isAdmin ? 1 : 0],
-      function(insertErr, statement) {
+      function(insertErr) {
         if (insertErr) return res.status(500).json({ error: insertErr.message });
+        
+        const commentId = this.lastID;
         
         // Update feedback updated_at timestamp
         db.run('UPDATE feedback_submissions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [feedbackId]);
         
         res.status(201).json({ 
-          id: statement?.lastID, 
+          id: commentId, 
           message: 'Comment added successfully' 
         });
       }
@@ -14256,11 +14275,693 @@ router.get('/extranet-pricing/bandwidths', authenticateToken, authorizeModulePer
   });
 });
 
+// ====================================
+// EXTRANET PRICING TOOL ENDPOINTS
+// ====================================
+
+// Get all pricing parameters
+router.get('/extranet-pricing/parameters', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  db.all('SELECT * FROM extranet_pricing_parameters ORDER BY id', [], (err, params) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    // Convert to object for easier frontend consumption
+    const paramsObject = {};
+    params.forEach(p => {
+      paramsObject[p.param_key] = {
+        id: p.id,
+        value: p.param_value,
+        type: p.param_type,
+        description: p.description
+      };
+    });
+    res.json(paramsObject);
+  });
+});
+
+// Update pricing parameters (bulk)
+router.put('/extranet-pricing/parameters', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), async (req, res) => {
+  const { parameters } = req.body;
+  
+  if (!parameters || typeof parameters !== 'object') {
+    return res.status(400).json({ error: 'Parameters object is required' });
+  }
+  
+  try {
+    const updates = Object.entries(parameters);
+    
+    for (const [key, value] of updates) {
+      // Get old value for logging
+      const oldValue = await new Promise((resolve, reject) => {
+        db.get('SELECT * FROM extranet_pricing_parameters WHERE param_key = ?', [key], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+      
+      // Update parameter
+      await new Promise((resolve, reject) => {
+        db.run(
+          'UPDATE extranet_pricing_parameters SET param_value = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE param_key = ?',
+          [value.toString(), req.user.id, key],
+          function(err) {
+            if (err) reject(err);
+            else resolve(this.changes);
+          }
+        );
+      });
+      
+      // Log change
+      if (oldValue) {
+        logChange(req.user.id, 'extranet_pricing_parameters', oldValue.id, 'UPDATE', 
+          { param_key: key, param_value: oldValue.param_value }, 
+          { param_key: key, param_value: value.toString() }, req);
+      }
+    }
+    
+    res.json({ success: true, message: 'Parameters updated successfully' });
+  } catch (error) {
+    console.error('Error updating pricing parameters:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get IPSec surcharges
+router.get('/extranet-pricing/ipsec-surcharges', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  db.all('SELECT * FROM extranet_ipsec_surcharges ORDER BY id', [], (err, surcharges) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(surcharges);
+  });
+});
+
+// Update IPSec surcharges
+router.put('/extranet-pricing/ipsec-surcharges', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), async (req, res) => {
+  const { surcharges } = req.body;
+  
+  if (!Array.isArray(surcharges)) {
+    return res.status(400).json({ error: 'Surcharges array is required' });
+  }
+  
+  try {
+    for (const surcharge of surcharges) {
+      const { id, bandwidth_tier, non_resilient_mrc, resilient_mrc } = surcharge;
+      
+      // Get old value for logging
+      const oldValue = await new Promise((resolve, reject) => {
+        db.get('SELECT * FROM extranet_ipsec_surcharges WHERE id = ?', [id], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+      
+      // Update surcharge
+      await new Promise((resolve, reject) => {
+        db.run(
+          'UPDATE extranet_ipsec_surcharges SET non_resilient_mrc = ?, resilient_mrc = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [non_resilient_mrc, resilient_mrc, req.user.id, id],
+          function(err) {
+            if (err) reject(err);
+            else resolve(this.changes);
+          }
+        );
+      });
+      
+      // Log change
+      if (oldValue) {
+        logChange(req.user.id, 'extranet_ipsec_surcharges', id, 'UPDATE', oldValue, surcharge, req);
+      }
+    }
+    
+    res.json({ success: true, message: 'IPSec surcharges updated successfully' });
+  } catch (error) {
+    console.error('Error updating IPSec surcharges:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get available currencies from exchange_rates table
+router.get('/extranet-pricing/currencies', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  db.all(`SELECT currency_code, exchange_rate,
+    CASE currency_code 
+      WHEN 'USD' THEN 'US Dollar' 
+      WHEN 'EUR' THEN 'Euro' 
+      WHEN 'GBP' THEN 'British Pound' 
+      WHEN 'JPY' THEN 'Japanese Yen' 
+      WHEN 'AUD' THEN 'Australian Dollar' 
+      WHEN 'CAD' THEN 'Canadian Dollar'
+      WHEN 'CHF' THEN 'Swiss Franc'
+      WHEN 'CNY' THEN 'Chinese Yuan'
+      WHEN 'HKD' THEN 'Hong Kong Dollar'
+      WHEN 'SGD' THEN 'Singapore Dollar'
+      WHEN 'INR' THEN 'Indian Rupee'
+      WHEN 'BRL' THEN 'Brazilian Real'
+      WHEN 'MXN' THEN 'Mexican Peso'
+      WHEN 'ZAR' THEN 'South African Rand'
+      WHEN 'KRW' THEN 'South Korean Won'
+      ELSE currency_code 
+    END as currency_name 
+    FROM exchange_rates 
+    ORDER BY CASE currency_code WHEN 'USD' THEN 0 ELSE 1 END, currency_code`, [], (err, currencies) => {
+    if (err) return res.status(500).json({ error: err.message });
+    // Check if USD exists in results, if not add it as base currency
+    const hasUSD = currencies.some(c => c.currency_code === 'USD');
+    if (!hasUSD) {
+      currencies.unshift({ currency_code: 'USD', currency_name: 'US Dollar', exchange_rate: 1 });
+    }
+    res.json(currencies);
+  });
+});
+
+// Main pricing calculation endpoint
+router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), async (req, res) => {
+  const {
+    provider_primary_city,
+    provider_secondary_city,
+    member_primary_city,
+    member_secondary_city,
+    member_resiliency,
+    member_on_off_net,
+    member_cloud,
+    bandwidth,
+    traffic_type,
+    ipsec_required,
+    contract_term,
+    currency_requested,
+    discount_requested,
+    discount_percent
+  } = req.body;
+  
+  // Validation
+  if (!provider_primary_city || !member_primary_city) {
+    return res.status(400).json({ error: 'Provider and Member primary locations are required' });
+  }
+  if (!bandwidth) {
+    return res.status(400).json({ error: 'Bandwidth is required' });
+  }
+  if (!member_resiliency) {
+    return res.status(400).json({ error: 'Member resiliency type is required' });
+  }
+  if (!traffic_type) {
+    return res.status(400).json({ error: 'Traffic type is required' });
+  }
+  if (!contract_term) {
+    return res.status(400).json({ error: 'Contract term is required' });
+  }
+  
+  // Adjust Off Net minimum bandwidth (auto-adjust to 10Mb if below)
+  let adjustedBandwidth = bandwidth;
+  if (member_on_off_net === 'Off Net') {
+    const bandwidthValue = parseFloat(bandwidth.replace(/[^0-9.]/g, ''));
+    const bandwidthUnit = bandwidth.toLowerCase();
+    let bandwidthMb = bandwidthValue;
+    if (bandwidthUnit.includes('kb')) {
+      bandwidthMb = bandwidthValue / 1000;
+    }
+    if (bandwidthMb < 10) {
+      // Seamlessly adjust to 10Mb for Off Net connections
+      adjustedBandwidth = '10Mb';
+    }
+  }
+  
+  try {
+    // 1. Get pricing parameters
+    const params = await new Promise((resolve, reject) => {
+      db.all('SELECT param_key, param_value, param_type FROM extranet_pricing_parameters', [], (err, rows) => {
+        if (err) reject(err);
+        else {
+          const paramsObj = {};
+          rows.forEach(r => {
+            paramsObj[r.param_key] = r.param_type === 'percentage' || r.param_type === 'amount' 
+              ? parseFloat(r.param_value) 
+              : r.param_value;
+          });
+          resolve(paramsObj);
+        }
+      });
+    });
+    
+    // 2. Validate discount doesn't exceed maximum
+    const userDiscount = discount_requested && discount_percent ? parseFloat(discount_percent) : 0;
+    if (userDiscount > params.max_user_discount) {
+      return res.status(400).json({ 
+        error: `Discount exceeds maximum allowed (${params.max_user_discount}%). Please reduce your discount request.` 
+      });
+    }
+    
+    // 3. Get city tiers for provider and member primary locations
+    const providerCity = await new Promise((resolve, reject) => {
+      db.get('SELECT * FROM extranet_pricing_cities WHERE city_name = ?', [provider_primary_city], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+    
+    const memberCity = await new Promise((resolve, reject) => {
+      db.get('SELECT * FROM extranet_pricing_cities WHERE city_name = ?', [member_primary_city], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+    
+    if (!providerCity) {
+      return res.status(400).json({ error: `Provider city "${provider_primary_city}" not found in city tiers` });
+    }
+    if (!memberCity) {
+      return res.status(400).json({ error: `Member city "${member_primary_city}" not found in city tiers` });
+    }
+    
+    // 4. Determine higher tier (more expensive) - tier ranking: Metro < Tier 1 < Tier 2 < Tier 3
+    const tierRank = { 'Metro': 0, 'Tier 1': 1, 'Tier 2': 2, 'Tier 3': 3 };
+    const providerTierRank = tierRank[providerCity.tier] || 0;
+    const memberTierRank = tierRank[memberCity.tier] || 0;
+    const highestTier = providerTierRank >= memberTierRank ? providerCity.tier : memberCity.tier;
+    const pricingRegion = providerTierRank >= memberTierRank ? providerCity.region : memberCity.region;
+    
+    // 5. Get base price from rate card (use adjustedBandwidth for Off Net)
+    const rateCard = await new Promise((resolve, reject) => {
+      db.get(
+        'SELECT price_usd FROM extranet_rate_card WHERE bandwidth = ? AND region = ? AND tier = ?',
+        [adjustedBandwidth, pricingRegion, highestTier],
+        (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        }
+      );
+    });
+    
+    if (!rateCard || rateCard.price_usd === 'POA' || rateCard.price_usd === 0) {
+      return res.status(400).json({ 
+        error: 'Price not available for this bandwidth/tier combination. Please contact sales for a quote.',
+        poa: true
+      });
+    }
+    
+    const basePrice = parseFloat(rateCard.price_usd);
+    
+    // 6. Apply Resiliency multiplier
+    let resiliencyMultiplier = 100;
+    switch (member_resiliency) {
+      case 'Non-Resilient':
+        resiliencyMultiplier = params.resiliency_non_resilient || 70;
+        break;
+      case 'Single Site Resilient':
+        resiliencyMultiplier = params.resiliency_single_site || 100;
+        break;
+      case 'Split Site Resilient':
+        resiliencyMultiplier = params.resiliency_split_site || 110;
+        break;
+      case 'Dual Site Resilient':
+        resiliencyMultiplier = params.resiliency_dual_site || 125;
+        break;
+    }
+    const afterResiliency = basePrice * (resiliencyMultiplier / 100);
+    
+    // 7. Apply Traffic Type multiplier
+    let trafficMultiplier = 100;
+    if (traffic_type === 'Live/Live') {
+      trafficMultiplier = params.traffic_live_live || 125;
+    } else {
+      trafficMultiplier = params.traffic_live_standby || 100;
+    }
+    const adjustedBase = afterResiliency * (trafficMultiplier / 100);
+    
+    // 8. Calculate discounts INDEPENDENTLY from adjusted base (additive, not compounding)
+    let cloudDiscount = 0;
+    let contractDiscount = 0;
+    let userDiscountAmount = 0;
+    
+    // Cloud discount
+    if (member_cloud) {
+      cloudDiscount = adjustedBase * ((params.cloud_discount || 0) / 100);
+    }
+    
+    // Contract term discount
+    if (contract_term === 24) {
+      contractDiscount = adjustedBase * ((params.contract_24_discount || 0) / 100);
+    } else if (contract_term === 36) {
+      contractDiscount = adjustedBase * ((params.contract_36_discount || 0) / 100);
+    }
+    
+    // User requested discount
+    if (discount_requested && userDiscount > 0) {
+      userDiscountAmount = adjustedBase * (userDiscount / 100);
+    }
+    
+    // Total discount (additive)
+    const totalDiscount = cloudDiscount + contractDiscount + userDiscountAmount;
+    
+    // 9. Calculate final MRC before IPSec
+    let finalMrc = adjustedBase - totalDiscount;
+    
+    // 10. Add IPSec surcharge if required
+    let ipsecSurcharge = 0;
+    let ipsecPoa = false;
+    if (ipsec_required) {
+      // Determine bandwidth tier for IPSec
+      const bandwidthValue = parseFloat(bandwidth.replace(/[^0-9.]/g, ''));
+      const bandwidthUnit = bandwidth.toLowerCase();
+      let bandwidthMb = bandwidthValue;
+      if (bandwidthUnit.includes('kb')) {
+        bandwidthMb = bandwidthValue / 1000;
+      }
+      
+      let ipsecTier = 'under_10mb';
+      if (bandwidthMb >= 100) {
+        ipsecTier = '100mb_plus';
+      } else if (bandwidthMb >= 10) {
+        ipsecTier = '10_to_99mb';
+      }
+      
+      const ipsecRow = await new Promise((resolve, reject) => {
+        db.get('SELECT * FROM extranet_ipsec_surcharges WHERE bandwidth_tier = ?', [ipsecTier], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+      
+      if (ipsecRow) {
+        // Use resilient rate for any resilient type, non-resilient for non-resilient
+        const rawIpsecValue = member_resiliency === 'Non-Resilient' 
+          ? ipsecRow.non_resilient_mrc 
+          : ipsecRow.resilient_mrc;
+        
+        // Check if POA (-1 indicates POA)
+        if (rawIpsecValue < 0) {
+          ipsecSurcharge = 0;
+          ipsecPoa = true;
+        } else {
+          ipsecSurcharge = rawIpsecValue;
+        }
+      }
+    }
+    
+    // Add IPSec to MRC
+    const finalMrcWithIPSec = finalMrc + ipsecSurcharge;
+    
+    // 11. Get NRC based on contract term
+    let nrc = params.nrc_12_month || 1000;
+    if (contract_term === 24) {
+      nrc = params.nrc_24_month || 500;
+    } else if (contract_term === 36) {
+      nrc = params.nrc_36_month || 0;
+    }
+    
+    // 12. Convert currency if needed
+    let finalMrcConverted = finalMrcWithIPSec;
+    let nrcConverted = nrc;
+    let ipsecConverted = ipsecSurcharge;
+    let exchangeRate = 1;
+    
+    if (currency_requested && currency_requested !== 'USD') {
+      const currencyRow = await new Promise((resolve, reject) => {
+        db.get('SELECT exchange_rate FROM exchange_rates WHERE currency_code = ?', [currency_requested], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+      
+      if (currencyRow) {
+        exchangeRate = parseFloat(currencyRow.exchange_rate);
+        finalMrcConverted = finalMrcWithIPSec * exchangeRate;
+        nrcConverted = nrc * exchangeRate;
+        ipsecConverted = ipsecSurcharge * exchangeRate;
+      }
+    }
+    
+    // Round to 2 decimal places
+    finalMrcConverted = Math.round(finalMrcConverted * 100) / 100;
+    nrcConverted = Math.round(nrcConverted * 100) / 100;
+    ipsecConverted = Math.round(ipsecConverted * 100) / 100;
+    
+    // 13. Build calculation breakdown for logging
+    const breakdown = {
+      rate_card_base: basePrice,
+      tier_used: highestTier,
+      region_used: pricingRegion,
+      resiliency_multiplier: resiliencyMultiplier,
+      after_resiliency: afterResiliency,
+      traffic_multiplier: trafficMultiplier,
+      adjusted_base: adjustedBase,
+      cloud_discount: cloudDiscount,
+      contract_discount: contractDiscount,
+      user_discount: userDiscountAmount,
+      total_discount: totalDiscount,
+      mrc_before_ipsec: finalMrc,
+      ipsec_surcharge: ipsecSurcharge,
+      mrc_usd: finalMrcWithIPSec,
+      nrc_usd: nrc,
+      exchange_rate: exchangeRate,
+      currency: currency_requested || 'USD'
+    };
+    
+    // 14. Log to extranet_pricing_lookups for analytics
+    db.run(
+      `INSERT INTO extranet_pricing_lookups (
+        user_id, provider_primary_city, provider_secondary_city, member_primary_city, member_secondary_city,
+        member_resiliency, member_on_off_net, member_cloud, bandwidth, traffic_type, ipsec_required,
+        contract_term, currency_requested, discount_requested, discount_percent, base_price_usd,
+        final_mrc, final_nrc, calculation_breakdown, region, tier
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.user.id,
+        provider_primary_city,
+        provider_secondary_city || null,
+        member_primary_city,
+        member_secondary_city || null,
+        member_resiliency,
+        member_on_off_net || 'On Net',
+        member_cloud ? 1 : 0,
+        adjustedBandwidth,
+        traffic_type,
+        ipsec_required ? 1 : 0,
+        contract_term,
+        currency_requested || 'USD',
+        discount_requested ? 1 : 0,
+        userDiscount,
+        basePrice,
+        finalMrcConverted,
+        nrcConverted,
+        JSON.stringify(breakdown),
+        pricingRegion,
+        highestTier
+      ],
+      (err) => {
+        if (err) console.error('Failed to log pricing calculation:', err);
+      }
+    );
+    
+    // 15. Return pricing result
+    res.json({
+      success: true,
+      pricing: {
+        mrc: finalMrcConverted,
+        nrc: nrcConverted,
+        ipsec_surcharge: ipsec_required ? ipsecConverted : 0,
+        ipsec_poa: ipsec_required && ipsecPoa,
+        currency: currency_requested || 'USD'
+      },
+      details: {
+        provider_primary_city,
+        provider_secondary_city: provider_secondary_city || null,
+        member_primary_city,
+        member_secondary_city: member_secondary_city || null,
+        tier_used: highestTier,
+        region_used: pricingRegion,
+        bandwidth: adjustedBandwidth,
+        member_resiliency,
+        traffic_type,
+        contract_term
+      },
+      breakdown
+    });
+    
+  } catch (error) {
+    console.error('Error calculating extranet pricing:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get locations for datacenter autocomplete
 router.get('/extranet-data/locations', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
   db.all('SELECT location_code FROM location_reference ORDER BY location_code', [], (err, locations) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(locations.map(l => l.location_code));
+  });
+});
+
+// ====================================
+// EXTRANET PRICING LOGS (Admin Only)
+// ====================================
+
+// Get extranet pricing logs with pagination and filtering
+router.get('/extranet-pricing/logs', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+  try {
+    const { limit = 100, offset = 0, user_id, provider_city, member_city, start_date, end_date } = req.query;
+    
+    // Build count query
+    let countQuery = 'SELECT COUNT(*) as total FROM extranet_pricing_lookups epl';
+    let dataQuery = `
+      SELECT epl.*, u.username, u.full_name 
+      FROM extranet_pricing_lookups epl
+      LEFT JOIN users u ON epl.user_id = u.id
+    `;
+    
+    let conditions = [];
+    let params = [];
+    
+    if (user_id) {
+      conditions.push('epl.user_id = ?');
+      params.push(user_id);
+    }
+    
+    if (provider_city) {
+      conditions.push('(epl.provider_primary_city LIKE ? OR epl.provider_secondary_city LIKE ?)');
+      params.push(`%${provider_city}%`, `%${provider_city}%`);
+    }
+    
+    if (member_city) {
+      conditions.push('(epl.member_primary_city LIKE ? OR epl.member_secondary_city LIKE ?)');
+      params.push(`%${member_city}%`, `%${member_city}%`);
+    }
+    
+    if (start_date) {
+      conditions.push('epl.lookup_timestamp >= ?');
+      params.push(start_date);
+    }
+    
+    if (end_date) {
+      conditions.push('epl.lookup_timestamp <= ?');
+      params.push(end_date);
+    }
+    
+    if (conditions.length > 0) {
+      const whereClause = ' WHERE ' + conditions.join(' AND ');
+      countQuery += whereClause;
+      dataQuery += whereClause;
+    }
+    
+    dataQuery += ' ORDER BY epl.lookup_timestamp DESC LIMIT ? OFFSET ?';
+    
+    // Get total count
+    const totalCount = await new Promise((resolve, reject) => {
+      db.get(countQuery, params, (err, row) => {
+        if (err) reject(err);
+        else resolve(row.total || 0);
+      });
+    });
+    
+    // Get paginated data
+    const logs = await new Promise((resolve, reject) => {
+      db.all(dataQuery, [...params, parseInt(limit), parseInt(offset)], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+    
+    res.json({
+      data: logs,
+      pagination: {
+        page: Math.floor(offset / limit) + 1,
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error fetching extranet pricing logs:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get users list for filter dropdown (Admin only)
+router.get('/extranet-pricing/users', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  db.all('SELECT id, username, full_name FROM users WHERE status = "active" ORDER BY username', [], (err, users) => {
+    if (err) {
+      console.error('Error fetching users list:', err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(users);
+  });
+});
+
+// Export extranet pricing logs to CSV (Admin only)
+router.get('/extranet-pricing/logs/export', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const { start_date, end_date } = req.query;
+  
+  let query = `
+    SELECT epl.*, u.username, u.full_name 
+    FROM extranet_pricing_lookups epl
+    LEFT JOIN users u ON epl.user_id = u.id
+  `;
+  let params = [];
+  
+  if (start_date && end_date) {
+    query += ' WHERE epl.lookup_timestamp >= ? AND epl.lookup_timestamp <= ?';
+    params = [start_date, end_date];
+  }
+  
+  query += ' ORDER BY epl.lookup_timestamp DESC';
+  
+  db.all(query, params, (err, rows) => {
+    if (err) {
+      console.error('Error exporting extranet pricing logs:', err);
+      return res.status(500).json({ error: 'Failed to export logs' });
+    }
+    
+    // Convert to CSV format
+    const csvHeaders = 'ID,Timestamp,User,Provider Primary,Provider Secondary,Member Primary,Member Secondary,Resiliency,On/Off Net,Cloud,Bandwidth,Traffic Type,IPSec,Contract Term,Currency,Discount Requested,Discount %,Base Price USD,Final MRC,Final NRC,Region,Tier\n';
+    const csvRows = rows.map(row => {
+      const escapeCsv = (str) => {
+        if (str === null || str === undefined) return '';
+        return `"${String(str).replace(/"/g, '""')}"`;
+      };
+      
+      return [
+        row.id,
+        row.lookup_timestamp,
+        escapeCsv(row.username || row.full_name),
+        escapeCsv(row.provider_primary_city),
+        escapeCsv(row.provider_secondary_city),
+        escapeCsv(row.member_primary_city),
+        escapeCsv(row.member_secondary_city),
+        escapeCsv(row.member_resiliency),
+        escapeCsv(row.member_on_off_net),
+        row.member_cloud ? 'Yes' : 'No',
+        escapeCsv(row.bandwidth),
+        escapeCsv(row.traffic_type),
+        row.ipsec_required ? 'Yes' : 'No',
+        row.contract_term,
+        escapeCsv(row.currency_requested),
+        row.discount_requested ? 'Yes' : 'No',
+        row.discount_percent || 0,
+        row.base_price_usd,
+        row.final_mrc,
+        row.final_nrc,
+        escapeCsv(row.region),
+        escapeCsv(row.tier)
+      ].join(',');
+    }).join('\n');
+    
+    const csvContent = csvHeaders + csvRows;
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=extranet_pricing_logs_${new Date().toISOString().split('T')[0]}.csv`);
+    res.send(csvContent);
+  });
+});
+
+// Clear extranet pricing logs (Admin only)
+router.delete('/extranet-pricing/logs', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  db.run('DELETE FROM extranet_pricing_lookups', [], function(err) {
+    if (err) {
+      console.error('Error clearing extranet pricing logs:', err);
+      return res.status(500).json({ error: 'Failed to clear logs' });
+    }
+    
+    res.json({ 
+      message: 'Extranet pricing logs cleared successfully',
+      cleared_count: this.changes
+    });
   });
 });
 
@@ -14946,6 +15647,18 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
     const regionSearches = {};
     const citySearches = {};
     const userActivity = {};
+    const resiliencyTypes = {};
+    const contractTerms = {};
+    const trafficTypes = {};
+    const currencyDistribution = {};
+    let ipsecRequiredCount = 0;
+    let ipsecNotRequiredCount = 0;
+    let cloudMemberCount = 0;
+    let discountRequestedCount = 0;
+    let totalDiscountPercent = 0;
+    let discountCount = 0;
+    let offNetCount = 0;
+    const cityPairs = {};
     
     lookups.forEach(lookup => {
       // Provider searches
@@ -14968,9 +15681,69 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
         regionSearches[lookup.region] = (regionSearches[lookup.region] || 0) + 1;
       }
       
-      // City searches
+      // City searches (combine provider and member primary cities)
       if (lookup.city_name) {
         citySearches[lookup.city_name] = (citySearches[lookup.city_name] || 0) + 1;
+      }
+      if (lookup.provider_primary_city) {
+        citySearches[lookup.provider_primary_city] = (citySearches[lookup.provider_primary_city] || 0) + 1;
+      }
+      if (lookup.member_primary_city) {
+        citySearches[lookup.member_primary_city] = (citySearches[lookup.member_primary_city] || 0) + 1;
+      }
+      
+      // City pairs
+      if (lookup.provider_primary_city && lookup.member_primary_city) {
+        const cities = [lookup.provider_primary_city, lookup.member_primary_city].sort();
+        const pairKey = `${cities[0]} ↔ ${cities[1]}`;
+        cityPairs[pairKey] = (cityPairs[pairKey] || 0) + 1;
+      }
+      
+      // Resiliency types
+      if (lookup.member_resiliency) {
+        resiliencyTypes[lookup.member_resiliency] = (resiliencyTypes[lookup.member_resiliency] || 0) + 1;
+      }
+      
+      // Contract terms
+      if (lookup.contract_term) {
+        const termKey = `${lookup.contract_term} months`;
+        contractTerms[termKey] = (contractTerms[termKey] || 0) + 1;
+      }
+      
+      // Traffic types
+      if (lookup.traffic_type) {
+        trafficTypes[lookup.traffic_type] = (trafficTypes[lookup.traffic_type] || 0) + 1;
+      }
+      
+      // Currency distribution
+      if (lookup.currency_requested) {
+        currencyDistribution[lookup.currency_requested] = (currencyDistribution[lookup.currency_requested] || 0) + 1;
+      }
+      
+      // IPSec
+      if (lookup.ipsec_required) {
+        ipsecRequiredCount++;
+      } else {
+        ipsecNotRequiredCount++;
+      }
+      
+      // Cloud members
+      if (lookup.member_cloud) {
+        cloudMemberCount++;
+      }
+      
+      // Discount tracking
+      if (lookup.discount_requested) {
+        discountRequestedCount++;
+        if (lookup.discount_percent) {
+          totalDiscountPercent += parseFloat(lookup.discount_percent);
+          discountCount++;
+        }
+      }
+      
+      // Off-net tracking
+      if (lookup.member_on_off_net === 'Off Net') {
+        offNetCount++;
       }
       
       // User activity
@@ -15016,6 +15789,29 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
         .sort((a, b) => b[1] - a[1])
         .slice(0, 20)
         .map(([city, count]) => ({ city, count })),
+      topCityPairs: Object.entries(cityPairs)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([pair, count]) => ({ pair, count })),
+      resiliencyDistribution: Object.entries(resiliencyTypes)
+        .map(([resiliency, count]) => ({ resiliency, count })),
+      contractTermDistribution: Object.entries(contractTerms)
+        .map(([term, count]) => ({ term, count })),
+      trafficTypeDistribution: Object.entries(trafficTypes)
+        .map(([type, count]) => ({ type, count })),
+      currencyDistribution: Object.entries(currencyDistribution)
+        .sort((a, b) => b[1] - a[1])
+        .map(([currency, count]) => ({ currency, count })),
+      ipsecStats: {
+        required: ipsecRequiredCount,
+        notRequired: ipsecNotRequiredCount
+      },
+      cloudMemberCount,
+      offNetCount,
+      discountStats: {
+        requestedCount: discountRequestedCount,
+        averageDiscount: discountCount > 0 ? (totalDiscountPercent / discountCount).toFixed(1) : 0
+      },
       topUsers: Object.values(userActivity)
         .filter(u => u.username)
         .sort((a, b) => b.count - a.count)
@@ -15982,8 +16778,8 @@ router.get('/kmz_templates/info/:templateType', authenticateToken, authorizeRole
   );
 });
 
-// Download template
-router.get('/kmz_templates/download/:templateType', authenticateToken, authorizeRole('administrator'), (req, res) => {
+// Download template (accessible to all users with KMZ Viewer module access)
+router.get('/kmz_templates/download/:templateType', authenticateToken, authorizeModulePermission('kmz_viewer', 'read_only'), (req, res) => {
   const { templateType } = req.params;
   
   if (!['locations', 'disclaimer'].includes(templateType)) {

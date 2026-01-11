@@ -111,6 +111,9 @@ const AllocatedCostCalculator = () => {
     totalPages: 0
   });
   
+  // Track if initial data has been loaded to prevent double-load
+  const initialLoadComplete = React.useRef(false);
+  
   // Export dialog state
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportOptions, setExportOptions] = useState({
@@ -162,9 +165,13 @@ const AllocatedCostCalculator = () => {
       if (canViewPricingLogs) {
         await loadAuditLogs();
       }
+      
+      // Mark initial load as complete to prevent duplicate loads from useEffect
+      initialLoadComplete.current = true;
     } catch (err) {
       console.error('Failed to load initial data:', err);
       setError(`Failed to load data: ${err.message}`);
+      initialLoadComplete.current = true; // Still mark complete on error to prevent loop
     } finally {
       setLoading(false);
     }
@@ -197,11 +204,20 @@ const AllocatedCostCalculator = () => {
         setPagination(prev => ({
           ...prev,
           total: response.pagination.total,
-          totalPages: response.pagination.totalPages
+          totalPages: response.pagination.totalPages,
+          page: response.pagination.page || prev.page // Ensure page is synced with server
         }));
       } else {
         // Fallback for old format
-        setAuditLogs(response || []);
+        const logs = Array.isArray(response) ? response : [];
+        setAuditLogs(logs);
+        // Reset pagination to avoid stale state
+        setPagination(prev => ({
+          ...prev,
+          total: logs.length,
+          totalPages: Math.max(1, Math.ceil(logs.length / prev.limit)),
+          page: 1
+        }));
       }
     } catch (err) {
       console.error('Failed to load audit logs:', err);
@@ -1793,14 +1809,27 @@ const AllocatedCostCalculator = () => {
   };
   
   // Pricing Logs Filtering and Pagination Functions
+  // Skip on initial mount since loadInitialData already loads audit logs
   useEffect(() => {
+    // Skip if initial load hasn't completed yet (loadInitialData handles first load)
+    if (!initialLoadComplete.current) {
+      return;
+    }
     if (canViewPricingLogs) {
       loadAuditLogs();
     }
   }, [pagination.page, pagination.limit, selectedUser, customerNameFilter, logSearchTerm]);
 
+  const handleLogSearchChange = (event) => {
+    setLogSearchTerm(event.target.value);
+    // Reset to page 1 when search changes
+    setPagination(prev => ({ ...prev, page: 1 }));
+  };
+
   const handleCustomerNameFilterChange = (event) => {
     setCustomerNameFilter(event.target.value);
+    // Reset to page 1 when filter changes
+    setPagination(prev => ({ ...prev, page: 1 }));
   };
 
   const handleUserFilterChange = (event) => {
@@ -3213,7 +3242,7 @@ const AllocatedCostCalculator = () => {
                     size="small"
                     label="Search Quote Request ID"
                     value={logSearchTerm}
-                    onChange={(e) => setLogSearchTerm(e.target.value)}
+                    onChange={handleLogSearchChange}
                     placeholder="Enter Quote Request ID..."
                     InputProps={{
                       startAdornment: (

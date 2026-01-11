@@ -16,6 +16,9 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckIcon from '@mui/icons-material/Check';
 import WarningIcon from '@mui/icons-material/Warning';
 import InfoIcon from '@mui/icons-material/Info';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import PersonSearchIcon from '@mui/icons-material/PersonSearch';
 import axios from 'axios';
 import { API_BASE_URL } from './config';
 import { useAuth } from './AuthContext';
@@ -69,8 +72,14 @@ const CarriersManager = ({ hasPermission }) => {
 
   // Search and filter states
   const [searchText, setSearchText] = useState('');
+  const [contactSearchText, setContactSearchText] = useState('');
   const [regionFilter, setRegionFilter] = useState('');
   const debounceRef = useRef();
+  const contactDebounceRef = useRef();
+
+  // Contact sorting states
+  const [contactSortField, setContactSortField] = useState('contact_type'); // 'contact_type' or 'contact_level'
+  const [contactSortDirection, setContactSortDirection] = useState('asc'); // 'asc' or 'desc'
 
   // Validation rules for Carrier contact form
   const carrierContactValidationRules = {
@@ -116,7 +125,55 @@ const CarriersManager = ({ hasPermission }) => {
     }
   }, [currentTab]);
 
-  // Debounced search function
+  // Auto-expand carriers with matching contacts when contact search is active
+  useEffect(() => {
+    const searchAndExpand = async () => {
+      if (!contactSearchText) {
+        return;
+      }
+
+      // Load contacts for all carriers that don't have contacts loaded yet
+      const carriersToLoad = carriers.filter(c => !contacts[c.id]);
+      
+      for (const carrier of carriersToLoad) {
+        await loadContacts(carrier.id);
+      }
+    };
+
+    searchAndExpand();
+  }, [contactSearchText, carriers]);
+
+  // Find carriers that have matching contacts
+  const getCarriersWithMatchingContacts = () => {
+    if (!contactSearchText) return new Set();
+    
+    const matchingCarrierIds = new Set();
+    const searchLower = contactSearchText.toLowerCase();
+    
+    Object.entries(contacts).forEach(([carrierId, carrierContacts]) => {
+      if (carrierContacts && carrierContacts.some(contact => 
+        contact.contact_name && contact.contact_name.toLowerCase().includes(searchLower)
+      )) {
+        matchingCarrierIds.add(parseInt(carrierId));
+      }
+    });
+    
+    return matchingCarrierIds;
+  };
+
+  const matchingCarrierIds = getCarriersWithMatchingContacts();
+
+  // Filter contacts based on search
+  const filterContacts = (carrierContacts) => {
+    if (!contactSearchText || !carrierContacts) return carrierContacts;
+    
+    const searchLower = contactSearchText.toLowerCase();
+    return carrierContacts.filter(contact => 
+      contact.contact_name && contact.contact_name.toLowerCase().includes(searchLower)
+    );
+  };
+
+  // Debounced search function for carriers
   const debouncedSearch = useCallback((searchValue) => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
@@ -127,11 +184,25 @@ const CarriersManager = ({ hasPermission }) => {
     }, 300); // 300ms debounce
   }, []);
 
+  // Debounced search function for contacts
+  const debouncedContactSearch = useCallback((searchValue) => {
+    if (contactDebounceRef.current) {
+      clearTimeout(contactDebounceRef.current);
+    }
+    
+    contactDebounceRef.current = setTimeout(() => {
+      setContactSearchText(searchValue);
+    }, 300); // 300ms debounce
+  }, []);
+
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
+      }
+      if (contactDebounceRef.current) {
+        clearTimeout(contactDebounceRef.current);
       }
     };
   }, []);
@@ -139,6 +210,70 @@ const CarriersManager = ({ hasPermission }) => {
   // Handle search input change
   const handleSearchChange = (event) => {
     debouncedSearch(event.target.value);
+  };
+
+  // Handle contact search input change
+  const handleContactSearchChange = (event) => {
+    debouncedContactSearch(event.target.value);
+  };
+
+  // Level sorting order (logical)
+  const levelSortOrder = {
+    'General': 0,
+    '1st Level': 1,
+    '2nd Level': 2,
+    '3rd Level': 3,
+    '4th Level': 4,
+    '5th Level': 5
+  };
+
+  // Sort contacts based on current sort field and direction
+  const sortContacts = (contactsList) => {
+    if (!contactsList) return [];
+    
+    return [...contactsList].sort((a, b) => {
+      // Primary sort by selected field
+      let comparison = 0;
+      
+      if (contactSortField === 'contact_type') {
+        const typeA = (a.contact_type || '').toLowerCase();
+        const typeB = (b.contact_type || '').toLowerCase();
+        comparison = typeA.localeCompare(typeB);
+        
+        // Secondary sort by level (logical order) when types are equal
+        if (comparison === 0) {
+          const levelA = levelSortOrder[a.contact_level] ?? 999;
+          const levelB = levelSortOrder[b.contact_level] ?? 999;
+          comparison = levelA - levelB;
+        }
+      } else if (contactSortField === 'contact_level') {
+        const levelA = levelSortOrder[a.contact_level] ?? 999;
+        const levelB = levelSortOrder[b.contact_level] ?? 999;
+        comparison = levelA - levelB;
+        
+        // Secondary sort by type (alphabetical) when levels are equal
+        if (comparison === 0) {
+          const typeA = (a.contact_type || '').toLowerCase();
+          const typeB = (b.contact_type || '').toLowerCase();
+          comparison = typeA.localeCompare(typeB);
+        }
+      }
+      
+      // Apply direction
+      return contactSortDirection === 'asc' ? comparison : -comparison;
+    });
+  };
+
+  // Handle clicking on sortable column headers
+  const handleContactSort = (field) => {
+    if (contactSortField === field) {
+      // Toggle direction if same field
+      setContactSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Switch to new field with ascending order
+      setContactSortField(field);
+      setContactSortDirection('asc');
+    }
   };
 
   const loadCarriers = async () => {
@@ -523,13 +658,23 @@ const CarriersManager = ({ hasPermission }) => {
       {currentTab === 0 && (
         <Box role="tabpanel" id="carriers-tabpanel-0" aria-labelledby="carriers-tab-0">
           {/* Search and Filter */}
-          <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
+          <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
             <TextField
               size="small"
               label="Search Carriers"
               onChange={handleSearchChange}
               placeholder="Search by carrier name or previously known as..."
-              sx={{ minWidth: 350 }}
+              sx={{ minWidth: 300 }}
+            />
+            <TextField
+              size="small"
+              label="Search Contacts"
+              onChange={handleContactSearchChange}
+              placeholder="Search by contact name..."
+              sx={{ minWidth: 250 }}
+              InputProps={{
+                startAdornment: <PersonSearchIcon sx={{ mr: 1, color: 'action.active' }} />
+              }}
             />
             <FormControl size="small" sx={{ minWidth: 120 }}>
               <InputLabel>Region</InputLabel>
@@ -544,6 +689,19 @@ const CarriersManager = ({ hasPermission }) => {
                 <MenuItem value="APAC">APAC</MenuItem>
               </Select>
             </FormControl>
+            {contactSearchText && (
+              <Chip
+                label={`Found in ${matchingCarrierIds.size} carrier${matchingCarrierIds.size !== 1 ? 's' : ''}`}
+                color="info"
+                size="small"
+                onDelete={() => {
+                  setContactSearchText('');
+                  // Clear the search input field
+                  const contactSearchInput = document.querySelector('input[placeholder="Search by contact name..."]');
+                  if (contactSearchInput) contactSearchInput.value = '';
+                }}
+              />
+            )}
           </Box>
           <TableContainer component={Paper}>
             <Table>
@@ -557,11 +715,12 @@ const CarriersManager = ({ hasPermission }) => {
           </TableHead>
           <TableBody>
             {carriers.filter(carrier => {
-              const matchesSearch = !searchText || 
+              const matchesCarrierSearch = !searchText || 
                 carrier.carrier_name.toLowerCase().includes(searchText.toLowerCase()) ||
                 (carrier.previously_known_as && carrier.previously_known_as.toLowerCase().includes(searchText.toLowerCase()));
               const matchesRegion = !regionFilter || carrier.region === regionFilter;
-              return matchesSearch && matchesRegion;
+              const matchesContactSearch = !contactSearchText || matchingCarrierIds.has(carrier.id);
+              return matchesCarrierSearch && matchesRegion && matchesContactSearch;
             }).map((carrier) => (
               <React.Fragment key={carrier.id}>
                 <TableRow 
@@ -624,7 +783,7 @@ const CarriersManager = ({ hasPermission }) => {
                 {/* Contact Details Dropdown */}
                 <TableRow>
                   <TableCell colSpan={4} sx={{ p: 0, border: 0 }}>
-                    <Collapse in={expandedCarrier === carrier.id} timeout="auto" unmountOnExit>
+                    <Collapse in={expandedCarrier === carrier.id || (contactSearchText && matchingCarrierIds.has(carrier.id))} timeout="auto" unmountOnExit>
                       <Box sx={{ p: 2, backgroundColor: '#f5f5f5' }}>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                           <Typography variant="h6" component="h3">
@@ -649,8 +808,32 @@ const CarriersManager = ({ hasPermission }) => {
                             <Table size="small">
                               <TableHead>
                                 <TableRow>
-                                  <TableCell>Type</TableCell>
-                                  <TableCell>Level</TableCell>
+                                  <TableCell 
+                                    onClick={() => handleContactSort('contact_type')}
+                                    sx={{ cursor: 'pointer', userSelect: 'none', '&:hover': { backgroundColor: 'action.hover' } }}
+                                  >
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                      Type
+                                      {contactSortField === 'contact_type' && (
+                                        contactSortDirection === 'asc' 
+                                          ? <ArrowUpwardIcon sx={{ fontSize: 16 }} /> 
+                                          : <ArrowDownwardIcon sx={{ fontSize: 16 }} />
+                                      )}
+                                    </Box>
+                                  </TableCell>
+                                  <TableCell 
+                                    onClick={() => handleContactSort('contact_level')}
+                                    sx={{ cursor: 'pointer', userSelect: 'none', '&:hover': { backgroundColor: 'action.hover' } }}
+                                  >
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                      Level
+                                      {contactSortField === 'contact_level' && (
+                                        contactSortDirection === 'asc' 
+                                          ? <ArrowUpwardIcon sx={{ fontSize: 16 }} /> 
+                                          : <ArrowDownwardIcon sx={{ fontSize: 16 }} />
+                                      )}
+                                    </Box>
+                                  </TableCell>
                                   <TableCell>Name</TableCell>
                                   <TableCell>Job Title</TableCell>
                                   <TableCell>Email</TableCell>
@@ -661,11 +844,25 @@ const CarriersManager = ({ hasPermission }) => {
                                 </TableRow>
                               </TableHead>
                               <TableBody>
-                                {contacts[carrier.id].map((contact) => (
-                                  <TableRow key={contact.id}>
+                                {sortContacts(filterContacts(contacts[carrier.id])).map((contact) => (
+                                  <TableRow 
+                                    key={contact.id}
+                                    sx={contactSearchText && contact.contact_name?.toLowerCase().includes(contactSearchText.toLowerCase()) 
+                                      ? { backgroundColor: 'rgba(25, 118, 210, 0.08)', borderLeft: '3px solid #1976d2' } 
+                                      : {}
+                                    }
+                                  >
                                     <TableCell>{contact.contact_type}</TableCell>
                                     <TableCell>{contact.contact_level}</TableCell>
-                                    <TableCell>{contact.contact_name}</TableCell>
+                                    <TableCell>
+                                      {contactSearchText && contact.contact_name?.toLowerCase().includes(contactSearchText.toLowerCase()) ? (
+                                        <Typography component="span" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                                          {contact.contact_name}
+                                        </Typography>
+                                      ) : (
+                                        contact.contact_name
+                                      )}
+                                    </TableCell>
                                     <TableCell>{contact.contact_function}</TableCell>
                                     <TableCell>{contact.contact_email}</TableCell>
                                     <TableCell>{contact.contact_phone}</TableCell>
@@ -689,23 +886,30 @@ const CarriersManager = ({ hasPermission }) => {
                                       ) : '-'}
                                     </TableCell>
                                     <TableCell align="center">
-                                      <Tooltip title="Edit">
-                                        <IconButton 
-                                          size="small" 
-                                          onClick={() => handleEditContact(carrier, contact)}
-                                        >
-                                          <EditIcon />
-                                        </IconButton>
-                                      </Tooltip>
-                                      <Tooltip title="Delete">
-                                        <IconButton 
-                                          size="small" 
-                                          onClick={() => handleDeleteContact(carrier, contact)}
-                                          color="error"
-                                        >
-                                          <DeleteIcon />
-                                        </IconButton>
-                                      </Tooltip>
+                                      {hasPermission && hasPermission('carriers', 'edit') && (
+                                        <Tooltip title="Edit">
+                                          <IconButton 
+                                            size="small" 
+                                            onClick={() => handleEditContact(carrier, contact)}
+                                          >
+                                            <EditIcon />
+                                          </IconButton>
+                                        </Tooltip>
+                                      )}
+                                      {hasPermission && hasPermission('carriers', 'delete') && (
+                                        <Tooltip title="Delete">
+                                          <IconButton 
+                                            size="small" 
+                                            onClick={() => handleDeleteContact(carrier, contact)}
+                                            color="error"
+                                          >
+                                            <DeleteIcon />
+                                          </IconButton>
+                                        </Tooltip>
+                                      )}
+                                      {(!hasPermission || (!hasPermission('carriers', 'edit') && !hasPermission('carriers', 'delete'))) && (
+                                        <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
+                                      )}
                                     </TableCell>
                                   </TableRow>
                                 ))}
@@ -771,28 +975,35 @@ const CarriersManager = ({ hasPermission }) => {
                       <TableCell>{getDaysOverdueChip(contact.days_since_update)}</TableCell>
                       <TableCell align="center">
                         <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
-                          <Tooltip title="Approve yearly update">
-                            <IconButton
-                              size="small"
-                              color="success"
-                              onClick={() => handleApproveContact(contact.carrier_id, contact.id)}
-                            >
-                              <CheckIcon />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Delete contact">
-                            <IconButton
-                              size="small"
-                              color="error"
-                              onClick={() => {
-                                setSelectedCarrier({ id: contact.carrier_id, carrier_name: contact.carrier_name });
-                                setSelectedContact(contact);
-                                setDeleteContactDialogOpen(true);
-                              }}
-                            >
-                              <DeleteIcon />
-                            </IconButton>
-                          </Tooltip>
+                          {hasPermission && hasPermission('carriers', 'edit') && (
+                            <Tooltip title="Approve yearly update">
+                              <IconButton
+                                size="small"
+                                color="success"
+                                onClick={() => handleApproveContact(contact.carrier_id, contact.id)}
+                              >
+                                <CheckIcon />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                          {hasPermission && hasPermission('carriers', 'delete') && (
+                            <Tooltip title="Delete contact">
+                              <IconButton
+                                size="small"
+                                color="error"
+                                onClick={() => {
+                                  setSelectedCarrier({ id: contact.carrier_id, carrier_name: contact.carrier_name });
+                                  setSelectedContact(contact);
+                                  setDeleteContactDialogOpen(true);
+                                }}
+                              >
+                                <DeleteIcon />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                          {(!hasPermission || (!hasPermission('carriers', 'edit') && !hasPermission('carriers', 'delete'))) && (
+                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
+                          )}
                         </Box>
                       </TableCell>
                     </TableRow>

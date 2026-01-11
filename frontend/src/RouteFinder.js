@@ -291,6 +291,29 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     return Math.round(latency * 1000) / 1000; // Round to 3 decimal places
   };
 
+  // Helper function to format bandwidth from Mbps to readable format
+  const formatBandwidth = (bandwidth) => {
+    if (!bandwidth) return 'N/A';
+    
+    // Handle "Dark Fiber" text
+    if (typeof bandwidth === 'string' && bandwidth.toLowerCase().includes('dark fiber')) {
+      return 'Dark Fiber';
+    }
+    
+    // Parse numeric value (stored in Mbps)
+    const mbps = parseFloat(bandwidth);
+    if (isNaN(mbps)) return bandwidth; // Return as-is if not a number
+    
+    // Convert to appropriate unit
+    if (mbps >= 1000) {
+      const gbps = mbps / 1000;
+      // Show whole number if it's an integer, otherwise show 1 decimal
+      return Number.isInteger(gbps) ? `${gbps} Gbps` : `${gbps.toFixed(1)} Gbps`;
+    }
+    
+    return `${mbps} Mbps`;
+  };
+
   // Helper function to get location display as "Datacenter Name (POP_CODE)"
   const getLocationDisplay = (locationCode) => {
     const location = locations.find(loc => loc.location_code === locationCode);
@@ -741,6 +764,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
                           <TableRow>
                             <TableCell>Circuit ID</TableCell>
                             <TableCell>Segment</TableCell>
+                            <TableCell>Bandwidth</TableCell>
                             <TableCell>Latency</TableCell>
                             <TableCell>Cable System</TableCell>
                           </TableRow>
@@ -750,6 +774,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
                             <TableRow key={index}>
                               <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                               <TableCell>{segment.from} → {segment.to}</TableCell>
+                              <TableCell>{formatBandwidth(segment.bandwidth)}</TableCell>
                               <TableCell>{formatLatency(segment.latency)}ms</TableCell>
                               <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                             </TableRow>
@@ -835,6 +860,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
                             <TableRow>
                               <TableCell>Circuit ID</TableCell>
                               <TableCell>Segment</TableCell>
+                              <TableCell>Bandwidth</TableCell>
                               <TableCell>Latency</TableCell>
                               <TableCell>Cable System</TableCell>
                             </TableRow>
@@ -844,6 +870,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
                               <TableRow key={index}>
                                 <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
                                 <TableCell>{segment.from} → {segment.to}</TableCell>
+                                <TableCell>{formatBandwidth(segment.bandwidth)}</TableCell>
                                 <TableCell>{formatLatency(segment.latency)}ms</TableCell>
                                 <TableCell>{segment.cable_system || 'N/A'}</TableCell>
                               </TableRow>
