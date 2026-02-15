@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Paper, Typography, Grid, TextField, Button, FormControl, InputLabel, Select, MenuItem,
   Card, CardContent, Divider, Alert, CircularProgress, Autocomplete, Chip, Switch,
   FormControlLabel, InputAdornment, alpha, Accordion, AccordionSummary, AccordionDetails,
   Snackbar, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, Tab,
-  Pagination, IconButton
+  Pagination, IconButton, Badge, Tooltip
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CalculateIcon from '@mui/icons-material/Calculate';
@@ -23,6 +23,13 @@ import HistoryIcon from '@mui/icons-material/History';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListOffIcon from '@mui/icons-material/FilterListOff';
+import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
+import AddShoppingCartIcon from '@mui/icons-material/AddShoppingCart';
+import StorefrontIcon from '@mui/icons-material/Storefront';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowRightIcon from '@mui/icons-material/KeyboardArrowRight';
+import ShoppingBasketIcon from '@mui/icons-material/ShoppingBasket';
 import { API_BASE_URL } from './config';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
@@ -49,6 +56,13 @@ const ExtranetPricingTool = () => {
     // Provider
     provider_primary_city: null,
     provider_secondary_city: null,
+    provider_region: '',
+    // Provider/Product selection
+    selected_provider: null,
+    selected_product: null,
+    isf: '',
+    provider_name: '',
+    product_name: '',
     // Member
     member_primary_city: null,
     member_secondary_city: null,
@@ -60,10 +74,7 @@ const ExtranetPricingTool = () => {
     traffic_type: 'Live/Standby',
     ipsec_required: false,
     contract_term: 12,
-    currency_requested: 'USD',
-    // Discount
-    discount_requested: false,
-    discount_percent: ''
+    currency_requested: 'USD'
   });
 
   // Data states
@@ -72,6 +83,22 @@ const ExtranetPricingTool = () => {
   const [currencies, setCurrencies] = useState([{ currency_code: 'USD', currency_name: 'US Dollar' }]);
   const [maxDiscount, setMaxDiscount] = useState(15);
   
+  // Provider/product selection states
+  const [availableProviders, setAvailableProviders] = useState([]);
+  const [availableProducts, setAvailableProducts] = useState([]);
+  const [providersLoading, setProvidersLoading] = useState(false);
+  const [productsLoading, setProductsLoading] = useState(false);
+  
+  // Shopping basket states
+  const [basketItems, setBasketItems] = useState([]);
+  const [bundleDiscounts, setBundleDiscounts] = useState({
+    mrc: { '1_3': 0, '4_5': 0, '6_plus': 0 },
+    nrc: { '1_3': 0, '4_5': 0, '6_plus': 0 }
+  });
+  const [bundleResult, setBundleResult] = useState(null);
+  const [bundleLoading, setBundleLoading] = useState(false);
+  const [selectedBundleDiscount, setSelectedBundleDiscount] = useState('');
+  
   // Pricing logs states
   const [pricingLogs, setPricingLogs] = useState([]);
   const [usersList, setUsersList] = useState([]);
@@ -79,6 +106,7 @@ const ExtranetPricingTool = () => {
   const [selectedUser, setSelectedUser] = useState('');
   const [providerCityFilter, setProviderCityFilter] = useState('');
   const [memberCityFilter, setMemberCityFilter] = useState('');
+  const [expandedBundles, setExpandedBundles] = useState({});
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 100,
@@ -106,6 +134,9 @@ const ExtranetPricingTool = () => {
     'Any additional costs incurred for out of hours work will be chargeable to the customer.',
     'Pricing is for connectivity only and does not include any fees associated with data feeds.'
   ];
+
+  // Provider region options
+  const providerRegionOptions = ['AMERs', 'APAC', 'EMEA'];
 
   // Resiliency options
   const resiliencyOptions = [
@@ -144,7 +175,7 @@ const ExtranetPricingTool = () => {
     try {
       setInitialLoading(true);
       
-      const [citiesRes, bandwidthsRes, currenciesRes, parametersRes] = await Promise.all([
+      const [citiesRes, bandwidthsRes, currenciesRes, parametersRes, bundleDiscountsRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/extranet-pricing/cities`, {
           headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
         }),
@@ -156,7 +187,10 @@ const ExtranetPricingTool = () => {
         }),
         axios.get(`${API_BASE_URL}/extranet-pricing/parameters`, {
           headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
-        })
+        }),
+        axios.get(`${API_BASE_URL}/extranet-pricing/bundle-discounts`, {
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+        }).catch(() => ({ data: null }))
       ]);
       
       setCities(citiesRes.data);
@@ -171,6 +205,10 @@ const ExtranetPricingTool = () => {
       if (parametersRes.data.max_user_discount) {
         setMaxDiscount(parseFloat(parametersRes.data.max_user_discount.value) || 15);
       }
+      
+      if (bundleDiscountsRes.data) {
+        setBundleDiscounts(bundleDiscountsRes.data);
+      }
     } catch (err) {
       console.error('Failed to load initial data:', err);
       setError('Failed to load initial data: ' + err.message);
@@ -178,6 +216,60 @@ const ExtranetPricingTool = () => {
       setInitialLoading(false);
     }
   };
+
+  // Load providers when region changes
+  const loadProviders = useCallback(async (region) => {
+    if (!region) {
+      setAvailableProviders([]);
+      return;
+    }
+    try {
+      setProvidersLoading(true);
+      const response = await axios.get(`${API_BASE_URL}/extranet-pricing/providers/${region}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+      });
+      setAvailableProviders(response.data || []);
+    } catch (err) {
+      console.error('Failed to load providers:', err);
+      setAvailableProviders([]);
+    } finally {
+      setProvidersLoading(false);
+    }
+  }, []);
+
+  // Load products when provider changes
+  const loadProducts = useCallback(async (providerId) => {
+    if (!providerId) {
+      setAvailableProducts([]);
+      return;
+    }
+    try {
+      setProductsLoading(true);
+      const response = await axios.get(`${API_BASE_URL}/extranet-pricing/products/${providerId}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+      });
+      setAvailableProducts(response.data || []);
+    } catch (err) {
+      console.error('Failed to load products:', err);
+      setAvailableProducts([]);
+    } finally {
+      setProductsLoading(false);
+    }
+  }, []);
+
+  // Resolve datacenter code to pricing city
+  const resolveDatacenter = useCallback(async (code) => {
+    if (!code) return null;
+    try {
+      const response = await axios.get(`${API_BASE_URL}/extranet-pricing/resolve-datacenter/${code}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+      });
+      return response.data;
+    } catch (err) {
+      console.error('Failed to resolve datacenter:', err);
+      return null;
+    }
+  }, []);
 
   const loadPricingLogs = async () => {
     if (!isAdmin) return;
@@ -278,13 +370,106 @@ const ExtranetPricingTool = () => {
     setPagination(prev => ({ ...prev, page: 1 }));
   };
 
+  const toggleBundleExpand = (bundleId) => {
+    setExpandedBundles(prev => ({ ...prev, [bundleId]: !prev[bundleId] }));
+  };
+
   const handleInputChange = (field, value) => {
-    if (parametersLocked) return;
+    if (parametersLocked && field !== 'provider_region' && field !== 'selected_provider' && field !== 'selected_product') return;
+    // Lock contract_term and currency after first basket item
+    if (basketItems.length > 0 && (field === 'contract_term' || field === 'currency_requested')) return;
     
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    setFormData(prev => {
+      const updated = { ...prev, [field]: value };
+      // Auto-populate provider_region when provider_primary_city changes
+      if (field === 'provider_primary_city' && value && value.region) {
+        updated.provider_region = value.region;
+      } else if (field === 'provider_primary_city' && !value) {
+        updated.provider_region = '';
+      }
+      
+      // When provider_region changes, clear provider/product selection and load new providers
+      if (field === 'provider_region') {
+        updated.selected_provider = null;
+        updated.selected_product = null;
+        updated.isf = '';
+        updated.provider_name = '';
+        updated.product_name = '';
+        loadProviders(value);
+        setAvailableProducts([]);
+      }
+      
+      // When provider changes, clear product and load products
+      if (field === 'selected_provider') {
+        updated.selected_product = null;
+        updated.isf = '';
+        updated.product_name = '';
+        if (value) {
+          updated.provider_name = value.provider_name;
+          loadProducts(value.id);
+        } else {
+          updated.provider_name = '';
+          setAvailableProducts([]);
+        }
+      }
+      
+      // When product changes, auto-populate locations, bandwidth, ISF
+      if (field === 'selected_product') {
+        if (value) {
+          updated.isf = value.isf || '';
+          updated.product_name = value.product_name || '';
+          
+          // Auto-populate suggested bandwidth (user can still change it)
+          if (value.suggested_bandwidth) {
+            updated.bandwidth = `${value.suggested_bandwidth}Mb`;
+          }
+          
+          // Auto-populate primary datacenter location
+          if (value.primary_datacenter && value.primary_pricing_city) {
+            // Use the admin-set pricing city
+            const matchingCity = cities.find(c => c.city_name.toLowerCase() === value.primary_pricing_city.toLowerCase());
+            if (matchingCity) {
+              updated.provider_primary_city = matchingCity;
+              if (matchingCity.region) updated.provider_region = matchingCity.region;
+            }
+          } else if (value.primary_datacenter) {
+            // Try to resolve via datacenter code
+            resolveDatacenter(value.primary_datacenter).then(result => {
+              if (result && result.resolved) {
+                const matchingCity = cities.find(c => c.id === result.pricing_city.id);
+                if (matchingCity) {
+                  setFormData(prev => ({
+                    ...prev,
+                    provider_primary_city: matchingCity,
+                    provider_region: matchingCity.region || prev.provider_region
+                  }));
+                }
+              }
+            });
+          }
+          
+          // Auto-populate secondary datacenter location (first secondary)
+          if (value.secondary_datacenters) {
+            const secondaryDcs = value.secondary_datacenters.split(',').map(dc => dc.trim()).filter(dc => dc);
+            if (secondaryDcs.length > 0) {
+              resolveDatacenter(secondaryDcs[0]).then(result => {
+                if (result && result.resolved) {
+                  const matchingCity = cities.find(c => c.id === result.pricing_city.id);
+                  if (matchingCity) {
+                    setFormData(prev => ({ ...prev, provider_secondary_city: matchingCity }));
+                  }
+                }
+              });
+            }
+          }
+        } else {
+          updated.isf = '';
+          updated.product_name = '';
+        }
+      }
+      
+      return updated;
+    });
     setError('');
   };
 
@@ -308,31 +493,49 @@ const ExtranetPricingTool = () => {
     const inputValue = formData.bandwidth.trim().toLowerCase();
     if (!inputValue) return;
     
-    // Extract numeric value from input
-    const numericMatch = inputValue.match(/^(\d+)/);
+    // Extract numeric value (including decimals) and optional unit from input
+    const numericMatch = inputValue.match(/^(\d+\.?\d*)\s*(kb|mb|gb)?$/i);
     if (numericMatch) {
       const numericValue = numericMatch[1];
+      const unit = numericMatch[2] ? numericMatch[2].toLowerCase() : null;
       
-      // Find the best matching bandwidth
-      const matchingBandwidth = bandwidths.find(bw => {
-        const bwLower = bw.toLowerCase();
-        return bwLower === inputValue || 
-               bwLower === `${numericValue}mb` || 
-               bwLower.startsWith(numericValue);
-      });
+      // Priority 1: Exact match (case-insensitive)
+      const exactMatch = bandwidths.find(bw => bw.toLowerCase() === inputValue);
+      if (exactMatch) {
+        handleInputChange('bandwidth', exactMatch);
+        return;
+      }
       
-      if (matchingBandwidth) {
-        handleInputChange('bandwidth', matchingBandwidth);
-      } else if (!inputValue.includes('mb') && !inputValue.includes('gb')) {
-        // If user just typed a number, add 'Mb'
+      // Priority 2: Match numeric + explicit unit (e.g. "1" + "mb" = "1mb")
+      if (unit) {
+        const withUnit = `${numericValue}${unit}`;
+        const unitMatch = bandwidths.find(bw => bw.toLowerCase() === withUnit);
+        if (unitMatch) {
+          handleInputChange('bandwidth', unitMatch);
+          return;
+        }
+      }
+      
+      // Priority 3: If user typed just a number with no unit, try matching with 'mb' suffix
+      if (!unit) {
+        const mbMatch = bandwidths.find(bw => bw.toLowerCase() === `${numericValue}mb`);
+        if (mbMatch) {
+          handleInputChange('bandwidth', mbMatch);
+          return;
+        }
+        // Fallback: append 'Mb' to the number so it can be sent to the backend
         handleInputChange('bandwidth', `${numericValue}Mb`);
       }
     }
   };
 
-  const handleCalculate = async () => {
+  const handleCalculateAndAddToBasket = async () => {
     if (!formData.provider_primary_city || !formData.member_primary_city) {
       setError('Provider and Member primary locations are required');
+      return;
+    }
+    if (!formData.provider_region) {
+      setError('Provider Region is required');
       return;
     }
     if (!formData.bandwidth) {
@@ -342,14 +545,6 @@ const ExtranetPricingTool = () => {
     if (!formData.member_resiliency) {
       setError('Resiliency Type is required');
       return;
-    }
-
-    if (formData.discount_requested && formData.discount_percent) {
-      const discountValue = parseFloat(formData.discount_percent);
-      if (discountValue > maxDiscount) {
-        setError(`Discount exceeds maximum allowed. Please reduce your discount request.`);
-        return;
-      }
     }
 
     let adjustedBandwidth = formData.bandwidth;
@@ -367,12 +562,12 @@ const ExtranetPricingTool = () => {
 
     setLoading(true);
     setError('');
-    setResult(null);
 
     try {
       const response = await axios.post(`${API_BASE_URL}/extranet-pricing/calculate`, {
         provider_primary_city: formData.provider_primary_city?.city_name,
         provider_secondary_city: formData.provider_secondary_city?.city_name || null,
+        provider_region: formData.provider_region,
         member_primary_city: formData.member_primary_city?.city_name,
         member_secondary_city: formData.member_secondary_city?.city_name || null,
         member_resiliency: formData.member_resiliency,
@@ -383,8 +578,11 @@ const ExtranetPricingTool = () => {
         ipsec_required: formData.ipsec_required,
         contract_term: formData.contract_term,
         currency_requested: formData.currency_requested,
-        discount_requested: formData.discount_requested,
-        discount_percent: formData.discount_requested ? parseFloat(formData.discount_percent) || 0 : 0
+        discount_requested: false,
+        discount_percent: 0,
+        isf: formData.isf || null,
+        provider_name: formData.provider_name || null,
+        product_name: formData.product_name || null
       }, {
         headers: { 
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
@@ -392,18 +590,76 @@ const ExtranetPricingTool = () => {
         }
       });
 
-      setResult({
-        ...response.data,
-        formSnapshot: {
-          ...formData,
-          bandwidth: adjustedBandwidth
-        }
-      });
-      setParametersLocked(true);
-      setExpandedAccordion('results');
+      // Add to basket
+      const newItem = {
+        id: Date.now(),
+        formSnapshot: { ...formData, bandwidth: adjustedBandwidth },
+        result: response.data,
+        poa: false
+      };
+      
+      setBasketItems(prev => [...prev, newItem]);
+      setBundleResult(null);
+      setSelectedBundleDiscount('');
+      setSuccess(`Item added to basket (${basketItems.length + 1} items total)`);
+      
+      // Reset form for next item (keep contract_term, currency, provider_region)
+      setFormData(prev => ({
+        ...prev,
+        provider_primary_city: null,
+        provider_secondary_city: null,
+        selected_provider: null,
+        selected_product: null,
+        isf: '',
+        provider_name: '',
+        product_name: '',
+        member_primary_city: null,
+        member_secondary_city: null,
+        member_resiliency: '',
+        member_on_off_net: 'On Net',
+        member_cloud: false,
+        bandwidth: '',
+        traffic_type: 'Live/Standby',
+        ipsec_required: false
+      }));
+      setParametersLocked(false);
+      setExpandedAccordion('basket');
     } catch (err) {
       if (err.response?.data?.poa) {
-        setError(err.response.data.error);
+        // Still add POA items to basket
+        const poaItem = {
+          id: Date.now(),
+          formSnapshot: { ...formData, bandwidth: adjustedBandwidth },
+          result: null,
+          poa: true,
+          poaMessage: err.response.data.error
+        };
+        setBasketItems(prev => [...prev, poaItem]);
+        setBundleResult(null);
+        setSelectedBundleDiscount('');
+        setSuccess('Item added to basket (POA - Price On Application)');
+        
+        // Reset form
+        setFormData(prev => ({
+          ...prev,
+          provider_primary_city: null,
+          provider_secondary_city: null,
+          selected_provider: null,
+          selected_product: null,
+          isf: '',
+          provider_name: '',
+          product_name: '',
+          member_primary_city: null,
+          member_secondary_city: null,
+          member_resiliency: '',
+          member_on_off_net: 'On Net',
+          member_cloud: false,
+          bandwidth: '',
+          traffic_type: 'Live/Standby',
+          ipsec_required: false
+        }));
+        setParametersLocked(false);
+        setExpandedAccordion('basket');
       } else {
         setError(err.response?.data?.error || 'Failed to calculate pricing');
       }
@@ -412,10 +668,86 @@ const ExtranetPricingTool = () => {
     }
   };
 
+  const handleRemoveFromBasket = (itemId) => {
+    setBasketItems(prev => prev.filter(item => item.id !== itemId));
+    setBundleResult(null);
+    setSelectedBundleDiscount('');
+  };
+
+  // Get max discount available based on basket size
+  const getMaxBundleDiscount = () => {
+    const count = basketItems.length;
+    if (count >= 6) return bundleDiscounts.mrc['6_plus'];
+    if (count >= 4) return bundleDiscounts.mrc['4_5'];
+    return bundleDiscounts.mrc['1_3'];
+  };
+
+  // Complete basket with bundle discount
+  const handleCompleteBasket = async () => {
+    if (basketItems.length === 0) {
+      setError('Add at least one item to the basket');
+      return;
+    }
+    
+    const numericItems = basketItems.filter(item => !item.poa);
+    if (numericItems.length === 0) {
+      setError('All items are POA - cannot apply bundle discount');
+      return;
+    }
+
+    setBundleLoading(true);
+    setError('');
+
+    try {
+      const items = basketItems.map(item => ({
+        provider_primary_city: item.formSnapshot.provider_primary_city?.city_name,
+        provider_secondary_city: item.formSnapshot.provider_secondary_city?.city_name || null,
+        member_primary_city: item.formSnapshot.member_primary_city?.city_name,
+        member_secondary_city: item.formSnapshot.member_secondary_city?.city_name || null,
+        member_resiliency: item.formSnapshot.member_resiliency,
+        member_on_off_net: item.formSnapshot.member_on_off_net,
+        member_cloud: item.formSnapshot.member_cloud,
+        bandwidth: item.formSnapshot.bandwidth,
+        traffic_type: item.formSnapshot.traffic_type,
+        ipsec_required: item.formSnapshot.ipsec_required,
+        provider_region: item.formSnapshot.provider_region,
+        isf: item.formSnapshot.isf || null,
+        provider_name: item.formSnapshot.provider_name || null,
+        product_name: item.formSnapshot.product_name || null
+      }));
+
+      const response = await axios.post(`${API_BASE_URL}/extranet-pricing/calculate-bundle`, {
+        items,
+        contract_term: formData.contract_term,
+        currency_requested: formData.currency_requested,
+        discount_percent: parseFloat(selectedBundleDiscount) || 0
+      }, {
+        headers: { 
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      setBundleResult(response.data);
+      setExpandedAccordion('basket');
+      setParametersLocked(true);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to calculate bundle pricing');
+    } finally {
+      setBundleLoading(false);
+    }
+  };
+
   const handleRefresh = () => {
     setFormData({
       provider_primary_city: null,
       provider_secondary_city: null,
+      provider_region: '',
+      selected_provider: null,
+      selected_product: null,
+      isf: '',
+      provider_name: '',
+      product_name: '',
       member_primary_city: null,
       member_secondary_city: null,
       member_resiliency: '',
@@ -425,114 +757,70 @@ const ExtranetPricingTool = () => {
       traffic_type: 'Live/Standby',
       ipsec_required: false,
       contract_term: 12,
-      currency_requested: 'USD',
-      discount_requested: false,
-      discount_percent: ''
+      currency_requested: 'USD'
     });
     setResult(null);
+    setBasketItems([]);
+    setBundleResult(null);
+    setSelectedBundleDiscount('');
+    setAvailableProviders([]);
+    setAvailableProducts([]);
     setError('');
     setParametersLocked(false);
     setExpandedAccordion('form');
   };
 
   const handleExportToFile = () => {
-    if (!result) return;
+    if (!bundleResult && basketItems.length === 0) return;
 
-    const snapshot = result.formSnapshot || formData;
     const timestamp = new Date().toLocaleString();
+    const currency = formData.currency_requested || 'USD';
     
-    let content = `EXTRANET PRICING QUOTE
-Generated: ${timestamp}
-================================================
+    let content = `EXTRANET PRICING BUNDLE QUOTE\nGenerated: ${timestamp}\nContract Term: ${formData.contract_term} months\nCurrency: ${currency}\n================================================\n\n`;
 
-PROVIDER DETAILS
-----------------
-Primary Location: ${snapshot.provider_primary_city?.city_name || 'N/A'}, ${snapshot.provider_primary_city?.country || ''}
-Secondary Location: ${snapshot.provider_secondary_city?.city_name || 'None'}, ${snapshot.provider_secondary_city?.country || ''}
-
-MEMBER DETAILS
---------------
-Primary Location: ${snapshot.member_primary_city?.city_name || 'N/A'}, ${snapshot.member_primary_city?.country || ''}
-Secondary Location: ${snapshot.member_secondary_city?.city_name || 'None'}, ${snapshot.member_secondary_city?.country || ''}
-Resiliency Type: ${snapshot.member_resiliency}
-On/Off Net: ${snapshot.member_on_off_net}
-Public Cloud: ${snapshot.member_cloud ? 'Yes' : 'No'}
-
-SERVICE PARAMETERS
-------------------
-Bandwidth: ${result.details?.bandwidth || snapshot.bandwidth}
-Traffic Type: ${snapshot.traffic_type}
-IPSec Required: ${snapshot.ipsec_required ? 'Yes' : 'No'}
-Contract Term: ${snapshot.contract_term} months
-Currency: ${snapshot.currency_requested}
-
-`;
-
-    if (snapshot.discount_requested && snapshot.discount_percent) {
-      content += `DISCOUNT
---------
-Discount Requested: ${snapshot.discount_percent}%
-
-`;
+    if (bundleResult) {
+      content += `BUNDLE SUMMARY\n--------------\nItems in Bundle: ${bundleResult.bundle_pricing.item_count}\nMRC Discount Applied: ${bundleResult.bundle_pricing.mrc_discount_percent}%\nTotal MRC: ${formatCurrency(bundleResult.bundle_pricing.total_mrc, currency)}\nTotal NRC: ${formatCurrency(bundleResult.bundle_pricing.total_nrc, currency)}\n`;
+      if (bundleResult.bundle.has_poa_items) content += '⚠ Some items are POA (Price On Application)\n';
+      content += '\n================================================\n\n';
     }
 
-    content += `PRICING RESULT
-==============
-Monthly Recurring Charge (MRC): ${formatCurrency(result.pricing.mrc, result.pricing.currency)}
-Non-Recurring Charge (NRC): ${formatCurrency(result.pricing.nrc, result.pricing.currency)}
-`;
-
-    if (result.pricing.ipsec_poa) {
-      content += `\nIPSec: Unable to provide pricing for IPSec at this bandwidth - please contact pricing team.\n`;
-    } else if (result.pricing.ipsec_surcharge > 0) {
-      content += `IPSec Surcharge (included in MRC): ${formatCurrency(result.pricing.ipsec_surcharge, result.pricing.currency)}\n`;
-    }
-
-    content += `
-CONFIGURATION DETAILS
----------------------
-Tier Used: ${result.details.tier_used}
-Region: ${result.details.region_used}
-
-`;
-
-    if (result.breakdown) {
-      content += `PRICE BREAKDOWN (USD)
---------------------
-Rate Card Base: $${roundUpToNearest5(result.breakdown.rate_card_base).toLocaleString()}
-After Resiliency: $${roundUpToNearest5(result.breakdown.after_resiliency).toLocaleString()}
-After Traffic Type: $${roundUpToNearest5(result.breakdown.adjusted_base).toLocaleString()}
-`;
-      if (result.breakdown.total_discount > 0) {
-        content += `Total Discount: -$${roundUpToNearest5(result.breakdown.total_discount).toLocaleString()}\n`;
+    basketItems.forEach((item, idx) => {
+      const snap = item.formSnapshot;
+      content += `ITEM ${idx + 1}\n--------\n`;
+      content += `Provider: ${snap.provider_name || 'Manual Entry'}\nProduct: ${snap.product_name || 'N/A'}\nISF: ${snap.isf || 'N/A'}\n`;
+      content += `Provider Primary: ${snap.provider_primary_city?.city_name || 'N/A'}, ${snap.provider_primary_city?.country || ''}\n`;
+      content += `Provider Secondary: ${snap.provider_secondary_city?.city_name || 'None'}\n`;
+      content += `Member Primary: ${snap.member_primary_city?.city_name || 'N/A'}, ${snap.member_primary_city?.country || ''}\n`;
+      content += `Member Secondary: ${snap.member_secondary_city?.city_name || 'None'}\n`;
+      content += `Resiliency: ${snap.member_resiliency}\nOn/Off Net: ${snap.member_on_off_net}\nCloud: ${snap.member_cloud ? 'Yes' : 'No'}\n`;
+      content += `Bandwidth: ${snap.bandwidth}\nTraffic Type: ${snap.traffic_type}\nIPSec: ${snap.ipsec_required ? 'Yes' : 'No'}\n`;
+      
+      if (item.poa) {
+        content += `Status: POA - ${item.poaMessage || 'Price On Application'}\n`;
+      } else if (item.result?.pricing) {
+        content += `Pre-Discount MRC: ${formatCurrency(item.result.pricing.mrc, item.result.pricing.currency)}\nPre-Discount NRC: ${formatCurrency(item.result.pricing.nrc, item.result.pricing.currency)}\n`;
       }
-      if (result.breakdown.ipsec_surcharge > 0 && !result.pricing.ipsec_poa) {
-        content += `IPSec Surcharge: +$${roundUpToNearest5(result.breakdown.ipsec_surcharge).toLocaleString()}\n`;
+      
+      if (bundleResult?.items?.[idx]?.pricing) {
+        const bItem = bundleResult.items[idx];
+        content += `Bundle MRC: ${formatCurrency(bItem.pricing.mrc, bItem.pricing.currency)}\nBundle NRC: ${formatCurrency(bItem.pricing.nrc, bItem.pricing.currency)}\n`;
       }
-      content += `Final MRC (USD): $${roundUpToNearest5(result.breakdown.mrc_usd).toLocaleString()}\n`;
-    }
-
-    content += `
-================================================
-TERMS AND CONDITIONS
-================================================
-`;
-    pricingTerms.forEach((term, index) => {
-      content += `${index + 1}. ${term}\n`;
+      content += '\n';
     });
+
+    content += `================================================\nTERMS AND CONDITIONS\n================================================\n`;
+    pricingTerms.forEach((term, index) => { content += `${index + 1}. ${term}\n`; });
 
     const blob = new Blob([content], { type: 'text/plain' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    const fileName = `Extranet_Quote_${snapshot.provider_primary_city?.city_name || 'Provider'}_${snapshot.member_primary_city?.city_name || 'Member'}_${new Date().toISOString().slice(0, 10)}.txt`;
-    link.download = fileName;
+    link.download = `Extranet_Bundle_Quote_${basketItems.length}items_${new Date().toISOString().slice(0, 10)}.txt`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
-    
-    setSuccess('Quote exported successfully');
+    setSuccess('Bundle quote exported successfully');
   };
 
   const getTierColor = (tier) => {
@@ -703,6 +991,96 @@ TERMS AND CONDITIONS
                 <Box sx={{ mb: 3 }}>
                   <SectionHeader icon={BusinessIcon} title="Provider Location" color="primary" />
                   <Grid container spacing={2}>
+                    {/* Provider Region at TOP */}
+                    <Grid item xs={12}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>Provider Region *</InputLabel>
+                        <Select
+                          value={formData.provider_region}
+                          onChange={(e) => handleInputChange('provider_region', e.target.value)}
+                          label="Provider Region *"
+                        >
+                          {providerRegionOptions.map(region => (
+                            <MenuItem key={region} value={region}>{region}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+
+                    {/* Provider Selection (optional) */}
+                    {formData.provider_region && (
+                      <Grid item xs={12}>
+                        <Autocomplete
+                          options={availableProviders}
+                          getOptionLabel={(option) => option.provider_name || ''}
+                          value={formData.selected_provider}
+                          onChange={(e, value) => handleInputChange('selected_provider', value)}
+                          disabled={parametersLocked}
+                          loading={providersLoading}
+                          renderInput={(params) => (
+                            <TextField 
+                              {...params} 
+                              label="Extranet Provider (Optional)" 
+                              size="small"
+                              placeholder="Select or leave blank for manual entry"
+                              InputProps={{
+                                ...params.InputProps,
+                                startAdornment: (
+                                  <>
+                                    <InputAdornment position="start"><StorefrontIcon sx={{ fontSize: 18, color: 'text.secondary' }} /></InputAdornment>
+                                    {params.InputProps.startAdornment}
+                                  </>
+                                )
+                              }}
+                            />
+                          )}
+                        />
+                      </Grid>
+                    )}
+
+                    {/* Product Selection (optional, shown after provider) */}
+                    {formData.selected_provider && (
+                      <Grid item xs={12}>
+                        <Autocomplete
+                          options={availableProducts}
+                          getOptionLabel={(option) => `${option.product_name}${option.isf ? ` (ISF: ${option.isf})` : ''}`}
+                          value={formData.selected_product}
+                          onChange={(e, value) => handleInputChange('selected_product', value)}
+                          disabled={parametersLocked}
+                          loading={productsLoading}
+                          renderInput={(params) => (
+                            <TextField 
+                              {...params} 
+                              label="Product (Optional)" 
+                              size="small"
+                              placeholder="Select a product to auto-populate locations"
+                            />
+                          )}
+                          renderOption={(props, option) => (
+                            <li {...props} key={option.id}>
+                              <Box sx={{ width: '100%' }}>
+                                <Typography sx={{ fontSize: '0.875rem', fontWeight: 500 }}>{option.product_name}</Typography>
+                                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                  {option.isf && <Chip label={`ISF: ${option.isf}`} size="small" variant="outlined" sx={{ fontSize: '0.65rem' }} />}
+                                  {option.suggested_bandwidth && <Chip label={`${option.suggested_bandwidth}Mb`} size="small" color="info" variant="outlined" sx={{ fontSize: '0.65rem' }} />}
+                                  {option.primary_datacenter && <Chip label={option.primary_datacenter} size="small" variant="outlined" sx={{ fontSize: '0.65rem' }} />}
+                                </Box>
+                              </Box>
+                            </li>
+                          )}
+                        />
+                      </Grid>
+                    )}
+
+                    {/* ISF display (if product selected) */}
+                    {formData.isf && (
+                      <Grid item xs={12}>
+                        <Alert severity="info" sx={{ py: 0.5 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 500 }}>ISF: {formData.isf}</Typography>
+                        </Alert>
+                      </Grid>
+                    )}
+
                     <Grid item xs={12}>
                       <Autocomplete
                         options={cities}
@@ -722,6 +1100,11 @@ TERMS AND CONDITIONS
                           </li>
                         )}
                       />
+                      {formData.selected_product && (
+                        <Typography variant="caption" color="text.secondary">
+                          Auto-populated from product. You can override manually.
+                        </Typography>
+                      )}
                     </Grid>
                     <Grid item xs={12}>
                       <Autocomplete
@@ -854,6 +1237,8 @@ TERMS AND CONDITIONS
                     <Grid item xs={12} sm={6}>
                       <Autocomplete
                         freeSolo
+                        autoHighlight={false}
+                        autoSelect={false}
                         options={bandwidths}
                         value={formData.bandwidth}
                         onInputChange={handleBandwidthChange}
@@ -884,36 +1269,40 @@ TERMS AND CONDITIONS
                       </FormControl>
                     </Grid>
                     <Grid item xs={12} sm={6}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel>Contract Term *</InputLabel>
-                        <Select
-                          value={formData.contract_term}
-                          onChange={(e) => handleInputChange('contract_term', e.target.value)}
-                          label="Contract Term *"
-                          disabled={parametersLocked}
-                        >
-                          <MenuItem value={12}>12 Months</MenuItem>
-                          <MenuItem value={24}>24 Months</MenuItem>
-                          <MenuItem value={36}>36 Months</MenuItem>
-                        </Select>
-                      </FormControl>
+                      <Tooltip title={basketItems.length > 0 ? 'Locked - all basket items share the same contract term' : ''}>
+                        <FormControl fullWidth size="small">
+                          <InputLabel>Contract Term *</InputLabel>
+                          <Select
+                            value={formData.contract_term}
+                            onChange={(e) => handleInputChange('contract_term', e.target.value)}
+                            label="Contract Term *"
+                            disabled={parametersLocked || basketItems.length > 0}
+                          >
+                            <MenuItem value={12}>12 Months</MenuItem>
+                            <MenuItem value={24}>24 Months</MenuItem>
+                            <MenuItem value={36}>36 Months</MenuItem>
+                          </Select>
+                        </FormControl>
+                      </Tooltip>
                     </Grid>
                     <Grid item xs={12} sm={6}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel>Currency *</InputLabel>
-                        <Select
-                          value={formData.currency_requested}
-                          onChange={(e) => handleInputChange('currency_requested', e.target.value)}
-                          label="Currency *"
-                          disabled={parametersLocked}
-                        >
-                          {currencies.map(curr => (
-                            <MenuItem key={curr.currency_code} value={curr.currency_code}>
-                              {curr.currency_code}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
+                      <Tooltip title={basketItems.length > 0 ? 'Locked - all basket items share the same currency' : ''}>
+                        <FormControl fullWidth size="small">
+                          <InputLabel>Currency *</InputLabel>
+                          <Select
+                            value={formData.currency_requested}
+                            onChange={(e) => handleInputChange('currency_requested', e.target.value)}
+                            label="Currency *"
+                            disabled={parametersLocked || basketItems.length > 0}
+                          >
+                            {currencies.map(curr => (
+                              <MenuItem key={curr.currency_code} value={curr.currency_code}>
+                                {curr.currency_code}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </Tooltip>
                     </Grid>
                     <Grid item xs={12}>
                       <FormControlLabel
@@ -935,46 +1324,21 @@ TERMS AND CONDITIONS
                   </Grid>
                 </Box>
 
-                {/* Discount Section */}
-                <Box sx={{ mb: 3 }}>
-                  <SectionHeader icon={DiscountIcon} title="Discount Request" color="success" />
-                  <Grid container spacing={2} alignItems="center">
-                    <Grid item xs={12} sm={6}>
-                      <FormControlLabel
-                        control={
-                          <Switch
-                            checked={formData.discount_requested}
-                            onChange={(e) => handleInputChange('discount_requested', e.target.checked)}
-                            color="success"
-                            disabled={parametersLocked}
-                          />
-                        }
-                        label={
-                          <Typography variant="body2">
-                            Request Discount
-                          </Typography>
-                        }
-                      />
-                    </Grid>
-                    {formData.discount_requested && (
-                      <Grid item xs={12} sm={6}>
-                        <TextField
-                          fullWidth
-                          size="small"
-                          label="Discount Percentage"
-                          type="number"
-                          value={formData.discount_percent}
-                          onChange={(e) => handleInputChange('discount_percent', e.target.value)}
-                          disabled={parametersLocked}
-                          InputProps={{
-                            endAdornment: <InputAdornment position="end">%</InputAdornment>
-                          }}
-                          error={parseFloat(formData.discount_percent) > maxDiscount}
-                        />
-                      </Grid>
-                    )}
-                  </Grid>
-                </Box>
+                {/* Bundle Info */}
+                {basketItems.length > 0 && (
+                  <Box sx={{ mb: 3 }}>
+                    <SectionHeader icon={ShoppingCartIcon} title="Shopping Basket" color="success" />
+                    <Alert severity="info" sx={{ mb: 1 }}>
+                      <Typography variant="body2">
+                        <strong>{basketItems.length} item(s)</strong> in basket. Contract term and currency are locked to the first item's values.
+                        Discount will be applied when basket is completed.
+                      </Typography>
+                    </Alert>
+                    <Typography variant="caption" color="text.secondary">
+                      Max MRC discount available: <strong>{getMaxBundleDiscount()}%</strong> (based on {basketItems.length} items)
+                    </Typography>
+                  </Box>
+                )}
               </Grid>
 
               {/* Action Buttons */}
@@ -983,9 +1347,9 @@ TERMS AND CONDITIONS
                   <Button
                     variant="contained"
                     size="large"
-                    startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <CalculateIcon />}
-                    onClick={handleCalculate}
-                    disabled={loading || !formData.provider_primary_city || !formData.member_primary_city || !formData.bandwidth || !formData.member_resiliency || parametersLocked}
+                    startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <AddShoppingCartIcon />}
+                    onClick={handleCalculateAndAddToBasket}
+                    disabled={loading || !formData.provider_primary_city || !formData.member_primary_city || !formData.bandwidth || !formData.member_resiliency || !formData.provider_region || (bundleResult !== null)}
                     sx={{ 
                       px: 4,
                       background: (theme) => `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`,
@@ -994,7 +1358,7 @@ TERMS AND CONDITIONS
                       }
                     }}
                   >
-                    {loading ? 'Calculating...' : 'Calculate Price'}
+                    {loading ? 'Calculating...' : 'Calculate & Add to Basket'}
                   </Button>
                 </Box>
               </Grid>
@@ -1002,303 +1366,395 @@ TERMS AND CONDITIONS
           </AccordionDetails>
         </Accordion>
 
-        {/* Results Accordion */}
-        {result && (
+        {/* Shopping Basket Accordion */}
+        {basketItems.length > 0 && (
           <Accordion 
-            expanded={expandedAccordion === 'results'} 
-            onChange={() => setExpandedAccordion(expandedAccordion === 'results' ? '' : 'results')}
+            expanded={expandedAccordion === 'basket'} 
+            onChange={() => setExpandedAccordion(expandedAccordion === 'basket' ? '' : 'basket')}
+            sx={{ mb: 2 }}
           >
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <AttachMoneyIcon />
-                <Typography variant="h6" sx={{ fontSize: '1rem' }}>Pricing Results</Typography>
+                <Badge badgeContent={basketItems.length} color="primary">
+                  <ShoppingCartIcon />
+                </Badge>
+                <Typography variant="h6" sx={{ fontSize: '1rem', ml: 1 }}>
+                  Shopping Basket ({basketItems.length} item{basketItems.length !== 1 ? 's' : ''})
+                </Typography>
+                {bundleResult && <Chip label="Completed" size="small" color="success" sx={{ ml: 1 }} />}
               </Box>
             </AccordionSummary>
             <AccordionDetails>
-              {/* Export Button */}
-              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-                <Button
-                  variant="outlined"
-                  startIcon={<DownloadIcon />}
-                  onClick={handleExportToFile}
-                >
-                  Export to File
-                </Button>
-              </Box>
+              {/* Basket Items Table */}
+              <TableContainer component={Paper} variant="outlined" sx={{ mb: 3 }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ backgroundColor: 'grey.100' }}>
+                      <TableCell><strong>#</strong></TableCell>
+                      <TableCell><strong>Provider</strong></TableCell>
+                      <TableCell><strong>Product / ISF</strong></TableCell>
+                      <TableCell><strong>Provider City</strong></TableCell>
+                      <TableCell><strong>Member City</strong></TableCell>
+                      <TableCell><strong>BW</strong></TableCell>
+                      <TableCell><strong>Resiliency</strong></TableCell>
+                      <TableCell align="right"><strong>MRC</strong></TableCell>
+                      <TableCell align="right"><strong>NRC</strong></TableCell>
+                      <TableCell><strong>Status</strong></TableCell>
+                      {!bundleResult && <TableCell></TableCell>}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {basketItems.map((item, idx) => {
+                      const snap = item.formSnapshot;
+                      const bItem = bundleResult?.items?.[idx];
+                      return (
+                        <TableRow key={item.id} hover>
+                          <TableCell>{idx + 1}</TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                              {snap.provider_name || 'Manual'}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                              {snap.product_name || '-'}
+                            </Typography>
+                            {snap.isf && (
+                              <Chip label={`ISF: ${snap.isf}`} size="small" variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                              {snap.provider_primary_city?.city_name || '-'}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                              {snap.member_primary_city?.city_name || '-'}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>{snap.bandwidth}</Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Chip label={snap.member_resiliency} size="small" sx={{ fontSize: '0.6rem' }} />
+                          </TableCell>
+                          <TableCell align="right">
+                            {item.poa ? (
+                              <Chip label="POA" size="small" color="warning" />
+                            ) : bItem?.pricing ? (
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600, color: 'success.main' }}>
+                                {formatCurrency(bItem.pricing.mrc, bItem.pricing.currency)}
+                              </Typography>
+                            ) : item.result?.pricing ? (
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                {formatCurrency(item.result.pricing.mrc, item.result.pricing.currency)}
+                              </Typography>
+                            ) : '-'}
+                          </TableCell>
+                          <TableCell align="right">
+                            {item.poa ? '-' : bItem?.pricing ? (
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {formatCurrency(bItem.pricing.nrc, bItem.pricing.currency)}
+                              </Typography>
+                            ) : item.result?.pricing ? (
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {formatCurrency(item.result.pricing.nrc, item.result.pricing.currency)}
+                              </Typography>
+                            ) : '-'}
+                          </TableCell>
+                          <TableCell>
+                            {item.poa ? (
+                              <Chip label="POA" size="small" color="warning" />
+                            ) : bundleResult ? (
+                              <Chip label="Priced" size="small" color="success" />
+                            ) : (
+                              <Chip label="Pending" size="small" color="info" />
+                            )}
+                          </TableCell>
+                          {!bundleResult && (
+                            <TableCell>
+                              <IconButton size="small" color="error" onClick={() => handleRemoveFromBasket(item.id)}>
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
 
-              <Grid container spacing={3}>
-                {/* Left Column - Request Summary */}
-                <Grid item xs={12} md={6}>
-                  <Card variant="outlined" sx={{ height: '100%' }}>
-                    <CardContent>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
-                        Quote Summary
-                      </Typography>
-                      
-                      <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>Provider</Typography>
-                      <Box sx={{ mb: 2, pl: 1 }}>
-                        <Typography variant="body2">
-                          Primary: {result.formSnapshot?.provider_primary_city?.city_name}, {result.formSnapshot?.provider_primary_city?.country}
-                        </Typography>
-                        {result.formSnapshot?.provider_secondary_city && (
-                          <Typography variant="body2">
-                            Secondary: {result.formSnapshot.provider_secondary_city.city_name}, {result.formSnapshot.provider_secondary_city.country}
-                          </Typography>
-                        )}
-                      </Box>
-
-                      <Typography variant="subtitle2" color="secondary" sx={{ mb: 1 }}>Member</Typography>
-                      <Box sx={{ mb: 2, pl: 1 }}>
-                        <Typography variant="body2">
-                          Primary: {result.formSnapshot?.member_primary_city?.city_name}, {result.formSnapshot?.member_primary_city?.country}
-                        </Typography>
-                        {result.formSnapshot?.member_secondary_city && (
-                          <Typography variant="body2">
-                            Secondary: {result.formSnapshot.member_secondary_city.city_name}, {result.formSnapshot.member_secondary_city.country}
-                          </Typography>
-                        )}
-                        <Typography variant="body2">Resiliency: {result.formSnapshot?.member_resiliency}</Typography>
-                        <Typography variant="body2">Network: {result.formSnapshot?.member_on_off_net}</Typography>
-                        {result.formSnapshot?.member_cloud && (
-                          <Typography variant="body2">Public Cloud: Yes</Typography>
-                        )}
-                      </Box>
-
-                      <Typography variant="subtitle2" color="info.main" sx={{ mb: 1 }}>Service</Typography>
-                      <Box sx={{ pl: 1 }}>
-                        <Typography variant="body2">Bandwidth: {result.details?.bandwidth || result.formSnapshot?.bandwidth}</Typography>
-                        <Typography variant="body2">Traffic Type: {result.formSnapshot?.traffic_type}</Typography>
-                        <Typography variant="body2">Contract Term: {result.formSnapshot?.contract_term} months</Typography>
-                        <Typography variant="body2">Currency: {result.formSnapshot?.currency_requested}</Typography>
-                        {result.formSnapshot?.ipsec_required && (
-                          <Typography variant="body2">IPSec: Required</Typography>
-                        )}
-                        {result.formSnapshot?.discount_requested && result.formSnapshot?.discount_percent && (
-                          <Typography variant="body2">Discount: {result.formSnapshot.discount_percent}%</Typography>
-                        )}
-                      </Box>
-                    </CardContent>
-                  </Card>
-                </Grid>
-
-                {/* Right Column - Pricing */}
-                <Grid item xs={12} md={6}>
-                  <Card 
-                    elevation={0}
-                    sx={{ 
-                      border: '1px solid',
-                      borderColor: 'divider',
-                      borderRadius: 2,
-                      overflow: 'hidden',
-                      height: '100%'
+              {/* Add Additional Connection button (only before completing) */}
+              {!bundleResult && (
+                <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    startIcon={<AddCircleOutlineIcon />}
+                    onClick={() => {
+                      setExpandedAccordion('form');
+                      setParametersLocked(false);
                     }}
+                    sx={{ borderStyle: 'dashed', px: 4, py: 1 }}
                   >
-                    {/* Result Header */}
-                    <Box 
+                    Add Additional Connection
+                  </Button>
+                </Box>
+              )}
+
+              {/* Bundle Discount Selection (only before completing) */}
+              {!bundleResult && (
+                <Card variant="outlined" sx={{ p: 2, mb: 2, backgroundColor: (theme) => alpha(theme.palette.success.main, 0.04) }}>
+                  <SectionHeader icon={DiscountIcon} title="Apply Bundle Discount" color="success" />
+                  <Grid container spacing={2} alignItems="center">
+                    <Grid item xs={12} sm={4}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        Items: <strong>{basketItems.length}</strong> | Max MRC Discount: <strong>{getMaxBundleDiscount()}%</strong>
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>MRC Discount %</InputLabel>
+                        <Select
+                          value={selectedBundleDiscount}
+                          onChange={(e) => setSelectedBundleDiscount(e.target.value)}
+                          label="MRC Discount %"
+                        >
+                          <MenuItem value="">No Discount</MenuItem>
+                          {Array.from({ length: Math.floor(getMaxBundleDiscount() / 5) + 1 }, (_, i) => i * 5).filter(v => v > 0 && v <= getMaxBundleDiscount()).map(pct => (
+                            <MenuItem key={pct} value={pct}>{pct}%</MenuItem>
+                          ))}
+                          {!Array.from({ length: Math.floor(getMaxBundleDiscount() / 5) + 1 }, (_, i) => i * 5).includes(getMaxBundleDiscount()) && (
+                            <MenuItem value={getMaxBundleDiscount()}>{getMaxBundleDiscount()}%</MenuItem>
+                          )}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <Button
+                        variant="contained"
+                        color="success"
+                        fullWidth
+                        startIcon={bundleLoading ? <CircularProgress size={20} color="inherit" /> : <CalculateIcon />}
+                        onClick={handleCompleteBasket}
+                        disabled={bundleLoading || basketItems.length === 0}
+                        sx={{ height: 40 }}
+                      >
+                        {bundleLoading ? 'Calculating...' : 'Complete Basket & Apply Discount'}
+                      </Button>
+                    </Grid>
+                  </Grid>
+                </Card>
+              )}
+
+              {/* Bundle Totals (after completing) */}
+              {bundleResult && (
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={6}>
+                    <Card 
                       sx={{ 
-                        background: (theme) => `linear-gradient(135deg, ${theme.palette.success.main} 0%, ${theme.palette.success.dark} 100%)`,
-                        color: '#fff',
-                        p: 2,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 1.5
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 2,
+                        overflow: 'hidden',
+                        height: '100%'
                       }}
                     >
-                      <AttachMoneyIcon sx={{ fontSize: 28 }} />
-                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                        Pricing Result
-                      </Typography>
-                    </Box>
-                    
-                    <CardContent sx={{ p: 3 }}>
-                      {/* Main Pricing */}
+                      {/* Bundle Result Header */}
                       <Box 
                         sx={{ 
-                          textAlign: 'center', 
-                          py: 3, 
-                          px: 2,
-                          background: (theme) => alpha(theme.palette.success.main, 0.08),
-                          borderRadius: 2, 
-                          mb: 2,
-                          border: '1px solid',
-                          borderColor: (theme) => alpha(theme.palette.success.main, 0.2)
+                          background: (theme) => `linear-gradient(135deg, ${theme.palette.success.main} 0%, ${theme.palette.success.dark} 100%)`,
+                          color: '#fff',
+                          p: 2,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 1.5
                         }}
                       >
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, mb: 1 }}>
-                          <TrendingUpIcon sx={{ color: 'text.secondary', fontSize: 18 }} />
-                          <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-                            Monthly Recurring Charge (MRC)
-                          </Typography>
-                        </Box>
-                        <Typography 
-                          variant="h3" 
+                        <AttachMoneyIcon sx={{ fontSize: 28 }} />
+                        <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                          Bundle Pricing
+                        </Typography>
+                      </Box>
+                      
+                      <CardContent sx={{ p: 3 }}>
+                        {/* Total MRC */}
+                        <Box 
                           sx={{ 
-                            color: 'success.main', 
-                            fontWeight: 700,
-                            fontSize: { xs: '2rem', sm: '2.5rem' }
+                            textAlign: 'center', 
+                            py: 3, 
+                            px: 2,
+                            background: (theme) => alpha(theme.palette.success.main, 0.08),
+                            borderRadius: 2, 
+                            mb: 2,
+                            border: '1px solid',
+                            borderColor: (theme) => alpha(theme.palette.success.main, 0.2)
                           }}
                         >
-                          {formatCurrency(result.pricing.mrc, result.pricing.currency)}
-                        </Typography>
-                        {result.pricing.ipsec_poa && (
-                          <Alert severity="warning" sx={{ mt: 2, textAlign: 'left' }}>
-                            <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                              Unable to provide pricing for IPSec at this bandwidth - please contact pricing team.
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, mb: 1 }}>
+                            <TrendingUpIcon sx={{ color: 'text.secondary', fontSize: 18 }} />
+                            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+                              Total Monthly Recurring Charge (MRC)
                             </Typography>
-                          </Alert>
-                        )}
-                        {result.pricing.ipsec_surcharge > 0 && !result.pricing.ipsec_poa && (
-                          <Chip 
-                            label={`Includes IPSec: ${formatCurrency(result.pricing.ipsec_surcharge, result.pricing.currency)}`}
-                            size="small"
-                            color="warning"
-                            sx={{ mt: 1 }}
-                          />
-                        )}
-                      </Box>
-
-                      <Box 
-                        sx={{ 
-                          textAlign: 'center', 
-                          py: 2.5, 
-                          px: 2,
-                          background: (theme) => alpha(theme.palette.warning.main, 0.08),
-                          borderRadius: 2, 
-                          mb: 3,
-                          border: '1px solid',
-                          borderColor: (theme) => alpha(theme.palette.warning.main, 0.2)
-                        }}
-                      >
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, mb: 1 }}>
-                          <ReceiptIcon sx={{ color: 'text.secondary', fontSize: 18 }} />
-                          <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-                            Non-Recurring Charge (NRC)
-                          </Typography>
-                        </Box>
-                        <Typography 
-                          variant="h4" 
-                          sx={{ 
-                            color: 'warning.dark', 
-                            fontWeight: 700,
-                            fontSize: { xs: '1.5rem', sm: '1.75rem' }
-                          }}
-                        >
-                          {formatCurrency(result.pricing.nrc, result.pricing.currency)}
-                        </Typography>
-                      </Box>
-
-                      {/* Details */}
-                      <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, fontSize: '0.875rem' }}>
-                        Configuration Details
-                      </Typography>
-                      <Grid container spacing={1.5} sx={{ mb: 2 }}>
-                        <Grid item xs={5}>
-                          <Typography variant="body2" color="text.secondary">Tier Used:</Typography>
-                        </Grid>
-                        <Grid item xs={7}>
-                          <Chip label={result.details.tier_used} size="small" color={getTierColor(result.details.tier_used)} />
-                        </Grid>
-                        
-                        <Grid item xs={5}>
-                          <Typography variant="body2" color="text.secondary">Region:</Typography>
-                        </Grid>
-                        <Grid item xs={7}>
-                          <Chip label={result.details.region_used} size="small" color={getRegionColor(result.details.region_used)} />
-                        </Grid>
-                        
-                        <Grid item xs={5}>
-                          <Typography variant="body2" color="text.secondary">Bandwidth:</Typography>
-                        </Grid>
-                        <Grid item xs={7}>
-                          <Typography variant="body2" sx={{ fontWeight: 500 }}>{result.details.bandwidth}</Typography>
-                        </Grid>
-                      </Grid>
-
-                      {/* Breakdown Summary - Without percentages */}
-                      {result.breakdown && (
-                        <>
-                          <Divider sx={{ my: 2 }} />
-                          <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, fontSize: '0.875rem' }}>
-                            Price Breakdown (USD)
-                          </Typography>
-                          <Box 
+                          </Box>
+                          <Typography 
+                            variant="h3" 
                             sx={{ 
-                              fontSize: '0.8125rem', 
-                              color: 'text.secondary',
-                              backgroundColor: 'grey.50',
-                              borderRadius: 1,
-                              p: 1.5
+                              color: 'success.main', 
+                              fontWeight: 700,
+                              fontSize: { xs: '2rem', sm: '2.5rem' }
                             }}
                           >
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                              <span>Rate Card Base:</span>
-                              <span style={{ fontWeight: 500 }}>${roundUpToNearest5(result.breakdown.rate_card_base).toLocaleString()}</span>
-                            </Box>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                              <span>After Resiliency:</span>
-                              <span style={{ fontWeight: 500 }}>${roundUpToNearest5(result.breakdown.after_resiliency).toLocaleString()}</span>
-                            </Box>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                              <span>After Traffic Type:</span>
-                              <span style={{ fontWeight: 500 }}>${roundUpToNearest5(result.breakdown.adjusted_base).toLocaleString()}</span>
-                            </Box>
-                            {result.breakdown.total_discount > 0 && (
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5, color: 'success.main' }}>
-                                <span>Total Discount:</span>
-                                <span style={{ fontWeight: 600 }}>-${roundUpToNearest5(result.breakdown.total_discount).toLocaleString()}</span>
-                              </Box>
-                            )}
-                            {result.pricing.ipsec_poa && (
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5, color: 'info.main' }}>
-                                <span>IPSec Surcharge:</span>
-                                <Chip label="POA" size="small" color="info" />
-                              </Box>
-                            )}
-                            {result.breakdown.ipsec_surcharge > 0 && !result.pricing.ipsec_poa && (
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5, color: 'warning.main' }}>
-                                <span>IPSec Surcharge:</span>
-                                <span style={{ fontWeight: 500 }}>+${roundUpToNearest5(result.breakdown.ipsec_surcharge).toLocaleString()}</span>
-                              </Box>
-                            )}
-                            <Divider sx={{ my: 1 }} />
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5, fontWeight: 'bold', color: 'text.primary' }}>
-                              <span>Final MRC (USD):</span>
-                              <span>${roundUpToNearest5(result.breakdown.mrc_usd).toLocaleString()}</span>
-                            </Box>
-                          </Box>
-                        </>
-                      )}
-                    </CardContent>
-                  </Card>
-                </Grid>
-
-                {/* Terms and Conditions */}
-                <Grid item xs={12}>
-                  <Card variant="outlined" sx={{ backgroundColor: 'grey.50' }}>
-                    <CardContent>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                        <InfoIcon color="info" />
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                          Terms and Conditions
-                        </Typography>
-                      </Box>
-                      <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-                        {pricingTerms.map((term, index) => (
-                          <Typography component="li" variant="body2" key={index} sx={{ mb: 0.5, color: 'text.secondary' }}>
-                            {term}
+                            {formatCurrency(bundleResult.bundle_pricing.total_mrc, bundleResult.bundle_pricing.currency)}
                           </Typography>
-                        ))}
-                      </Box>
-                    </CardContent>
-                  </Card>
+                          {bundleResult.bundle_pricing.mrc_discount_percent > 0 && (
+                            <Chip
+                              label={`${bundleResult.bundle_pricing.mrc_discount_percent}% bundle discount applied`}
+                              size="small"
+                              color="success"
+                              sx={{ mt: 1 }}
+                            />
+                          )}
+                        </Box>
+
+                        {/* Total NRC */}
+                        <Box 
+                          sx={{ 
+                            textAlign: 'center', 
+                            py: 2.5, 
+                            px: 2,
+                            background: (theme) => alpha(theme.palette.warning.main, 0.08),
+                            borderRadius: 2, 
+                            mb: 3,
+                            border: '1px solid',
+                            borderColor: (theme) => alpha(theme.palette.warning.main, 0.2)
+                          }}
+                        >
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, mb: 1 }}>
+                            <ReceiptIcon sx={{ color: 'text.secondary', fontSize: 18 }} />
+                            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+                              Total Non-Recurring Charge (NRC)
+                            </Typography>
+                          </Box>
+                          <Typography 
+                            variant="h4" 
+                            sx={{ 
+                              color: 'warning.dark', 
+                              fontWeight: 700,
+                              fontSize: { xs: '1.5rem', sm: '1.75rem' }
+                            }}
+                          >
+                            {formatCurrency(bundleResult.bundle_pricing.total_nrc, bundleResult.bundle_pricing.currency)}
+                          </Typography>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+
+                  {/* Right Column - Bundle Breakdown */}
+                  <Grid item xs={12} md={6}>
+                    <Card variant="outlined" sx={{ height: '100%' }}>
+                      <CardContent>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
+                          Bundle Breakdown (USD)
+                        </Typography>
+                        <Box 
+                          sx={{ 
+                            fontSize: '0.8125rem', 
+                            color: 'text.secondary',
+                            backgroundColor: 'grey.50',
+                            borderRadius: 1,
+                            p: 1.5
+                          }}
+                        >
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                            <span>Items in Bundle:</span>
+                            <span style={{ fontWeight: 500 }}>{basketItems.length}</span>
+                          </Box>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                            <span>MRC Before Discount:</span>
+                            <span style={{ fontWeight: 500 }}>${(bundleResult.breakdown?.total_mrc_usd_before_discount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </Box>
+                          {bundleResult.breakdown?.mrc_bundle_discount_applied_usd > 0 && (
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5, color: 'success.main' }}>
+                              <span>MRC Discount ({bundleResult.bundle_pricing.mrc_discount_percent}%):</span>
+                              <span style={{ fontWeight: 600 }}>-${(bundleResult.breakdown.mrc_bundle_discount_applied_usd).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </Box>
+                          )}
+                          {bundleResult.bundle_pricing.exchange_rate !== 1 && (
+                            <>
+                              <Divider sx={{ my: 1 }} />
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                                <span>Exchange Rate (USD → {bundleResult.bundle_pricing.currency}):</span>
+                                <span style={{ fontWeight: 500 }}>{bundleResult.bundle_pricing.exchange_rate}</span>
+                              </Box>
+                            </>
+                          )}
+                          <Divider sx={{ my: 1 }} />
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5, fontWeight: 'bold', color: 'text.primary' }}>
+                            <span>Final Bundle MRC ({bundleResult.bundle_pricing.currency}):</span>
+                            <span>{formatCurrency(bundleResult.bundle_pricing.total_mrc, bundleResult.bundle_pricing.currency)}</span>
+                          </Box>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5, fontWeight: 'bold', color: 'text.primary' }}>
+                            <span>Final Bundle NRC ({bundleResult.bundle_pricing.currency}):</span>
+                            <span>{formatCurrency(bundleResult.bundle_pricing.total_nrc, bundleResult.bundle_pricing.currency)}</span>
+                          </Box>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+
+                  {/* Export and New Basket Buttons */}
+                  <Grid item xs={12}>
+                    <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
+                      <Button
+                        variant="outlined"
+                        startIcon={<DownloadIcon />}
+                        onClick={handleExportToFile}
+                      >
+                        Export Bundle to File
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        color="warning"
+                        startIcon={<RefreshIcon />}
+                        onClick={handleRefresh}
+                      >
+                        New Basket
+                      </Button>
+                    </Box>
+                  </Grid>
+
+                  {/* Terms and Conditions */}
+                  <Grid item xs={12}>
+                    <Card variant="outlined" sx={{ backgroundColor: 'grey.50' }}>
+                      <CardContent>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                          <InfoIcon color="info" />
+                          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                            Terms and Conditions
+                          </Typography>
+                        </Box>
+                        <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+                          {pricingTerms.map((term, index) => (
+                            <Typography component="li" variant="body2" key={index} sx={{ mb: 0.5, color: 'text.secondary' }}>
+                              {term}
+                            </Typography>
+                          ))}
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
                 </Grid>
-              </Grid>
+              )}
             </AccordionDetails>
           </Accordion>
         )}
 
-        {/* Placeholder when no result */}
-        {!result && !error && expandedAccordion !== 'form' && (
+        {/* Placeholder when basket is empty */}
+        {basketItems.length === 0 && !error && expandedAccordion !== 'form' && (
           <Card 
             elevation={0}
             sx={{ 
@@ -1324,13 +1780,13 @@ TERMS AND CONDITIONS
                 mb: 2
               }}
             >
-              <CalculateIcon sx={{ fontSize: 40, color: 'grey.400' }} />
+              <ShoppingCartIcon sx={{ fontSize: 40, color: 'grey.400' }} />
             </Box>
             <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
-              Ready to Calculate
+              Your Basket is Empty
             </Typography>
             <Typography variant="body2" color="text.disabled">
-              Enter provider and member details, then click Calculate Price
+              Enter provider and member details, then click "Calculate & Add to Basket" to start building your pricing bundle
             </Typography>
           </Card>
         )}
@@ -1440,15 +1896,15 @@ TERMS AND CONDITIONS
               <Table size="small">
                 <TableHead>
                   <TableRow sx={{ backgroundColor: 'grey.100' }}>
+                    <TableCell sx={{ width: 30 }}></TableCell>
+                    <TableCell><strong>Type</strong></TableCell>
                     <TableCell><strong>Timestamp</strong></TableCell>
                     <TableCell><strong>User</strong></TableCell>
                     <TableCell><strong>Provider City</strong></TableCell>
                     <TableCell><strong>Member City</strong></TableCell>
                     <TableCell><strong>Resiliency</strong></TableCell>
                     <TableCell><strong>Bandwidth</strong></TableCell>
-                    <TableCell><strong>Traffic</strong></TableCell>
                     <TableCell><strong>Term</strong></TableCell>
-                    <TableCell><strong>IPSec</strong></TableCell>
                     <TableCell><strong>Discount</strong></TableCell>
                     <TableCell align="right"><strong>MRC</strong></TableCell>
                     <TableCell align="right"><strong>NRC</strong></TableCell>
@@ -1462,82 +1918,219 @@ TERMS AND CONDITIONS
                       </TableCell>
                     </TableRow>
                   ) : (
-                    pricingLogs.map((log) => (
-                      <TableRow key={log.id} hover>
-                        <TableCell>
-                          <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                            {new Date(log.lookup_timestamp).toLocaleString()}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                            {log.username || log.full_name || 'Unknown'}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                            {log.provider_primary_city}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                            {log.member_primary_city}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Chip 
-                            label={log.member_resiliency} 
-                            size="small" 
-                            sx={{ fontSize: '0.65rem' }}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                            {log.bandwidth}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                            {log.traffic_type}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                            {log.contract_term}m
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Chip 
-                            label={log.ipsec_required ? 'Yes' : 'No'} 
-                            size="small" 
-                            color={log.ipsec_required ? 'warning' : 'default'}
-                            sx={{ fontSize: '0.65rem' }}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          {log.discount_requested ? (
-                            <Chip 
-                              label={`${log.discount_percent || 0}%`} 
-                              size="small" 
-                              color="success"
+                    pricingLogs.map((log) => {
+                      if (log.log_type === 'bundle') {
+                        // Bundle row (expandable)
+                        const isExpanded = expandedBundles[log.id] || false;
+                        return (
+                          <React.Fragment key={`bundle-${log.id}`}>
+                            <TableRow 
+                              hover 
+                              onClick={() => toggleBundleExpand(log.id)}
+                              sx={{ 
+                                cursor: 'pointer',
+                                backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.04),
+                                '&:hover': { backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.08) }
+                              }}
+                            >
+                              <TableCell sx={{ width: 30, px: 1 }}>
+                                <IconButton size="small" sx={{ p: 0 }}>
+                                  {isExpanded ? <KeyboardArrowDownIcon fontSize="small" /> : <KeyboardArrowRightIcon fontSize="small" />}
+                                </IconButton>
+                              </TableCell>
+                              <TableCell>
+                                <Chip
+                                  icon={<ShoppingBasketIcon sx={{ fontSize: '0.85rem !important' }} />}
+                                  label={`Bundle (${log.item_count} items)`}
+                                  size="small"
+                                  color="primary"
+                                  variant="outlined"
+                                  sx={{ fontSize: '0.7rem' }}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                  {new Date(log.created_at).toLocaleString()}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                  {log.username || log.full_name || 'Unknown'}
+                                </Typography>
+                              </TableCell>
+                              <TableCell colSpan={2}>
+                                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.7rem', fontStyle: 'italic' }}>
+                                  {log.item_count} connections — click to expand
+                                </Typography>
+                              </TableCell>
+                              <TableCell></TableCell>
+                              <TableCell></TableCell>
+                              <TableCell>
+                                <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                  {log.contract_term}m
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                {log.mrc_discount_percent > 0 ? (
+                                  <Chip 
+                                    label={`${log.mrc_discount_percent}%`} 
+                                    size="small" 
+                                    color="success"
+                                    sx={{ fontSize: '0.65rem' }}
+                                  />
+                                ) : (
+                                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
+                                )}
+                              </TableCell>
+                              <TableCell align="right">
+                                <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600, color: 'primary.main' }}>
+                                  {log.currency || 'USD'} {roundUpToNearest5(log.total_mrc || 0).toLocaleString()}
+                                </Typography>
+                              </TableCell>
+                              <TableCell align="right">
+                                <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  {log.currency || 'USD'} {roundUpToNearest5(log.total_nrc || 0).toLocaleString()}
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                            {/* Expanded bundle items */}
+                            {isExpanded && log.items && log.items.map((item, idx) => (
+                              <TableRow 
+                                key={`bundle-${log.id}-item-${item.id || idx}`}
+                                sx={{ backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.02) }}
+                              >
+                                <TableCell></TableCell>
+                                <TableCell>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <Box sx={{ width: 16, borderLeft: '2px solid', borderBottom: '2px solid', borderColor: 'divider', height: 12, ml: 1 }} />
+                                    <Typography variant="body2" sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
+                                      Item {idx + 1}
+                                    </Typography>
+                                    {item.provider_name && (
+                                      <Chip label={item.provider_name} size="small" variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+                                    )}
+                                  </Box>
+                                </TableCell>
+                                <TableCell>
+                                  <Typography variant="body2" sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
+                                    {new Date(item.lookup_timestamp).toLocaleString()}
+                                  </Typography>
+                                </TableCell>
+                                <TableCell></TableCell>
+                                <TableCell>
+                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                    {item.provider_primary_city}
+                                  </Typography>
+                                </TableCell>
+                                <TableCell>
+                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                    {item.member_primary_city}
+                                  </Typography>
+                                </TableCell>
+                                <TableCell>
+                                  <Chip label={item.member_resiliency} size="small" sx={{ fontSize: '0.6rem', height: 18 }} />
+                                </TableCell>
+                                <TableCell>
+                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                    {item.bandwidth}
+                                  </Typography>
+                                </TableCell>
+                                <TableCell>
+                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                    {item.contract_term}m
+                                  </Typography>
+                                </TableCell>
+                                <TableCell></TableCell>
+                                <TableCell align="right">
+                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                    {item.currency_requested} {roundUpToNearest5(item.final_mrc || 0).toLocaleString()}
+                                  </Typography>
+                                </TableCell>
+                                <TableCell align="right">
+                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                    {item.currency_requested} {roundUpToNearest5(item.final_nrc || 0).toLocaleString()}
+                                  </Typography>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </React.Fragment>
+                        );
+                      }
+                      
+                      // Individual log row
+                      return (
+                        <TableRow key={`log-${log.id}`} hover>
+                          <TableCell></TableCell>
+                          <TableCell>
+                            <Chip
+                              label="Individual"
+                              size="small"
+                              variant="outlined"
                               sx={{ fontSize: '0.65rem' }}
                             />
-                          ) : (
-                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
-                          )}
-                        </TableCell>
-                        <TableCell align="right">
-                          <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                            {log.currency_requested} {roundUpToNearest5(log.final_mrc || 0).toLocaleString()}
-                          </Typography>
-                        </TableCell>
-                        <TableCell align="right">
-                          <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                            {log.currency_requested} {roundUpToNearest5(log.final_nrc || 0).toLocaleString()}
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    ))
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                              {new Date(log.lookup_timestamp).toLocaleString()}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                              {log.username || log.full_name || 'Unknown'}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                              {log.provider_primary_city}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                              {log.member_primary_city}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Chip 
+                              label={log.member_resiliency} 
+                              size="small" 
+                              sx={{ fontSize: '0.65rem' }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                              {log.bandwidth}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                              {log.contract_term}m
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            {log.discount_requested ? (
+                              <Chip 
+                                label={`${log.discount_percent || 0}%`} 
+                                size="small" 
+                                color="success"
+                                sx={{ fontSize: '0.65rem' }}
+                              />
+                            ) : (
+                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
+                            )}
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                              {log.currency_requested} {roundUpToNearest5(log.final_mrc || 0).toLocaleString()}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                              {log.currency_requested} {roundUpToNearest5(log.final_nrc || 0).toLocaleString()}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
                   )}
                 </TableBody>
               </Table>

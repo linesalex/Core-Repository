@@ -22,6 +22,7 @@ import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import CableIcon from '@mui/icons-material/Cable';
 import MapIcon from '@mui/icons-material/Map';
 import WarningIcon from '@mui/icons-material/Warning';
+import SecurityIcon from '@mui/icons-material/Security';
 import LoadingButton from '@mui/lab/LoadingButton';
 import { networkDesignApi, getCrossConnectInfo, checkKMZAvailability, exportNetworkDesignKMZ } from './api';
 import { getCarriers } from './api';
@@ -54,6 +55,9 @@ const NetworkDesignTool = () => {
   
   // Get user's network_design module permission level
   const networkDesignPermission = modulePermissions['network_design'] || null;
+  
+  // Check if user has route_finder access (for showing Route Finder search logs)
+  const hasRouteFinderAccess = !!modulePermissions['route_finder'];
   
   // Check if user can view pricing logs (all authenticated users with network_design access can view)
   const canViewPricingLogs = user !== null && networkDesignPermission !== null;
@@ -127,6 +131,7 @@ const NetworkDesignTool = () => {
   const [logSearchTerm, setLogSearchTerm] = useState('');
   const [customerNameFilter, setCustomerNameFilter] = useState('');
   const [selectedUser, setSelectedUser] = useState('');
+  const [actionTypeFilter, setActionTypeFilter] = useState('');
   const [logDateFilter, setLogDateFilter] = useState({
     startDate: '',
     endDate: ''
@@ -158,6 +163,7 @@ const NetworkDesignTool = () => {
   const [kmzMissingCircuitsDialogOpen, setKmzMissingCircuitsDialogOpen] = useState(false);
   const [kmzMissingCircuits, setKmzMissingCircuits] = useState([]);
   const [kmzExportDataPending, setKmzExportDataPending] = useState(null);
+  const kmzAbortControllerRef = React.useRef(null);
 
   // Contract term options (only 12, 24, 36 months)
   const contractTerms = [
@@ -333,6 +339,9 @@ const NetworkDesignTool = () => {
       }
       if (logSearchTerm.trim()) {
         params.quote_request_id = logSearchTerm.trim();
+      }
+      if (actionTypeFilter) {
+        params.action_type = actionTypeFilter;
       }
       
       const response = await networkDesignApi.getAuditLogs(params);
@@ -1288,12 +1297,527 @@ const NetworkDesignTool = () => {
   };
 
   // Render human-readable log details
+  // Render Route Finder search log details (separate from Network Design logs)
+  const renderRouteFinderLogDetails = (log) => {
+    const params = log.parameters || log.pricing_data?.inputParameters;
+    const pricingData = log.pricing_data || {};
+    const routeResults = pricingData.routeResults || {};
+    const promoPricing = pricingData.promoPricing || {};
+    const crossConnectPricing = pricingData.crossConnectPricing || {};
+    const marginAnalysis = pricingData.marginAnalysis || {};
+
+    const formatPromoPriceDisplay = (price) => {
+      if (price === null || price === undefined) return 'N/A';
+      if (price === 0) return 'N/A';
+      const currency = params?.outputCurrency || 'USD';
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(price);
+    };
+
+    const formatUSD = (amount) => {
+      if (amount === null || amount === undefined) return 'N/A';
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+    };
+
+    const tierLabels = {
+      price_10mb: '10 Mbps',
+      price_100mb: '100 Mbps',
+      price_1000mb: '1000 Mbps',
+      price_10gb: '10 Gbps'
+    };
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {/* Search Parameters */}
+        {params && (
+          <Card variant="outlined">
+            <CardHeader 
+              title="Search Parameters" 
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Source</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.source || 'N/A'}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Destination</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.destination || 'N/A'}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Bandwidth</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.bandwidth || 'Not specified'} Mbps</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Route Mode</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.routeMode === 'fastest' ? 'Fastest Route' : 'Standard Route'}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">MTU Required</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.mtuRequired || '1500'}</Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">Output Currency</Typography>
+                  <Typography variant="body2" fontWeight="500">{params.outputCurrency || 'USD'}</Typography>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Primary Path */}
+        {routeResults.primaryPath && routeResults.primaryPath.route && (
+          <Card variant="outlined">
+            <CardHeader 
+              title={
+                <Box display="flex" alignItems="center" gap={1}>
+                  <RouteIcon color="success" fontSize="small" />
+                  <span>Primary Path</span>
+                </Box>
+              }
+              subheader={routeResults.primaryPath.path ? routeResults.primaryPath.path.join(' → ') : ''}
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                      <TableCell><strong>Circuit ID</strong></TableCell>
+                      <TableCell><strong>Segment</strong></TableCell>
+                      <TableCell><strong>Latency</strong></TableCell>
+                      <TableCell><strong>Bandwidth</strong></TableCell>
+                      <TableCell><strong>Cable System</strong></TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {routeResults.primaryPath.route.map((segment, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
+                        <TableCell>{segment.from} → {segment.to}</TableCell>
+                        <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                        <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
+                        <TableCell>{segment.cable_system || 'N/A'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+              <Box sx={{ mt: 1.5, display: 'flex', gap: 3 }}>
+                <Typography variant="body2"><strong>Total Latency:</strong> {formatLatency(routeResults.primaryPath.totalLatency)}ms RTD</Typography>
+                <Typography variant="body2"><strong>Hops:</strong> {routeResults.primaryPath.hops || routeResults.primaryPath.route?.length}</Typography>
+              </Box>
+
+              {/* Primary Promo Pricing */}
+              {promoPricing.primaryPromo ? (
+                <Box sx={{ mt: 2, p: 1.5, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
+                  <Typography variant="subtitle2" color="success.dark" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                    <LocalOfferIcon fontSize="small" /> Promo Pricing Available
+                  </Typography>
+                  <Grid container spacing={1}>
+                    <Grid item xs={3}><Typography variant="caption" color="text.secondary">10 Mbps</Typography><Typography variant="body2" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.primaryPromo.price_10mb)}</Typography></Grid>
+                    <Grid item xs={3}><Typography variant="caption" color="text.secondary">100 Mbps</Typography><Typography variant="body2" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.primaryPromo.price_100mb)}</Typography></Grid>
+                    <Grid item xs={3}><Typography variant="caption" color="text.secondary">1000 Mbps</Typography><Typography variant="body2" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.primaryPromo.price_1000mb)}</Typography></Grid>
+                    <Grid item xs={3}><Typography variant="caption" color="text.secondary">10 Gbps</Typography><Typography variant="body2" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.primaryPromo.price_10gb)}</Typography></Grid>
+                  </Grid>
+                </Box>
+              ) : (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', fontStyle: 'italic' }}>
+                  No promo pricing available for this path
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Secondary/Diverse Path */}
+        {routeResults.diversePath && routeResults.diversePath.route && (
+          <Card variant="outlined">
+            <CardHeader 
+              title={
+                <Box display="flex" alignItems="center" gap={1}>
+                  <RouteIcon color="info" fontSize="small" />
+                  <span>Secondary Path (Diverse)</span>
+                </Box>
+              }
+              subheader={routeResults.diversePath.path ? routeResults.diversePath.path.join(' → ') : ''}
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                      <TableCell><strong>Circuit ID</strong></TableCell>
+                      <TableCell><strong>Segment</strong></TableCell>
+                      <TableCell><strong>Latency</strong></TableCell>
+                      <TableCell><strong>Bandwidth</strong></TableCell>
+                      <TableCell><strong>Cable System</strong></TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {routeResults.diversePath.route.map((segment, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
+                        <TableCell>{segment.from} → {segment.to}</TableCell>
+                        <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                        <TableCell>{segment.bandwidthDisplay === 'Dark Fiber' ? 'Dark Fiber' : (segment.bandwidth || 'N/A')}</TableCell>
+                        <TableCell>{segment.cable_system || 'N/A'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+              <Box sx={{ mt: 1.5, display: 'flex', gap: 3 }}>
+                <Typography variant="body2"><strong>Total Latency:</strong> {formatLatency(routeResults.diversePath.totalLatency)}ms RTD</Typography>
+                <Typography variant="body2"><strong>Hops:</strong> {routeResults.diversePath.hops || routeResults.diversePath.route?.length}</Typography>
+              </Box>
+
+              {/* Secondary Promo Pricing */}
+              {promoPricing.secondaryPromo ? (
+                <Box sx={{ mt: 2, p: 1.5, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
+                  <Typography variant="subtitle2" color="success.dark" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                    <LocalOfferIcon fontSize="small" /> Promo Pricing Available
+                  </Typography>
+                  <Grid container spacing={1}>
+                    <Grid item xs={3}><Typography variant="caption" color="text.secondary">10 Mbps</Typography><Typography variant="body2" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.secondaryPromo.price_10mb)}</Typography></Grid>
+                    <Grid item xs={3}><Typography variant="caption" color="text.secondary">100 Mbps</Typography><Typography variant="body2" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.secondaryPromo.price_100mb)}</Typography></Grid>
+                    <Grid item xs={3}><Typography variant="caption" color="text.secondary">1000 Mbps</Typography><Typography variant="body2" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.secondaryPromo.price_1000mb)}</Typography></Grid>
+                    <Grid item xs={3}><Typography variant="caption" color="text.secondary">10 Gbps</Typography><Typography variant="body2" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.secondaryPromo.price_10gb)}</Typography></Grid>
+                  </Grid>
+                </Box>
+              ) : (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', fontStyle: 'italic' }}>
+                  No promo pricing available for this path
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Protected Service Promo Pricing */}
+        {promoPricing.protectedPromo && (
+          <Card variant="outlined" sx={{ border: 2, borderColor: 'primary.main' }}>
+            <CardHeader 
+              title={
+                <Box display="flex" alignItems="center" gap={1}>
+                  <SecurityIcon color="primary" fontSize="small" />
+                  <span>Protected Service Pricing</span>
+                  <Chip icon={<LocalOfferIcon />} label="Promo Protected" color="primary" size="small" />
+                </Box>
+              }
+              subheader="Both primary and secondary paths qualified for promo pricing"
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+                $1,000 NRC applicable for each option - X/Cs Excluded - Full Terms available from Pricing Team
+              </Typography>
+              <Grid container spacing={1}>
+                <Grid item xs={3}><Typography variant="caption" color="text.secondary">10 Mbps</Typography><Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_10mb)}</Typography></Grid>
+                <Grid item xs={3}><Typography variant="caption" color="text.secondary">100 Mbps</Typography><Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_100mb)}</Typography></Grid>
+                <Grid item xs={3}><Typography variant="caption" color="text.secondary">1000 Mbps</Typography><Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_1000mb)}</Typography></Grid>
+                <Grid item xs={3}><Typography variant="caption" color="text.secondary">10 Gbps</Typography><Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_10gb)}</Typography></Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Cross Connect Pricing */}
+        {(crossConnectPricing.source || crossConnectPricing.destination) && (
+          <Card variant="outlined">
+            <CardHeader 
+              title={
+                <Box display="flex" alignItems="center" gap={1}>
+                  <CableIcon color="info" fontSize="small" />
+                  <span>Cross Connect Pricing</span>
+                </Box>
+              }
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <Grid container spacing={2}>
+                {crossConnectPricing.source && (
+                  <Grid item xs={12} md={6}>
+                    <Box sx={{ p: 1.5, bgcolor: 'grey.50', borderRadius: 1 }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        Source: {crossConnectPricing.source.datacenterName || crossConnectPricing.source.locationCode}
+                        {crossConnectPricing.source.mandatory && <Chip label="Required" color="warning" size="small" sx={{ ml: 1 }} />}
+                      </Typography>
+                      {crossConnectPricing.source.customerOwned ? (
+                        <Typography variant="body2" fontStyle="italic" color="text.secondary">Customer must provide X/C</Typography>
+                      ) : (
+                        <Box sx={{ display: 'flex', gap: 3 }}>
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">NRC</Typography>
+                            <Typography variant="body2" fontWeight="500">{typeof crossConnectPricing.source.nrc === 'number' ? formatCurrency(crossConnectPricing.source.nrc, crossConnectPricing.source.currency || 'USD') : crossConnectPricing.source.nrc}</Typography>
+                          </Box>
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">MRC</Typography>
+                            <Typography variant="body2" fontWeight="500">{typeof crossConnectPricing.source.mrc === 'number' ? formatCurrency(crossConnectPricing.source.mrc, crossConnectPricing.source.currency || 'USD') : crossConnectPricing.source.mrc}</Typography>
+                          </Box>
+                        </Box>
+                      )}
+                      {crossConnectPricing.source.notes && (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', fontStyle: 'italic' }}>{crossConnectPricing.source.notes}</Typography>
+                      )}
+                    </Box>
+                  </Grid>
+                )}
+                {crossConnectPricing.destination && (
+                  <Grid item xs={12} md={6}>
+                    <Box sx={{ p: 1.5, bgcolor: 'grey.50', borderRadius: 1 }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        Destination: {crossConnectPricing.destination.datacenterName || crossConnectPricing.destination.locationCode}
+                        {crossConnectPricing.destination.mandatory && <Chip label="Required" color="warning" size="small" sx={{ ml: 1 }} />}
+                      </Typography>
+                      {crossConnectPricing.destination.customerOwned ? (
+                        <Typography variant="body2" fontStyle="italic" color="text.secondary">Customer must provide X/C</Typography>
+                      ) : (
+                        <Box sx={{ display: 'flex', gap: 3 }}>
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">NRC</Typography>
+                            <Typography variant="body2" fontWeight="500">{typeof crossConnectPricing.destination.nrc === 'number' ? formatCurrency(crossConnectPricing.destination.nrc, crossConnectPricing.destination.currency || 'USD') : crossConnectPricing.destination.nrc}</Typography>
+                          </Box>
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">MRC</Typography>
+                            <Typography variant="body2" fontWeight="500">{typeof crossConnectPricing.destination.mrc === 'number' ? formatCurrency(crossConnectPricing.destination.mrc, crossConnectPricing.destination.currency || 'USD') : crossConnectPricing.destination.mrc}</Typography>
+                          </Box>
+                        </Box>
+                      )}
+                      {crossConnectPricing.destination.notes && (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', fontStyle: 'italic' }}>{crossConnectPricing.destination.notes}</Typography>
+                      )}
+                    </Box>
+                  </Grid>
+                )}
+              </Grid>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Margin Analysis & Pricing Logic */}
+        {marginAnalysis && (marginAnalysis.primary || marginAnalysis.secondary || marginAnalysis.protected) && (
+          <Card variant="outlined" sx={{ border: 1, borderColor: 'warning.main' }}>
+            <CardHeader 
+              title={
+                <Box display="flex" alignItems="center" gap={1}>
+                  <AttachMoneyIcon color="warning" fontSize="small" />
+                  <span>Margin Analysis & Pricing Logic</span>
+                </Box>
+              }
+              sx={{ pb: 1, '& .MuiCardHeader-title': { fontSize: '1rem', fontWeight: 600 } }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              {/* Primary Path Margin Details */}
+              {marginAnalysis.primary && (
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <RouteIcon fontSize="small" color="success" /> Primary Path Promo Margin Check
+                    <Chip 
+                      label={marginAnalysis.primary.valid ? 'PASSED' : (marginAnalysis.primary.reason || 'FAILED')} 
+                      color={marginAnalysis.primary.valid ? 'success' : 'error'} 
+                      size="small" 
+                      sx={{ ml: 1 }}
+                    />
+                  </Typography>
+                  {marginAnalysis.primary.marginDetails && (
+                    <TableContainer sx={{ mb: 1 }}>
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow sx={{ bgcolor: 'grey.50' }}>
+                            <TableCell><strong>Tier</strong></TableCell>
+                            <TableCell align="right"><strong>Promo Price</strong></TableCell>
+                            <TableCell align="right"><strong>Allocated Cost</strong></TableCell>
+                            <TableCell align="right"><strong>Actual Margin</strong></TableCell>
+                            <TableCell align="right"><strong>Required Margin</strong></TableCell>
+                            <TableCell align="center"><strong>Status</strong></TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {Object.entries(marginAnalysis.primary.marginDetails).map(([tierKey, detail]) => (
+                            <TableRow key={tierKey} sx={{ bgcolor: detail.valid ? 'success.50' : 'error.50' }}>
+                              <TableCell>{tierLabels[tierKey] || tierKey}</TableCell>
+                              <TableCell align="right">{formatUSD(detail.price)}</TableCell>
+                              <TableCell align="right">{formatUSD(detail.allocatedCost)}</TableCell>
+                              <TableCell align="right" sx={{ color: detail.valid ? 'success.dark' : 'error.dark', fontWeight: 'bold' }}>
+                                {detail.actualMargin !== undefined ? `${detail.actualMargin}%` : 'N/A'}
+                              </TableCell>
+                              <TableCell align="right">{detail.requiredMargin !== undefined ? `${detail.requiredMargin}%` : 'N/A'}</TableCell>
+                              <TableCell align="center">
+                                <Chip label={detail.valid ? 'Pass' : 'Fail'} color={detail.valid ? 'success' : 'error'} size="small" variant="outlined" />
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  )}
+                  {!marginAnalysis.primary.marginDetails && marginAnalysis.primary.reason && (
+                    <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                      Reason: {marginAnalysis.primary.reason === 'no_promo_rule' ? 'No matching promo rule found' : 
+                               marginAnalysis.primary.reason === 'margin_not_met' ? 'Minimum margin not met for any tier' :
+                               marginAnalysis.primary.reason === 'no_path' ? 'No path available' : marginAnalysis.primary.reason}
+                    </Typography>
+                  )}
+                </Box>
+              )}
+
+              {marginAnalysis.primary && marginAnalysis.secondary && <Divider sx={{ my: 1.5 }} />}
+
+              {/* Secondary Path Margin Details */}
+              {marginAnalysis.secondary && (
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <RouteIcon fontSize="small" color="info" /> Secondary Path Promo Margin Check
+                    <Chip 
+                      label={marginAnalysis.secondary.valid ? 'PASSED' : (marginAnalysis.secondary.reason || 'FAILED')} 
+                      color={marginAnalysis.secondary.valid ? 'success' : 'error'} 
+                      size="small" 
+                      sx={{ ml: 1 }}
+                    />
+                  </Typography>
+                  {marginAnalysis.secondary.marginDetails && (
+                    <TableContainer sx={{ mb: 1 }}>
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow sx={{ bgcolor: 'grey.50' }}>
+                            <TableCell><strong>Tier</strong></TableCell>
+                            <TableCell align="right"><strong>Promo Price</strong></TableCell>
+                            <TableCell align="right"><strong>Allocated Cost</strong></TableCell>
+                            <TableCell align="right"><strong>Actual Margin</strong></TableCell>
+                            <TableCell align="right"><strong>Required Margin</strong></TableCell>
+                            <TableCell align="center"><strong>Status</strong></TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {Object.entries(marginAnalysis.secondary.marginDetails).map(([tierKey, detail]) => (
+                            <TableRow key={tierKey} sx={{ bgcolor: detail.valid ? 'success.50' : 'error.50' }}>
+                              <TableCell>{tierLabels[tierKey] || tierKey}</TableCell>
+                              <TableCell align="right">{formatUSD(detail.price)}</TableCell>
+                              <TableCell align="right">{formatUSD(detail.allocatedCost)}</TableCell>
+                              <TableCell align="right" sx={{ color: detail.valid ? 'success.dark' : 'error.dark', fontWeight: 'bold' }}>
+                                {detail.actualMargin !== undefined ? `${detail.actualMargin}%` : 'N/A'}
+                              </TableCell>
+                              <TableCell align="right">{detail.requiredMargin !== undefined ? `${detail.requiredMargin}%` : 'N/A'}</TableCell>
+                              <TableCell align="center">
+                                <Chip label={detail.valid ? 'Pass' : 'Fail'} color={detail.valid ? 'success' : 'error'} size="small" variant="outlined" />
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  )}
+                  {!marginAnalysis.secondary.marginDetails && marginAnalysis.secondary.reason && (
+                    <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                      Reason: {marginAnalysis.secondary.reason === 'no_promo_rule' ? 'No matching promo rule found' : 
+                               marginAnalysis.secondary.reason === 'margin_not_met' ? 'Minimum margin not met for any tier' :
+                               marginAnalysis.secondary.reason === 'no_path' ? 'No path available' : marginAnalysis.secondary.reason}
+                    </Typography>
+                  )}
+                </Box>
+              )}
+
+              {marginAnalysis.protected && (marginAnalysis.primary || marginAnalysis.secondary) && <Divider sx={{ my: 1.5 }} />}
+
+              {/* Protected Service Margin Details */}
+              {marginAnalysis.protected && (
+                <Box>
+                  <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <SecurityIcon fontSize="small" color="primary" /> Protected Service Pricing Logic
+                    <Chip 
+                      label={marginAnalysis.protected.valid ? 'VALID' : 'NOT ELIGIBLE'} 
+                      color={marginAnalysis.protected.valid ? 'primary' : 'default'} 
+                      size="small" 
+                      sx={{ ml: 1 }}
+                    />
+                    {marginAnalysis.protected.method && (
+                      <Chip label={`Method: ${marginAnalysis.protected.method}`} size="small" variant="outlined" sx={{ ml: 0.5 }} />
+                    )}
+                  </Typography>
+                  {marginAnalysis.protected.marginDetails && (
+                    <TableContainer>
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow sx={{ bgcolor: 'grey.50' }}>
+                            <TableCell><strong>Tier</strong></TableCell>
+                            <TableCell align="right"><strong>Combined Allocated Cost</strong></TableCell>
+                            <TableCell align="right"><strong>1.7x Price</strong></TableCell>
+                            <TableCell align="right"><strong>Margin-Based Price</strong></TableCell>
+                            <TableCell align="right"><strong>Final Price</strong></TableCell>
+                            <TableCell align="right"><strong>Required Margin</strong></TableCell>
+                            <TableCell align="right"><strong>Actual Margin</strong></TableCell>
+                            <TableCell align="center"><strong>Method Used</strong></TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {Object.entries(marginAnalysis.protected.marginDetails).map(([tierKey, detail]) => {
+                            if (!detail.eligible) {
+                              return (
+                                <TableRow key={tierKey} sx={{ bgcolor: 'grey.100' }}>
+                                  <TableCell>{tierLabels[tierKey] || tierKey}</TableCell>
+                                  <TableCell colSpan={7} align="center">
+                                    <Typography variant="caption" color="text.secondary" fontStyle="italic">
+                                      Not eligible — underlying promo tier did not pass margin check
+                                    </Typography>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            }
+                            return (
+                              <TableRow key={tierKey}>
+                                <TableCell>{tierLabels[tierKey] || tierKey}</TableCell>
+                                <TableCell align="right">{formatUSD(detail.allocatedCost)}</TableCell>
+                                <TableCell align="right">{formatUSD(detail.price_1_7x)}</TableCell>
+                                <TableCell align="right">{formatUSD(detail.marginBasedPrice)}</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>
+                                  {promoPricing.protectedPromo ? formatPromoPriceDisplay(promoPricing.protectedPromo[tierKey]) : formatUSD(Math.max(detail.price_1_7x || 0, detail.marginBasedPrice || 0))}
+                                </TableCell>
+                                <TableCell align="right">{detail.requiredMargin}%</TableCell>
+                                <TableCell align="right" sx={{ color: detail.actualMargin >= detail.requiredMargin ? 'success.dark' : 'warning.dark', fontWeight: 'bold' }}>
+                                  {detail.actualMargin}%
+                                </TableCell>
+                                <TableCell align="center">
+                                  <Chip 
+                                    label={detail.method === '1.7x' ? '1.7x Base' : 'Margin Override'} 
+                                    color={detail.method === '1.7x' ? 'primary' : 'warning'} 
+                                    size="small" 
+                                    variant="outlined" 
+                                  />
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  )}
+                  {!marginAnalysis.protected.valid && !marginAnalysis.protected.marginDetails && (
+                    <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                      Protected pricing not calculated — requires both primary and secondary paths to have valid promo pricing
+                    </Typography>
+                  )}
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </Box>
+    );
+  };
+
   const renderHumanReadableLogDetails = (log) => {
     const params = log.parameters || log.pricing_data?.inputParameters;
     const results = log.results || log.pricing_data?.calculationResults;
 
     if (!params && !results) {
       return <Alert severity="info">No data available for this log</Alert>;
+    }
+
+    // Route Finder Search logs have a different structure
+    if (log.action_type === 'ROUTE_FINDER_SEARCH') {
+      return renderRouteFinderLogDetails(log);
     }
 
     // Extract path data from results
@@ -1542,6 +2066,18 @@ const NetworkDesignTool = () => {
       if (!params) return "No parameter data available";
 
       let summary = "";
+
+      // Route Finder specific summary
+      if (log.action_type === 'ROUTE_FINDER_SEARCH') {
+        if (params.source && params.destination) {
+          summary += `Route: ${params.source} → ${params.destination} • `;
+        }
+        if (params.bandwidth) summary += `Bandwidth: ${params.bandwidth}Mb • `;
+        if (params.routeMode) summary += `Mode: ${params.routeMode === 'fastest' ? 'Fastest' : 'Standard'} • `;
+        if (params.outputCurrency) summary += `Currency: ${params.outputCurrency}`;
+        summary = summary.replace(/ • $/, '');
+        return summary || "Route Finder search";
+      }
       
       // Customer and Request Info
       if (params.customer_name) summary += `Customer: ${params.customer_name} • `;
@@ -1573,6 +2109,28 @@ const NetworkDesignTool = () => {
       const results = log.results || log.pricing_data?.calculationResults;
       
       if (!results) return "No results available";
+
+      // Route Finder specific results summary
+      if (log.action_type === 'ROUTE_FINDER_SEARCH') {
+        const pricingData = log.pricing_data || {};
+        const promo = pricingData.promoPricing || {};
+        const routes = pricingData.routeResults || {};
+        let rfSummary = "";
+        
+        // Path info
+        const primaryHops = routes.primaryPath?.hops || routes.primaryPath?.route?.length;
+        const secondaryHops = routes.diversePath?.hops || routes.diversePath?.route?.length;
+        if (primaryHops) rfSummary += `Primary: ${primaryHops} hops • `;
+        if (secondaryHops) rfSummary += `Secondary: ${secondaryHops} hops • `;
+        
+        // Promo status
+        if (promo.primaryPromo) rfSummary += `Primary Promo ✓ • `;
+        if (promo.secondaryPromo) rfSummary += `Secondary Promo ✓ • `;
+        if (promo.protectedPromo) rfSummary += `Protected Promo ✓`;
+        
+        rfSummary = rfSummary.replace(/ • $/, '');
+        return rfSummary || "Route search completed";
+      }
 
       let summary = "";
       
@@ -2074,10 +2632,16 @@ const NetworkDesignTool = () => {
   };
 
   const handleKMZExportClose = () => {
+    // Abort any in-progress KMZ export request
+    if (kmzAbortControllerRef.current) {
+      kmzAbortControllerRef.current.abort();
+      kmzAbortControllerRef.current = null;
+    }
     setKmzExportDialogOpen(false);
     setKmzExportType('primary');
     setKmzExportProgress(0);
     setKmzExportStep('');
+    setKmzExporting(false);
   };
 
   const handleMissingCircuitsCancel = () => {
@@ -2097,6 +2661,10 @@ const NetworkDesignTool = () => {
   };
 
   const performKMZExport = async (exportData) => {
+    // Create AbortController for this export so user can cancel
+    const abortController = new AbortController();
+    kmzAbortControllerRef.current = abortController;
+
     try {
       setKmzExporting(true);
       console.log('Performing KMZ export with data:', exportData);
@@ -2131,7 +2699,8 @@ const NetworkDesignTool = () => {
       setKmzExportProgress(55);
 
       // Call API to export (this is where the actual long processing happens)
-      const response = await exportNetworkDesignKMZ(exportData);
+      // AbortController signal allows user to cancel if it takes too long
+      const response = await exportNetworkDesignKMZ(exportData, abortController.signal);
 
       // Step 3: Combining routes
       setKmzExportStep('Merging route segments and applying styling...');
@@ -2200,6 +2769,7 @@ const NetworkDesignTool = () => {
       window.URL.revokeObjectURL(url);
 
       // Step 5: Complete
+      kmzAbortControllerRef.current = null;
       setKmzExportStep('Export complete!');
       setKmzExportProgress(100);
       await new Promise(resolve => setTimeout(resolve, 500)); // Show completion briefly
@@ -2211,8 +2781,29 @@ const NetworkDesignTool = () => {
       setKmzExportStep('');
 
     } catch (error) {
+      // Clean up abort controller reference
+      kmzAbortControllerRef.current = null;
+
+      // Handle user cancellation gracefully (don't show error)
+      if (error.name === 'AbortError' || error.code === 'ERR_CANCELED' || error.message === 'canceled') {
+        console.log('KMZ export cancelled by user');
+        setKmzExporting(false);
+        setKmzExportProgress(0);
+        setKmzExportStep('');
+        return;
+      }
+
       console.error('KMZ export error:', error);
       
+      // Handle timeout
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        setError('KMZ export timed out. The route may contain too many path segments. Please try exporting primary or secondary paths separately instead of both.');
+        setKmzExporting(false);
+        setKmzExportProgress(0);
+        setKmzExportStep('');
+        return;
+      }
+
       // Handle blob error response (when responseType is 'blob')
       let errorMessage = 'Unknown error occurred';
       
@@ -2672,7 +3263,7 @@ const NetworkDesignTool = () => {
     if (canViewPricingLogs) {
       loadAuditLogs();
     }
-  }, [pagination.page, pagination.limit, selectedUser, customerNameFilter, logSearchTerm]);
+  }, [pagination.page, pagination.limit, selectedUser, customerNameFilter, logSearchTerm, actionTypeFilter]);
 
   const handleLogSearchChange = (event) => {
     setLogSearchTerm(event.target.value);
@@ -2708,6 +3299,7 @@ const NetworkDesignTool = () => {
     setLogSearchTerm('');
     setCustomerNameFilter('');
     setSelectedUser('');
+    setActionTypeFilter('');
     setPagination(prev => ({ ...prev, page: 1 }));
   };
 
@@ -4026,6 +4618,24 @@ const NetworkDesignTool = () => {
                     fullWidth
                     select
                     size="small"
+                    label="Type"
+                    value={actionTypeFilter}
+                    onChange={(e) => { setActionTypeFilter(e.target.value); setPagination(prev => ({ ...prev, page: 1 })); }}
+                  >
+                    <MenuItem value="">All Types</MenuItem>
+                    <MenuItem value="CONTRACT_TERM_PRICING_CALCULATION">Contract Term Pricing</MenuItem>
+                    <MenuItem value="PATH_SEARCH">Path Search</MenuItem>
+                    {hasRouteFinderAccess && (
+                      <MenuItem value="ROUTE_FINDER_SEARCH">Route Finder Search</MenuItem>
+                    )}
+                  </TextField>
+                </Grid>
+
+                <Grid item xs={12} md={2}>
+                  <TextField
+                    fullWidth
+                    select
+                    size="small"
                     label="Rows per page"
                     value={pagination.limit}
                     onChange={handleLimitChange}
@@ -4082,8 +4692,8 @@ const NetworkDesignTool = () => {
                       </TableCell>
                       <TableCell>
                         <Chip 
-                          label={log.action_type} 
-                          color={log.action_type === 'PATH_SEARCH' ? 'primary' : 'secondary'} 
+                          label={log.action_type === 'ROUTE_FINDER_SEARCH' ? 'Route Finder Search' : log.action_type} 
+                          color={log.action_type === 'ROUTE_FINDER_SEARCH' ? 'info' : log.action_type === 'PATH_SEARCH' ? 'primary' : 'secondary'} 
                           size="small" 
                         />
                       </TableCell>
@@ -4154,16 +4764,18 @@ const NetworkDesignTool = () => {
                             </Button>
                           )}
                           
-                          {/* Reload Search - available to all users */}
-                          <Button
-                            variant="outlined"
-                            size="small"
-                            startIcon={<HistoryIcon />}
-                            onClick={() => handleReloadFromLog(log)}
-                            color="secondary"
-                          >
-                            Reload Search
-                          </Button>
+                          {/* Reload Search - available to all users except Route Finder logs (display-only) */}
+                          {log.action_type !== 'ROUTE_FINDER_SEARCH' && (
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              startIcon={<HistoryIcon />}
+                              onClick={() => handleReloadFromLog(log)}
+                              color="secondary"
+                            >
+                              Reload Search
+                            </Button>
+                          )}
                         </Box>
                       </TableCell>
                     </TableRow>
@@ -4238,7 +4850,12 @@ const NetworkDesignTool = () => {
                                     }}
                                   >
                                     {log.results ? JSON.stringify(log.results, null, 2) : 
-                                     log.pricing_data?.calculationResults ? JSON.stringify(log.pricing_data.calculationResults, null, 2) : 
+                                     log.pricing_data?.calculationResults ? JSON.stringify(log.pricing_data.calculationResults, null, 2) :
+                                     log.action_type === 'ROUTE_FINDER_SEARCH' && log.pricing_data ? JSON.stringify({
+                                       routeResults: log.pricing_data.routeResults,
+                                       promoPricing: log.pricing_data.promoPricing,
+                                       crossConnectPricing: log.pricing_data.crossConnectPricing
+                                     }, null, 2) :
                                      'No results data available'}
                                   </Box>
                                 </Grid>
@@ -4486,8 +5103,8 @@ const NetworkDesignTool = () => {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleKMZExportClose} disabled={kmzExporting}>
-            Cancel
+          <Button onClick={handleKMZExportClose} color={kmzExporting ? 'error' : 'inherit'}>
+            {kmzExporting ? 'Cancel Export' : 'Cancel'}
           </Button>
           <Button 
             onClick={handleKMZExport}

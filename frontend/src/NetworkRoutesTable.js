@@ -435,8 +435,13 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
   const getLiveLatencyColor = (row) => {
     if (isDataStale(row)) return '#000000'; // Black for stale/N/A
     if (row.live_latency === 0) return '#f44336'; // Red for 0ms latency (circuit down)
-    if (!row.sla_latency) return '#4caf50'; // Green if no SLA
-    return row.live_latency <= row.sla_latency ? '#4caf50' : '#f44336'; // Green if <= SLA, Red if > SLA
+    
+    const expected = parseFloat(row.expected_latency);
+    if (!expected || expected <= 0) return '#4caf50'; // Green if no expected latency to compare
+    
+    const live = parseFloat(row.live_latency);
+    const percentDiff = Math.abs(live - expected) / expected * 100;
+    return percentDiff > 5 ? '#ff9800' : '#4caf50'; // Orange if >5% difference from expected, Green if within 5%
   };
 
   const formatLastUpdated = (timestamp) => {
@@ -849,11 +854,35 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
               <strong>Circuit:</strong> {timestampDialog.row.circuit_id}
             </Typography>
             <Typography variant="body1" sx={{ mb: 2 }}>
-              <strong>Current Latency:</strong> {timestampDialog.row.live_latency} ms
+              <strong>Current Latency:</strong>{' '}
+              <span style={{ color: getLiveLatencyColor(timestampDialog.row), fontWeight: 'bold' }}>
+                {timestampDialog.row.live_latency} ms
+              </span>
+              {timestampDialog.row.live_latency === 0 && (
+                <Chip label="Circuit Down" size="small" color="error" sx={{ ml: 1, fontSize: '0.7rem', height: 20 }} />
+              )}
             </Typography>
             <Typography variant="body1" sx={{ mb: 2 }}>
-              <strong>SLA Latency:</strong> {timestampDialog.row.sla_latency ? `${timestampDialog.row.sla_latency} ms` : 'Not set'}
+              <strong>Expected Latency:</strong> {timestampDialog.row.expected_latency ? `${timestampDialog.row.expected_latency} ms` : 'Not set'}
             </Typography>
+            {timestampDialog.row.expected_latency && timestampDialog.row.live_latency > 0 && (
+              <Typography variant="body1" sx={{ mb: 2 }}>
+                <strong>Difference:</strong>{' '}
+                {(() => {
+                  const expected = parseFloat(timestampDialog.row.expected_latency);
+                  const live = parseFloat(timestampDialog.row.live_latency);
+                  if (!expected || expected <= 0) return 'N/A';
+                  const diff = Math.abs(live - expected);
+                  const percentDiff = (diff / expected * 100).toFixed(1);
+                  const direction = live > expected ? 'higher' : 'lower';
+                  return (
+                    <span style={{ color: percentDiff > 5 ? '#ff9800' : '#4caf50', fontWeight: 'bold' }}>
+                      {percentDiff}% {direction} than expected
+                    </span>
+                  );
+                })()}
+              </Typography>
+            )}
             <Typography variant="body1" sx={{ mb: 2 }}>
               <strong>Last Updated:</strong> {formatLastUpdated(timestampDialog.row.live_latency_last_updated)}
             </Typography>
@@ -1055,4 +1084,4 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
   );
 }
 
-export default NetworkRoutesTable; 
+export default NetworkRoutesTable;

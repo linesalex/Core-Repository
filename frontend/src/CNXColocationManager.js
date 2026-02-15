@@ -901,25 +901,26 @@ const CNXColocationManager = ({ hasPermission }) => {
   return (
     <Box sx={{ width: '100%' }}>
       {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} component="h2">
-          CNX Colocation
+          CNX Colocation Inventory
+        </Typography>
+      </Box>
+      
+      {/* Inventory Header */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
+          Showing all locations where CNX Colocation is enabled in POP Capabilities. 
+          Click on a POP Code to view rack details.
         </Typography>
         <Button
           variant="outlined"
           startIcon={<RefreshIcon />}
           onClick={loadCNXColocationLocations}
+          size="small"
         >
           Refresh
         </Button>
-      </Box>
-
-      {/* Info Box */}
-      <Box sx={{ mb: 2 }}>
-        <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
-          Showing all locations where CNX Colocation is enabled in POP Capabilities. 
-          Click on a POP Code to view rack details.
-        </Typography>
       </Box>
 
       {/* Locations Table */}
@@ -987,7 +988,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                       </IconButton>
                     </TableCell>
                     <TableCell align="center">
-                      {hasPermission && hasPermission('cnx_colocation', 'edit') ? (
+                      {hasPermission && hasPermission('cnx_colocation_inventory', 'edit') ? (
                         <Tooltip title="Edit Design & More Info">
                           <IconButton 
                             size="small" 
@@ -1011,7 +1012,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                             <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} gutterBottom component="div">
                               Racks for {location.location_code}
                             </Typography>
-                            {hasPermission && hasPermission('cnx_colocation', 'create') && (
+                            {hasPermission && hasPermission('cnx_colocation_inventory', 'create') && (
                               <Button
                                 variant="outlined"
                                 size="small"
@@ -1072,7 +1073,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                                       <TableCell>{rack.allocated_power}</TableCell>
                                       <TableCell>{rack.client_count}</TableCell>
                                       <TableCell>{rack.ru_allocated}/{rack.total_ru || 42}</TableCell>
-                                      <TableCell>{rack.tor_network_infrastructure ? 'Yes' : 'No'}</TableCell>
+                                      <TableCell>{rack.tor_network_infrastructure && rack.tor_network_infrastructure !== 'No' ? rack.tor_network_infrastructure : 'No'}</TableCell>
                                       <TableCell align="center">
                                         <IconButton 
                                           size="small"
@@ -1095,14 +1096,14 @@ const CNXColocationManager = ({ hasPermission }) => {
                                               <ViewModuleIcon />
                                             </IconButton>
                                           </Tooltip>
-                                          {hasPermission && hasPermission('cnx_colocation', 'edit') && (
+                                          {hasPermission && hasPermission('cnx_colocation_inventory', 'edit') && (
                                             <Tooltip title="Edit Rack">
                                               <IconButton size="small" onClick={() => handleEditRack(rack)}>
                                                 <EditIcon />
                                               </IconButton>
                                             </Tooltip>
                                           )}
-                                          {hasPermission && hasPermission('cnx_colocation', 'delete') && (
+                                          {hasPermission && hasPermission('cnx_colocation_inventory', 'delete') && (
                                             <Tooltip title="Delete Rack">
                                               <IconButton size="small" onClick={() => handleDeleteRack(rack)} color="error">
                                                 <DeleteIcon />
@@ -1122,7 +1123,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                                               <Typography variant="subtitle2" gutterBottom component="div">
                                                 Clients for Rack {rack.rack_id}
                                               </Typography>
-                                              {hasPermission && hasPermission('cnx_colocation', 'create') && (
+                                              {hasPermission && hasPermission('cnx_colocation_inventory', 'create') && (
                                                 <Button
                                                   variant="outlined"
                                                   size="small"
@@ -1194,14 +1195,14 @@ const CNXColocationManager = ({ hasPermission }) => {
                                                       </TableCell>
                                                       <TableCell align="center">
                                                         <Box sx={{ display: 'flex', gap: 0.5 }}>
-                                                          {hasPermission && hasPermission('cnx_colocation', 'edit') && (
+                                                          {hasPermission && hasPermission('cnx_colocation_inventory', 'edit') && (
                                                             <Tooltip title="Edit Client">
                                                               <IconButton size="small" onClick={() => handleEditClient(client)}>
                                                                 <EditIcon />
                                                               </IconButton>
                                                             </Tooltip>
                                                           )}
-                                                          {hasPermission && hasPermission('cnx_colocation', 'delete') && (
+                                                          {hasPermission && hasPermission('cnx_colocation_inventory', 'delete') && (
                                                             <Tooltip title="Delete Client">
                                                               <IconButton size="small" onClick={() => handleDeleteClient(client)} color="error">
                                                                 <DeleteIcon />
@@ -1306,14 +1307,14 @@ const CNXColocationManager = ({ hasPermission }) => {
                                               <ViewModuleIcon />
                                             </IconButton>
                                           </Tooltip>
-                                          {hasPermission && hasPermission('cnx_colocation', 'edit') && (
+                                          {hasPermission && hasPermission('cnx_colocation_inventory', 'edit') && (
                                             <Tooltip title="Edit Rack & Client">
                                               <IconButton size="small" onClick={() => handleEditDedicatedRack(rack, dedicatedClient)}>
                                                 <EditIcon />
                                               </IconButton>
                                             </Tooltip>
                                           )}
-                                          {hasPermission && hasPermission('cnx_colocation', 'delete') && (
+                                          {hasPermission && hasPermission('cnx_colocation_inventory', 'delete') && (
                                             <Tooltip title="Delete Rack">
                                               <IconButton size="small" onClick={() => handleDeleteRack(rack)} color="error">
                                                 <DeleteIcon />
@@ -1403,7 +1404,7 @@ const CNXColocationManager = ({ hasPermission }) => {
             overflowY: 'auto'
           }}>
             <Typography 
-              variant="body1" sx={{ fontSize: '0.875rem' }} 
+              variant="body1"
               sx={{ 
                 whiteSpace: 'pre-wrap',
                 wordWrap: 'break-word',
@@ -1722,7 +1723,7 @@ const CNXColocationManager = ({ hasPermission }) => {
         onDeviceChange={handleDeviceChange}
       />
 
-      {/* Success/Error Messages */}
+      {/* Snackbars */}
       <Snackbar 
         open={!!success} 
         autoHideDuration={6000} 

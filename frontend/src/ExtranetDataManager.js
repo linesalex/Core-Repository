@@ -96,7 +96,9 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
     product_name: '',
     isf: '',
     suggested_bandwidth: '',
-    source_datacenters: '',
+    primary_datacenter: '',
+    secondary_datacenters: '',
+    primary_pricing_city: '',
     isf_resiliency: '',
     more_info: '',
     design_file: null,
@@ -410,7 +412,9 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
       product_name: '',
       isf: '',
       suggested_bandwidth: '',
-      source_datacenters: '',
+      primary_datacenter: '',
+      secondary_datacenters: '',
+      primary_pricing_city: '',
       isf_resiliency: '',
       more_info: '',
       design_file: null,
@@ -432,7 +436,9 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
       product_name: product.product_name || '',
       isf: product.isf || '',
       suggested_bandwidth: product.suggested_bandwidth || '',
-      source_datacenters: product.source_datacenters || '',
+      primary_datacenter: product.primary_datacenter || '',
+      secondary_datacenters: product.secondary_datacenters || '',
+      primary_pricing_city: product.primary_pricing_city || '',
       isf_resiliency: product.isf_resiliency || '',
       more_info: product.more_info || '',
       design_file: null,
@@ -1173,8 +1179,13 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
                                       <TableCell>{product.suggested_bandwidth || '-'}</TableCell>
                                       <TableCell>
                                         <Typography variant="body2" sx={{ fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                          {product.source_datacenters || '-'}
+                                          {product.primary_datacenter || '-'}
                                         </Typography>
+                                        {product.secondary_datacenters && (
+                                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
+                                            +{product.secondary_datacenters.split(',').length} secondary
+                                          </Typography>
+                                        )}
                                       </TableCell>
                                       <TableCell>{getResiliencyChip(product.isf_resiliency)}</TableCell>
                                       <TableCell>{renderDesignFileCell(product, provider.id)}</TableCell>
@@ -1589,14 +1600,47 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
                 </Select>
               </FormControl>
             </Grid>
+            <Grid item xs={12} sm={6}>
+              <Autocomplete
+                freeSolo
+                options={locationsList}
+                value={productFormData.primary_datacenter || ''}
+                onChange={(event, newValue) => {
+                  handleProductInputChange('primary_datacenter', newValue || '');
+                }}
+                onInputChange={(event, newInputValue, reason) => {
+                  if (reason === 'input') {
+                    handleProductInputChange('primary_datacenter', newInputValue);
+                  }
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Primary Datacenter"
+                    placeholder="Enter POP code (e.g., EQXLON4)"
+                    helperText="Primary datacenter / POP code for this product"
+                  />
+                )}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Primary Pricing City"
+                value={productFormData.primary_pricing_city}
+                onChange={(e) => handleProductInputChange('primary_pricing_city', e.target.value)}
+                helperText="Set manually if POP code doesn't resolve to a pricing city"
+                placeholder="e.g., London"
+              />
+            </Grid>
             <Grid item xs={12}>
               <Autocomplete
                 multiple
                 freeSolo
                 options={locationsList}
-                value={productFormData.source_datacenters ? productFormData.source_datacenters.split(',').map(dc => dc.trim()).filter(dc => dc) : []}
+                value={productFormData.secondary_datacenters ? productFormData.secondary_datacenters.split(',').map(dc => dc.trim()).filter(dc => dc) : []}
                 onChange={(event, newValue) => {
-                  handleProductInputChange('source_datacenters', newValue.join(', '));
+                  handleProductInputChange('secondary_datacenters', newValue.join(', '));
                 }}
                 renderTags={(value, getTagProps) =>
                   value.map((option, index) => (
@@ -1611,9 +1655,9 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
                 renderInput={(params) => (
                   <TextField
                     {...params}
-                    label="Source Datacenters"
-                    placeholder="Select or enter datacenter codes"
-                    helperText="Select from locations or enter custom codes (e.g., EQXLON4)"
+                    label="Secondary Datacenter(s)"
+                    placeholder="Select or enter secondary datacenter codes"
+                    helperText="Additional / secondary datacenter POP codes (optional)"
                   />
                 )}
               />

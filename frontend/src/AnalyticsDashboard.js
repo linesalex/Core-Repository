@@ -3,13 +3,14 @@ import {
   Box, Typography, Card, CardContent, Grid, Tabs, Tab, CircularProgress, Alert,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
   FormControl, InputLabel, Select, MenuItem, Button, TextField, IconButton,
-  Chip
+  Chip, Divider
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import PeopleIcon from '@mui/icons-material/People';
 import CalculateIcon from '@mui/icons-material/Calculate';
+import ShoppingBasketIcon from '@mui/icons-material/ShoppingBasket';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
@@ -1623,23 +1624,40 @@ const AnalyticsDashboard = () => {
           </Box>
         ) : extranetPricingData ? (
           <>
-            {/* Key Metrics Summary Cards */}
-            <Grid container spacing={2} sx={{ mb: 3 }}>
+            {/* Key Metrics Summary Cards - Row 1 */}
+            <Grid container spacing={2} sx={{ mb: 2 }}>
               <Grid item xs={6} sm={4} md={2}>
                 <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
-                    <Typography color="textSecondary" variant="body2" gutterBottom>Total Lookups</Typography>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Total Pricing Events</Typography>
                     <Typography variant="h5" fontWeight="bold">{extranetPricingData.totalLookups?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      Individual + Bundle quotes
+                    </Typography>
                   </CardContent>
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
                 <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
-                    <Typography color="textSecondary" variant="body2" gutterBottom>IPSec Requests</Typography>
-                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.ipsecStats?.required?.toLocaleString() || 0}</Typography>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Connections Priced</Typography>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.totalConnectionsPriced?.toLocaleString() || 0}</Typography>
                     <Typography variant="caption" color="textSecondary">
-                      {extranetPricingData.totalLookups > 0 ? `${((extranetPricingData.ipsecStats?.required / extranetPricingData.totalLookups) * 100).toFixed(1)}% of total` : ''}
+                      All individual connections
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#e1f5fe', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                      <ShoppingBasketIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                      <Typography color="textSecondary" variant="body2">Bundles Created</Typography>
+                    </Box>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.bundleStats?.totalBundles?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {extranetPricingData.bundleStats?.bundlePercentage || 0}% of pricing events
                     </Typography>
                   </CardContent>
                 </Card>
@@ -1647,10 +1665,10 @@ const AnalyticsDashboard = () => {
               <Grid item xs={6} sm={4} md={2}>
                 <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
-                    <Typography color="textSecondary" variant="body2" gutterBottom>Cloud Members</Typography>
-                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.cloudMemberCount?.toLocaleString() || 0}</Typography>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Bundle Items Total</Typography>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.bundleStats?.totalBundleItems?.toLocaleString() || 0}</Typography>
                     <Typography variant="caption" color="textSecondary">
-                      {extranetPricingData.totalLookups > 0 ? `${((extranetPricingData.cloudMemberCount / extranetPricingData.totalLookups) * 100).toFixed(1)}% of total` : ''}
+                      Avg {extranetPricingData.bundleStats?.averageBundleSize || 0} items/bundle
                     </Typography>
                   </CardContent>
                 </Card>
@@ -1674,18 +1692,174 @@ const AnalyticsDashboard = () => {
                   </CardContent>
                 </Card>
               </Grid>
+            </Grid>
+
+            {/* Key Metrics Summary Cards - Row 2 */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={6} sm={4} md={2}>
                 <Card sx={{ bgcolor: '#e0f7fa', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>IPSec Requests</Typography>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.ipsecStats?.required?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {extranetPricingData.totalConnectionsPriced > 0 ? `${((extranetPricingData.ipsecStats?.required / extranetPricingData.totalConnectionsPriced) * 100).toFixed(1)}% of connections` : ''}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#fff8e1', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Cloud Members</Typography>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.cloudMemberCount?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {extranetPricingData.totalConnectionsPriced > 0 ? `${((extranetPricingData.cloudMemberCount / extranetPricingData.totalConnectionsPriced) * 100).toFixed(1)}% of connections` : ''}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#efebe9', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Off-Net Requests</Typography>
                     <Typography variant="h5" fontWeight="bold">{extranetPricingData.offNetCount?.toLocaleString() || 0}</Typography>
                     <Typography variant="caption" color="textSecondary">
-                      {extranetPricingData.totalLookups > 0 ? `${((extranetPricingData.offNetCount / extranetPricingData.totalLookups) * 100).toFixed(1)}% of total` : ''}
+                      {extranetPricingData.totalConnectionsPriced > 0 ? `${((extranetPricingData.offNetCount / extranetPricingData.totalConnectionsPriced) * 100).toFixed(1)}% of connections` : ''}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#e8eaf6', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Individual Lookups</Typography>
+                    <Typography variant="h5" fontWeight="bold">{extranetPricingData.individualLookups?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      Non-bundle quotes
                     </Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
+
+            {/* Bundle Analytics Section */}
+            {extranetPricingData.bundleStats?.totalBundles > 0 && (
+              <Card sx={{ mb: 3 }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                    <ShoppingBasketIcon color="primary" />
+                    <Typography variant="h6">Bundle Analytics</Typography>
+                  </Box>
+                  <Grid container spacing={3}>
+                    {/* Bundle Size Distribution */}
+                    <Grid item xs={12} md={4}>
+                      <Typography variant="subtitle2" color="textSecondary" gutterBottom>Bundle Size Distribution</Typography>
+                      <TableContainer>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Size</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {extranetPricingData.bundleStats.bundleSizeDistribution.map((item, index) => (
+                              <TableRow key={index}>
+                                <TableCell>
+                                  <Chip 
+                                    label={`${item.size} items`} 
+                                    size="small" 
+                                    color={item.size === '6+' ? 'success' : item.size === '4-5' ? 'warning' : 'default'}
+                                    variant="outlined"
+                                    sx={{ fontSize: '0.7rem' }}
+                                  />
+                                </TableCell>
+                                <TableCell align="right">{item.count}</TableCell>
+                                <TableCell align="right">
+                                  {extranetPricingData.bundleStats.totalBundles > 0 
+                                    ? `${((item.count / extranetPricingData.bundleStats.totalBundles) * 100).toFixed(1)}%` 
+                                    : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Grid>
+
+                    {/* Bundle Discount Distribution */}
+                    <Grid item xs={12} md={4}>
+                      <Typography variant="subtitle2" color="textSecondary" gutterBottom>Discount Tier Usage</Typography>
+                      <TableContainer>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Discount</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {extranetPricingData.bundleStats.bundleDiscountDistribution.map((item, index) => (
+                              <TableRow key={index}>
+                                <TableCell>
+                                  <Chip 
+                                    label={item.discount} 
+                                    size="small" 
+                                    color={item.discount !== 'No Discount' ? 'success' : 'default'}
+                                    variant="outlined"
+                                    sx={{ fontSize: '0.7rem' }}
+                                  />
+                                </TableCell>
+                                <TableCell align="right">{item.count}</TableCell>
+                                <TableCell align="right">
+                                  {extranetPricingData.bundleStats.totalBundles > 0 
+                                    ? `${((item.count / extranetPricingData.bundleStats.totalBundles) * 100).toFixed(1)}%` 
+                                    : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Grid>
+
+                    {/* Bundle Summary */}
+                    <Grid item xs={12} md={4}>
+                      <Typography variant="subtitle2" color="textSecondary" gutterBottom>Bundle Summary</Typography>
+                      <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
+                          <Typography variant="body2" color="text.secondary">Total Bundles:</Typography>
+                          <Typography variant="body2" fontWeight="bold">{extranetPricingData.bundleStats.totalBundles}</Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
+                          <Typography variant="body2" color="text.secondary">Total Items in Bundles:</Typography>
+                          <Typography variant="body2" fontWeight="bold">{extranetPricingData.bundleStats.totalBundleItems}</Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
+                          <Typography variant="body2" color="text.secondary">Avg Bundle Size:</Typography>
+                          <Typography variant="body2" fontWeight="bold">{extranetPricingData.bundleStats.averageBundleSize} items</Typography>
+                        </Box>
+                        <Divider sx={{ my: 1.5 }} />
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                          <Typography variant="body2" color="text.secondary">Total Bundle MRC:</Typography>
+                          <Typography variant="body2" fontWeight="bold" color="success.main">
+                            ${extranetPricingData.bundleStats.totalBundleMrc?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <Typography variant="body2" color="text.secondary">Total Bundle NRC:</Typography>
+                          <Typography variant="body2" fontWeight="bold">
+                            ${extranetPricingData.bundleStats.totalBundleNrc?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Main Data Tables in 2-Column Layout */}
             <Grid container spacing={3}>
@@ -1718,7 +1892,7 @@ const AnalyticsDashboard = () => {
                                 <TableCell>{provider.provider}</TableCell>
                                 <TableCell align="right">{provider.count}</TableCell>
                                 <TableCell align="right">
-                                  {extranetPricingData.totalLookups > 0 ? `${((provider.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                  {extranetPricingData.totalConnectionsPriced > 0 ? `${((provider.count / extranetPricingData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -1734,7 +1908,7 @@ const AnalyticsDashboard = () => {
                   <Card sx={{ mb: 3 }}>
                     <CardContent>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                        <Typography variant="h6">Top 10 City Pairs (Provider → Member)</Typography>
+                        <Typography variant="h6">Top 10 City Pairs (Provider ↔ Member)</Typography>
                         <IconButton size="small" onClick={() => exportToCSV(extranetPricingData.topCityPairs, 'extranet_city_pairs')}>
                           <DownloadIcon />
                         </IconButton>
@@ -1779,7 +1953,8 @@ const AnalyticsDashboard = () => {
                             <TableRow>
                               <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
                               <TableCell sx={{ fontWeight: 'bold' }}>Username</TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Lookups</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Total</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Bundles</TableCell>
                               <TableCell align="right" sx={{ fontWeight: 'bold' }}>% of Total</TableCell>
                             </TableRow>
                           </TableHead>
@@ -1789,6 +1964,11 @@ const AnalyticsDashboard = () => {
                                 <TableCell>{index + 1}</TableCell>
                                 <TableCell>{user.username}</TableCell>
                                 <TableCell align="right">{user.count}</TableCell>
+                                <TableCell align="right">
+                                  {user.bundleCount > 0 ? (
+                                    <Chip label={user.bundleCount} size="small" color="primary" variant="outlined" sx={{ fontSize: '0.7rem', height: 20 }} />
+                                  ) : '-'}
+                                </TableCell>
                                 <TableCell align="right">
                                   {extranetPricingData.totalLookups > 0 ? `${((user.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
                                 </TableCell>
@@ -1828,7 +2008,7 @@ const AnalyticsDashboard = () => {
                                   <TableCell>{item.resiliency || 'Unknown'}</TableCell>
                                   <TableCell align="right">{item.count}</TableCell>
                                   <TableCell align="right">
-                                    {extranetPricingData.totalLookups > 0 ? `${((item.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                    {extranetPricingData.totalConnectionsPriced > 0 ? `${((item.count / extranetPricingData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
                                   </TableCell>
                                 </TableRow>
                               ))}
@@ -1857,7 +2037,7 @@ const AnalyticsDashboard = () => {
                                   <TableCell>{item.term} months</TableCell>
                                   <TableCell align="right">{item.count}</TableCell>
                                   <TableCell align="right">
-                                    {extranetPricingData.totalLookups > 0 ? `${((item.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                    {extranetPricingData.totalConnectionsPriced > 0 ? `${((item.count / extranetPricingData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
                                   </TableCell>
                                 </TableRow>
                               ))}
@@ -1886,7 +2066,7 @@ const AnalyticsDashboard = () => {
                                   <TableCell>{item.type || 'Unknown'}</TableCell>
                                   <TableCell align="right">{item.count}</TableCell>
                                   <TableCell align="right">
-                                    {extranetPricingData.totalLookups > 0 ? `${((item.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                    {extranetPricingData.totalConnectionsPriced > 0 ? `${((item.count / extranetPricingData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
                                   </TableCell>
                                 </TableRow>
                               ))}
@@ -1923,7 +2103,7 @@ const AnalyticsDashboard = () => {
                                 <TableCell>{item.bandwidth}</TableCell>
                                 <TableCell align="right">{item.count}</TableCell>
                                 <TableCell align="right">
-                                  {extranetPricingData.totalLookups > 0 ? `${((item.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                  {extranetPricingData.totalConnectionsPriced > 0 ? `${((item.count / extranetPricingData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -1959,7 +2139,7 @@ const AnalyticsDashboard = () => {
                                 <TableCell>{item.currency}</TableCell>
                                 <TableCell align="right">{item.count}</TableCell>
                                 <TableCell align="right">
-                                  {extranetPricingData.totalLookups > 0 ? `${((item.count / extranetPricingData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                  {extranetPricingData.totalConnectionsPriced > 0 ? `${((item.count / extranetPricingData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
                                 </TableCell>
                               </TableRow>
                             ))}

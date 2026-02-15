@@ -36,6 +36,9 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
   const [success, setSuccess] = useState(null);
   const [currentTab, setCurrentTab] = useState(0);
   
+  // Provider region rate card selector (APAC, AMERs, EMEA)
+  const [selectedProviderRegion, setSelectedProviderRegion] = useState('APAC');
+  
   // Dialog states
   const [cityDialogOpen, setCityDialogOpen] = useState(false);
   const [cityDialogMode, setCityDialogMode] = useState('add');
@@ -65,16 +68,22 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
 
   // Load data on mount
   useEffect(() => {
-    loadRateCard();
+    loadRateCard(selectedProviderRegion);
     loadCities();
     loadParameters();
     loadIpsecSurcharges();
   }, []);
 
-  const loadRateCard = async () => {
+  // Reload rate card when provider region changes
+  useEffect(() => {
+    loadRateCard(selectedProviderRegion);
+  }, [selectedProviderRegion]);
+
+  const loadRateCard = async (providerRegion) => {
     try {
       setLoading(true);
       const response = await axios.get(`${API_BASE_URL}/extranet-pricing/rate-card`, {
+        params: { provider_region: providerRegion || selectedProviderRegion },
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -202,15 +211,15 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
         return { bandwidth, region, tier, price_usd: priceValue };
       });
 
-      await axios.post(`${API_BASE_URL}/extranet-pricing/rate-card/bulk`, { rates }, {
+      await axios.post(`${API_BASE_URL}/extranet-pricing/rate-card/bulk`, { rates, provider_region: selectedProviderRegion }, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
           'Content-Type': 'application/json'
         }
       });
 
-      setSuccess('Rate card updated successfully');
-      await loadRateCard();
+      setSuccess(`${selectedProviderRegion} rate card updated successfully`);
+      await loadRateCard(selectedProviderRegion);
     } catch (err) {
       setError('Failed to save rate card: ' + (err.response?.data?.error || err.message));
     } finally {
@@ -356,16 +365,16 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
         return;
       }
 
-      await axios.post(`${API_BASE_URL}/extranet-pricing/rate-card/bulk`, { rates }, {
+      await axios.post(`${API_BASE_URL}/extranet-pricing/rate-card/bulk`, { rates, provider_region: selectedProviderRegion }, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
           'Content-Type': 'application/json'
         }
       });
 
-      setSuccess(`Imported ${rates.length} rate card entries successfully`);
+      setSuccess(`Imported ${rates.length} rate card entries into ${selectedProviderRegion} rate card successfully`);
       setImportDialogOpen(false);
-      await loadRateCard();
+      await loadRateCard(selectedProviderRegion);
     } catch (err) {
       setError('Failed to import CSV: ' + (err.response?.data?.error || err.message));
     }
@@ -385,7 +394,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', 'extranet_rate_card.csv');
+    link.setAttribute('download', `extranet_rate_card_${selectedProviderRegion}.csv`);
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -413,7 +422,8 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
     if (editedParameters[key] !== undefined) {
       return editedParameters[key];
     }
-    return parameters[key]?.value || '';
+    const val = parameters[key]?.value;
+    return val !== undefined && val !== null ? val : '';
   };
 
   const handleParameterChange = (key, value) => {
@@ -568,7 +578,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
-            onClick={() => { loadRateCard(); loadCities(); }}
+            onClick={() => { loadRateCard(selectedProviderRegion); loadCities(); }}
           >
             Refresh
           </Button>
@@ -588,6 +598,40 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
       {/* Rate Card Tab */}
       {currentTab === 0 && (
         <Box>
+          {/* Provider Region Sub-Tabs */}
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              Select Provider Region Rate Card:
+            </Typography>
+            <Tabs 
+              value={selectedProviderRegion} 
+              onChange={(e, newValue) => {
+                setSelectedProviderRegion(newValue);
+                setEditedPrices({});
+              }}
+              sx={{ 
+                minHeight: 36,
+                '& .MuiTab-root': { minHeight: 36, py: 0.5, px: 2 }
+              }}
+            >
+              <Tab 
+                value="APAC" 
+                label={<Chip label="APAC" color={selectedProviderRegion === 'APAC' ? 'success' : 'default'} size="small" />} 
+              />
+              <Tab 
+                value="AMERs" 
+                label={<Chip label="AMERs" color={selectedProviderRegion === 'AMERs' ? 'primary' : 'default'} size="small" />} 
+              />
+              <Tab 
+                value="EMEA" 
+                label={<Chip label="EMEA" color={selectedProviderRegion === 'EMEA' ? 'secondary' : 'default'} size="small" />} 
+              />
+            </Tabs>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+              This rate card is used when the provider location is in the <strong>{selectedProviderRegion}</strong> region
+            </Typography>
+          </Box>
+
           {/* Actions */}
           <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
             <Button
@@ -596,7 +640,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
               onClick={handleSaveAllPrices}
               disabled={Object.keys(editedPrices).length === 0 || saving}
             >
-              {saving ? 'Saving...' : `Save Changes (${Object.keys(editedPrices).length})`}
+              {saving ? 'Saving...' : `Save ${selectedProviderRegion} Changes (${Object.keys(editedPrices).length})`}
             </Button>
             <Button
               variant="outlined"
@@ -685,7 +729,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
           )}
 
           <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-            * All prices are in USD. Edited cells are highlighted in orange.
+            * All prices are in USD. Edited cells are highlighted in orange. Currently viewing the <strong>{selectedProviderRegion}</strong> provider rate card.
           </Typography>
         </Box>
       )}
@@ -972,6 +1016,124 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                       />
                     </Grid>
                   </Grid>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            {/* Bundle Discount Tiers */}
+            <Grid item xs={12} md={6}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <SettingsIcon color="secondary" />
+                    Bundle Discount Tiers
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Maximum MRC discount users can select per bundle size. NRC discount is applied automatically in the background.
+                  </Typography>
+
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>1–3 Items</Typography>
+                  <Grid container spacing={2} sx={{ mb: 2 }}>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Max MRC Discount"
+                        type="number"
+                        value={getParameterValue('bundle_discount_mrc_1_3')}
+                        onChange={(e) => handleParameterChange('bundle_discount_mrc_1_3', e.target.value)}
+                        InputProps={{
+                          endAdornment: <InputAdornment position="end">%</InputAdornment>
+                        }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_mrc_1_3'] !== undefined ? '#fff3e0' : 'transparent' }}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Auto NRC Discount"
+                        type="number"
+                        value={getParameterValue('bundle_discount_nrc_1_3')}
+                        onChange={(e) => handleParameterChange('bundle_discount_nrc_1_3', e.target.value)}
+                        InputProps={{
+                          endAdornment: <InputAdornment position="end">%</InputAdornment>
+                        }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_nrc_1_3'] !== undefined ? '#fff3e0' : 'transparent' }}
+                      />
+                    </Grid>
+                  </Grid>
+
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>4–5 Items</Typography>
+                  <Grid container spacing={2} sx={{ mb: 2 }}>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Max MRC Discount"
+                        type="number"
+                        value={getParameterValue('bundle_discount_mrc_4_5')}
+                        onChange={(e) => handleParameterChange('bundle_discount_mrc_4_5', e.target.value)}
+                        InputProps={{
+                          endAdornment: <InputAdornment position="end">%</InputAdornment>
+                        }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_mrc_4_5'] !== undefined ? '#fff3e0' : 'transparent' }}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Auto NRC Discount"
+                        type="number"
+                        value={getParameterValue('bundle_discount_nrc_4_5')}
+                        onChange={(e) => handleParameterChange('bundle_discount_nrc_4_5', e.target.value)}
+                        InputProps={{
+                          endAdornment: <InputAdornment position="end">%</InputAdornment>
+                        }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_nrc_4_5'] !== undefined ? '#fff3e0' : 'transparent' }}
+                      />
+                    </Grid>
+                  </Grid>
+
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>6+ Items</Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Max MRC Discount"
+                        type="number"
+                        value={getParameterValue('bundle_discount_mrc_6_plus')}
+                        onChange={(e) => handleParameterChange('bundle_discount_mrc_6_plus', e.target.value)}
+                        InputProps={{
+                          endAdornment: <InputAdornment position="end">%</InputAdornment>
+                        }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_mrc_6_plus'] !== undefined ? '#fff3e0' : 'transparent' }}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Auto NRC Discount"
+                        type="number"
+                        value={getParameterValue('bundle_discount_nrc_6_plus')}
+                        onChange={(e) => handleParameterChange('bundle_discount_nrc_6_plus', e.target.value)}
+                        InputProps={{
+                          endAdornment: <InputAdornment position="end">%</InputAdornment>
+                        }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_nrc_6_plus'] !== undefined ? '#fff3e0' : 'transparent' }}
+                      />
+                    </Grid>
+                  </Grid>
+
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block' }}>
+                    MRC discount is the maximum % users can select when completing a basket. NRC discount is applied automatically and not displayed to users.
+                  </Typography>
                 </CardContent>
               </Card>
             </Grid>
@@ -1336,8 +1498,11 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
 
       {/* Import Dialog */}
       <Dialog open={importDialogOpen} onClose={() => setImportDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Import Rate Card from CSV</DialogTitle>
+        <DialogTitle>Import Rate Card from CSV — {selectedProviderRegion} Provider</DialogTitle>
         <DialogContent>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Importing into the <strong>{selectedProviderRegion}</strong> provider rate card
+          </Alert>
           <Typography variant="body2" sx={{ mb: 2 }}>
             Upload a CSV file with columns: <strong>bandwidth, region, tier, price_usd</strong>
           </Typography>

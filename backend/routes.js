@@ -231,10 +231,11 @@ router.post('/login', async (req, res) => {
         // Derive visibility from permissions (if a user has permission, module is visible)
         const moduleVisibility = {};
         const allModules = [
-          'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
+          'network_routes', 'network_design', 'locations', 'carriers',
+          'cnx_colocation_inventory', 'cnx_colocation_availability', 'cnx_colocation_pricing',
           'exchange_rates', 'exchange_data', 'extranet_data', 'change_logs', 'user_management', 
           'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
-          'allocated_cost_calculator', 'kmz_viewer', 'route_finder'
+          'allocated_cost_calculator', 'kmz_viewer', 'route_finder', 'carrier_quote_repository'
         ];
         
         allModules.forEach(module => {
@@ -294,10 +295,11 @@ router.get('/me', authenticateToken, (req, res) => {
       // Derive visibility from permissions (if a user has permission, module is visible)
       const moduleVisibility = {};
       const allModules = [
-        'network_routes', 'network_design', 'locations', 'carriers', 'cnx_colocation',
+        'network_routes', 'network_design', 'locations', 'carriers',
+        'cnx_colocation_inventory', 'cnx_colocation_availability', 'cnx_colocation_pricing',
         'exchange_rates', 'exchange_data', 'extranet_data', 'change_logs', 'user_management', 
         'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
-        'allocated_cost_calculator', 'kmz_viewer', 'route_finder'
+        'allocated_cost_calculator', 'kmz_viewer', 'route_finder', 'carrier_quote_repository'
       ];
       
       // For administrators, all modules are visible
@@ -2998,16 +3000,6 @@ async function validateRowForeignKeys(row, module) {
     if (row.isf_resiliency && row.isf_resiliency.trim() !== '' && !validIsfResiliency.includes(row.isf_resiliency.trim())) {
       errors.push(`Invalid isf_resiliency: "${row.isf_resiliency}". Must be one of: ${validIsfResiliency.join(', ')}`);
     }
-    // Validate source_datacenters format if provided
-    if (row.source_datacenters && row.source_datacenters.trim() !== '') {
-      const datacenters = row.source_datacenters.split(',').map(dc => dc.trim());
-      const externalDcRegex = /^[A-Z]{6}[0-9]+$/;
-      for (const dc of datacenters) {
-        if (dc && !dc.startsWith('IPC') && !externalDcRegex.test(dc)) {
-          errors.push(`Invalid datacenter format: "${dc}". External datacenters must be 6 uppercase letters followed by numbers (e.g., EQXLON4)`);
-        }
-      }
-    }
   } else if (module === 'extranet_contacts') {
     if (row.provider_id) {
       try {
@@ -3037,6 +3029,9 @@ async function validateRowForeignKeys(row, module) {
     const validBandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '50Mb', '100Mb'];
     const validRegions = ['AMERs', 'APAC', 'EMEA'];
     const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+    if (row.provider_region && !validRegions.includes(row.provider_region.trim())) {
+      errors.push(`Invalid provider_region: "${row.provider_region}". Must be one of: ${validRegions.join(', ')}`);
+    }
     if (row.bandwidth && !validBandwidths.includes(row.bandwidth.trim())) {
       errors.push(`Invalid bandwidth: "${row.bandwidth}". Must be one of: ${validBandwidths.join(', ')}`);
     }
@@ -3134,6 +3129,67 @@ async function validateRowForeignKeys(row, module) {
         }
       } catch (err) {
         errors.push(`Database error validating local_loop_carriers_b: ${err.message}`);
+      }
+    }
+  } else if (module === 'cnx_colocation_racks') {
+    // Validate location_code exists and has cnx_colocation enabled
+    if (row.location_code) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get(
+            `SELECT lr.id FROM location_reference lr 
+             JOIN pop_capabilities pc ON lr.id = pc.location_id AND pc.cnx_colocation = 1
+             WHERE LOWER(TRIM(lr.location_code)) = LOWER(TRIM(?))`,
+            [row.location_code],
+            (err, row) => { if (err) reject(err); else resolve(row); }
+          );
+        });
+        if (!result) {
+          errors.push(`Location code '${row.location_code}' not found or CNX Colocation not enabled for this location`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating location_code: ${err.message}`);
+      }
+    }
+  } else if (module === 'cnx_colocation_clients' || module === 'cnx_rack_devices') {
+    // Validate location_code + rack_id combination exists
+    if (row.location_code && row.rack_id) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get(
+            `SELECT r.id FROM cnx_colocation_racks r
+             JOIN location_reference lr ON r.location_id = lr.id
+             WHERE LOWER(TRIM(lr.location_code)) = LOWER(TRIM(?)) AND LOWER(TRIM(r.rack_id)) = LOWER(TRIM(?))`,
+            [row.location_code, row.rack_id],
+            (err, row) => { if (err) reject(err); else resolve(row); }
+          );
+        });
+        if (!result) {
+          errors.push(`Rack '${row.rack_id}' not found at location '${row.location_code}'`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating rack reference: ${err.message}`);
+      }
+    }
+    // For devices, validate client_name if provided
+    if (module === 'cnx_rack_devices' && row.client_name && row.client_name.trim() && row.location_code && row.rack_id) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get(
+            `SELECT c.id FROM cnx_colocation_clients c
+             JOIN cnx_colocation_racks r ON c.rack_id = r.id
+             JOIN location_reference lr ON r.location_id = lr.id
+             WHERE LOWER(TRIM(lr.location_code)) = LOWER(TRIM(?)) AND LOWER(TRIM(r.rack_id)) = LOWER(TRIM(?))
+             AND LOWER(TRIM(c.client_name)) = LOWER(TRIM(?))`,
+            [row.location_code, row.rack_id, row.client_name],
+            (err, row) => { if (err) reject(err); else resolve(row); }
+          );
+        });
+        if (!result) {
+          errors.push(`Client '${row.client_name}' not found in rack '${row.rack_id}' at location '${row.location_code}'`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating client reference: ${err.message}`);
       }
     }
   }
@@ -6776,6 +6832,7 @@ router.get('/network_design/audit_logs', authenticateToken, authorizeModulePermi
     }
     
     const userPermission = permissions['network_design'];
+    const hasRouteFinderAccess = !!permissions['route_finder'];
     const isReadOnly = userPermission === 'read_only';
     const isProvisioner = userPermission === 'provisioner';
     
@@ -6794,6 +6851,11 @@ router.get('/network_design/audit_logs', authenticateToken, authorizeModulePermi
       // Admin/Provisioner users can filter by specific user_id if provided
       conditions.push('al.user_id = ?');
       params.push(user_id);
+    }
+    
+    // Only show ROUTE_FINDER_SEARCH logs to users with route_finder permission
+    if (!hasRouteFinderAccess) {
+      conditions.push("al.action_type != 'ROUTE_FINDER_SEARCH'");
     }
     
     // Filter by action type if provided
@@ -7170,8 +7232,117 @@ if (!fs.existsSync(feedbackDir)) {
   fs.mkdirSync(feedbackDir, { recursive: true });
 }
 
+// Get availability dashboard data
+router.get('/cnx-colocation/availability', authenticateToken, authorizeModulePermission('cnx_colocation_availability', 'read_only'), (req, res) => {
+  const query = `
+    SELECT 
+      lr.id as location_ref_id,
+      lr.location_code,
+      lr.city,
+      lr.country,
+      lr.datacenter_name,
+      lr.datacenter_address,
+      lr.provider,
+      lr.more_info as colocation_more_info,
+      COUNT(DISTINCT r.id) as total_racks,
+      SUM(CASE WHEN r.rack_type = 'shared' THEN 1 ELSE 0 END) as shared_racks,
+      SUM(CASE WHEN r.rack_type = 'dedicated' THEN 1 ELSE 0 END) as dedicated_racks,
+      COALESCE(SUM(r.total_ru), 0) as total_ru_capacity,
+      COALESCE(SUM(r.total_power_kva), 0) as total_power_capacity
+    FROM location_reference lr
+    JOIN pop_capabilities pc ON lr.id = pc.location_id
+    LEFT JOIN cnx_colocation_racks r ON lr.id = r.location_id
+    WHERE pc.cnx_colocation = 1
+    GROUP BY lr.id
+    ORDER BY lr.location_code
+  `;
+  
+  db.all(query, [], (err, locations) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    // Use location_ref_id for rack lookups (since cnx_colocation_racks.location_id = location_reference.id)
+    const locationIds = locations.map(l => l.location_ref_id);
+    
+    if (locationIds.length === 0) {
+      return res.json(locations.map(l => ({
+        ...l,
+        allocated_ru: 0,
+        allocated_power: 0,
+        available_ru: l.total_ru_capacity,
+        available_power: l.total_power_capacity,
+        client_count: 0,
+        device_count: 0,
+        racks: []
+      })));
+    }
+    
+    // Get per-rack details for each location
+    const rackQuery = `
+      SELECT r.*, 
+             r.location_id as location_ref_id,
+             COALESCE(SUM(c.ru_purchased), 0) as allocated_ru,
+             COALESCE(SUM(c.power_purchased), 0) as allocated_power,
+             COUNT(DISTINCT c.id) as client_count,
+             (SELECT COUNT(*) FROM cnx_rack_devices d WHERE d.rack_id = r.id) as device_count
+      FROM cnx_colocation_racks r
+      LEFT JOIN cnx_colocation_clients c ON r.id = c.rack_id
+      WHERE r.location_id IN (${locationIds.map(() => '?').join(',')})
+      GROUP BY r.id
+      ORDER BY r.rack_id
+    `;
+    
+    db.all(rackQuery, locationIds, (rackErr, racks) => {
+      if (rackErr) return res.status(500).json({ error: rackErr.message });
+      
+      // Group racks by location (using location_reference.id)
+      const racksByLocation = {};
+      racks.forEach(rack => {
+        if (!racksByLocation[rack.location_ref_id]) {
+          racksByLocation[rack.location_ref_id] = [];
+        }
+        const ipcReservedRU = rack.ipc_reserved_ru_ranges ? (() => {
+          try {
+            const ranges = JSON.parse(rack.ipc_reserved_ru_ranges);
+            return ranges.reduce((sum, r) => sum + (r.end - r.start + 1), 0);
+          } catch { return 0; }
+        })() : 0;
+        
+        racksByLocation[rack.location_ref_id].push({
+          ...rack,
+          ipc_reserved_ru: ipcReservedRU,
+          available_ru: (rack.total_ru || 42) - rack.allocated_ru - ipcReservedRU,
+          available_power: rack.total_power_kva - rack.allocated_power
+        });
+      });
+      
+      const result = locations.map(location => {
+        const locationRacks = racksByLocation[location.location_ref_id] || [];
+        const totalAllocatedRU = locationRacks.reduce((sum, r) => sum + r.allocated_ru, 0);
+        const totalAllocatedPower = locationRacks.reduce((sum, r) => sum + r.allocated_power, 0);
+        const totalClients = locationRacks.reduce((sum, r) => sum + r.client_count, 0);
+        const totalDevices = locationRacks.reduce((sum, r) => sum + r.device_count, 0);
+        const totalIPCReserved = locationRacks.reduce((sum, r) => sum + r.ipc_reserved_ru, 0);
+        
+        return {
+          ...location,
+          allocated_ru: totalAllocatedRU,
+          allocated_power: totalAllocatedPower,
+          ipc_reserved_ru: totalIPCReserved,
+          available_ru: location.total_ru_capacity - totalAllocatedRU - totalIPCReserved,
+          available_power: parseFloat((location.total_power_capacity - totalAllocatedPower).toFixed(2)),
+          client_count: totalClients,
+          device_count: totalDevices,
+          racks: locationRacks
+        };
+      });
+      
+      res.json(result);
+    });
+  });
+});
+
 // Get all locations with CNX Colocation enabled
-router.get('/cnx-colocation/locations', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
+router.get('/cnx-colocation/locations', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'read_only'), (req, res) => {
   const query = `
     SELECT lr.*, pc.cnx_colocation
     FROM location_reference lr
@@ -7187,7 +7358,7 @@ router.get('/cnx-colocation/locations', authenticateToken, authorizeModulePermis
 });
 
 // Update CNX Colocation location (design file and more info only)
-router.put('/cnx-colocation/locations/:id', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), colocationUpload.single('design_file'), (req, res) => {
+router.put('/cnx-colocation/locations/:id', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), colocationUpload.single('design_file'), (req, res) => {
   const locationId = req.params.id;
   const { more_info } = req.body;
   
@@ -7249,13 +7420,14 @@ router.put('/cnx-colocation/locations/:id', authenticateToken, authorizeModulePe
 // ====================================
 
 // Get racks for a location
-router.get('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
+router.get('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'read_only'), (req, res) => {
   const locationId = req.params.locationId;
   
   const query = `
     SELECT r.*, 
            COUNT(c.id) as client_count,
            COALESCE(SUM(c.power_purchased), 0) as allocated_power,
+           COALESCE(SUM(c.ru_purchased), 0) as ru_allocated,
            u.username, u.full_name
     FROM cnx_colocation_racks r
     LEFT JOIN cnx_colocation_clients c ON r.id = c.rack_id
@@ -7267,44 +7439,12 @@ router.get('/cnx-colocation/locations/:locationId/racks', authenticateToken, aut
   
   db.all(query, [locationId], (err, racks) => {
     if (err) return res.status(500).json({ error: err.message });
-    
-    // Calculate RU allocated from client ru_ranges for each rack
-    const racksWithRU = racks.map(rack => {
-      return new Promise((resolve) => {
-        db.all('SELECT ru_ranges FROM cnx_colocation_clients WHERE rack_id = ?', [rack.id], (err, clients) => {
-          if (err) {
-            console.error('Error calculating RU:', err);
-            resolve({ ...rack, ru_allocated: 0 });
-            return;
-          }
-          
-          let totalRU = 0;
-          clients.forEach(client => {
-            if (client.ru_ranges) {
-              try {
-                const ranges = JSON.parse(client.ru_ranges);
-                ranges.forEach(range => {
-                  totalRU += (range.end - range.start + 1);
-                });
-              } catch (e) {
-                console.error('Error parsing RU ranges:', e);
-              }
-            }
-          });
-          
-          resolve({ ...rack, ru_allocated: totalRU });
-        });
-      });
-    });
-    
-    Promise.all(racksWithRU).then(results => {
-      res.json(results);
-    });
+    res.json(racks);
   });
 });
 
 // Create rack (supports shared/dedicated types)
-router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), 
+router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), 
   colocationUpload.fields([
     { name: 'pricing_info_file', maxCount: 1 },
     { name: 'rack_design_file', maxCount: 1 }
@@ -7435,7 +7575,7 @@ router.post('/cnx-colocation/locations/:locationId/racks', authenticateToken, au
 });
 
 // Update rack
-router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), 
+router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), 
   colocationUpload.fields([
     { name: 'pricing_info_file', maxCount: 1 },
     { name: 'rack_design_file', maxCount: 1 }
@@ -7536,7 +7676,7 @@ router.put('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModulePe
 });
 
 // Delete rack
-router.delete('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+router.delete('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const rackId = req.params.rackId;
   
   // Get rack data before deletion
@@ -7598,7 +7738,7 @@ router.delete('/cnx-colocation/racks/:rackId', authenticateToken, authorizeModul
 // ====================================
 
 // Get clients for a rack
-router.get('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
+router.get('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'read_only'), (req, res) => {
   const rackId = req.params.rackId;
   
   db.all(
@@ -7616,7 +7756,7 @@ router.get('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorize
 });
 
 // Create client (with RU purchased tracking)
-router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const rackId = req.params.rackId;
   const { client_name, power_purchased, space_power_ucn, design_sharepoint_link, ru_purchased, more_info } = req.body;
   
@@ -7688,7 +7828,7 @@ router.post('/cnx-colocation/racks/:rackId/clients', authenticateToken, authoriz
 });
 
 // Update client (with RU purchased tracking)
-router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const clientId = req.params.clientId;
   const { client_name, power_purchased, space_power_ucn, design_sharepoint_link, ru_purchased, more_info } = req.body;
   
@@ -7750,7 +7890,7 @@ router.put('/cnx-colocation/clients/:clientId', authenticateToken, authorizeModu
 });
 
 // Delete client
-router.delete('/cnx-colocation/clients/:clientId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+router.delete('/cnx-colocation/clients/:clientId', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const clientId = req.params.clientId;
   
   // Get client data before deletion
@@ -7769,8 +7909,146 @@ router.delete('/cnx-colocation/clients/:clientId', authenticateToken, authorizeM
   });
 });
 
+// Update client RU ranges (for rack elevation assignment)
+router.put('/cnx-colocation/clients/:clientId/ru-ranges', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
+  const clientId = req.params.clientId;
+  const { ru_ranges } = req.body;
+  
+  db.get('SELECT c.*, r.total_ru, r.ipc_reserved_ru_ranges, r.id as rack_db_id FROM cnx_colocation_clients c JOIN cnx_colocation_racks r ON c.rack_id = r.id WHERE c.id = ?', [clientId], (err, client) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    
+    const totalRU = client.total_ru || 42;
+    const rangesJson = JSON.stringify(ru_ranges || []);
+    
+    // Validate ranges are within rack bounds
+    if (ru_ranges && ru_ranges.length > 0) {
+      for (const range of ru_ranges) {
+        if (range.start < 1 || range.end > totalRU || range.start > range.end) {
+          return res.status(400).json({ error: `Invalid RU range: ${range.start}-${range.end}. Must be between 1 and ${totalRU}` });
+        }
+      }
+      
+      // Check for overlap with IPC reserved ranges
+      const ipcRanges = client.ipc_reserved_ru_ranges ? JSON.parse(client.ipc_reserved_ru_ranges) : [];
+      for (const range of ru_ranges) {
+        for (const ipcRange of ipcRanges) {
+          if (range.start <= ipcRange.end && range.end >= ipcRange.start) {
+            return res.status(400).json({ error: `RU range ${range.start}-${range.end} overlaps with IPC reserved range ${ipcRange.start}-${ipcRange.end}` });
+          }
+        }
+      }
+      
+      // Check for overlap with other clients' ranges
+      db.all('SELECT id, client_name, ru_ranges FROM cnx_colocation_clients WHERE rack_id = ? AND id != ?', [client.rack_id, clientId], (overlapErr, otherClients) => {
+        if (overlapErr) return res.status(500).json({ error: overlapErr.message });
+        
+        for (const otherClient of otherClients) {
+          if (otherClient.ru_ranges) {
+            const otherRanges = JSON.parse(otherClient.ru_ranges);
+            for (const range of ru_ranges) {
+              for (const otherRange of otherRanges) {
+                if (range.start <= otherRange.end && range.end >= otherRange.start) {
+                  return res.status(400).json({ error: `RU range ${range.start}-${range.end} overlaps with ${otherClient.client_name}'s range ${otherRange.start}-${otherRange.end}` });
+                }
+              }
+            }
+          }
+        }
+        
+        proceedWithUpdate();
+      });
+    } else {
+      proceedWithUpdate();
+    }
+    
+    function proceedWithUpdate() {
+      db.run(
+        'UPDATE cnx_colocation_clients SET ru_ranges = ?, updated_by = ?, updated_date = ? WHERE id = ?',
+        [rangesJson, req.user.id, new Date().toISOString(), clientId],
+        function(updateErr) {
+          if (updateErr) return res.status(500).json({ error: updateErr.message });
+          
+          try {
+            logChange(req.user.id, 'cnx_colocation_clients', client.client_name, 'UPDATE', 
+              { ru_ranges: client.ru_ranges }, { ru_ranges: rangesJson }, req);
+          } catch (logError) {
+            console.error('Failed to log RU range update:', logError);
+          }
+          
+          res.json({ message: 'Client RU ranges updated successfully' });
+        }
+      );
+    }
+  });
+});
+
+// Update IPC reserved RU ranges for a rack
+router.put('/cnx-colocation/racks/:rackId/ipc-reserved', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
+  const rackId = req.params.rackId;
+  const { ipc_reserved_ru_ranges } = req.body;
+  
+  db.get('SELECT * FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rack) return res.status(404).json({ error: 'Rack not found' });
+    
+    const totalRU = rack.total_ru || 42;
+    const rangesJson = JSON.stringify(ipc_reserved_ru_ranges || []);
+    
+    // Validate ranges
+    if (ipc_reserved_ru_ranges && ipc_reserved_ru_ranges.length > 0) {
+      for (const range of ipc_reserved_ru_ranges) {
+        if (range.start < 1 || range.end > totalRU || range.start > range.end) {
+          return res.status(400).json({ error: `Invalid IPC reserved range: ${range.start}-${range.end}. Must be between 1 and ${totalRU}` });
+        }
+      }
+      
+      // Check for overlap with client ranges
+      db.all('SELECT id, client_name, ru_ranges FROM cnx_colocation_clients WHERE rack_id = ?', [rackId], (clientErr, clients) => {
+        if (clientErr) return res.status(500).json({ error: clientErr.message });
+        
+        for (const client of clients) {
+          if (client.ru_ranges) {
+            const clientRanges = JSON.parse(client.ru_ranges);
+            for (const range of ipc_reserved_ru_ranges) {
+              for (const clientRange of clientRanges) {
+                if (range.start <= clientRange.end && range.end >= clientRange.start) {
+                  return res.status(400).json({ error: `IPC range ${range.start}-${range.end} overlaps with ${client.client_name}'s range ${clientRange.start}-${clientRange.end}` });
+                }
+              }
+            }
+          }
+        }
+        
+        proceedWithUpdate();
+      });
+    } else {
+      proceedWithUpdate();
+    }
+    
+    function proceedWithUpdate() {
+      db.run(
+        'UPDATE cnx_colocation_racks SET ipc_reserved_ru_ranges = ?, updated_by = ?, updated_date = ? WHERE id = ?',
+        [rangesJson, req.user.id, new Date().toISOString(), rackId],
+        function(updateErr) {
+          if (updateErr) return res.status(500).json({ error: updateErr.message });
+          
+          try {
+            logChange(req.user.id, 'cnx_colocation_racks', rack.rack_id, 'UPDATE', 
+              { ipc_reserved_ru_ranges: rack.ipc_reserved_ru_ranges }, { ipc_reserved_ru_ranges: rangesJson }, req);
+          } catch (logError) {
+            console.error('Failed to log IPC reserved update:', logError);
+          }
+          
+          res.json({ message: 'IPC reserved RU ranges updated successfully' });
+        }
+      );
+    }
+  });
+});
+
 // Get rack elevation data
-router.get('/cnx-colocation/racks/:rackId/elevation', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
+router.get('/cnx-colocation/racks/:rackId/elevation', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'read_only'), (req, res) => {
   const rackId = req.params.rackId;
   
   // Get rack details
@@ -7812,7 +8090,7 @@ router.get('/cnx-colocation/racks/:rackId/elevation', authenticateToken, authori
 // ====================================
 
 // Get devices for a rack
-router.get('/cnx-colocation/racks/:rackId/devices', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
+router.get('/cnx-colocation/racks/:rackId/devices', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'read_only'), (req, res) => {
   const rackId = req.params.rackId;
   
   db.all(
@@ -7831,7 +8109,7 @@ router.get('/cnx-colocation/racks/:rackId/devices', authenticateToken, authorize
 });
 
 // Create device
-router.post('/cnx-colocation/racks/:rackId/devices', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+router.post('/cnx-colocation/racks/:rackId/devices', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const rackId = req.params.rackId;
   const { client_id, name, model, serial, start_ru, height_ru, position, power_kw, notes } = req.body;
   
@@ -7917,7 +8195,7 @@ router.post('/cnx-colocation/racks/:rackId/devices', authenticateToken, authoriz
 });
 
 // Update device
-router.put('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+router.put('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const deviceId = req.params.deviceId;
   const { client_id, name, model, serial, start_ru, height_ru, position, power_kw, notes } = req.body;
   
@@ -7986,7 +8264,7 @@ router.put('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModu
 });
 
 // Delete device
-router.delete('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+router.delete('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const deviceId = req.params.deviceId;
   
   db.get('SELECT * FROM cnx_rack_devices WHERE id = ?', [deviceId], (err, device) => {
@@ -8005,11 +8283,211 @@ router.delete('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeM
 });
 
 // ====================================
+// CNX COLOCATION PRICING ENDPOINTS
+// ====================================
+
+// Get pricing config for all locations
+router.get('/cnx-colocation/pricing-config', authenticateToken, authorizeModulePermission('cnx_colocation_pricing', 'read_only'), (req, res) => {
+  const query = `
+    SELECT pc.*, 
+           lr.location_code, lr.city, lr.country, lr.datacenter_name,
+           lr.id as colocation_location_id
+    FROM cnx_colocation_pricing_config pc
+    JOIN location_reference lr ON pc.location_id = lr.id
+    ORDER BY lr.location_code
+  `;
+  
+  db.all(query, [], (err, configs) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(configs);
+  });
+});
+
+// Get pricing config for a specific location
+router.get('/cnx-colocation/pricing-config/:locationId', authenticateToken, authorizeModulePermission('cnx_colocation_pricing', 'read_only'), (req, res) => {
+  const query = `
+    SELECT pc.*, 
+           lr.location_code, lr.city, lr.country, lr.datacenter_name,
+           lr.cross_connect_nrc as location_cc_nrc, lr.cross_connect_mrc as location_cc_mrc,
+           lr.cross_connect_nrc_currency, lr.cross_connect_mrc_currency
+    FROM cnx_colocation_pricing_config pc
+    JOIN location_reference lr ON pc.location_id = lr.id
+    WHERE pc.location_id = ?
+  `;
+  
+  db.get(query, [req.params.locationId], (err, config) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!config) return res.status(404).json({ error: 'Pricing config not found for this location' });
+    res.json(config);
+  });
+});
+
+// Create or update pricing config for a location
+router.put('/cnx-colocation/pricing-config/:locationId', authenticateToken, authorizeModulePermission('cnx_colocation_pricing', 'provisioner'), (req, res) => {
+  const locationId = req.params.locationId;
+  const {
+    currency, price_per_ru_month, price_per_kw_month, ru_per_kw_ratio,
+    tor_port_price_month, premium_tor_port_price_month,
+    internet_access_price_month, internet_access_bandwidth_mb,
+    setup_nrc, cross_connect_nrc, cross_connect_mrc,
+    discount_12_month, discount_24_month, discount_36_month, notes
+  } = req.body;
+  
+  // Check if config exists
+  db.get('SELECT id FROM cnx_colocation_pricing_config WHERE location_id = ?', [locationId], (err, existing) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    if (existing) {
+      // Update
+      db.run(`
+        UPDATE cnx_colocation_pricing_config SET
+          currency = ?, price_per_ru_month = ?, price_per_kw_month = ?, ru_per_kw_ratio = ?,
+          tor_port_price_month = ?, premium_tor_port_price_month = ?,
+          internet_access_price_month = ?, internet_access_bandwidth_mb = ?,
+          setup_nrc = ?, cross_connect_nrc = ?, cross_connect_mrc = ?,
+          discount_12_month = ?, discount_24_month = ?, discount_36_month = ?,
+          notes = ?, updated_by = ?, updated_date = ?
+        WHERE location_id = ?
+      `, [
+        currency || 'USD', parseFloat(price_per_ru_month) || 0, parseFloat(price_per_kw_month) || 0,
+        parseFloat(ru_per_kw_ratio) || 4,
+        parseFloat(tor_port_price_month) || 0, parseFloat(premium_tor_port_price_month) || 0,
+        parseFloat(internet_access_price_month) || 0, parseInt(internet_access_bandwidth_mb) || 10,
+        parseFloat(setup_nrc) || 0, cross_connect_nrc != null ? parseFloat(cross_connect_nrc) : null,
+        cross_connect_mrc != null ? parseFloat(cross_connect_mrc) : null,
+        parseFloat(discount_12_month) || 0, parseFloat(discount_24_month) || 5, parseFloat(discount_36_month) || 10,
+        notes || null, req.user.id, new Date().toISOString(), locationId
+      ], function(updateErr) {
+        if (updateErr) return res.status(500).json({ error: updateErr.message });
+        res.json({ message: 'Pricing config updated successfully' });
+      });
+    } else {
+      // Insert
+      db.run(`
+        INSERT INTO cnx_colocation_pricing_config (
+          location_id, currency, price_per_ru_month, price_per_kw_month, ru_per_kw_ratio,
+          tor_port_price_month, premium_tor_port_price_month,
+          internet_access_price_month, internet_access_bandwidth_mb,
+          setup_nrc, cross_connect_nrc, cross_connect_mrc,
+          discount_12_month, discount_24_month, discount_36_month,
+          notes, updated_by, updated_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        locationId, currency || 'USD', parseFloat(price_per_ru_month) || 0,
+        parseFloat(price_per_kw_month) || 0, parseFloat(ru_per_kw_ratio) || 4,
+        parseFloat(tor_port_price_month) || 0, parseFloat(premium_tor_port_price_month) || 0,
+        parseFloat(internet_access_price_month) || 0, parseInt(internet_access_bandwidth_mb) || 10,
+        parseFloat(setup_nrc) || 0, cross_connect_nrc != null ? parseFloat(cross_connect_nrc) : null,
+        cross_connect_mrc != null ? parseFloat(cross_connect_mrc) : null,
+        parseFloat(discount_12_month) || 0, parseFloat(discount_24_month) || 5, parseFloat(discount_36_month) || 10,
+        notes || null, req.user.id, new Date().toISOString()
+      ], function(insertErr) {
+        if (insertErr) return res.status(500).json({ error: insertErr.message });
+        res.json({ message: 'Pricing config created successfully', id: this.lastID });
+      });
+    }
+  });
+});
+
+// Get colocation locations for pricing (with pricing config status)
+router.get('/cnx-colocation/pricing-locations', authenticateToken, authorizeModulePermission('cnx_colocation_pricing', 'read_only'), (req, res) => {
+  const query = `
+    SELECT lr.id as colocation_location_id, 
+           lr.location_code, lr.city, lr.country, lr.datacenter_name, lr.provider,
+           lr.cross_connect_nrc as location_cc_nrc, lr.cross_connect_mrc as location_cc_mrc,
+           lr.cross_connect_nrc_currency, lr.cross_connect_mrc_currency,
+           pc.id as has_pricing_config,
+           pc.currency, pc.price_per_ru_month, pc.price_per_kw_month
+    FROM location_reference lr
+    JOIN pop_capabilities pca ON lr.id = pca.location_id AND pca.cnx_colocation = 1
+    LEFT JOIN cnx_colocation_pricing_config pc ON lr.id = pc.location_id
+    ORDER BY lr.location_code
+  `;
+  
+  db.all(query, [], (err, locations) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(locations);
+  });
+});
+
+// Save a colocation quote
+router.post('/cnx-colocation/quotes', authenticateToken, authorizeModulePermission('cnx_colocation_pricing', 'read_only'), (req, res) => {
+  const {
+    location_id, client_name, contact_name, contact_email,
+    rack_type, ru_count, power_kw, tor_ports, premium_tor_ports,
+    internet_access, managed_cross_connects, contract_term_months,
+    currency, mrc_total, nrc_total, pricing_breakdown, notes
+  } = req.body;
+  
+  if (!location_id || !client_name) {
+    return res.status(400).json({ error: 'Location and client name are required' });
+  }
+  
+  // Generate quote reference
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const randomSuffix = Math.random().toString(36).substr(2, 4).toUpperCase();
+  const quoteReference = `COLO-${dateStr}-${randomSuffix}`;
+  
+  db.run(`
+    INSERT INTO cnx_colocation_quotes (
+      quote_reference, location_id, client_name, contact_name, contact_email,
+      rack_type, ru_count, power_kw, tor_ports, premium_tor_ports,
+      internet_access, managed_cross_connects, contract_term_months,
+      currency, mrc_total, nrc_total, pricing_breakdown, notes,
+      status, created_by, updated_by, created_date, updated_date
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)
+  `, [
+    quoteReference, location_id, client_name, contact_name || null, contact_email || null,
+    rack_type || 'shared', parseInt(ru_count) || 0, parseFloat(power_kw) || 0,
+    parseInt(tor_ports) || 0, parseInt(premium_tor_ports) || 0,
+    parseInt(internet_access) || 0, parseInt(managed_cross_connects) || 0,
+    parseInt(contract_term_months) || 12,
+    currency || 'USD', parseFloat(mrc_total) || 0, parseFloat(nrc_total) || 0,
+    pricing_breakdown ? JSON.stringify(pricing_breakdown) : null, notes || null,
+    req.user.id, req.user.id, new Date().toISOString(), new Date().toISOString()
+  ], function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ 
+      message: 'Quote saved successfully', 
+      id: this.lastID,
+      quote_reference: quoteReference
+    });
+  });
+});
+
+// Get all saved quotes
+router.get('/cnx-colocation/quotes', authenticateToken, authorizeModulePermission('cnx_colocation_pricing', 'read_only'), (req, res) => {
+  const query = `
+    SELECT q.*, 
+           lr.location_code, lr.city, lr.country,
+           u.full_name as created_by_name
+    FROM cnx_colocation_quotes q
+    JOIN location_reference lr ON q.location_id = lr.id
+    LEFT JOIN users u ON q.created_by = u.id
+    ORDER BY q.created_date DESC
+  `;
+  
+  db.all(query, [], (err, quotes) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(quotes);
+  });
+});
+
+// Delete a quote
+router.delete('/cnx-colocation/quotes/:quoteId', authenticateToken, authorizeModulePermission('cnx_colocation_pricing', 'provisioner'), (req, res) => {
+  db.run('DELETE FROM cnx_colocation_quotes WHERE id = ?', [req.params.quoteId], function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    if (this.changes === 0) return res.status(404).json({ error: 'Quote not found' });
+    res.json({ message: 'Quote deleted successfully' });
+  });
+});
+
+// ====================================
 // CNX COLOCATION FILE DOWNLOAD ENDPOINTS
 // ====================================
 
 // Download location design file
-router.get('/cnx-colocation/locations/:id/download', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
+router.get('/cnx-colocation/locations/:id/download', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'read_only'), (req, res) => {
   const locationId = req.params.id;
   
   db.get('SELECT design_file FROM location_reference WHERE id = ?', [locationId], (err, location) => {
@@ -8040,7 +8518,7 @@ router.get('/cnx-colocation/locations/:id/download', authenticateToken, authoriz
 });
 
 // Download rack pricing file
-router.get('/cnx-colocation/racks/:id/download', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
+router.get('/cnx-colocation/racks/:id/download', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'read_only'), (req, res) => {
   const rackId = req.params.id;
   
   db.get('SELECT pricing_info_file FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
@@ -8072,7 +8550,7 @@ router.get('/cnx-colocation/racks/:id/download', authenticateToken, authorizeMod
 
 
 // Delete location design file
-router.delete('/cnx-colocation/locations/:id/design-file', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+router.delete('/cnx-colocation/locations/:id/design-file', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const locationId = req.params.id;
   
   db.get('SELECT design_file FROM location_reference WHERE id = ?', [locationId], (err, location) => {
@@ -8095,7 +8573,7 @@ router.delete('/cnx-colocation/locations/:id/design-file', authenticateToken, au
   });
 });
 // Download rack design file
-router.get('/cnx-colocation/racks/:id/design-download', authenticateToken, authorizeModulePermission('cnx_colocation', 'read_only'), (req, res) => {
+router.get('/cnx-colocation/racks/:id/design-download', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'read_only'), (req, res) => {
   const rackId = req.params.id;
   
   db.get('SELECT rack_design_file FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
@@ -8123,7 +8601,7 @@ router.get('/cnx-colocation/racks/:id/design-download', authenticateToken, autho
 });
 
 // Delete rack pricing file
-router.delete('/cnx-colocation/racks/:id/pricing-file', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+router.delete('/cnx-colocation/racks/:id/pricing-file', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const rackId = req.params.id;
   
   db.get('SELECT pricing_info_file FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
@@ -8147,7 +8625,7 @@ router.delete('/cnx-colocation/racks/:id/pricing-file', authenticateToken, autho
 });
 
 // Delete rack design file
-router.delete('/cnx-colocation/racks/:id/design-file', authenticateToken, authorizeModulePermission('cnx_colocation', 'provisioner'), (req, res) => {
+router.delete('/cnx-colocation/racks/:id/design-file', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const rackId = req.params.id;
   
   db.get('SELECT rack_design_file FROM cnx_colocation_racks WHERE id = ?', [rackId], (err, rack) => {
@@ -9213,7 +9691,8 @@ const bulkUploadModules = {
     table: 'extranet_products',
     templateFields: [
       'provider_id', 'product_name', 'isf', 'suggested_bandwidth',
-      'source_datacenters', 'isf_resiliency', 'more_info'
+      'primary_datacenter', 'secondary_datacenters', 'primary_pricing_city',
+      'isf_resiliency', 'more_info'
     ],
     requiredFields: ['provider_id', 'product_name'],
     sampleData: {
@@ -9221,7 +9700,9 @@ const bulkUploadModules = {
       product_name: 'Sample Feed Product',
       isf: 'ISF001',
       suggested_bandwidth: '10',
-      source_datacenters: 'EQXLON4,CYXTOK2',
+      primary_datacenter: 'EQXLON4',
+      secondary_datacenters: 'CYXTOK2',
+      primary_pricing_city: 'London',
       isf_resiliency: 'Resilient',
       more_info: 'Sample extranet product for market data'
     }
@@ -9257,13 +9738,72 @@ const bulkUploadModules = {
   },
   extranet_rate_card: {
     table: 'extranet_rate_card',
-    templateFields: ['bandwidth', 'region', 'tier', 'price_usd'],
-    requiredFields: ['bandwidth', 'region', 'tier', 'price_usd'],
+    templateFields: ['provider_region', 'bandwidth', 'region', 'tier', 'price_usd'],
+    requiredFields: ['provider_region', 'bandwidth', 'region', 'tier', 'price_usd'],
     sampleData: {
+      provider_region: 'APAC',
       bandwidth: '1Mb',
       region: 'APAC',
       tier: 'Tier 1',
       price_usd: '500'
+    }
+  },
+  cnx_colocation_racks: {
+    table: 'cnx_colocation_racks',
+    templateFields: [
+      'location_code', 'rack_id', 'rack_type', 'total_power_kva', 'total_ru',
+      'ipc_reserved_ru_ranges', 'tor_network_infrastructure', 'exchange_facing_infrastructure', 'more_info'
+    ],
+    requiredFields: ['location_code', 'rack_id', 'rack_type', 'total_power_kva'],
+    sampleData: {
+      location_code: 'LON1',
+      rack_id: 'R01',
+      rack_type: 'shared',
+      total_power_kva: '10',
+      total_ru: '42',
+      ipc_reserved_ru_ranges: '1-3',
+      tor_network_infrastructure: 'Yes - Cisco 3548',
+      exchange_facing_infrastructure: '',
+      more_info: 'Main shared rack'
+    }
+  },
+  cnx_colocation_clients: {
+    table: 'cnx_colocation_clients',
+    templateFields: [
+      'location_code', 'rack_id', 'client_name', 'ru_purchased', 'power_purchased',
+      'space_power_ucn', 'design_sharepoint_link', 'more_info'
+    ],
+    requiredFields: ['location_code', 'rack_id', 'client_name', 'ru_purchased', 'power_purchased'],
+    sampleData: {
+      location_code: 'LON1',
+      rack_id: 'R01',
+      client_name: 'Acme Corp',
+      ru_purchased: '10',
+      power_purchased: '2.5',
+      space_power_ucn: 'UCN-12345',
+      design_sharepoint_link: 'https://sharepoint.example.com/design',
+      more_info: 'Primary client'
+    }
+  },
+  cnx_rack_devices: {
+    table: 'cnx_rack_devices',
+    templateFields: [
+      'location_code', 'rack_id', 'client_name', 'name', 'model', 'serial',
+      'start_ru', 'height_ru', 'position', 'power_kw', 'notes'
+    ],
+    requiredFields: ['location_code', 'rack_id', 'name', 'start_ru', 'height_ru'],
+    sampleData: {
+      location_code: 'LON1',
+      rack_id: 'R01',
+      client_name: 'Acme Corp',
+      name: 'Core Switch',
+      model: 'Cisco 9300',
+      serial: 'SN12345678',
+      start_ru: '5',
+      height_ru: '2',
+      position: 'front',
+      power_kw: '500',
+      notes: 'Primary network switch'
     }
   },
 };
@@ -9404,12 +9944,55 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
              GROUP BY pr.id
              ORDER BY pr.rule_name
              LIMIT ?`;
+  } else if (module === 'cnx_colocation_racks') {
+    query = `SELECT lr.location_code, r.rack_id, r.rack_type, r.total_power_kva, r.total_ru,
+             r.ipc_reserved_ru_ranges, r.tor_network_infrastructure, r.exchange_facing_infrastructure, r.more_info
+             FROM cnx_colocation_racks r
+             JOIN location_reference lr ON r.location_id = lr.id
+             ORDER BY lr.location_code, r.rack_id
+             LIMIT ?`;
+  } else if (module === 'cnx_colocation_clients') {
+    query = `SELECT lr.location_code, r.rack_id, c.client_name, c.ru_purchased, c.power_purchased,
+             c.space_power_ucn, c.design_sharepoint_link, c.more_info
+             FROM cnx_colocation_clients c
+             JOIN cnx_colocation_racks r ON c.rack_id = r.id
+             JOIN location_reference lr ON r.location_id = lr.id
+             ORDER BY lr.location_code, r.rack_id, c.client_name
+             LIMIT ?`;
+  } else if (module === 'cnx_rack_devices') {
+    query = `SELECT lr.location_code, r.rack_id, COALESCE(cl.client_name, '') as client_name,
+             d.name, d.model, d.serial, d.start_ru, d.height_ru, d.position, d.power_kw, d.notes
+             FROM cnx_rack_devices d
+             JOIN cnx_colocation_racks r ON d.rack_id = r.id
+             JOIN location_reference lr ON r.location_id = lr.id
+             LEFT JOIN cnx_colocation_clients cl ON d.client_id = cl.id
+             ORDER BY lr.location_code, r.rack_id, d.start_ru
+             LIMIT ?`;
   }
   
   db.all(query, queryParams, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     
     try {
+      // Post-process CNX colocation racks to convert JSON ranges back to human-readable format
+      if (module === 'cnx_colocation_racks') {
+        rows = rows.map(row => {
+          if (row.ipc_reserved_ru_ranges) {
+            try {
+              const ranges = JSON.parse(row.ipc_reserved_ru_ranges);
+              if (Array.isArray(ranges)) {
+                row.ipc_reserved_ru_ranges = ranges.map(r => 
+                  r.start === r.end ? `${r.start}` : `${r.start}-${r.end}`
+                ).join(',');
+              }
+            } catch (e) {
+              // Keep raw value if not valid JSON
+            }
+          }
+          return row;
+        });
+      }
+      
       // Determine fields for CSV based on module
       let csvFields = config.templateFields;
       
@@ -9736,6 +10319,67 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                 cleanedRow[field] = 0; // Default to false for boolean fields
               }
             });
+          } else if (module === 'cnx_colocation_racks') {
+            // Validate rack_type
+            const validRackTypes = ['shared', 'dedicated'];
+            if (cleanedRow.rack_type && !validRackTypes.includes(cleanedRow.rack_type.toLowerCase())) {
+              moduleValidationErrors.push('Invalid rack_type. Must be shared or dedicated');
+            } else {
+              cleanedRow.rack_type = (cleanedRow.rack_type || 'shared').toLowerCase();
+            }
+            // Validate numeric fields
+            if (cleanedRow.total_power_kva && isNaN(parseFloat(cleanedRow.total_power_kva))) {
+              moduleValidationErrors.push('total_power_kva must be a number');
+            }
+            if (cleanedRow.total_ru && isNaN(parseInt(cleanedRow.total_ru))) {
+              moduleValidationErrors.push('total_ru must be a number');
+            }
+            if (!cleanedRow.total_ru) cleanedRow.total_ru = '42';
+            // Parse IPC reserved RU ranges from "1-3,5-7" format
+            if (cleanedRow.ipc_reserved_ru_ranges && cleanedRow.ipc_reserved_ru_ranges.trim()) {
+              try {
+                const ranges = cleanedRow.ipc_reserved_ru_ranges.split(',').map(r => {
+                  const parts = r.trim().split('-');
+                  if (parts.length === 1) return { start: parseInt(parts[0]), end: parseInt(parts[0]) };
+                  return { start: parseInt(parts[0]), end: parseInt(parts[1]) };
+                });
+                for (const range of ranges) {
+                  if (isNaN(range.start) || isNaN(range.end) || range.start > range.end || range.start < 1) {
+                    moduleValidationErrors.push(`Invalid IPC reserved RU range: ${r}`);
+                  }
+                }
+                cleanedRow._ipc_reserved_parsed = JSON.stringify(ranges);
+              } catch (e) {
+                moduleValidationErrors.push('Invalid ipc_reserved_ru_ranges format. Use "1-3,5-7" format');
+              }
+            }
+            // Mark for foreign key lookup
+            cleanedRow._needsLocationLookup = true;
+          } else if (module === 'cnx_colocation_clients') {
+            // Validate numeric fields
+            if (cleanedRow.ru_purchased && isNaN(parseInt(cleanedRow.ru_purchased))) {
+              moduleValidationErrors.push('ru_purchased must be a number');
+            }
+            if (cleanedRow.power_purchased && isNaN(parseFloat(cleanedRow.power_purchased))) {
+              moduleValidationErrors.push('power_purchased must be a number');
+            }
+            cleanedRow._needsRackLookup = true;
+          } else if (module === 'cnx_rack_devices') {
+            // Validate numeric fields
+            if (cleanedRow.start_ru && isNaN(parseInt(cleanedRow.start_ru))) {
+              moduleValidationErrors.push('start_ru must be a number');
+            }
+            if (cleanedRow.height_ru && isNaN(parseInt(cleanedRow.height_ru))) {
+              moduleValidationErrors.push('height_ru must be a number');
+            }
+            // Validate position
+            const validPositions = ['front', 'rear'];
+            if (cleanedRow.position && !validPositions.includes(cleanedRow.position.toLowerCase())) {
+              moduleValidationErrors.push('position must be front or rear');
+            }
+            if (!cleanedRow.position) cleanedRow.position = 'front';
+            if (!cleanedRow.height_ru) cleanedRow.height_ru = '1';
+            cleanedRow._needsRackLookup = true;
           }
           allRowErrors.push(...moduleValidationErrors);
           
@@ -10573,6 +11217,175 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
           } else if (module === 'exchanges') {
             sql = `INSERT OR REPLACE INTO exchanges (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
             values = config.templateFields.map(field => cleanRow[field] || null);
+          } else if (module === 'cnx_colocation_racks') {
+            try {
+              // Look up location by location_code (location_reference.id is used as location_id in racks)
+              const location = await new Promise((resolve, reject) => {
+                db.get(
+                  `SELECT lr.id as location_id FROM location_reference lr
+                   JOIN pop_capabilities pc ON lr.id = pc.location_id AND pc.cnx_colocation = 1
+                   WHERE LOWER(TRIM(lr.location_code)) = LOWER(TRIM(?))`,
+                  [cleanRow.location_code],
+                  (err, row) => { if (err) reject(err); else resolve(row); }
+                );
+              });
+              if (!location) {
+                insertErrors.push(`Row ${index + 1}: Location code '${cleanRow.location_code}' not found in CNX colocation locations`);
+                continue;
+              }
+              
+              // Check for existing rack with same rack_id in this location
+              const existingRack = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT id FROM cnx_colocation_racks WHERE location_id = ? AND LOWER(TRIM(rack_id)) = LOWER(TRIM(?))',
+                  [location.location_id, cleanRow.rack_id],
+                  (err, row) => { if (err) reject(err); else resolve(row); }
+                );
+              });
+              
+              const ipcRanges = cleanRow._ipc_reserved_parsed || null;
+              
+              if (existingRack) {
+                sql = `UPDATE cnx_colocation_racks SET rack_type = ?, total_power_kva = ?, total_ru = ?, 
+                       ipc_reserved_ru_ranges = ?, tor_network_infrastructure = ?, exchange_facing_infrastructure = ?,
+                       more_info = ?, updated_by = ?, updated_date = ? WHERE id = ?`;
+                values = [
+                  cleanRow.rack_type, parseFloat(cleanRow.total_power_kva), parseInt(cleanRow.total_ru),
+                  ipcRanges, cleanRow.tor_network_infrastructure || null, cleanRow.exchange_facing_infrastructure || null,
+                  cleanRow.more_info || null, req.user.id, new Date().toISOString(), existingRack.id
+                ];
+              } else {
+                sql = `INSERT INTO cnx_colocation_racks (location_id, rack_id, rack_type, total_power_kva, total_ru, 
+                       ipc_reserved_ru_ranges, tor_network_infrastructure, exchange_facing_infrastructure, more_info, 
+                       updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                values = [
+                  location.location_id, cleanRow.rack_id, cleanRow.rack_type, parseFloat(cleanRow.total_power_kva),
+                  parseInt(cleanRow.total_ru), ipcRanges, cleanRow.tor_network_infrastructure || null,
+                  cleanRow.exchange_facing_infrastructure || null, cleanRow.more_info || null,
+                  req.user.id, new Date().toISOString()
+                ];
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error - ${dbError.message}`);
+              continue;
+            }
+          } else if (module === 'cnx_colocation_clients') {
+            try {
+              // Look up rack by location_code + rack_id
+              const rack = await new Promise((resolve, reject) => {
+                db.get(
+                  `SELECT r.id as rack_id_db FROM cnx_colocation_racks r
+                   JOIN location_reference lr ON r.location_id = lr.id
+                   WHERE LOWER(TRIM(lr.location_code)) = LOWER(TRIM(?)) AND LOWER(TRIM(r.rack_id)) = LOWER(TRIM(?))`,
+                  [cleanRow.location_code, cleanRow.rack_id],
+                  (err, row) => { if (err) reject(err); else resolve(row); }
+                );
+              });
+              if (!rack) {
+                insertErrors.push(`Row ${index + 1}: Rack '${cleanRow.rack_id}' at location '${cleanRow.location_code}' not found`);
+                continue;
+              }
+              
+              // Check for existing client with same name in this rack
+              const existingClient = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT id FROM cnx_colocation_clients WHERE rack_id = ? AND LOWER(TRIM(client_name)) = LOWER(TRIM(?))',
+                  [rack.rack_id_db, cleanRow.client_name],
+                  (err, row) => { if (err) reject(err); else resolve(row); }
+                );
+              });
+              
+              if (existingClient) {
+                sql = `UPDATE cnx_colocation_clients SET ru_purchased = ?, power_purchased = ?, 
+                       space_power_ucn = ?, design_sharepoint_link = ?, more_info = ?,
+                       updated_by = ?, updated_date = ? WHERE id = ?`;
+                values = [
+                  parseInt(cleanRow.ru_purchased), parseFloat(cleanRow.power_purchased),
+                  cleanRow.space_power_ucn || null, cleanRow.design_sharepoint_link || null,
+                  cleanRow.more_info || null, req.user.id, new Date().toISOString(), existingClient.id
+                ];
+              } else {
+                sql = `INSERT INTO cnx_colocation_clients (rack_id, client_name, ru_purchased, power_purchased, 
+                       space_power_ucn, design_sharepoint_link, more_info, updated_by, updated_date) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                values = [
+                  rack.rack_id_db, cleanRow.client_name, parseInt(cleanRow.ru_purchased),
+                  parseFloat(cleanRow.power_purchased), cleanRow.space_power_ucn || null,
+                  cleanRow.design_sharepoint_link || null, cleanRow.more_info || null,
+                  req.user.id, new Date().toISOString()
+                ];
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error - ${dbError.message}`);
+              continue;
+            }
+          } else if (module === 'cnx_rack_devices') {
+            try {
+              // Look up rack by location_code + rack_id
+              const rack = await new Promise((resolve, reject) => {
+                db.get(
+                  `SELECT r.id as rack_id_db FROM cnx_colocation_racks r
+                   JOIN location_reference lr ON r.location_id = lr.id
+                   WHERE LOWER(TRIM(lr.location_code)) = LOWER(TRIM(?)) AND LOWER(TRIM(r.rack_id)) = LOWER(TRIM(?))`,
+                  [cleanRow.location_code, cleanRow.rack_id],
+                  (err, row) => { if (err) reject(err); else resolve(row); }
+                );
+              });
+              if (!rack) {
+                insertErrors.push(`Row ${index + 1}: Rack '${cleanRow.rack_id}' at location '${cleanRow.location_code}' not found`);
+                continue;
+              }
+              
+              // Look up client by name (optional)
+              let clientId = null;
+              if (cleanRow.client_name && cleanRow.client_name.trim()) {
+                const client = await new Promise((resolve, reject) => {
+                  db.get(
+                    'SELECT id FROM cnx_colocation_clients WHERE rack_id = ? AND LOWER(TRIM(client_name)) = LOWER(TRIM(?))',
+                    [rack.rack_id_db, cleanRow.client_name],
+                    (err, row) => { if (err) reject(err); else resolve(row); }
+                  );
+                });
+                if (!client) {
+                  insertErrors.push(`Row ${index + 1}: Client '${cleanRow.client_name}' not found in rack '${cleanRow.rack_id}'`);
+                  continue;
+                }
+                clientId = client.id;
+              }
+              
+              // Check for existing device by name + start_ru in this rack
+              const existingDevice = await new Promise((resolve, reject) => {
+                db.get(
+                  'SELECT id FROM cnx_rack_devices WHERE rack_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND start_ru = ?',
+                  [rack.rack_id_db, cleanRow.name, parseInt(cleanRow.start_ru)],
+                  (err, row) => { if (err) reject(err); else resolve(row); }
+                );
+              });
+              
+              if (existingDevice) {
+                sql = `UPDATE cnx_rack_devices SET client_id = ?, name = ?, model = ?, serial = ?, 
+                       start_ru = ?, height_ru = ?, position = ?, power_kw = ?, notes = ?,
+                       updated_by = ?, updated_date = ? WHERE id = ?`;
+                values = [
+                  clientId, cleanRow.name, cleanRow.model || null, cleanRow.serial || null,
+                  parseInt(cleanRow.start_ru), parseInt(cleanRow.height_ru), cleanRow.position || 'front',
+                  cleanRow.power_kw ? parseFloat(cleanRow.power_kw) : null, cleanRow.notes || null,
+                  req.user.id, new Date().toISOString(), existingDevice.id
+                ];
+              } else {
+                sql = `INSERT INTO cnx_rack_devices (rack_id, client_id, name, model, serial, start_ru, height_ru, 
+                       position, power_kw, notes, updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                values = [
+                  rack.rack_id_db, clientId, cleanRow.name, cleanRow.model || null, cleanRow.serial || null,
+                  parseInt(cleanRow.start_ru), parseInt(cleanRow.height_ru), cleanRow.position || 'front',
+                  cleanRow.power_kw ? parseFloat(cleanRow.power_kw) : null, cleanRow.notes || null,
+                  req.user.id, new Date().toISOString()
+                ];
+              }
+            } catch (dbError) {
+              insertErrors.push(`Row ${index + 1}: Database error - ${dbError.message}`);
+              continue;
+            }
           }
           
           try {
@@ -13460,7 +14273,7 @@ router.get('/extranets/:id/products', authenticateToken, authorizeModulePermissi
 // Create extranet product
 router.post('/extranets/:id/products', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), extranetProductUpload, async (req, res) => {
   const providerId = req.params.id;
-  const { product_name, isf, suggested_bandwidth, source_datacenters, isf_resiliency, more_info } = req.body;
+  const { product_name, isf, suggested_bandwidth, primary_datacenter, secondary_datacenters, primary_pricing_city, isf_resiliency, more_info } = req.body;
   
   if (!product_name) {
     return res.status(400).json({ error: 'Product name is required' });
@@ -13475,15 +14288,14 @@ router.post('/extranets/:id/products', authenticateToken, authorizeModulePermiss
     return res.status(400).json({ error: 'Invalid ISF resiliency value' });
   }
   
-  // Validate source_datacenters - allow existing locations OR valid external format
-  const validateDatacenters = async () => {
-    if (!source_datacenters) return { valid: true };
+  // Validate datacenter codes (primary_datacenter, secondary_datacenters)
+  const validateDatacenterCodes = async (dcString) => {
+    if (!dcString) return { valid: true };
     
-    const datacenters = source_datacenters.split(',').map(dc => dc.trim()).filter(dc => dc);
+    const datacenters = dcString.split(',').map(dc => dc.trim()).filter(dc => dc);
     const externalDcRegex = /^[A-Z]{6}[0-9]+$/;
     
     for (const dc of datacenters) {
-      // Check if it exists in location_reference
       const existsInDb = await new Promise((resolve, reject) => {
         db.get('SELECT location_code FROM location_reference WHERE location_code = ?', [dc], (err, row) => {
           if (err) reject(err);
@@ -13491,12 +14303,9 @@ router.post('/extranets/:id/products', authenticateToken, authorizeModulePermiss
         });
       });
       
-      if (existsInDb) continue; // Valid - exists in database
+      if (existsInDb) continue;
+      if (externalDcRegex.test(dc)) continue;
       
-      // Check if it matches external datacenter format
-      if (externalDcRegex.test(dc)) continue; // Valid - matches format
-      
-      // Invalid
       return { 
         valid: false, 
         error: `Invalid datacenter: ${dc}. Must be an existing location or match format (6 uppercase letters + numbers, e.g., EQXLON4)` 
@@ -13507,9 +14316,16 @@ router.post('/extranets/:id/products', authenticateToken, authorizeModulePermiss
   };
   
   try {
-    const dcValidation = await validateDatacenters();
-    if (!dcValidation.valid) {
-      return res.status(400).json({ error: dcValidation.error });
+    // Validate primary_datacenter
+    if (primary_datacenter) {
+      const primaryValidation = await validateDatacenterCodes(primary_datacenter);
+      if (!primaryValidation.valid) return res.status(400).json({ error: primaryValidation.error });
+    }
+    
+    // Validate secondary_datacenters
+    if (secondary_datacenters) {
+      const secondaryValidation = await validateDatacenterCodes(secondary_datacenters);
+      if (!secondaryValidation.valid) return res.status(400).json({ error: secondaryValidation.error });
     }
   } catch (err) {
     return res.status(500).json({ error: 'Error validating datacenters: ' + err.message });
@@ -13519,9 +14335,10 @@ router.post('/extranets/:id/products', authenticateToken, authorizeModulePermiss
   const designTemplatePath = req.files?.design_template?.[0]?.filename || null;
   
   db.run(
-    `INSERT INTO extranet_products (provider_id, product_name, isf, suggested_bandwidth, source_datacenters, isf_resiliency, design_file_path, design_template_path, more_info, created_by) 
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [providerId, product_name, isf || null, suggested_bandwidth || null, source_datacenters || null, 
+    `INSERT INTO extranet_products (provider_id, product_name, isf, suggested_bandwidth, primary_datacenter, secondary_datacenters, primary_pricing_city, isf_resiliency, design_file_path, design_template_path, more_info, created_by) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [providerId, product_name, isf || null, suggested_bandwidth || null,
+     primary_datacenter || null, secondary_datacenters || null, primary_pricing_city || null,
      isf_resiliency || null, designFilePath, designTemplatePath, more_info || null, req.user.id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
@@ -13530,7 +14347,7 @@ router.post('/extranets/:id/products', authenticateToken, authorizeModulePermiss
       
       try {
         logChange(req.user.id, 'extranet_products', recordId, 'CREATE', null, { 
-          provider_id: providerId, product_name, isf, suggested_bandwidth, source_datacenters, isf_resiliency, design_file_path: designFilePath, design_template_path: designTemplatePath, more_info 
+          provider_id: providerId, product_name, isf, suggested_bandwidth, primary_datacenter, secondary_datacenters, primary_pricing_city, isf_resiliency, design_file_path: designFilePath, design_template_path: designTemplatePath, more_info 
         }, req);
       } catch (logError) {
         console.error('Failed to log extranet product creation:', logError);
@@ -13544,22 +14361,21 @@ router.post('/extranets/:id/products', authenticateToken, authorizeModulePermiss
 // Update extranet product
 router.put('/extranets/:providerId/products/:productId', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), extranetProductUpload, async (req, res) => {
   const { providerId, productId } = req.params;
-  const { product_name, isf, suggested_bandwidth, source_datacenters, isf_resiliency, more_info } = req.body;
+  const { product_name, isf, suggested_bandwidth, primary_datacenter, secondary_datacenters, primary_pricing_city, isf_resiliency, more_info } = req.body;
   
   const validIsfResiliency = ['Single-Site Resilient', 'Multi-Site Resilient', 'Split-Site Resilient', 'Non-Resilient', 'Multi-Region Resilient'];
   if (isf_resiliency && !validIsfResiliency.includes(isf_resiliency)) {
     return res.status(400).json({ error: 'Invalid ISF resiliency value' });
   }
   
-  // Validate source_datacenters - allow existing locations OR valid external format
-  const validateDatacenters = async () => {
-    if (!source_datacenters) return { valid: true };
+  // Validate datacenter codes
+  const validateDatacenterCodes = async (dcString) => {
+    if (!dcString) return { valid: true };
     
-    const datacenters = source_datacenters.split(',').map(dc => dc.trim()).filter(dc => dc);
+    const datacenters = dcString.split(',').map(dc => dc.trim()).filter(dc => dc);
     const externalDcRegex = /^[A-Z]{6}[0-9]+$/;
     
     for (const dc of datacenters) {
-      // Check if it exists in location_reference
       const existsInDb = await new Promise((resolve, reject) => {
         db.get('SELECT location_code FROM location_reference WHERE location_code = ?', [dc], (err, row) => {
           if (err) reject(err);
@@ -13567,12 +14383,9 @@ router.put('/extranets/:providerId/products/:productId', authenticateToken, auth
         });
       });
       
-      if (existsInDb) continue; // Valid - exists in database
+      if (existsInDb) continue;
+      if (externalDcRegex.test(dc)) continue;
       
-      // Check if it matches external datacenter format
-      if (externalDcRegex.test(dc)) continue; // Valid - matches format
-      
-      // Invalid
       return { 
         valid: false, 
         error: `Invalid datacenter: ${dc}. Must be an existing location or match format (6 uppercase letters + numbers, e.g., EQXLON4)` 
@@ -13583,9 +14396,13 @@ router.put('/extranets/:providerId/products/:productId', authenticateToken, auth
   };
   
   try {
-    const dcValidation = await validateDatacenters();
-    if (!dcValidation.valid) {
-      return res.status(400).json({ error: dcValidation.error });
+    if (primary_datacenter) {
+      const primaryValidation = await validateDatacenterCodes(primary_datacenter);
+      if (!primaryValidation.valid) return res.status(400).json({ error: primaryValidation.error });
+    }
+    if (secondary_datacenters) {
+      const secondaryValidation = await validateDatacenterCodes(secondary_datacenters);
+      if (!secondaryValidation.valid) return res.status(400).json({ error: secondaryValidation.error });
     }
   } catch (err) {
     return res.status(500).json({ error: 'Error validating datacenters: ' + err.message });
@@ -13600,17 +14417,19 @@ router.put('/extranets/:providerId/products/:productId', authenticateToken, auth
     const designTemplatePath = req.files?.design_template?.[0]?.filename || oldProduct.design_template_path;
     
     db.run(
-      `UPDATE extranet_products SET product_name = ?, isf = ?, suggested_bandwidth = ?, source_datacenters = ?, 
+      `UPDATE extranet_products SET product_name = ?, isf = ?, suggested_bandwidth = ?, 
+       primary_datacenter = ?, secondary_datacenters = ?, primary_pricing_city = ?,
        isf_resiliency = ?, design_file_path = ?, design_template_path = ?, more_info = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP 
        WHERE id = ? AND provider_id = ?`,
-      [product_name, isf || null, suggested_bandwidth || null, source_datacenters || null, 
+      [product_name, isf || null, suggested_bandwidth || null,
+       primary_datacenter || null, secondary_datacenters || null, primary_pricing_city || null,
        isf_resiliency || null, designFilePath, designTemplatePath, more_info || null, req.user.id, productId, providerId],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Product not found' });
         
         logChange(req.user.id, 'extranet_products', productId, 'UPDATE', oldProduct, { 
-          product_name, isf, suggested_bandwidth, source_datacenters, isf_resiliency, design_file_path: designFilePath, design_template_path: designTemplatePath, more_info 
+          product_name, isf, suggested_bandwidth, primary_datacenter, secondary_datacenters, primary_pricing_city, isf_resiliency, design_file_path: designFilePath, design_template_path: designTemplatePath, more_info 
         }, req);
         
         res.json({ message: 'Extranet product updated successfully' });
@@ -14056,12 +14875,25 @@ router.delete('/extranet-pricing/cities/:id', authenticateToken, authorizeModule
   });
 });
 
-// Get rate card
+// Get rate card (optionally filtered by provider_region)
 router.get('/extranet-pricing/rate-card', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
-  db.all('SELECT * FROM extranet_rate_card ORDER BY bandwidth, region, tier', [], (err, rates) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rates);
-  });
+  const { provider_region } = req.query;
+  
+  if (provider_region) {
+    const validRegions = ['AMERs', 'APAC', 'EMEA'];
+    if (!validRegions.includes(provider_region)) {
+      return res.status(400).json({ error: 'Invalid provider_region. Must be AMERs, APAC, or EMEA' });
+    }
+    db.all('SELECT * FROM extranet_rate_card WHERE provider_region = ? ORDER BY bandwidth, region, tier', [provider_region], (err, rates) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rates);
+    });
+  } else {
+    db.all('SELECT * FROM extranet_rate_card ORDER BY provider_region, bandwidth, region, tier', [], (err, rates) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rates);
+    });
+  }
 });
 
 // Update rate card entry
@@ -14096,9 +14928,9 @@ router.put('/extranet-pricing/rate-card/:id', authenticateToken, authorizeModule
   });
 });
 
-// Bulk update rate card (for CSV import)
+// Bulk update rate card (for CSV import) - requires provider_region
 router.post('/extranet-pricing/rate-card/bulk', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
-  const { rates } = req.body;
+  const { rates, provider_region } = req.body;
   
   if (!Array.isArray(rates) || rates.length === 0) {
     return res.status(400).json({ error: 'Rates array is required' });
@@ -14107,6 +14939,11 @@ router.post('/extranet-pricing/rate-card/bulk', authenticateToken, authorizeModu
   const validBandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '50Mb', '100Mb'];
   const validRegions = ['AMERs', 'APAC', 'EMEA'];
   const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+  
+  // provider_region is required for bulk updates
+  if (!provider_region || !validRegions.includes(provider_region)) {
+    return res.status(400).json({ error: 'Valid provider_region is required (AMERs, APAC, or EMEA)' });
+  }
   
   let updatedCount = 0;
   let errorCount = 0;
@@ -14152,8 +14989,8 @@ router.post('/extranet-pricing/rate-card/bulk', authenticateToken, authorizeModu
     
     db.run(
       `UPDATE extranet_rate_card SET price_usd = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP 
-       WHERE bandwidth = ? AND region = ? AND tier = ?`,
-      [priceValue, req.user.id, rate.bandwidth, rate.region, rate.tier],
+       WHERE bandwidth = ? AND region = ? AND tier = ? AND provider_region = ?`,
+      [priceValue, req.user.id, rate.bandwidth, rate.region, rate.tier, provider_region],
       function(err) {
         if (err) {
           errors.push(`Error updating ${rate.bandwidth}/${rate.region}/${rate.tier}: ${err.message}`);
@@ -14171,21 +15008,24 @@ router.post('/extranet-pricing/rate-card/bulk', authenticateToken, authorizeModu
 
 // Price lookup endpoint
 router.get('/extranet-pricing/lookup', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
-  const { city_name, bandwidth, provider_id, product_id } = req.query;
+  const { city_name, bandwidth, provider_id, product_id, provider_region } = req.query;
   
   if (!city_name || !bandwidth) {
     return res.status(400).json({ error: 'City name and bandwidth are required' });
   }
+  
+  // Default provider_region to APAC for backward compatibility
+  const lookupProviderRegion = provider_region || 'APAC';
   
   // First, get the city's region and tier
   db.get('SELECT * FROM extranet_pricing_cities WHERE city_name = ?', [city_name], (err, city) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!city) return res.status(404).json({ error: 'City not found in pricing database' });
     
-    // Get the price from rate card
+    // Get the price from rate card (filtered by provider_region)
     db.get(
-      'SELECT price_usd FROM extranet_rate_card WHERE bandwidth = ? AND region = ? AND tier = ?',
-      [bandwidth, city.region, city.tier],
+      'SELECT price_usd FROM extranet_rate_card WHERE bandwidth = ? AND region = ? AND tier = ? AND provider_region = ?',
+      [bandwidth, city.region, city.tier, lookupProviderRegion],
       (err, rateCard) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!rateCard) return res.status(404).json({ error: 'Price not found for this bandwidth and tier combination' });
@@ -14258,7 +15098,7 @@ router.get('/extranet-pricing/products/:providerId', authenticateToken, authoriz
   const { providerId } = req.params;
   
   db.all(
-    'SELECT id, product_name, suggested_bandwidth FROM extranet_products WHERE provider_id = ? ORDER BY product_name',
+    'SELECT id, product_name, suggested_bandwidth, isf, isf_resiliency, primary_datacenter, secondary_datacenters, primary_pricing_city FROM extranet_products WHERE provider_id = ? ORDER BY product_name',
     [providerId],
     (err, products) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -14436,6 +15276,7 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
   const {
     provider_primary_city,
     provider_secondary_city,
+    provider_region,
     member_primary_city,
     member_secondary_city,
     member_resiliency,
@@ -14446,6 +15287,9 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
     ipsec_required,
     contract_term,
     currency_requested,
+    isf,
+    provider_name,
+    product_name,
     discount_requested,
     discount_percent
   } = req.body;
@@ -14536,11 +15380,15 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
     const highestTier = providerTierRank >= memberTierRank ? providerCity.tier : memberCity.tier;
     const pricingRegion = providerTierRank >= memberTierRank ? providerCity.region : memberCity.region;
     
-    // 5. Get base price from rate card (use adjustedBandwidth for Off Net)
+    // 4b. Provider region determines which rate card to use
+    // Use explicitly sent provider_region if provided, otherwise fall back to provider city's region
+    const providerRateCardRegion = provider_region || providerCity.region;
+    
+    // 5. Get base price from rate card (use adjustedBandwidth for Off Net, filtered by provider region)
     const rateCard = await new Promise((resolve, reject) => {
       db.get(
-        'SELECT price_usd FROM extranet_rate_card WHERE bandwidth = ? AND region = ? AND tier = ?',
-        [adjustedBandwidth, pricingRegion, highestTier],
+        'SELECT price_usd FROM extranet_rate_card WHERE bandwidth = ? AND region = ? AND tier = ? AND provider_region = ?',
+        [adjustedBandwidth, pricingRegion, highestTier, providerRateCardRegion],
         (err, row) => {
           if (err) reject(err);
           else resolve(row);
@@ -14657,12 +15505,12 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
     // Add IPSec to MRC
     const finalMrcWithIPSec = finalMrc + ipsecSurcharge;
     
-    // 11. Get NRC based on contract term
-    let nrc = params.nrc_12_month || 1000;
+    // 11. Get NRC based on contract term (use typeof check to properly handle 0 values)
+    let nrc = typeof params.nrc_12_month === 'number' ? params.nrc_12_month : 1000;
     if (contract_term === 24) {
-      nrc = params.nrc_24_month || 500;
+      nrc = typeof params.nrc_24_month === 'number' ? params.nrc_24_month : 500;
     } else if (contract_term === 36) {
-      nrc = params.nrc_36_month || 0;
+      nrc = typeof params.nrc_36_month === 'number' ? params.nrc_36_month : 0;
     }
     
     // 12. Convert currency if needed
@@ -14695,6 +15543,7 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
     // 13. Build calculation breakdown for logging
     const breakdown = {
       rate_card_base: basePrice,
+      provider_rate_card: providerRateCardRegion,
       tier_used: highestTier,
       region_used: pricingRegion,
       resiliency_multiplier: resiliencyMultiplier,
@@ -14764,12 +15613,16 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
         provider_secondary_city: provider_secondary_city || null,
         member_primary_city,
         member_secondary_city: member_secondary_city || null,
+        provider_rate_card: providerRateCardRegion,
         tier_used: highestTier,
         region_used: pricingRegion,
         bandwidth: adjustedBandwidth,
         member_resiliency,
         traffic_type,
-        contract_term
+        contract_term,
+        isf: isf || null,
+        provider_name: provider_name || null,
+        product_name: product_name || null
       },
       breakdown
     });
@@ -14788,6 +15641,537 @@ router.get('/extranet-data/locations', authenticateToken, authorizeModulePermiss
   });
 });
 
+// Resolve POP/datacenter code to pricing city
+// Returns the matching extranet_pricing_cities entry if the location_reference city matches
+router.get('/extranet-pricing/resolve-datacenter/:code', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+  const { code } = req.params;
+  
+  // First look up the location_reference to get the city
+  db.get('SELECT city, country, region FROM location_reference WHERE location_code = ?', [code], (err, location) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    if (!location || !location.city) {
+      // POP code not found in location_reference - city must be manually set
+      return res.json({ resolved: false, code, message: 'Datacenter code not found in location reference. Please select city manually.' });
+    }
+    
+    // Now check if this city exists in extranet_pricing_cities
+    db.get('SELECT id, city_name, country, region, tier FROM extranet_pricing_cities WHERE LOWER(city_name) = LOWER(?)', [location.city], (err, pricingCity) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      if (!pricingCity) {
+        return res.json({ 
+          resolved: false, 
+          code, 
+          location_city: location.city, 
+          location_country: location.country,
+          message: `City "${location.city}" found in location reference but not in extranet pricing cities. Please select city manually.` 
+        });
+      }
+      
+      res.json({ 
+        resolved: true, 
+        code, 
+        pricing_city: pricingCity 
+      });
+    });
+  });
+});
+
+// Bundle pricing calculation endpoint
+// Calculates pricing for multiple items and applies bundle discounts
+router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), async (req, res) => {
+  try {
+    const { items, contract_term, currency_requested, discount_percent } = req.body;
+    
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'At least one item is required in the bundle' });
+    }
+    
+    if (!contract_term) {
+      return res.status(400).json({ error: 'Contract term is required' });
+    }
+    
+    // Get all pricing parameters (use type-aware parsing to properly handle 0 values)
+    const params = await new Promise((resolve, reject) => {
+      db.all('SELECT param_key, param_value, param_type FROM extranet_pricing_parameters', [], (err, rows) => {
+        if (err) reject(err);
+        else {
+          const p = {};
+          rows.forEach(r => {
+            const numVal = parseFloat(r.param_value);
+            p[r.param_key] = !isNaN(numVal) ? numVal : r.param_value;
+          });
+          resolve(p);
+        }
+      });
+    });
+    
+    // Determine bundle discount tiers based on item count
+    const itemCount = items.length;
+    let maxMrcDiscount, autoNrcDiscount;
+    
+    if (itemCount >= 6) {
+      maxMrcDiscount = typeof params.bundle_discount_mrc_6_plus === 'number' ? params.bundle_discount_mrc_6_plus : 0;
+      autoNrcDiscount = typeof params.bundle_discount_nrc_6_plus === 'number' ? params.bundle_discount_nrc_6_plus : 0;
+    } else if (itemCount >= 4) {
+      maxMrcDiscount = typeof params.bundle_discount_mrc_4_5 === 'number' ? params.bundle_discount_mrc_4_5 : 0;
+      autoNrcDiscount = typeof params.bundle_discount_nrc_4_5 === 'number' ? params.bundle_discount_nrc_4_5 : 0;
+    } else {
+      maxMrcDiscount = typeof params.bundle_discount_mrc_1_3 === 'number' ? params.bundle_discount_mrc_1_3 : 0;
+      autoNrcDiscount = typeof params.bundle_discount_nrc_1_3 === 'number' ? params.bundle_discount_nrc_1_3 : 0;
+    }
+    
+    // Validate discount_percent against max
+    const requestedDiscount = discount_percent ? parseFloat(discount_percent) : 0;
+    if (requestedDiscount > maxMrcDiscount) {
+      return res.status(400).json({ 
+        error: `Requested discount (${requestedDiscount}%) exceeds maximum allowed (${maxMrcDiscount}%) for ${itemCount} item(s)` 
+      });
+    }
+    
+    // Get exchange rate if needed
+    let exchangeRate = 1;
+    if (currency_requested && currency_requested !== 'USD') {
+      const currencyRow = await new Promise((resolve, reject) => {
+        db.get('SELECT exchange_rate FROM exchange_rates WHERE currency_code = ?', [currency_requested], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+      if (currencyRow) exchangeRate = parseFloat(currencyRow.exchange_rate);
+    }
+    
+    // Calculate each item
+    const calculatedItems = [];
+    let totalMrcUsd = 0;
+    let totalNrcUsd = 0;
+    let totalMrcUsdBeforeDiscount = 0;
+    let totalNrcUsdBeforeDiscount = 0;
+    let hasPoaItems = false;
+    
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      
+      try {
+        // Look up provider city
+        const providerCity = await new Promise((resolve, reject) => {
+          db.get('SELECT * FROM extranet_pricing_cities WHERE LOWER(city_name) = LOWER(?)', 
+            [item.provider_primary_city], (err, row) => {
+              if (err) reject(err);
+              else resolve(row);
+            });
+        });
+        
+        if (!providerCity) {
+          calculatedItems.push({ 
+            index: i, error: `Provider city "${item.provider_primary_city}" not found in pricing cities`, poa: true 
+          });
+          hasPoaItems = true;
+          continue;
+        }
+        
+        // Look up member city
+        const memberCity = await new Promise((resolve, reject) => {
+          db.get('SELECT * FROM extranet_pricing_cities WHERE LOWER(city_name) = LOWER(?)', 
+            [item.member_primary_city], (err, row) => {
+              if (err) reject(err);
+              else resolve(row);
+            });
+        });
+        
+        if (!memberCity) {
+          calculatedItems.push({ 
+            index: i, error: `Member city "${item.member_primary_city}" not found in pricing cities`, poa: true 
+          });
+          hasPoaItems = true;
+          continue;
+        }
+        
+        // Determine tier and region
+        const tierRank = { 'Metro': 0, 'Tier 1': 1, 'Tier 2': 2, 'Tier 3': 3 };
+        const providerTierRank = tierRank[providerCity.tier] || 0;
+        const memberTierRank = tierRank[memberCity.tier] || 0;
+        const highestTier = providerTierRank >= memberTierRank ? providerCity.tier : memberCity.tier;
+        const pricingRegion = providerTierRank >= memberTierRank ? providerCity.region : memberCity.region;
+        const providerRateCardRegion = item.provider_region || providerCity.region;
+        
+        // Bandwidth adjustment for Off Net
+        let adjustedBandwidth = item.bandwidth;
+        if (item.member_on_off_net === 'Off Net') {
+          const bwVal = parseFloat(item.bandwidth.replace(/[^0-9.]/g, ''));
+          const bwUnit = item.bandwidth.toLowerCase();
+          let bwMb = bwVal;
+          if (bwUnit.includes('kb')) bwMb = bwVal / 1000;
+          
+          const offNetMultiplier = params.off_net_bandwidth_multiplier || 2;
+          let newBwMb = bwMb * offNetMultiplier;
+          
+          // Find nearest available bandwidth
+          const allBandwidths = await new Promise((resolve, reject) => {
+            db.all('SELECT DISTINCT bandwidth FROM extranet_rate_card ORDER BY id', [], (err, rows) => {
+              if (err) reject(err);
+              else resolve(rows.map(r => r.bandwidth));
+            });
+          });
+          
+          // Convert to comparable format
+          const parseBw = (bw) => {
+            const v = parseFloat(bw.replace(/[^0-9.]/g, ''));
+            return bw.toLowerCase().includes('kb') ? v / 1000 : v;
+          };
+          
+          let closestBw = allBandwidths[allBandwidths.length - 1];
+          let closestDiff = Infinity;
+          for (const bw of allBandwidths) {
+            const diff = Math.abs(parseBw(bw) - newBwMb);
+            if (diff < closestDiff) {
+              closestDiff = diff;
+              closestBw = bw;
+            }
+          }
+          adjustedBandwidth = closestBw;
+        }
+        
+        // Get rate card price
+        const rateCard = await new Promise((resolve, reject) => {
+          db.get(
+            'SELECT price_usd FROM extranet_rate_card WHERE bandwidth = ? AND region = ? AND tier = ? AND provider_region = ?',
+            [adjustedBandwidth, pricingRegion, highestTier, providerRateCardRegion],
+            (err, row) => {
+              if (err) reject(err);
+              else resolve(row);
+            }
+          );
+        });
+        
+        if (!rateCard || rateCard.price_usd === 'POA' || rateCard.price_usd === 0) {
+          calculatedItems.push({ 
+            index: i, 
+            poa: true, 
+            error: 'Price On Application - contact sales',
+            item_summary: {
+              provider_primary_city: item.provider_primary_city,
+              member_primary_city: item.member_primary_city,
+              bandwidth: item.bandwidth,
+              isf: item.isf || null,
+              provider_name: item.provider_name || null,
+              product_name: item.product_name || null
+            }
+          });
+          hasPoaItems = true;
+          continue;
+        }
+        
+        const basePrice = parseFloat(rateCard.price_usd);
+        
+        // Resiliency multiplier
+        let resiliencyMultiplier = 100;
+        switch (item.member_resiliency) {
+          case 'Non-Resilient': resiliencyMultiplier = params.resiliency_non_resilient || 70; break;
+          case 'Single Site Resilient': resiliencyMultiplier = params.resiliency_single_site || 100; break;
+          case 'Split Site Resilient': resiliencyMultiplier = params.resiliency_split_site || 110; break;
+          case 'Dual Site Resilient': resiliencyMultiplier = params.resiliency_dual_site || 125; break;
+        }
+        const afterResiliency = basePrice * (resiliencyMultiplier / 100);
+        
+        // Traffic type multiplier
+        let trafficMultiplier = 100;
+        if (item.traffic_type === 'Live/Live') {
+          trafficMultiplier = params.traffic_live_live || 125;
+        } else {
+          trafficMultiplier = params.traffic_live_standby || 100;
+        }
+        const adjustedBase = afterResiliency * (trafficMultiplier / 100);
+        
+        // Cloud discount only (no user discount - that's applied at bundle level)
+        let cloudDiscount = 0;
+        let contractDiscount = 0;
+        
+        if (item.member_cloud) {
+          cloudDiscount = adjustedBase * ((params.cloud_discount || 0) / 100);
+        }
+        
+        if (contract_term === 24) {
+          contractDiscount = adjustedBase * ((params.contract_24_discount || 0) / 100);
+        } else if (contract_term === 36) {
+          contractDiscount = adjustedBase * ((params.contract_36_discount || 0) / 100);
+        }
+        
+        const autoDiscounts = cloudDiscount + contractDiscount;
+        let itemMrc = adjustedBase - autoDiscounts;
+        
+        // Apply bundle MRC discount (user-selected)
+        const bundleMrcDiscount = itemMrc * (requestedDiscount / 100);
+        itemMrc = itemMrc - bundleMrcDiscount;
+        
+        // IPSec surcharge
+        let ipsecSurcharge = 0;
+        let ipsecPoa = false;
+        if (item.ipsec_required) {
+          const bandwidthValue = parseFloat(item.bandwidth.replace(/[^0-9.]/g, ''));
+          const bandwidthUnit = item.bandwidth.toLowerCase();
+          let bandwidthMb = bandwidthValue;
+          if (bandwidthUnit.includes('kb')) bandwidthMb = bandwidthValue / 1000;
+          
+          let ipsecTier = 'under_10mb';
+          if (bandwidthMb >= 100) ipsecTier = '100mb_plus';
+          else if (bandwidthMb >= 10) ipsecTier = '10_to_99mb';
+          
+          const ipsecRow = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM extranet_ipsec_surcharges WHERE bandwidth_tier = ?', [ipsecTier], (err, row) => {
+              if (err) reject(err);
+              else resolve(row);
+            });
+          });
+          
+          if (ipsecRow) {
+            const rawIpsecValue = item.member_resiliency === 'Non-Resilient' 
+              ? ipsecRow.non_resilient_mrc : ipsecRow.resilient_mrc;
+            if (rawIpsecValue < 0) {
+              ipsecPoa = true;
+            } else {
+              ipsecSurcharge = rawIpsecValue;
+            }
+          }
+        }
+        
+        const itemMrcWithIPSec = itemMrc + ipsecSurcharge;
+        
+        // NRC per item (use typeof check to properly handle 0 values)
+        let itemNrc = typeof params.nrc_12_month === 'number' ? params.nrc_12_month : 1000;
+        if (contract_term === 24) itemNrc = typeof params.nrc_24_month === 'number' ? params.nrc_24_month : 500;
+        else if (contract_term === 36) itemNrc = typeof params.nrc_36_month === 'number' ? params.nrc_36_month : 0;
+        
+        // Apply automatic NRC bundle discount
+        const nrcBundleDiscount = itemNrc * (autoNrcDiscount / 100);
+        itemNrc = itemNrc - nrcBundleDiscount;
+        
+        // Convert currency
+        const itemMrcConverted = Math.round(itemMrcWithIPSec * exchangeRate * 100) / 100;
+        const itemNrcConverted = Math.round(itemNrc * exchangeRate * 100) / 100;
+        const ipsecConverted = Math.round(ipsecSurcharge * exchangeRate * 100) / 100;
+        
+        // Track before-discount totals (MRC before bundle discount, NRC before bundle discount)
+        const itemMrcBeforeBundleDiscount = itemMrc + bundleMrcDiscount + ipsecSurcharge;
+        const itemNrcBeforeBundleDiscount = itemNrc + nrcBundleDiscount;
+        totalMrcUsdBeforeDiscount += itemMrcBeforeBundleDiscount;
+        totalNrcUsdBeforeDiscount += itemNrcBeforeBundleDiscount;
+        
+        totalMrcUsd += itemMrcWithIPSec;
+        totalNrcUsd += itemNrc;
+        
+        calculatedItems.push({
+          index: i,
+          poa: false,
+          pricing: {
+            mrc: itemMrcConverted,
+            nrc: itemNrcConverted,
+            ipsec_surcharge: item.ipsec_required ? ipsecConverted : 0,
+            ipsec_poa: ipsecPoa,
+            currency: currency_requested || 'USD'
+          },
+          item_summary: {
+            provider_primary_city: item.provider_primary_city,
+            provider_secondary_city: item.provider_secondary_city || null,
+            member_primary_city: item.member_primary_city,
+            member_secondary_city: item.member_secondary_city || null,
+            bandwidth: item.bandwidth,
+            member_resiliency: item.member_resiliency,
+            traffic_type: item.traffic_type,
+            isf: item.isf || null,
+            provider_name: item.provider_name || null,
+            product_name: item.product_name || null
+          },
+          breakdown: {
+            rate_card_base: basePrice,
+            provider_rate_card: providerRateCardRegion,
+            tier_used: highestTier,
+            region_used: pricingRegion,
+            resiliency_multiplier: resiliencyMultiplier,
+            traffic_multiplier: trafficMultiplier,
+            adjusted_base: adjustedBase,
+            cloud_discount: cloudDiscount,
+            contract_discount: contractDiscount,
+            bundle_mrc_discount: bundleMrcDiscount,
+            bundle_nrc_discount: nrcBundleDiscount,
+            ipsec_surcharge: ipsecSurcharge,
+            mrc_usd: itemMrcWithIPSec,
+            nrc_usd: itemNrc
+          }
+        });
+        
+      } catch (itemError) {
+        calculatedItems.push({ 
+          index: i, 
+          error: `Calculation error: ${itemError.message}`, 
+          poa: true 
+        });
+        hasPoaItems = true;
+      }
+    }
+    
+    // Calculate totals
+    const totalMrcConverted = Math.round(totalMrcUsd * exchangeRate * 100) / 100;
+    const totalNrcConverted = Math.round(totalNrcUsd * exchangeRate * 100) / 100;
+    
+    // Log bundle to bundle_logs table and individual items to pricing_lookups
+    const totalMrcBeforeDiscountConvertedForLog = Math.round(totalMrcUsdBeforeDiscount * exchangeRate * 100) / 100;
+    const totalNrcBeforeDiscountConvertedForLog = Math.round(totalNrcUsdBeforeDiscount * exchangeRate * 100) / 100;
+    
+    // Create bundle log entry
+    let bundleLogId = null;
+    try {
+      bundleLogId = await new Promise((resolve, reject) => {
+        db.run(
+          `INSERT INTO extranet_bundle_logs (
+            user_id, item_count, contract_term, currency, 
+            mrc_discount_percent, nrc_discount_percent,
+            total_mrc, total_nrc, 
+            total_mrc_usd_before_discount, total_nrc_usd_before_discount,
+            exchange_rate, has_poa_items
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            req.user.id, items.length, contract_term, currency_requested || 'USD',
+            requestedDiscount, autoNrcDiscount,
+            totalMrcConverted, totalNrcConverted,
+            Math.round(totalMrcUsdBeforeDiscount * 100) / 100,
+            Math.round(totalNrcUsdBeforeDiscount * 100) / 100,
+            exchangeRate, hasPoaItems ? 1 : 0
+          ],
+          function(err) {
+            if (err) reject(err);
+            else resolve(this.lastID);
+          }
+        );
+      });
+      
+      // Log each individual item linked to this bundle
+      for (let i = 0; i < calculatedItems.length; i++) {
+        const calcItem = calculatedItems[i];
+        const origItem = items[i];
+        if (calcItem.poa) continue; // skip errored items
+        
+        db.run(
+          `INSERT INTO extranet_pricing_lookups (
+            user_id, provider_primary_city, provider_secondary_city,
+            member_primary_city, member_secondary_city,
+            member_resiliency, member_on_off_net, member_cloud, bandwidth, traffic_type,
+            ipsec_required, contract_term, currency_requested,
+            discount_requested, discount_percent, base_price_usd,
+            final_mrc, final_nrc, calculation_breakdown, region, tier,
+            bundle_id, provider_name, product_name, isf_code
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            req.user.id,
+            origItem.provider_primary_city,
+            origItem.provider_secondary_city || null,
+            origItem.member_primary_city,
+            origItem.member_secondary_city || null,
+            origItem.member_resiliency,
+            origItem.member_on_off_net || 'On Net',
+            origItem.member_cloud ? 1 : 0,
+            origItem.bandwidth,
+            origItem.traffic_type,
+            origItem.ipsec_required ? 1 : 0,
+            contract_term,
+            currency_requested || 'USD',
+            requestedDiscount > 0 ? 1 : 0,
+            requestedDiscount,
+            calcItem.breakdown?.rate_card_base || 0,
+            calcItem.pricing?.mrc || 0,
+            calcItem.pricing?.nrc || 0,
+            JSON.stringify(calcItem.breakdown || {}),
+            calcItem.breakdown?.region_used || origItem.provider_region,
+            calcItem.breakdown?.tier_used || '',
+            bundleLogId,
+            origItem.provider_name || null,
+            origItem.product_name || null,
+            origItem.isf || null
+          ],
+          (err) => {
+            if (err) console.error('Failed to log bundle item:', err);
+          }
+        );
+      }
+    } catch (logErr) {
+      console.error('Failed to log bundle pricing:', logErr);
+    }
+    
+    const totalMrcBeforeDiscountConverted = Math.round(totalMrcUsdBeforeDiscount * exchangeRate * 100) / 100;
+    const totalNrcBeforeDiscountConverted = Math.round(totalNrcUsdBeforeDiscount * exchangeRate * 100) / 100;
+    
+    res.json({
+      success: true,
+      bundle: {
+        item_count: items.length,
+        discount_percent: requestedDiscount,
+        max_mrc_discount: maxMrcDiscount,
+        auto_nrc_discount: autoNrcDiscount,
+        total_mrc: totalMrcConverted,
+        total_nrc: totalNrcConverted,
+        currency: currency_requested || 'USD',
+        exchange_rate: exchangeRate,
+        has_poa_items: hasPoaItems,
+        contract_term
+      },
+      bundle_pricing: {
+        total_mrc: totalMrcConverted,
+        total_nrc: totalNrcConverted,
+        currency: currency_requested || 'USD',
+        mrc_discount_percent: requestedDiscount,
+        nrc_discount_percent: autoNrcDiscount,
+        exchange_rate: exchangeRate
+      },
+      breakdown: {
+        total_mrc_usd_before_discount: Math.round(totalMrcUsdBeforeDiscount * 100) / 100,
+        total_nrc_usd_before_discount: Math.round(totalNrcUsdBeforeDiscount * 100) / 100,
+        mrc_bundle_discount_applied_usd: Math.round((totalMrcUsdBeforeDiscount - totalMrcUsd) * 100) / 100,
+        nrc_bundle_discount_applied_usd: Math.round((totalNrcUsdBeforeDiscount - totalNrcUsd) * 100) / 100
+      },
+      items: calculatedItems
+    });
+    
+  } catch (error) {
+    console.error('Error calculating bundle pricing:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get bundle discount tiers for display
+router.get('/extranet-pricing/bundle-discounts', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), async (req, res) => {
+  try {
+    const params = await new Promise((resolve, reject) => {
+      db.all("SELECT param_key, param_value FROM extranet_pricing_parameters WHERE param_key LIKE 'bundle_discount_%'", [], (err, rows) => {
+        if (err) reject(err);
+        else {
+          const p = {};
+          rows.forEach(r => {
+            const numVal = parseFloat(r.param_value);
+            p[r.param_key] = !isNaN(numVal) ? numVal : 0;
+          });
+          resolve(p);
+        }
+      });
+    });
+    
+    res.json({
+      mrc: {
+        '1_3': typeof params.bundle_discount_mrc_1_3 === 'number' ? params.bundle_discount_mrc_1_3 : 0,
+        '4_5': typeof params.bundle_discount_mrc_4_5 === 'number' ? params.bundle_discount_mrc_4_5 : 0,
+        '6_plus': typeof params.bundle_discount_mrc_6_plus === 'number' ? params.bundle_discount_mrc_6_plus : 0
+      },
+      nrc: {
+        '1_3': typeof params.bundle_discount_nrc_1_3 === 'number' ? params.bundle_discount_nrc_1_3 : 0,
+        '4_5': typeof params.bundle_discount_nrc_4_5 === 'number' ? params.bundle_discount_nrc_4_5 : 0,
+        '6_plus': typeof params.bundle_discount_nrc_6_plus === 'number' ? params.bundle_discount_nrc_6_plus : 0
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ====================================
 // EXTRANET PRICING LOGS (Admin Only)
 // ====================================
@@ -14795,16 +16179,9 @@ router.get('/extranet-data/locations', authenticateToken, authorizeModulePermiss
 // Get extranet pricing logs with pagination and filtering
 router.get('/extranet-pricing/logs', authenticateToken, authorizeRole('administrator'), async (req, res) => {
   try {
-    const { limit = 100, offset = 0, user_id, provider_city, member_city, start_date, end_date } = req.query;
+    const { limit = 100, offset = 0, user_id, provider_city, member_city, start_date, end_date, type } = req.query;
     
-    // Build count query
-    let countQuery = 'SELECT COUNT(*) as total FROM extranet_pricing_lookups epl';
-    let dataQuery = `
-      SELECT epl.*, u.username, u.full_name 
-      FROM extranet_pricing_lookups epl
-      LEFT JOIN users u ON epl.user_id = u.id
-    `;
-    
+    // Build conditions for individual lookups (exclude bundle items by default — they appear under bundles)
     let conditions = [];
     let params = [];
     
@@ -14812,53 +16189,121 @@ router.get('/extranet-pricing/logs', authenticateToken, authorizeRole('administr
       conditions.push('epl.user_id = ?');
       params.push(user_id);
     }
-    
     if (provider_city) {
       conditions.push('(epl.provider_primary_city LIKE ? OR epl.provider_secondary_city LIKE ?)');
       params.push(`%${provider_city}%`, `%${provider_city}%`);
     }
-    
     if (member_city) {
       conditions.push('(epl.member_primary_city LIKE ? OR epl.member_secondary_city LIKE ?)');
       params.push(`%${member_city}%`, `%${member_city}%`);
     }
-    
     if (start_date) {
       conditions.push('epl.lookup_timestamp >= ?');
       params.push(start_date);
     }
-    
     if (end_date) {
       conditions.push('epl.lookup_timestamp <= ?');
       params.push(end_date);
     }
     
-    if (conditions.length > 0) {
-      const whereClause = ' WHERE ' + conditions.join(' AND ');
-      countQuery += whereClause;
-      dataQuery += whereClause;
-    }
+    // Fetch individual (non-bundle) lookups
+    let individualConditions = [...conditions, 'epl.bundle_id IS NULL'];
+    let individualWhere = individualConditions.length > 0 ? ' WHERE ' + individualConditions.join(' AND ') : '';
     
-    dataQuery += ' ORDER BY epl.lookup_timestamp DESC LIMIT ? OFFSET ?';
-    
-    // Get total count
-    const totalCount = await new Promise((resolve, reject) => {
-      db.get(countQuery, params, (err, row) => {
+    // Count individual lookups
+    const individualCount = await new Promise((resolve, reject) => {
+      db.get(`SELECT COUNT(*) as total FROM extranet_pricing_lookups epl${individualWhere}`, params, (err, row) => {
         if (err) reject(err);
         else resolve(row.total || 0);
       });
     });
     
-    // Get paginated data
-    const logs = await new Promise((resolve, reject) => {
-      db.all(dataQuery, [...params, parseInt(limit), parseInt(offset)], (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows || []);
-      });
+    const individualLogs = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT epl.*, u.username, u.full_name, 'individual' as log_type
+         FROM extranet_pricing_lookups epl
+         LEFT JOIN users u ON epl.user_id = u.id
+         ${individualWhere}
+         ORDER BY epl.lookup_timestamp DESC`,
+        params,
+        (err, rows) => err ? reject(err) : resolve(rows || [])
+      );
     });
     
+    // Fetch bundle logs
+    let bundleConditions = [];
+    let bundleParams = [];
+    if (user_id) {
+      bundleConditions.push('ebl.user_id = ?');
+      bundleParams.push(user_id);
+    }
+    if (start_date) {
+      bundleConditions.push('ebl.created_at >= ?');
+      bundleParams.push(start_date);
+    }
+    if (end_date) {
+      bundleConditions.push('ebl.created_at <= ?');
+      bundleParams.push(end_date);
+    }
+    let bundleWhere = bundleConditions.length > 0 ? ' WHERE ' + bundleConditions.join(' AND ') : '';
+    
+    const bundleLogs = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT ebl.*, u.username, u.full_name, 'bundle' as log_type
+         FROM extranet_bundle_logs ebl
+         LEFT JOIN users u ON ebl.user_id = u.id
+         ${bundleWhere}
+         ORDER BY ebl.created_at DESC`,
+        bundleParams,
+        (err, rows) => err ? reject(err) : resolve(rows || [])
+      );
+    });
+    
+    // For each bundle, fetch its items
+    for (const bundle of bundleLogs) {
+      let itemConditions = ['epl.bundle_id = ?'];
+      let itemParams = [bundle.id];
+      
+      // Apply city filters to bundle items too
+      if (provider_city) {
+        itemConditions.push('(epl.provider_primary_city LIKE ? OR epl.provider_secondary_city LIKE ?)');
+        itemParams.push(`%${provider_city}%`, `%${provider_city}%`);
+      }
+      if (member_city) {
+        itemConditions.push('(epl.member_primary_city LIKE ? OR epl.member_secondary_city LIKE ?)');
+        itemParams.push(`%${member_city}%`, `%${member_city}%`);
+      }
+      
+      bundle.items = await new Promise((resolve, reject) => {
+        db.all(
+          `SELECT epl.*, u.username, u.full_name
+           FROM extranet_pricing_lookups epl
+           LEFT JOIN users u ON epl.user_id = u.id
+           WHERE ${itemConditions.join(' AND ')}
+           ORDER BY epl.id ASC`,
+          itemParams,
+          (err, rows) => err ? reject(err) : resolve(rows || [])
+        );
+      });
+    }
+    
+    // Filter out bundles that have no matching items if city filter is applied
+    const filteredBundles = (provider_city || member_city) 
+      ? bundleLogs.filter(b => b.items && b.items.length > 0)
+      : bundleLogs;
+    
+    // Merge and sort by timestamp
+    const allLogs = [
+      ...individualLogs.map(log => ({ ...log, timestamp: log.lookup_timestamp })),
+      ...filteredBundles.map(bundle => ({ ...bundle, timestamp: bundle.created_at }))
+    ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    // Paginate the merged results
+    const totalCount = allLogs.length;
+    const paginatedLogs = allLogs.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+    
     res.json({
-      data: logs,
+      data: paginatedLogs,
       pagination: {
         page: Math.floor(offset / limit) + 1,
         limit: parseInt(limit),
@@ -14885,41 +16330,70 @@ router.get('/extranet-pricing/users', authenticateToken, authorizeRole('administ
 });
 
 // Export extranet pricing logs to CSV (Admin only)
-router.get('/extranet-pricing/logs/export', authenticateToken, authorizeRole('administrator'), (req, res) => {
-  const { start_date, end_date } = req.query;
-  
-  let query = `
-    SELECT epl.*, u.username, u.full_name 
-    FROM extranet_pricing_lookups epl
-    LEFT JOIN users u ON epl.user_id = u.id
-  `;
-  let params = [];
-  
-  if (start_date && end_date) {
-    query += ' WHERE epl.lookup_timestamp >= ? AND epl.lookup_timestamp <= ?';
-    params = [start_date, end_date];
-  }
-  
-  query += ' ORDER BY epl.lookup_timestamp DESC';
-  
-  db.all(query, params, (err, rows) => {
-    if (err) {
-      console.error('Error exporting extranet pricing logs:', err);
-      return res.status(500).json({ error: 'Failed to export logs' });
+router.get('/extranet-pricing/logs/export', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    
+    const escapeCsv = (str) => {
+      if (str === null || str === undefined) return '';
+      return `"${String(str).replace(/"/g, '""')}"`;
+    };
+    
+    // Get individual (non-bundle) lookups
+    let lookupQuery = `SELECT epl.*, u.username, u.full_name FROM extranet_pricing_lookups epl LEFT JOIN users u ON epl.user_id = u.id`;
+    let lookupParams = [];
+    let lookupConditions = ['epl.bundle_id IS NULL'];
+    
+    if (start_date && end_date) {
+      lookupConditions.push('epl.lookup_timestamp >= ?', 'epl.lookup_timestamp <= ?');
+      lookupParams = [start_date, end_date];
     }
     
-    // Convert to CSV format
-    const csvHeaders = 'ID,Timestamp,User,Provider Primary,Provider Secondary,Member Primary,Member Secondary,Resiliency,On/Off Net,Cloud,Bandwidth,Traffic Type,IPSec,Contract Term,Currency,Discount Requested,Discount %,Base Price USD,Final MRC,Final NRC,Region,Tier\n';
-    const csvRows = rows.map(row => {
-      const escapeCsv = (str) => {
-        if (str === null || str === undefined) return '';
-        return `"${String(str).replace(/"/g, '""')}"`;
-      };
-      
-      return [
+    lookupQuery += ' WHERE ' + lookupConditions.join(' AND ') + ' ORDER BY epl.lookup_timestamp DESC';
+    
+    const individualRows = await new Promise((resolve, reject) => {
+      db.all(lookupQuery, lookupParams, (err, rows) => err ? reject(err) : resolve(rows || []));
+    });
+    
+    // Get bundles
+    let bundleQuery = `SELECT ebl.*, u.username, u.full_name FROM extranet_bundle_logs ebl LEFT JOIN users u ON ebl.user_id = u.id`;
+    let bundleParams = [];
+    
+    if (start_date && end_date) {
+      bundleQuery += ' WHERE ebl.created_at >= ? AND ebl.created_at <= ?';
+      bundleParams = [start_date, end_date];
+    }
+    bundleQuery += ' ORDER BY ebl.created_at DESC';
+    
+    const bundles = await new Promise((resolve, reject) => {
+      db.all(bundleQuery, bundleParams, (err, rows) => err ? reject(err) : resolve(rows || []));
+    });
+    
+    // Get bundle items
+    for (const bundle of bundles) {
+      bundle.items = await new Promise((resolve, reject) => {
+        db.all(
+          `SELECT epl.*, u.username, u.full_name FROM extranet_pricing_lookups epl LEFT JOIN users u ON epl.user_id = u.id WHERE epl.bundle_id = ? ORDER BY epl.id ASC`,
+          [bundle.id],
+          (err, rows) => err ? reject(err) : resolve(rows || [])
+        );
+      });
+    }
+    
+    const csvHeaders = 'Type,ID,Timestamp,User,Provider,Product,ISF,Provider Primary,Provider Secondary,Member Primary,Member Secondary,Resiliency,On/Off Net,Cloud,Bandwidth,Traffic Type,IPSec,Contract Term,Currency,Discount %,Base Price USD,Final MRC,Final NRC,Region,Tier,Bundle ID\n';
+    
+    const csvRows = [];
+    
+    // Add individual lookups
+    individualRows.forEach(row => {
+      csvRows.push([
+        'Individual',
         row.id,
         row.lookup_timestamp,
         escapeCsv(row.username || row.full_name),
+        escapeCsv(row.provider_name),
+        escapeCsv(row.product_name),
+        escapeCsv(row.isf_code),
         escapeCsv(row.provider_primary_city),
         escapeCsv(row.provider_secondary_city),
         escapeCsv(row.member_primary_city),
@@ -14932,35 +16406,112 @@ router.get('/extranet-pricing/logs/export', authenticateToken, authorizeRole('ad
         row.ipsec_required ? 'Yes' : 'No',
         row.contract_term,
         escapeCsv(row.currency_requested),
-        row.discount_requested ? 'Yes' : 'No',
         row.discount_percent || 0,
         row.base_price_usd,
         row.final_mrc,
         row.final_nrc,
         escapeCsv(row.region),
-        escapeCsv(row.tier)
-      ].join(',');
-    }).join('\n');
+        escapeCsv(row.tier),
+        ''
+      ].join(','));
+    });
     
-    const csvContent = csvHeaders + csvRows;
+    // Add bundles and their items
+    bundles.forEach(bundle => {
+      csvRows.push([
+        'Bundle',
+        `B${bundle.id}`,
+        bundle.created_at,
+        escapeCsv(bundle.username || bundle.full_name),
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        `${bundle.item_count} items`,
+        '',
+        '',
+        bundle.contract_term,
+        escapeCsv(bundle.currency),
+        bundle.mrc_discount_percent || 0,
+        '',
+        bundle.total_mrc,
+        bundle.total_nrc,
+        '',
+        '',
+        bundle.id
+      ].join(','));
+      
+      (bundle.items || []).forEach((item, idx) => {
+        csvRows.push([
+          `  Bundle Item ${idx + 1}`,
+          item.id,
+          item.lookup_timestamp,
+          escapeCsv(item.username || item.full_name),
+          escapeCsv(item.provider_name),
+          escapeCsv(item.product_name),
+          escapeCsv(item.isf_code),
+          escapeCsv(item.provider_primary_city),
+          escapeCsv(item.provider_secondary_city),
+          escapeCsv(item.member_primary_city),
+          escapeCsv(item.member_secondary_city),
+          escapeCsv(item.member_resiliency),
+          escapeCsv(item.member_on_off_net),
+          item.member_cloud ? 'Yes' : 'No',
+          escapeCsv(item.bandwidth),
+          escapeCsv(item.traffic_type),
+          item.ipsec_required ? 'Yes' : 'No',
+          item.contract_term,
+          escapeCsv(item.currency_requested),
+          item.discount_percent || 0,
+          item.base_price_usd,
+          item.final_mrc,
+          item.final_nrc,
+          escapeCsv(item.region),
+          escapeCsv(item.tier),
+          bundle.id
+        ].join(','));
+      });
+    });
+    
+    const csvContent = csvHeaders + csvRows.join('\n');
     
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=extranet_pricing_logs_${new Date().toISOString().split('T')[0]}.csv`);
     res.send(csvContent);
-  });
+  } catch (error) {
+    console.error('Error exporting extranet pricing logs:', error);
+    res.status(500).json({ error: 'Failed to export logs' });
+  }
 });
 
 // Clear extranet pricing logs (Admin only)
 router.delete('/extranet-pricing/logs', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  // Clear lookups first (has FK reference to bundle_logs), then bundle_logs
   db.run('DELETE FROM extranet_pricing_lookups', [], function(err) {
     if (err) {
       console.error('Error clearing extranet pricing logs:', err);
       return res.status(500).json({ error: 'Failed to clear logs' });
     }
     
-    res.json({ 
-      message: 'Extranet pricing logs cleared successfully',
-      cleared_count: this.changes
+    const lookupsCleared = this.changes;
+    
+    db.run('DELETE FROM extranet_bundle_logs', [], function(err2) {
+      if (err2) {
+        console.error('Error clearing bundle logs:', err2);
+        // Don't fail - lookups already cleared
+      }
+      
+      res.json({ 
+        message: 'Extranet pricing logs cleared successfully',
+        cleared_count: lookupsCleared,
+        bundles_cleared: err2 ? 0 : this.changes
+      });
     });
   });
 });
@@ -15625,13 +17176,17 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
     const { start_date, end_date } = req.query;
     
     let dateFilter = '';
+    let bundleDateFilter = '';
     let params = [];
+    let bundleParams = [];
     if (start_date && end_date) {
       dateFilter = ' WHERE lookup_timestamp >= ? AND lookup_timestamp <= ?';
+      bundleDateFilter = ' WHERE created_at >= ? AND created_at <= ?';
       params = [start_date, end_date];
+      bundleParams = [start_date, end_date];
     }
     
-    // Get all pricing lookups
+    // Get all pricing lookups (individual items, not bundle items for some metrics)
     const lookups = await new Promise((resolve, reject) => {
       db.all(
         `SELECT * FROM extranet_pricing_lookups${dateFilter} ORDER BY lookup_timestamp DESC`,
@@ -15640,7 +17195,16 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
       );
     });
     
-    // Process data
+    // Get bundle logs
+    const bundles = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT * FROM extranet_bundle_logs${bundleDateFilter} ORDER BY created_at DESC`,
+        bundleParams,
+        (err, rows) => err ? reject(err) : resolve(rows || [])
+      );
+    });
+    
+    // Process data from all lookups (both individual and bundle items)
     const providerSearches = {};
     const bandwidthSearches = {};
     const tierSearches = {};
@@ -15667,46 +17231,44 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
       }
       
       // Bandwidth searches
-      if (lookup.bandwidth) {
+      if (lookup.bandwidth && lookup.bandwidth !== `${lookup.bandwidth} items`) {
         bandwidthSearches[lookup.bandwidth] = (bandwidthSearches[lookup.bandwidth] || 0) + 1;
       }
       
       // Tier searches
-      if (lookup.tier) {
+      if (lookup.tier && lookup.tier !== 'Bundle') {
         tierSearches[lookup.tier] = (tierSearches[lookup.tier] || 0) + 1;
       }
       
       // Region searches
-      if (lookup.region) {
+      if (lookup.region && lookup.region !== 'Bundle') {
         regionSearches[lookup.region] = (regionSearches[lookup.region] || 0) + 1;
       }
       
-      // City searches (combine provider and member primary cities)
-      if (lookup.city_name) {
-        citySearches[lookup.city_name] = (citySearches[lookup.city_name] || 0) + 1;
-      }
-      if (lookup.provider_primary_city) {
+      // City searches
+      if (lookup.provider_primary_city && !lookup.provider_primary_city.startsWith('BUNDLE')) {
         citySearches[lookup.provider_primary_city] = (citySearches[lookup.provider_primary_city] || 0) + 1;
       }
-      if (lookup.member_primary_city) {
+      if (lookup.member_primary_city && !lookup.member_primary_city.startsWith('BUNDLE')) {
         citySearches[lookup.member_primary_city] = (citySearches[lookup.member_primary_city] || 0) + 1;
       }
       
       // City pairs
-      if (lookup.provider_primary_city && lookup.member_primary_city) {
+      if (lookup.provider_primary_city && lookup.member_primary_city && 
+          !lookup.provider_primary_city.startsWith('BUNDLE') && !lookup.member_primary_city.startsWith('BUNDLE')) {
         const cities = [lookup.provider_primary_city, lookup.member_primary_city].sort();
         const pairKey = `${cities[0]} ↔ ${cities[1]}`;
         cityPairs[pairKey] = (cityPairs[pairKey] || 0) + 1;
       }
       
       // Resiliency types
-      if (lookup.member_resiliency) {
+      if (lookup.member_resiliency && lookup.member_resiliency !== 'Bundle') {
         resiliencyTypes[lookup.member_resiliency] = (resiliencyTypes[lookup.member_resiliency] || 0) + 1;
       }
       
       // Contract terms
       if (lookup.contract_term) {
-        const termKey = `${lookup.contract_term} months`;
+        const termKey = `${lookup.contract_term}`;
         contractTerms[termKey] = (contractTerms[termKey] || 0) + 1;
       }
       
@@ -15723,7 +17285,7 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
       // IPSec
       if (lookup.ipsec_required) {
         ipsecRequiredCount++;
-      } else {
+      } else if (lookup.member_resiliency !== 'Bundle') {
         ipsecNotRequiredCount++;
       }
       
@@ -15746,14 +17308,51 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
         offNetCount++;
       }
       
-      // User activity
-      if (lookup.user_id) {
+      // User activity (only count non-bundle items for individual lookups)
+      if (lookup.user_id && !lookup.bundle_id) {
         if (!userActivity[lookup.user_id]) {
-          userActivity[lookup.user_id] = { user_id: lookup.user_id, count: 0 };
+          userActivity[lookup.user_id] = { user_id: lookup.user_id, count: 0, bundleCount: 0 };
         }
         userActivity[lookup.user_id].count++;
       }
     });
+    
+    // Process bundle-specific analytics
+    let totalBundles = bundles.length;
+    let totalBundleItems = 0;
+    let totalBundleMrc = 0;
+    let totalBundleNrc = 0;
+    let avgBundleSize = 0;
+    const bundleSizeDistribution = {};
+    const bundleDiscountDistribution = {};
+    
+    bundles.forEach(bundle => {
+      totalBundleItems += bundle.item_count;
+      totalBundleMrc += bundle.total_mrc || 0;
+      totalBundleNrc += bundle.total_nrc || 0;
+      
+      // Bundle size distribution
+      const sizeKey = bundle.item_count >= 6 ? '6+' : bundle.item_count >= 4 ? '4-5' : '1-3';
+      bundleSizeDistribution[sizeKey] = (bundleSizeDistribution[sizeKey] || 0) + 1;
+      
+      // Discount distribution
+      const discPct = bundle.mrc_discount_percent || 0;
+      const discKey = discPct > 0 ? `${discPct}%` : 'No Discount';
+      bundleDiscountDistribution[discKey] = (bundleDiscountDistribution[discKey] || 0) + 1;
+      
+      // Count bundle as user activity
+      if (bundle.user_id) {
+        if (!userActivity[bundle.user_id]) {
+          userActivity[bundle.user_id] = { user_id: bundle.user_id, count: 0, bundleCount: 0 };
+        }
+        userActivity[bundle.user_id].bundleCount++;
+        userActivity[bundle.user_id].count++;
+      }
+    });
+    
+    if (totalBundles > 0) {
+      avgBundleSize = (totalBundleItems / totalBundles).toFixed(1);
+    }
     
     // Get user names for activity
     const userIds = Object.keys(userActivity);
@@ -15773,8 +17372,30 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
       });
     }
     
+    // Calculate total lookups (individual non-bundle + bundles as single events)
+    const individualLookups = lookups.filter(l => !l.bundle_id).length;
+    const totalLookupEvents = individualLookups + totalBundles;
+    
     res.json({
-      totalLookups: lookups.length,
+      totalLookups: totalLookupEvents,
+      individualLookups,
+      totalConnectionsPriced: lookups.length,
+      
+      // Bundle analytics
+      bundleStats: {
+        totalBundles,
+        totalBundleItems,
+        averageBundleSize: parseFloat(avgBundleSize),
+        totalBundleMrc: Math.round(totalBundleMrc * 100) / 100,
+        totalBundleNrc: Math.round(totalBundleNrc * 100) / 100,
+        bundleSizeDistribution: Object.entries(bundleSizeDistribution)
+          .map(([size, count]) => ({ size, count })),
+        bundleDiscountDistribution: Object.entries(bundleDiscountDistribution)
+          .sort((a, b) => b[1] - a[1])
+          .map(([discount, count]) => ({ discount, count })),
+        bundlePercentage: totalLookupEvents > 0 ? ((totalBundles / totalLookupEvents) * 100).toFixed(1) : 0
+      },
+      
       topProviders: Object.entries(providerSearches)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 20)
@@ -16537,31 +18158,38 @@ router.post('/route_finder/check-promo-match', authenticateToken, authorizeModul
               exchangeRates[rate.currency_code] = rate.exchange_rate;
             });
             
-            // Calculate total allocated cost
-            let totalAllocatedCost = 0;
-            const requestedBandwidth = parseFloat(bandwidth) || 10; // Default to 10 Mbps (under 100Mb tier)
+            // Utilization factors from config
+            const primaryUtilUnder = pricingConfig.utilizationFactors?.primaryUnder10000 || 0.9;
+            const primaryUtilOver = pricingConfig.utilizationFactors?.primaryOver10000 || 0.9;
             
-            routeCosts.forEach(route => {
-              let routeCost = parseFloat(route.cost) || 0;
-              const routeCurrency = route.currency || 'USD';
-              
-              // Convert to USD
-              if (routeCurrency !== 'USD' && exchangeRates[routeCurrency]) {
-                routeCost = routeCost / exchangeRates[routeCurrency];
-              }
-              
-              // Calculate bandwidth allocation
-              let routeBandwidth = parseFloat(route.bandwidth) || 1000;
-              if (route.bandwidth && route.bandwidth.toLowerCase && route.bandwidth.toLowerCase().includes('dark fiber')) {
-                routeBandwidth = 200000;
-              }
-              
-              const utilizationFactor = 0.9; // Default primary utilization
-              const allocationRatio = requestedBandwidth / (routeBandwidth * utilizationFactor);
-              totalAllocatedCost += routeCost * allocationRatio;
-            });
+            // Calculate allocated cost for a given requested bandwidth
+            const calculateAllocatedCostForBw = (requestedBw) => {
+              let totalCost = 0;
+              routeCosts.forEach(route => {
+                let routeCost = parseFloat(route.cost) || 0;
+                const routeCurrency = route.currency || 'USD';
+                
+                // Convert to USD
+                if (routeCurrency !== 'USD' && exchangeRates[routeCurrency]) {
+                  routeCost = routeCost / exchangeRates[routeCurrency];
+                }
+                
+                // Calculate bandwidth allocation
+                let routeBandwidth = parseFloat(route.bandwidth) || 1000;
+                if (route.bandwidth && route.bandwidth.toLowerCase && route.bandwidth.toLowerCase().includes('dark fiber')) {
+                  routeBandwidth = 200000;
+                }
+                
+                const utilizationFactor = routeBandwidth <= 10000 ? primaryUtilUnder : primaryUtilOver;
+                const allocationRatio = requestedBw / (routeBandwidth * utilizationFactor);
+                totalCost += routeCost * allocationRatio;
+              });
+              return totalCost;
+            };
             
-            // Find the best (lowest price) valid promo rule for the bandwidth tier
+            // Find the best (lowest price) valid promo rule
+            // Use the requested bandwidth tier to pick the best rule
+            const requestedBandwidth = parseFloat(bandwidth) || 10;
             let priceField;
             if (requestedBandwidth < 100) {
               priceField = 'price_under_100mb';
@@ -16593,31 +18221,71 @@ router.post('/route_finder/check-promo-match', authenticateToken, authorizeModul
               });
             }
             
-            // Validate margin requirement
-            // Margin formula: ((price - allocatedCost) / price) * 100
-            const requiredAllocatedCost = lowestPrice * (1 - promoMinMargin / 100);
-            const marginMet = totalAllocatedCost <= requiredAllocatedCost;
+            // Per-tier margin validation: check ALL four bandwidth tiers independently
+            // Each tier has its own allocated cost calculated at that tier's bandwidth
+            const tierChecks = [
+              { key: 'price_10mb', ruleField: 'price_under_100mb', requestedBw: 10 },
+              { key: 'price_100mb', ruleField: 'price_100_to_999mb', requestedBw: 100 },
+              { key: 'price_1000mb', ruleField: 'price_1000_to_2999mb', requestedBw: 1000 },
+              { key: 'price_10gb', ruleField: 'price_3000mb_plus', requestedBw: 10000 }
+            ];
             
-            if (!marginMet) {
-              // Margin not met - don't show promo (silent failure per requirements)
+            const validatedPrices = {};
+            let anyTierValid = false;
+            const marginDetails = {};
+            
+            tierChecks.forEach(tier => {
+              const tierPrice = parseFloat(bestRule[tier.ruleField]) || 0;
+              if (tierPrice <= 0) {
+                validatedPrices[tier.key] = null;
+                return;
+              }
+              
+              const tierAllocatedCost = calculateAllocatedCostForBw(tier.requestedBw);
+              
+              // Margin formula: ((price - allocatedCost) / price) * 100
+              const actualMargin = tierPrice > 0 ? ((tierPrice - tierAllocatedCost) / tierPrice) * 100 : 0;
+              const marginMet = actualMargin >= promoMinMargin;
+              
+              marginDetails[tier.key] = {
+                price: tierPrice,
+                allocatedCost: Math.round(tierAllocatedCost * 100) / 100,
+                actualMargin: Math.round(actualMargin * 100) / 100,
+                requiredMargin: promoMinMargin,
+                valid: marginMet
+              };
+              
+              if (marginMet) {
+                validatedPrices[tier.key] = tierPrice;
+                anyTierValid = true;
+              } else {
+                validatedPrices[tier.key] = null; // This tier fails margin check
+              }
+            });
+            
+            if (!anyTierValid) {
+              // No tier meets margin - don't show promo
               return res.json({
                 hasPromo: true,
                 valid: false,
                 reason: 'margin_not_met',
-                prices: null
+                prices: null,
+                marginDetails: marginDetails
               });
             }
             
-            // Promo is valid!
+            // At least one tier is valid - return validated prices
+            // Null values indicate tiers that don't meet margin requirements
             res.json({
               hasPromo: true,
               valid: true,
               prices: {
-                price_10mb: bestRule.price_under_100mb || 0,
-                price_100mb: bestRule.price_100_to_999mb || 0,
-                price_1000mb: bestRule.price_1000_to_2999mb || 0,
-                price_10gb: bestRule.price_3000mb_plus || 0
-              }
+                price_10mb: validatedPrices.price_10mb,
+                price_100mb: validatedPrices.price_100mb,
+                price_1000mb: validatedPrices.price_1000mb,
+                price_10gb: validatedPrices.price_10gb
+              },
+              marginDetails: marginDetails
             });
           });
         }
@@ -16626,6 +18294,275 @@ router.post('/route_finder/check-promo-match', authenticateToken, authorizeModul
   } catch (err) {
     console.error('Error in check-promo-match:', err);
     res.status(500).json({ error: 'Failed to check promo pricing match' });
+  }
+});
+
+// Calculate protected promo pricing for Route Finder
+// Returns protected pricing when BOTH primary and secondary paths have valid promo pricing
+router.post('/route_finder/calculate-protected-promo', authenticateToken, authorizeModulePermission('route_finder', 'read_only'), async (req, res) => {
+  try {
+    const { 
+      source, destination, bandwidth,
+      primary_circuit_ids = [], secondary_circuit_ids = [],
+      primary_promo_prices, secondary_promo_prices 
+    } = req.body;
+    
+    if (!source || !destination) {
+      return res.status(400).json({ error: 'Source and destination are required' });
+    }
+    
+    if (!primary_promo_prices || !secondary_promo_prices) {
+      return res.status(400).json({ error: 'Both primary and secondary promo prices are required' });
+    }
+    
+    // Get pricing config for protected service margin validation (per-bandwidth-tier)
+    const pricingConfig = await getPricingLogicConfig();
+    const protectedMargins = pricingConfig.protectedServiceMargins?.[12]?.bandwidthTiers || {
+      under_100mb: { minMargin: 60 },
+      from_100_to_999mb: { minMargin: 50 },
+      from_1000_to_2999mb: { minMargin: 45 },
+      over_3000mb: { minMargin: 40 }
+    };
+    
+    // Map bandwidth tiers to their config keys and requested bandwidths
+    const tierConfig = [
+      { key: 'price_10mb', requestedBw: 10, marginKey: 'under_100mb' },
+      { key: 'price_100mb', requestedBw: 100, marginKey: 'from_100_to_999mb' },
+      { key: 'price_1000mb', requestedBw: 1000, marginKey: 'from_1000_to_2999mb' },
+      { key: 'price_10gb', requestedBw: 10000, marginKey: 'over_3000mb' }
+    ];
+    
+    // Calculate 1.7x base prices for each tier
+    // If either primary or secondary price is null for a tier, that tier is not eligible
+    const basePrices = {};
+    const tierEligible = {};
+    tierConfig.forEach(tier => {
+      const primaryPrice = primary_promo_prices[tier.key];
+      const secondaryPrice = secondary_promo_prices[tier.key];
+      
+      // Both paths must have a valid (non-null) price for this tier
+      if (primaryPrice === null || primaryPrice === undefined || secondaryPrice === null || secondaryPrice === undefined) {
+        basePrices[tier.key] = null;
+        tierEligible[tier.key] = false;
+      } else {
+        basePrices[tier.key] = Math.max(primaryPrice || 0, secondaryPrice || 0) * 1.7;
+        tierEligible[tier.key] = true;
+      }
+    });
+    
+    // Calculate allocated costs for BOTH paths combined (full redundancy cost)
+    const allPrimaryIds = primary_circuit_ids.filter(c => c);
+    const allSecondaryIds = secondary_circuit_ids.filter(c => c);
+    const allCircuitIds = [...new Set([...allPrimaryIds, ...allSecondaryIds])];
+    
+    if (allCircuitIds.length === 0) {
+      // No circuits - return 1.7x prices (no cost data to validate margins against)
+      return res.json({
+        valid: true,
+        prices: basePrices,
+        method: 'both_promo_1.7x'
+      });
+    }
+    
+    // Get costs for all circuits
+    const placeholders = allCircuitIds.map(() => '?').join(',');
+    
+    db.all(
+      `SELECT circuit_id, cost, currency, bandwidth FROM network_routes WHERE circuit_id IN (${placeholders})`,
+      allCircuitIds,
+      async (costErr, routeCosts) => {
+        if (costErr) {
+          console.error('Error fetching route costs for protected promo:', costErr);
+          return res.status(500).json({ error: 'Failed to fetch route costs' });
+        }
+        
+        // Get exchange rates
+        db.all('SELECT * FROM exchange_rates WHERE status = "Active"', [], (rateErr, rates) => {
+          if (rateErr) {
+            console.error('Error fetching exchange rates:', rateErr);
+            return res.status(500).json({ error: 'Failed to fetch exchange rates' });
+          }
+          
+          // Build exchange rate map
+          const exchangeRates = {};
+          rates.forEach(rate => {
+            exchangeRates[rate.currency_code] = rate.exchange_rate;
+          });
+          
+          // Utilization factors from config
+          const primaryUtilUnder = pricingConfig.utilizationFactors?.primaryUnder10000 || 0.9;
+          const primaryUtilOver = pricingConfig.utilizationFactors?.primaryOver10000 || 0.9;
+          const protectionUtilUnder = pricingConfig.utilizationFactors?.protectionUnder10000 || 1.0;
+          const protectionUtilOver = pricingConfig.utilizationFactors?.protectionOver10000 || 1.0;
+          
+          // Calculate allocated cost for a path at a specific requested bandwidth
+          const calculatePathCostForBw = (circuitIds, requestedBw, isProtection) => {
+            let totalCost = 0;
+            circuitIds.forEach(cid => {
+              const route = routeCosts.find(r => r.circuit_id === cid);
+              if (!route) return;
+              
+              let routeCost = parseFloat(route.cost) || 0;
+              const routeCurrency = route.currency || 'USD';
+              
+              // Convert to USD
+              if (routeCurrency !== 'USD' && exchangeRates[routeCurrency]) {
+                routeCost = routeCost / exchangeRates[routeCurrency];
+              }
+              
+              let routeBandwidth = parseFloat(route.bandwidth) || 1000;
+              if (route.bandwidth && typeof route.bandwidth === 'string' && route.bandwidth.toLowerCase().includes('dark fiber')) {
+                routeBandwidth = 200000;
+              }
+              
+              // Use appropriate utilization factor based on path type and bandwidth
+              let utilizationFactor;
+              if (isProtection) {
+                utilizationFactor = routeBandwidth <= 10000 ? protectionUtilUnder : protectionUtilOver;
+              } else {
+                utilizationFactor = routeBandwidth <= 10000 ? primaryUtilUnder : primaryUtilOver;
+              }
+              
+              const allocationRatio = requestedBw / (routeBandwidth * utilizationFactor);
+              totalCost += routeCost * allocationRatio;
+            });
+            return totalCost;
+          };
+          
+          // For each bandwidth tier, calculate final price as max(1.7x, margin-based)
+          const finalPrices = {};
+          const marginDetails = {};
+          
+          tierConfig.forEach(tier => {
+            // Skip tiers where underlying promo prices were null (margin not met at individual path level)
+            if (!tierEligible[tier.key]) {
+              finalPrices[tier.key] = null;
+              marginDetails[tier.key] = { eligible: false, reason: 'underlying_promo_tier_not_valid' };
+              return;
+            }
+            
+            const primaryCost = calculatePathCostForBw(allPrimaryIds, tier.requestedBw, false);
+            const secondaryCost = calculatePathCostForBw(allSecondaryIds, tier.requestedBw, true);
+            const totalAllocatedCost = primaryCost + secondaryCost;
+            
+            // Get the minimum margin for this tier from protected service config
+            const tierMinMargin = protectedMargins[tier.marginKey]?.minMargin || 40;
+            
+            // Calculate margin-based price: allocatedCost / (1 - minMargin/100)
+            const marginBasedPrice = totalAllocatedCost > 0 
+              ? totalAllocatedCost / (1 - tierMinMargin / 100) 
+              : 0;
+            
+            // Final price = max(1.7x price, margin-based price) - ensures both 1.7x minimum AND margin requirements
+            const price_1_7x = basePrices[tier.key];
+            finalPrices[tier.key] = Math.max(price_1_7x, marginBasedPrice);
+            
+            // Track margin details for debugging
+            const actualMargin = finalPrices[tier.key] > 0
+              ? ((finalPrices[tier.key] - totalAllocatedCost) / finalPrices[tier.key]) * 100
+              : 0;
+            marginDetails[tier.key] = {
+              eligible: true,
+              allocatedCost: Math.round(totalAllocatedCost * 100) / 100,
+              price_1_7x: Math.round(price_1_7x * 100) / 100,
+              marginBasedPrice: Math.round(marginBasedPrice * 100) / 100,
+              requiredMargin: tierMinMargin,
+              actualMargin: Math.round(actualMargin * 100) / 100,
+              method: price_1_7x >= marginBasedPrice ? '1.7x' : 'margin_based'
+            };
+          });
+          
+          // Always valid - we enforce minimum of 1.7x OR margin-based price
+          res.json({
+            valid: true,
+            prices: finalPrices,
+            method: 'both_promo_protected',
+            marginDetails: marginDetails
+          });
+        });
+      }
+    );
+  } catch (err) {
+    console.error('Error in calculate-protected-promo:', err);
+    res.status(500).json({ error: 'Failed to calculate protected promo pricing' });
+  }
+});
+
+// Save Route Finder search log to audit_logs table
+// Logs the complete search results, promo pricing, protected pricing, and cross connect pricing
+router.post('/route_finder/save-search-log', authenticateToken, authorizeModulePermission('route_finder', 'read_only'), async (req, res) => {
+  try {
+    const {
+      searchParameters,
+      searchResults,
+      primaryPromo,
+      secondaryPromo,
+      protectedPromo,
+      marginAnalysis,
+      crossConnectResults,
+      executionTime
+    } = req.body;
+
+    if (!searchParameters || !searchResults) {
+      return res.status(400).json({ error: 'Search parameters and results are required' });
+    }
+
+    const parameters = JSON.stringify({
+      source: searchParameters.source,
+      destination: searchParameters.destination,
+      bandwidth: searchParameters.bandwidth,
+      routeMode: searchParameters.routeMode,
+      mtuRequired: searchParameters.mtuRequired,
+      outputCurrency: searchParameters.outputCurrency,
+      timestamp: new Date().toISOString()
+    });
+
+    const pricingData = JSON.stringify({
+      inputParameters: {
+        source: searchParameters.source,
+        destination: searchParameters.destination,
+        bandwidth: searchParameters.bandwidth,
+        routeMode: searchParameters.routeMode,
+        mtuRequired: searchParameters.mtuRequired,
+        outputCurrency: searchParameters.outputCurrency
+      },
+      routeResults: {
+        primaryPath: searchResults.primaryPath || null,
+        diversePath: searchResults.diversePath || null,
+        routeLifecycleNotes: searchResults.routeLifecycleNotes || null
+      },
+      promoPricing: {
+        primaryPromo: primaryPromo || null,
+        secondaryPromo: secondaryPromo || null,
+        protectedPromo: protectedPromo || null
+      },
+      marginAnalysis: marginAnalysis || null,
+      crossConnectPricing: crossConnectResults || { source: null, destination: null }
+    });
+
+    db.run(
+      'INSERT INTO audit_logs (action_type, user_id, user_name, parameters, pricing_data, execution_time, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        'ROUTE_FINDER_SEARCH',
+        req.user?.id || null,
+        req.user?.username || 'Unknown User',
+        parameters,
+        pricingData,
+        executionTime || null,
+        req.ip || req.connection?.remoteAddress || 'unknown',
+        req.get('User-Agent') || 'unknown'
+      ],
+      function(err) {
+        if (err) {
+          console.error('Failed to save Route Finder search log:', err);
+          return res.status(500).json({ error: 'Failed to save search log' });
+        }
+        res.json({ success: true, logId: this.lastID });
+      }
+    );
+  } catch (err) {
+    console.error('Error saving Route Finder search log:', err);
+    res.status(500).json({ error: 'Failed to save search log' });
   }
 });
 
@@ -17023,6 +18960,895 @@ router.post('/network_design/export_kmz', authenticateToken, authorizeModulePerm
       details: error.stack
     });
   }
+});
+
+// ============================================================================
+// CARRIER QUOTE REPOSITORY ENDPOINTS
+// ============================================================================
+
+// Configure multer for quote attachment uploads
+const quoteAttachmentStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = path.join(__dirname, 'quote_attachments');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'quote-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const quoteUpload = multer({
+  storage: quoteAttachmentStorage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['.kmz', '.kml', '.pdf', '.eml', '.doc', '.docx', '.xls', '.xlsx', '.png', '.jpg', '.jpeg', '.msg', '.txt', '.csv'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowedTypes.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type ${ext} not allowed. Allowed types: ${allowedTypes.join(', ')}`));
+    }
+  }
+});
+
+// Helper: Generate quote reference (QR-YYYYMMDD-XXXX)
+function generateQuoteReference(callback) {
+  const today = new Date();
+  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+  const prefix = `QR-${dateStr}-`;
+  
+  db.get(
+    `SELECT quote_reference FROM carrier_quotes WHERE quote_reference LIKE ? ORDER BY quote_reference DESC LIMIT 1`,
+    [`${prefix}%`],
+    (err, row) => {
+      if (err) return callback(err);
+      
+      let nextNum = 1;
+      if (row) {
+        const lastNum = parseInt(row.quote_reference.split('-').pop(), 10);
+        if (!isNaN(lastNum)) {
+          nextNum = lastNum + 1;
+        }
+      }
+      
+      const reference = `${prefix}${String(nextNum).padStart(4, '0')}`;
+      callback(null, reference);
+    }
+  );
+}
+
+// Get all carrier quotes (with search/filter support)
+router.get('/carrier_quotes', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { search, carrier, region, service_type, location, location_a, location_b,
+          date_from, date_to,
+          protection, bandwidth_unit, currency, contract_term, cable_system,
+          min_mrc, max_mrc, min_nrc, max_nrc, sort_by, sort_order,
+          limit = 100, offset = 0 } = req.query;
+  
+  let query = `
+    SELECT cq.*,
+           u_created.username as created_by_username,
+           u_created.full_name as created_by_name,
+           u_updated.username as updated_by_username,
+           u_updated.full_name as updated_by_name,
+           loc_a.location_name as location_a_custom_name,
+           loc_a.address as location_a_custom_address,
+           loc_b.location_name as location_b_custom_name,
+           loc_b.address as location_b_custom_address,
+           pop_a.city as location_a_city,
+           pop_a.datacenter_name as location_a_datacenter,
+           pop_b.city as location_b_city,
+           pop_b.datacenter_name as location_b_datacenter
+    FROM carrier_quotes cq
+    LEFT JOIN users u_created ON cq.created_by = u_created.id
+    LEFT JOIN users u_updated ON cq.updated_by = u_updated.id
+    LEFT JOIN quote_custom_locations loc_a ON cq.location_a_custom_id = loc_a.id
+    LEFT JOIN quote_custom_locations loc_b ON cq.location_b_custom_id = loc_b.id
+    LEFT JOIN location_reference pop_a ON cq.location_a_pop_code = pop_a.location_code
+    LEFT JOIN location_reference pop_b ON cq.location_b_pop_code = pop_b.location_code
+  `;
+  
+  let countQuery = `SELECT COUNT(*) as total FROM carrier_quotes cq
+    LEFT JOIN quote_custom_locations loc_a ON cq.location_a_custom_id = loc_a.id
+    LEFT JOIN quote_custom_locations loc_b ON cq.location_b_custom_id = loc_b.id
+    LEFT JOIN location_reference pop_a ON cq.location_a_pop_code = pop_a.location_code
+    LEFT JOIN location_reference pop_b ON cq.location_b_pop_code = pop_b.location_code`;
+  let conditions = [];
+  let params = [];
+  
+  if (search) {
+    conditions.push(`(cq.quote_reference LIKE ? OR cq.carrier_name LIKE ? OR cq.carrier_quote_ref LIKE ? OR cq.cable_system LIKE ? OR cq.transit_cities LIKE ? OR cq.notes LIKE ? OR cq.location_a_pop_code LIKE ? OR cq.location_b_pop_code LIKE ? OR cq.transit_countries LIKE ?)`);
+    const searchParam = `%${search}%`;
+    params.push(searchParam, searchParam, searchParam, searchParam, searchParam, searchParam, searchParam, searchParam, searchParam);
+  }
+  
+  if (carrier) {
+    conditions.push('cq.carrier_name LIKE ?');
+    params.push(`%${carrier}%`);
+  }
+  
+  if (region) {
+    conditions.push('cq.region = ?');
+    params.push(region);
+  }
+  
+  if (service_type) {
+    conditions.push('cq.service_type = ?');
+    params.push(service_type);
+  }
+  
+  if (location) {
+    conditions.push('(cq.location_a_pop_code LIKE ? OR cq.location_b_pop_code LIKE ?)');
+    params.push(`%${location}%`, `%${location}%`);
+  }
+  
+  if (location_a) {
+    conditions.push('(cq.location_a_pop_code LIKE ? OR loc_a.location_name LIKE ? OR loc_a.city LIKE ? OR pop_a.city LIKE ? OR pop_a.datacenter_name LIKE ?)');
+    params.push(`%${location_a}%`, `%${location_a}%`, `%${location_a}%`, `%${location_a}%`, `%${location_a}%`);
+  }
+  
+  if (location_b) {
+    conditions.push('(cq.location_b_pop_code LIKE ? OR loc_b.location_name LIKE ? OR loc_b.city LIKE ? OR pop_b.city LIKE ? OR pop_b.datacenter_name LIKE ?)');
+    params.push(`%${location_b}%`, `%${location_b}%`, `%${location_b}%`, `%${location_b}%`, `%${location_b}%`);
+  }
+  
+  if (protection) {
+    conditions.push('cq.protection = ?');
+    params.push(protection);
+  }
+  
+  if (bandwidth_unit) {
+    conditions.push('cq.bandwidth_unit = ?');
+    params.push(bandwidth_unit);
+  }
+  
+  if (currency) {
+    conditions.push('cq.currency = ?');
+    params.push(currency);
+  }
+  
+  if (contract_term) {
+    conditions.push('cq.contract_term = ?');
+    params.push(parseInt(contract_term));
+  }
+  
+  if (cable_system) {
+    conditions.push('cq.cable_system LIKE ?');
+    params.push(`%${cable_system}%`);
+  }
+  
+  if (min_mrc) {
+    conditions.push('cq.mrc >= ?');
+    params.push(parseFloat(min_mrc));
+  }
+  
+  if (max_mrc) {
+    conditions.push('cq.mrc <= ?');
+    params.push(parseFloat(max_mrc));
+  }
+  
+  if (min_nrc) {
+    conditions.push('cq.nrc >= ?');
+    params.push(parseFloat(min_nrc));
+  }
+  
+  if (max_nrc) {
+    conditions.push('cq.nrc <= ?');
+    params.push(parseFloat(max_nrc));
+  }
+  
+  if (date_from) {
+    conditions.push('cq.quote_date >= ?');
+    params.push(date_from);
+  }
+  
+  if (date_to) {
+    conditions.push('cq.quote_date <= ?');
+    params.push(date_to);
+  }
+  
+  if (conditions.length > 0) {
+    const whereClause = ' WHERE ' + conditions.join(' AND ');
+    query += whereClause;
+    countQuery += whereClause;
+  }
+  
+  // Sortable columns whitelist
+  const allowedSortColumns = ['created_at', 'quote_date', 'carrier_name', 'service_type', 'region', 'mrc', 'nrc', 'bandwidth_value', 'contract_term', 'expected_latency', 'quote_reference'];
+  const sortColumn = allowedSortColumns.includes(sort_by) ? `cq.${sort_by}` : 'cq.created_at';
+  const sortDir = sort_order === 'asc' ? 'ASC' : 'DESC';
+  
+  query += ` ORDER BY ${sortColumn} ${sortDir} LIMIT ? OFFSET ?`;
+  const queryParams = [...params, parseInt(limit), parseInt(offset)];
+  
+  // Get total count first
+  db.get(countQuery, params, (err, countRow) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    db.all(query, queryParams, (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      res.json({
+        quotes: rows,
+        total: countRow.total,
+        limit: parseInt(limit),
+        offset: parseInt(offset)
+      });
+    });
+  });
+});
+
+// Get available currencies for quote currency selector
+router.get('/carrier_quotes/currencies', authenticateToken, (req, res) => {
+  db.all(`SELECT currency_code, exchange_rate,
+    CASE currency_code 
+      WHEN 'USD' THEN 'US Dollar' 
+      WHEN 'EUR' THEN 'Euro' 
+      WHEN 'GBP' THEN 'British Pound' 
+      WHEN 'JPY' THEN 'Japanese Yen' 
+      WHEN 'AUD' THEN 'Australian Dollar' 
+      WHEN 'CAD' THEN 'Canadian Dollar'
+      WHEN 'CHF' THEN 'Swiss Franc'
+      WHEN 'CNY' THEN 'Chinese Yuan'
+      WHEN 'HKD' THEN 'Hong Kong Dollar'
+      WHEN 'SGD' THEN 'Singapore Dollar'
+      WHEN 'INR' THEN 'Indian Rupee'
+      WHEN 'BRL' THEN 'Brazilian Real'
+      WHEN 'MXN' THEN 'Mexican Peso'
+      WHEN 'ZAR' THEN 'South African Rand'
+      WHEN 'KRW' THEN 'South Korean Won'
+      ELSE currency_code 
+    END as currency_name 
+    FROM exchange_rates 
+    ORDER BY CASE currency_code WHEN 'USD' THEN 0 ELSE 1 END, currency_code`, [], (err, currencies) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const hasUSD = currencies.some(c => c.currency_code === 'USD');
+    if (!hasUSD) {
+      currencies.unshift({ currency_code: 'USD', currency_name: 'US Dollar', exchange_rate: 1 });
+    }
+    res.json(currencies);
+  });
+});
+
+// Get POP locations for autocomplete (from location_reference table)
+router.get('/carrier_quotes/pop_locations', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { q } = req.query;
+  
+  let query = 'SELECT location_code, datacenter_name, city, country FROM location_reference';
+  let params = [];
+  
+  if (q && q.length >= 1) {
+    query += ' WHERE location_code LIKE ? OR datacenter_name LIKE ? OR city LIKE ?';
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  
+  query += ' ORDER BY location_code LIMIT 50';
+  
+  db.all(query, params, (err, locations) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(locations);
+  });
+});
+
+// Get carriers for autocomplete
+router.get('/carrier_quotes/carriers', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { q } = req.query;
+  
+  let query = 'SELECT id, carrier_name, region FROM carriers WHERE status = "active"';
+  let params = [];
+  
+  if (q && q.length >= 1) {
+    query += ' AND carrier_name LIKE ?';
+    params.push(`%${q}%`);
+  }
+  
+  query += ' ORDER BY carrier_name LIMIT 50';
+  
+  db.all(query, params, (err, carriers) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    // Map database region values to frontend display values
+    const regionMapping = {
+      'North America': 'AMERs',
+      'Asia Pacific': 'APAC',
+      'Europe': 'EMEA'
+    };
+    
+    const mappedCarriers = carriers.map(carrier => ({
+      ...carrier,
+      region: regionMapping[carrier.region] || carrier.region || '',
+      display_name: `${carrier.carrier_name} (${regionMapping[carrier.region] || carrier.region || 'N/A'})`
+    }));
+    
+    res.json(mappedCarriers);
+  });
+});
+
+// Get custom locations for autocomplete
+router.get('/carrier_quotes/custom_locations', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { q } = req.query;
+  
+  let query = 'SELECT * FROM quote_custom_locations';
+  let params = [];
+  
+  if (q && q.length >= 1) {
+    query += ' WHERE location_name LIKE ?';
+    params.push(`%${q}%`);
+  }
+  
+  query += ' ORDER BY location_name LIMIT 50';
+  
+  db.all(query, params, (err, locations) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(locations);
+  });
+});
+
+// Export carrier quotes to CSV
+router.get('/carrier_quotes/export', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { search, carrier, region, service_type } = req.query;
+  
+  let query = `
+    SELECT cq.quote_reference, cq.carrier_name, cq.carrier_quote_ref, cq.service_type, cq.region,
+           cq.location_a_pop_code, cq.location_b_pop_code,
+           cq.bandwidth_value, cq.bandwidth_unit, cq.mrc, cq.nrc, cq.currency,
+           cq.contract_term, cq.expected_latency, cq.protection, cq.cable_system,
+           cq.quote_date, cq.expiry_date, cq.transit_cities, cq.transit_countries,
+           cq.route_distance_km, cq.notes,
+           u_created.username as created_by,
+           cq.created_at
+    FROM carrier_quotes cq
+    LEFT JOIN users u_created ON cq.created_by = u_created.id
+  `;
+  
+  let conditions = [];
+  let params = [];
+  
+  if (search) {
+    conditions.push('(cq.quote_reference LIKE ? OR cq.carrier_name LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`);
+  }
+  if (carrier) { conditions.push('cq.carrier_name LIKE ?'); params.push(`%${carrier}%`); }
+  if (region) { conditions.push('cq.region = ?'); params.push(region); }
+  if (service_type) { conditions.push('cq.service_type = ?'); params.push(service_type); }
+  
+  if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
+  query += ' ORDER BY cq.created_at DESC';
+  
+  db.all(query, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    try {
+      const fields = [
+        'quote_reference', 'carrier_name', 'carrier_quote_ref', 'service_type', 'region',
+        'location_a_pop_code', 'location_b_pop_code',
+        'bandwidth_value', 'bandwidth_unit', 'mrc', 'nrc', 'currency',
+        'contract_term', 'expected_latency', 'protection', 'cable_system',
+        'quote_date', 'expiry_date', 'transit_cities', 'transit_countries',
+        'route_distance_km', 'notes', 'created_by', 'created_at'
+      ];
+      const parser = new Parser({ fields });
+      const csv = parser.parse(rows);
+      
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="carrier_quotes_export.csv"');
+      res.send(csv);
+    } catch (csvErr) {
+      res.status(500).json({ error: 'Failed to generate CSV: ' + csvErr.message });
+    }
+  });
+});
+
+// Get a single carrier quote by ID (with attachments and price stages)
+router.get('/carrier_quotes/:id', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { id } = req.params;
+  
+  db.get(`
+    SELECT cq.*,
+           u_created.username as created_by_username,
+           u_created.full_name as created_by_name,
+           u_updated.username as updated_by_username,
+           u_updated.full_name as updated_by_name,
+           loc_a.location_name as location_a_custom_name,
+           loc_a.address as location_a_custom_address,
+           loc_a.city as location_a_custom_city,
+           loc_a.country as location_a_custom_country,
+           loc_b.location_name as location_b_custom_name,
+           loc_b.address as location_b_custom_address,
+           loc_b.city as location_b_custom_city,
+           loc_b.country as location_b_custom_country,
+           pop_a.city as location_a_city,
+           pop_a.datacenter_name as location_a_datacenter,
+           pop_b.city as location_b_city,
+           pop_b.datacenter_name as location_b_datacenter
+    FROM carrier_quotes cq
+    LEFT JOIN users u_created ON cq.created_by = u_created.id
+    LEFT JOIN users u_updated ON cq.updated_by = u_updated.id
+    LEFT JOIN quote_custom_locations loc_a ON cq.location_a_custom_id = loc_a.id
+    LEFT JOIN quote_custom_locations loc_b ON cq.location_b_custom_id = loc_b.id
+    LEFT JOIN location_reference pop_a ON cq.location_a_pop_code = pop_a.location_code
+    LEFT JOIN location_reference pop_b ON cq.location_b_pop_code = pop_b.location_code
+    WHERE cq.id = ?
+  `, [id], (err, quote) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!quote) return res.status(404).json({ error: 'Quote not found' });
+    
+    // Get attachments
+    db.all('SELECT * FROM quote_attachments WHERE quote_id = ? ORDER BY uploaded_at DESC', [id], (err, attachments) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      // Get price stages
+      db.all(`
+        SELECT ps.*, u.username as created_by_username, u.full_name as created_by_name
+        FROM quote_price_stages ps
+        LEFT JOIN users u ON ps.created_by = u.id
+        WHERE ps.quote_id = ?
+        ORDER BY ps.stage_date ASC, ps.created_at ASC
+      `, [id], (err, priceStages) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        res.json({ ...quote, attachments: attachments || [], price_stages: priceStages || [] });
+      });
+    });
+  });
+});
+
+// Create a new carrier quote
+router.post('/carrier_quotes', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const {
+    quote_reference, carrier_id, carrier_name, carrier_quote_ref,
+    service_type, region, location_a_type, location_a_pop_code, location_a_custom_id,
+    location_b_type, location_b_pop_code, location_b_custom_id,
+    bandwidth_value, bandwidth_unit, mrc, nrc, currency, contract_term,
+    expected_latency, protection, cable_system, quote_date, expiry_date,
+    transit_cities, transit_countries, route_distance_km, notes
+  } = req.body;
+  
+  // Validate required fields
+  if (!carrier_name) return res.status(400).json({ error: 'Carrier name is required' });
+  if (!service_type) return res.status(400).json({ error: 'Service type is required' });
+  if (!region) return res.status(400).json({ error: 'Region is required' });
+  if (!bandwidth_unit) return res.status(400).json({ error: 'Bandwidth unit is required' });
+  // Bandwidth value not required when unit is Dark Fiber
+  if (bandwidth_unit !== 'Dark Fiber' && !bandwidth_value) return res.status(400).json({ error: 'Bandwidth value is required' });
+  
+  const insertQuote = (ref) => {
+    db.run(`
+      INSERT INTO carrier_quotes (
+        quote_reference, carrier_id, carrier_name, carrier_quote_ref,
+        service_type, region, location_a_type, location_a_pop_code, location_a_custom_id,
+        location_b_type, location_b_pop_code, location_b_custom_id,
+        bandwidth_value, bandwidth_unit, mrc, nrc, currency, contract_term,
+        expected_latency, protection, cable_system, quote_date, expiry_date,
+        transit_cities, transit_countries, route_distance_km, notes,
+        created_by, updated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      ref, carrier_id || null, carrier_name, carrier_quote_ref || null,
+      service_type, region, location_a_type || 'pop', location_a_pop_code || null, location_a_custom_id || null,
+      location_b_type || 'pop', location_b_pop_code || null, location_b_custom_id || null,
+      bandwidth_value, bandwidth_unit, mrc || null, nrc || null, currency || 'USD', contract_term || null,
+      expected_latency || null, protection || null, cable_system || null, quote_date || null, expiry_date || null,
+      transit_cities || null, transit_countries || null, route_distance_km || null, notes || null,
+      req.user.id, req.user.id
+    ], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      const quoteId = this.lastID;
+      
+      logChange(req.user.id, 'carrier_quotes', quoteId, 'CREATE', null, {
+        quote_reference: ref, carrier_name, service_type, region, bandwidth_value, bandwidth_unit
+      }, req);
+      
+      // Auto-create "Initial Offer" price stage if MRC or NRC is provided
+      if (mrc || nrc) {
+        const stageCurrency = currency || 'USD';
+        const stageDate = quote_date || new Date().toISOString().split('T')[0];
+        db.run(`
+          INSERT INTO quote_price_stages (quote_id, stage_name, mrc, nrc, currency, notes, stage_date, created_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, [quoteId, 'Initial Offer', mrc || null, nrc || null, stageCurrency, null, stageDate, req.user.id], (stageErr) => {
+          if (stageErr) {
+            console.warn('Warning: Failed to create initial price stage:', stageErr.message);
+          }
+          res.status(201).json({ id: quoteId, quote_reference: ref });
+        });
+      } else {
+        res.status(201).json({ id: quoteId, quote_reference: ref });
+      }
+    });
+  };
+  
+  // Use provided reference or auto-generate
+  if (quote_reference) {
+    insertQuote(quote_reference);
+  } else {
+    generateQuoteReference((err, ref) => {
+      if (err) return res.status(500).json({ error: 'Failed to generate quote reference' });
+      insertQuote(ref);
+    });
+  }
+});
+
+// Update a carrier quote
+router.put('/carrier_quotes/:id', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { id } = req.params;
+  const {
+    carrier_id, carrier_name, carrier_quote_ref,
+    service_type, region, location_a_type, location_a_pop_code, location_a_custom_id,
+    location_b_type, location_b_pop_code, location_b_custom_id,
+    bandwidth_value, bandwidth_unit, mrc, nrc, currency, contract_term,
+    expected_latency, protection, cable_system, quote_date, expiry_date,
+    transit_cities, transit_countries, route_distance_km, notes
+  } = req.body;
+  
+  // Get old values for logging
+  db.get('SELECT * FROM carrier_quotes WHERE id = ?', [id], (err, oldQuote) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldQuote) return res.status(404).json({ error: 'Quote not found' });
+    
+    db.run(`
+      UPDATE carrier_quotes SET
+        carrier_id = ?, carrier_name = ?, carrier_quote_ref = ?,
+        service_type = ?, region = ?, location_a_type = ?, location_a_pop_code = ?, location_a_custom_id = ?,
+        location_b_type = ?, location_b_pop_code = ?, location_b_custom_id = ?,
+        bandwidth_value = ?, bandwidth_unit = ?, mrc = ?, nrc = ?, currency = ?, contract_term = ?,
+        expected_latency = ?, protection = ?, cable_system = ?, quote_date = ?, expiry_date = ?,
+        transit_cities = ?, transit_countries = ?, route_distance_km = ?, notes = ?,
+        updated_by = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      carrier_id || null, carrier_name, carrier_quote_ref || null,
+      service_type, region, location_a_type || 'pop', location_a_pop_code || null, location_a_custom_id || null,
+      location_b_type || 'pop', location_b_pop_code || null, location_b_custom_id || null,
+      bandwidth_value, bandwidth_unit, mrc || null, nrc || null, currency || 'USD', contract_term || null,
+      expected_latency || null, protection || null, cable_system || null, quote_date || null, expiry_date || null,
+      transit_cities || null, transit_countries || null, route_distance_km || null, notes || null,
+      req.user.id, id
+    ], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      logChange(req.user.id, 'carrier_quotes', id, 'UPDATE', oldQuote, {
+        carrier_name, service_type, region, bandwidth_value, bandwidth_unit
+      }, req);
+      
+      res.json({ message: 'Quote updated successfully' });
+    });
+  });
+});
+
+// Delete a carrier quote
+router.delete('/carrier_quotes/:id', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'provisioner'), (req, res) => {
+  const { id } = req.params;
+  
+  db.get('SELECT * FROM carrier_quotes WHERE id = ?', [id], (err, quote) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!quote) return res.status(404).json({ error: 'Quote not found' });
+    
+    // Delete associated attachments from filesystem
+    db.all('SELECT file_path FROM quote_attachments WHERE quote_id = ?', [id], (err, attachments) => {
+      if (!err && attachments) {
+        attachments.forEach(att => {
+          const filePath = path.join(__dirname, 'quote_attachments', att.file_path);
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+          }
+        });
+      }
+      
+      // Delete attachments from DB
+      db.run('DELETE FROM quote_attachments WHERE quote_id = ?', [id], (err) => {
+        if (err) console.error('Error deleting quote attachments:', err);
+        
+        // Delete the quote
+        db.run('DELETE FROM carrier_quotes WHERE id = ?', [id], function(err) {
+          if (err) return res.status(500).json({ error: err.message });
+          
+          logChange(req.user.id, 'carrier_quotes', id, 'DELETE', quote, null, req);
+          
+          res.json({ message: 'Quote deleted successfully' });
+        });
+      });
+    });
+  });
+});
+
+// Upload attachments to a quote
+router.post('/carrier_quotes/:id/attachments', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), quoteUpload.array('files', 10), (req, res) => {
+  const { id } = req.params;
+  const attachmentType = req.body.attachment_type || 'document';
+  
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ error: 'No files uploaded' });
+  }
+  
+  // Verify quote exists
+  db.get('SELECT id FROM carrier_quotes WHERE id = ?', [id], (err, quote) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!quote) return res.status(404).json({ error: 'Quote not found' });
+    
+    const insertPromises = req.files.map(file => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      const fileAttachmentType = ['.kmz', '.kml'].includes(ext) ? 'kmz' : 'document';
+      
+      return new Promise((resolve, reject) => {
+        db.run(`
+          INSERT INTO quote_attachments (quote_id, file_name, file_path, file_type, file_size, attachment_type, uploaded_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [id, file.originalname, file.filename, ext, file.size, fileAttachmentType, req.user.id], function(err) {
+          if (err) reject(err);
+          else resolve({ id: this.lastID, file_name: file.originalname, file_type: ext, attachment_type: fileAttachmentType });
+        });
+      });
+    });
+    
+    Promise.all(insertPromises)
+      .then(results => {
+        logChange(req.user.id, 'quote_attachments', id, 'CREATE', null, {
+          files: results.map(r => r.file_name).join(', ')
+        }, req);
+        
+        res.status(201).json({ attachments: results });
+      })
+      .catch(err => res.status(500).json({ error: err.message }));
+  });
+});
+
+// Download a quote attachment
+router.get('/carrier_quotes/attachments/:attachmentId/download', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { attachmentId } = req.params;
+  
+  db.get('SELECT * FROM quote_attachments WHERE id = ?', [attachmentId], (err, attachment) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!attachment) return res.status(404).json({ error: 'Attachment not found' });
+    
+    const filePath = path.join(__dirname, 'quote_attachments', attachment.file_path);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'File not found on server' });
+    }
+    
+    res.download(filePath, attachment.file_name);
+  });
+});
+
+// Delete a quote attachment
+router.delete('/carrier_quotes/attachments/:attachmentId', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { attachmentId } = req.params;
+  
+  db.get('SELECT * FROM quote_attachments WHERE id = ?', [attachmentId], (err, attachment) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!attachment) return res.status(404).json({ error: 'Attachment not found' });
+    
+    // Delete file from filesystem
+    const filePath = path.join(__dirname, 'quote_attachments', attachment.file_path);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    
+    // Delete from database
+    db.run('DELETE FROM quote_attachments WHERE id = ?', [attachmentId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      logChange(req.user.id, 'quote_attachments', attachmentId, 'DELETE', attachment, null, req);
+      
+      res.json({ message: 'Attachment deleted successfully' });
+    });
+  });
+});
+
+// Parse KMZ file and extract route data (transit cities, countries, distance)
+router.post('/carrier_quotes/parse_kmz', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), quoteUpload.single('kmz_file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No KMZ file uploaded' });
+  }
+  
+  try {
+    const { XMLParser } = require('fast-xml-parser');
+    const AdmZip = require('adm-zip');
+    
+    const filePath = path.join(__dirname, 'quote_attachments', req.file.filename);
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    
+    let kmlText;
+    if (ext === '.kmz') {
+      const zip = new AdmZip(filePath);
+      const kmlEntry = zip.getEntries().find(e => e.entryName.endsWith('.kml'));
+      if (!kmlEntry) {
+        return res.status(400).json({ error: 'No KML file found inside KMZ archive' });
+      }
+      kmlText = kmlEntry.getData().toString('utf8');
+    } else if (ext === '.kml') {
+      kmlText = fs.readFileSync(filePath, 'utf8');
+    } else {
+      return res.status(400).json({ error: 'File must be .kmz or .kml' });
+    }
+    
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '@_'
+    });
+    const kmlObj = parser.parse(kmlText);
+    
+    // Extract route coordinates
+    const routes = [];
+    function findPlacemarks(obj) {
+      if (!obj || typeof obj !== 'object') return [];
+      let placemarks = [];
+      if (obj.Placemark) {
+        placemarks = Array.isArray(obj.Placemark) ? obj.Placemark : [obj.Placemark];
+      }
+      if (obj.Document) placemarks = placemarks.concat(findPlacemarks(obj.Document));
+      if (obj.Folder) {
+        const folders = Array.isArray(obj.Folder) ? obj.Folder : [obj.Folder];
+        folders.forEach(f => { placemarks = placemarks.concat(findPlacemarks(f)); });
+      }
+      return placemarks;
+    }
+    
+    const placemarks = findPlacemarks(kmlObj.kml);
+    const allCoords = [];
+    const pointNames = [];
+    
+    for (const pm of placemarks) {
+      // Extract LineString coordinates
+      if (pm.LineString && pm.LineString.coordinates) {
+        const coords = pm.LineString.coordinates.toString().trim().split(/\s+/).map(c => {
+          const parts = c.split(',');
+          return { lon: parseFloat(parts[0]), lat: parseFloat(parts[1]) };
+        }).filter(c => !isNaN(c.lon) && !isNaN(c.lat));
+        allCoords.push(...coords);
+      }
+      
+      // Extract MultiGeometry LineStrings
+      if (pm.MultiGeometry && pm.MultiGeometry.LineString) {
+        const lines = Array.isArray(pm.MultiGeometry.LineString) ? pm.MultiGeometry.LineString : [pm.MultiGeometry.LineString];
+        for (const ls of lines) {
+          if (ls.coordinates) {
+            const coords = ls.coordinates.toString().trim().split(/\s+/).map(c => {
+              const parts = c.split(',');
+              return { lon: parseFloat(parts[0]), lat: parseFloat(parts[1]) };
+            }).filter(c => !isNaN(c.lon) && !isNaN(c.lat));
+            allCoords.push(...coords);
+          }
+        }
+      }
+      
+      // Extract named points
+      if (pm.Point && pm.Point.coordinates && pm.name) {
+        pointNames.push(pm.name.toString());
+      }
+    }
+    
+    // Calculate total distance from coordinates (Haversine formula)
+    let totalDistance = 0;
+    for (let i = 1; i < allCoords.length; i++) {
+      const R = 6371; // Earth radius in km
+      const dLat = (allCoords[i].lat - allCoords[i-1].lat) * Math.PI / 180;
+      const dLon = (allCoords[i].lon - allCoords[i-1].lon) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(allCoords[i-1].lat * Math.PI / 180) * Math.cos(allCoords[i].lat * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      totalDistance += R * c;
+    }
+    
+    // Extract transit info from point names (these are typically city/location labels in the KMZ)
+    const transitCities = pointNames.length > 0 ? pointNames.join(', ') : '';
+    
+    res.json({
+      transit_cities: transitCities,
+      transit_countries: '',
+      route_distance_km: Math.round(totalDistance * 10) / 10,
+      coordinates_count: allCoords.length,
+      point_names: pointNames,
+      file_path: req.file.filename
+    });
+    
+  } catch (error) {
+    console.error('KMZ parsing error:', error);
+    res.status(500).json({ error: 'Failed to parse KMZ file: ' + error.message });
+  }
+});
+
+// Get price stages for a quote
+router.get('/carrier_quotes/:id/price_stages', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { id } = req.params;
+  
+  db.all(`
+    SELECT ps.*, u.username as created_by_username, u.full_name as created_by_name
+    FROM quote_price_stages ps
+    LEFT JOIN users u ON ps.created_by = u.id
+    WHERE ps.quote_id = ?
+    ORDER BY ps.stage_date ASC, ps.created_at ASC
+  `, [id], (err, stages) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(stages || []);
+  });
+});
+
+// Add a price stage to a quote
+router.post('/carrier_quotes/:id/price_stages', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { id } = req.params;
+  const { stage_name, mrc, nrc, currency, notes, stage_date } = req.body;
+  
+  if (!stage_name) return res.status(400).json({ error: 'Stage name is required' });
+  
+  // Verify quote exists
+  db.get('SELECT id, currency FROM carrier_quotes WHERE id = ?', [id], (err, quote) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!quote) return res.status(404).json({ error: 'Quote not found' });
+    
+    const stageCurrency = currency || quote.currency || 'USD';
+    const stageDate = stage_date || new Date().toISOString().split('T')[0];
+    
+    db.run(`
+      INSERT INTO quote_price_stages (quote_id, stage_name, mrc, nrc, currency, notes, stage_date, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, stage_name, mrc || null, nrc || null, stageCurrency, notes || null, stageDate, req.user.id], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      const stageId = this.lastID;
+      
+      logChange(req.user.id, 'quote_price_stages', stageId, 'CREATE', null, {
+        quote_id: id, stage_name, mrc, nrc, currency: stageCurrency
+      }, req);
+      
+      // Return the newly created stage with user info
+      db.get(`
+        SELECT ps.*, u.username as created_by_username, u.full_name as created_by_name
+        FROM quote_price_stages ps
+        LEFT JOIN users u ON ps.created_by = u.id
+        WHERE ps.id = ?
+      `, [stageId], (err, stage) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(201).json(stage);
+      });
+    });
+  });
+});
+
+// Delete a price stage
+router.delete('/carrier_quotes/:quoteId/price_stages/:stageId', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { quoteId, stageId } = req.params;
+  
+  db.get('SELECT * FROM quote_price_stages WHERE id = ? AND quote_id = ?', [stageId, quoteId], (err, stage) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!stage) return res.status(404).json({ error: 'Price stage not found' });
+    
+    db.run('DELETE FROM quote_price_stages WHERE id = ?', [stageId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      logChange(req.user.id, 'quote_price_stages', stageId, 'DELETE', stage, null, req);
+      
+      res.json({ message: 'Price stage deleted successfully' });
+    });
+  });
+});
+
+// Create a custom location
+router.post('/carrier_quotes/custom_locations', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const { location_name, address, city, country, latitude, longitude } = req.body;
+  
+  if (!location_name) return res.status(400).json({ error: 'Location name is required' });
+  
+  db.run(`
+    INSERT INTO quote_custom_locations (location_name, address, city, country, latitude, longitude, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `, [location_name, address || null, city || null, country || null, latitude || null, longitude || null, req.user.id], function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    res.status(201).json({
+      id: this.lastID,
+      location_name,
+      address,
+      city,
+      country
+    });
+  });
 });
 
 module.exports = router;

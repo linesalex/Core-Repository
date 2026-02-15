@@ -253,7 +253,10 @@ export const getBulkUploadModules = () => {
     { id: 'extranet_products', name: 'Extranet Products', description: 'Bulk upload extranet products with ISF and datacenter information' },
     { id: 'extranet_contacts', name: 'Extranet Contacts', description: 'Bulk upload extranet provider contact information' },
     { id: 'extranet_pricing_cities', name: 'Extranet Pricing Cities', description: 'Bulk upload pricing tier city assignments for extranet pricing' },
-    { id: 'extranet_rate_card', name: 'Extranet Rate Card', description: 'Bulk upload extranet pricing rate card with bandwidth and tier pricing' }
+    { id: 'extranet_rate_card', name: 'Extranet Rate Card', description: 'Bulk upload extranet pricing rate card with bandwidth and tier pricing' },
+    { id: 'cnx_colocation_racks', name: 'CNX Colocation Racks', description: 'Bulk upload colocation rack data with location POP codes, rack types, power, and RU capacity' },
+    { id: 'cnx_colocation_clients', name: 'CNX Colocation Clients', description: 'Bulk upload colocation client allocations with location POP code and rack ID references' },
+    { id: 'cnx_rack_devices', name: 'CNX Rack Devices', description: 'Bulk upload rack devices with location POP code, rack ID, and optional client name references' }
   ]);
 };
 
@@ -375,6 +378,24 @@ export const downloadRackDesign = (rackId) => {
   });
 };
 export const deleteRackDesign = (rackId) => api.delete(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/design-file`);
+
+// Availability Dashboard
+export const getColocationAvailability = () => api.get(`${API_BASE_URL}/cnx-colocation/availability`).then(res => res.data);
+
+// Colocation Pricing
+export const getColocationPricingConfigs = () => api.get(`${API_BASE_URL}/cnx-colocation/pricing-config`).then(res => res.data);
+export const getColocationPricingConfig = (locationId) => api.get(`${API_BASE_URL}/cnx-colocation/pricing-config/${locationId}`).then(res => res.data);
+export const updateColocationPricingConfig = (locationId, data) => api.put(`${API_BASE_URL}/cnx-colocation/pricing-config/${locationId}`, data);
+export const getColocationPricingLocations = () => api.get(`${API_BASE_URL}/cnx-colocation/pricing-locations`).then(res => res.data);
+export const saveColocationQuote = (data) => api.post(`${API_BASE_URL}/cnx-colocation/quotes`, data);
+export const getColocationQuotes = () => api.get(`${API_BASE_URL}/cnx-colocation/quotes`).then(res => res.data);
+export const deleteColocationQuote = (quoteId) => api.delete(`${API_BASE_URL}/cnx-colocation/quotes/${quoteId}`);
+
+// Client RU Ranges
+export const updateClientRURanges = (clientId, ruRanges) => api.put(`${API_BASE_URL}/cnx-colocation/clients/${clientId}/ru-ranges`, { ru_ranges: ruRanges });
+
+// IPC Reserved RU Ranges
+export const updateRackIPCReserved = (rackId, ipcReservedRuRanges) => api.put(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/ipc-reserved`, { ipc_reserved_ru_ranges: ipcReservedRuRanges });
 
 // Devices
 export const getRackDevices = (rackId) => api.get(`${API_BASE_URL}/cnx-colocation/racks/${rackId}/devices`).then(res => res.data);
@@ -609,9 +630,11 @@ export const checkKMZAvailability = (data) => {
   return api.post(`${API_BASE_URL}/network_design/check_kmz_availability`, data);
 };
 
-export const exportNetworkDesignKMZ = (data) => {
+export const exportNetworkDesignKMZ = (data, signal) => {
   return api.post(`${API_BASE_URL}/network_design/export_kmz`, data, {
-    responseType: 'blob'
+    responseType: 'blob',
+    timeout: 300000, // 5 minute timeout for large KMZ exports
+    signal // AbortController signal for cancellation support
   });
 };
 
@@ -634,6 +657,136 @@ export const checkPromoMatch = (source, destination, bandwidth, primaryCircuitId
     primary_circuit_ids: primaryCircuitIds,
     secondary_circuit_ids: secondaryCircuitIds
   }).then(res => res.data);
+};
+
+// Calculate protected promo pricing for Route Finder (both paths must have valid promo)
+export const calculateProtectedPromo = (source, destination, bandwidth, primaryCircuitIds, secondaryCircuitIds, primaryPromoPrices, secondaryPromoPrices) => {
+  return api.post(`${API_BASE_URL}/route_finder/calculate-protected-promo`, {
+    source,
+    destination,
+    bandwidth,
+    primary_circuit_ids: primaryCircuitIds,
+    secondary_circuit_ids: secondaryCircuitIds,
+    primary_promo_prices: primaryPromoPrices,
+    secondary_promo_prices: secondaryPromoPrices
+  }).then(res => res.data);
+};
+
+// Save Route Finder search log to pricing logs
+export const saveRouteFinderSearchLog = (data) => {
+  return api.post(`${API_BASE_URL}/route_finder/save-search-log`, data).then(res => res.data);
+};
+
+// ====================================
+// CARRIER QUOTE REPOSITORY APIs
+// ====================================
+
+export const carrierQuoteApi = {
+  // Get all quotes with search/filter
+  getQuotes: (params = {}) => {
+    const queryParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        queryParams.append(key, value);
+      }
+    });
+    return api.get(`${API_BASE_URL}/carrier_quotes?${queryParams.toString()}`).then(res => res.data);
+  },
+
+  // Get a single quote by ID
+  getQuote: (id) => api.get(`${API_BASE_URL}/carrier_quotes/${id}`).then(res => res.data),
+
+  // Create a new quote
+  createQuote: (data) => api.post(`${API_BASE_URL}/carrier_quotes`, data).then(res => res.data),
+
+  // Update a quote
+  updateQuote: (id, data) => api.put(`${API_BASE_URL}/carrier_quotes/${id}`, data).then(res => res.data),
+
+  // Delete a quote
+  deleteQuote: (id) => api.delete(`${API_BASE_URL}/carrier_quotes/${id}`).then(res => res.data),
+
+  // Upload attachments to a quote
+  uploadAttachments: (quoteId, files) => {
+    const formData = new FormData();
+    files.forEach(file => formData.append('files', file));
+    return api.post(`${API_BASE_URL}/carrier_quotes/${quoteId}/attachments`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    }).then(res => res.data);
+  },
+
+  // Download an attachment
+  downloadAttachment: (attachmentId, fileName) => {
+    return api.get(`${API_BASE_URL}/carrier_quotes/attachments/${attachmentId}/download`, {
+      responseType: 'blob'
+    }).then(response => {
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    });
+  },
+
+  // Delete an attachment
+  deleteAttachment: (attachmentId) => api.delete(`${API_BASE_URL}/carrier_quotes/attachments/${attachmentId}`).then(res => res.data),
+
+  // Parse KMZ file for route data
+  parseKmz: (file) => {
+    const formData = new FormData();
+    formData.append('kmz_file', file);
+    return api.post(`${API_BASE_URL}/carrier_quotes/parse_kmz`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    }).then(res => res.data);
+  },
+
+  // Get POP locations for autocomplete
+  getPopLocations: (query) => api.get(`${API_BASE_URL}/carrier_quotes/pop_locations`, { params: { q: query } }).then(res => res.data),
+
+  // Get custom locations for autocomplete
+  getCustomLocations: (query) => api.get(`${API_BASE_URL}/carrier_quotes/custom_locations`, { params: { q: query } }).then(res => res.data),
+
+  // Create a custom location
+  createCustomLocation: (data) => api.post(`${API_BASE_URL}/carrier_quotes/custom_locations`, data).then(res => res.data),
+
+  // Get carriers for autocomplete
+  getCarriers: (query) => api.get(`${API_BASE_URL}/carrier_quotes/carriers`, { params: { q: query } }).then(res => res.data),
+
+  // Get currencies
+  getCurrencies: () => api.get(`${API_BASE_URL}/carrier_quotes/currencies`).then(res => res.data),
+
+  // Get price stages for a quote
+  getPriceStages: (quoteId) => api.get(`${API_BASE_URL}/carrier_quotes/${quoteId}/price_stages`).then(res => res.data),
+
+  // Add a price stage to a quote
+  addPriceStage: (quoteId, data) => api.post(`${API_BASE_URL}/carrier_quotes/${quoteId}/price_stages`, data).then(res => res.data),
+
+  // Delete a price stage
+  deletePriceStage: (quoteId, stageId) => api.delete(`${API_BASE_URL}/carrier_quotes/${quoteId}/price_stages/${stageId}`).then(res => res.data),
+
+  // Export CSV
+  exportCSV: (params = {}) => {
+    const queryParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        queryParams.append(key, value);
+      }
+    });
+    return api.get(`${API_BASE_URL}/carrier_quotes/export?${queryParams.toString()}`, {
+      responseType: 'blob'
+    }).then(response => {
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'carrier_quotes_export.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    });
+  }
 };
 
 // Export the base api object for direct use

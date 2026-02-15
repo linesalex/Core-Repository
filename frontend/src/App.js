@@ -34,6 +34,7 @@ import FeedbackIcon from '@mui/icons-material/Feedback';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import BusinessCenterIcon from '@mui/icons-material/BusinessCenter';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
+import DashboardIcon from '@mui/icons-material/Dashboard';
 import PublicIcon from '@mui/icons-material/Public';
 import SearchIcon from '@mui/icons-material/Search';
 import LanIcon from '@mui/icons-material/Lan';
@@ -51,6 +52,8 @@ import MinimumPricingManager from './MinimumPricingManager';
 import PricingLogicManager from './PricingLogicManager';
 import PromoPricingManager from './PromoPricingManager';
 import CNXColocationManager from './CNXColocationManager';
+import ColocationAvailabilityDashboard from './components/ColocationAvailabilityDashboard';
+import ColocationPricingTool from './components/ColocationPricingTool';
 import UserManagement from './UserManagement';
 import ChangeLogsViewer from './ChangeLogsViewer';
 import CoreOutagesTable from './CoreOutagesTable';
@@ -64,7 +67,11 @@ import BulkUpload from './BulkUpload';
 import LiveLatencyAdminManager from './LiveLatencyAdminManager';
 import AnalyticsDashboard from './AnalyticsDashboard';
 import SystemSettingsManager from './SystemSettingsManager';
+import CarrierQuoteRepository from './CarrierQuoteRepository';
+import AddCarrierQuote from './AddCarrierQuote';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
+import RequestQuoteIcon from '@mui/icons-material/RequestQuote';
+import NoteAddIcon from '@mui/icons-material/NoteAdd';
 
 import { fetchRoutes, fetchRoutesWithKMZ, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking, getFeedbackNotificationCount } from './api';
 import { API_BASE_URL } from './config';
@@ -116,6 +123,8 @@ function AuthenticatedApp() {
   const [networkDataOpen, setNetworkDataOpen] = useState(false);
   const [cnxColocationOpen, setCnxColocationOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [carrierQuoteOpen, setCarrierQuoteOpen] = useState(false);
+  const [editQuoteId, setEditQuoteId] = useState(null);
   
   // User menu state
   const [userMenuAnchor, setUserMenuAnchor] = useState(null);
@@ -731,9 +740,23 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
-      case 'cnx-colocation':
-        return hasModuleAccess('cnx_colocation') ? (
+      case 'cnx-colocation-inventory':
+        return hasModuleAccess('cnx_colocation_inventory') ? (
           <CNXColocationManager hasPermission={hasPermission} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'cnx-colocation-availability':
+        return hasModuleAccess('cnx_colocation_availability') ? (
+          <ColocationAvailabilityDashboard />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'cnx-colocation-pricing':
+        return hasModuleAccess('cnx_colocation_pricing') ? (
+          <ColocationPricingTool hasPermission={hasPermission} />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
@@ -871,6 +894,31 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'carrier-quote-repository':
+        return hasModuleAccess('carrier_quote_repository') ? (
+          <CarrierQuoteRepository 
+            onNavigateToAddQuote={(quoteId) => {
+              setEditQuoteId(quoteId || null);
+              setCurrentTab('add-carrier-quote');
+            }}
+          />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'add-carrier-quote':
+        return hasModuleAccess('carrier_quote_repository') ? (
+          <AddCarrierQuote 
+            editQuoteId={editQuoteId}
+            onNavigateBack={() => {
+              setEditQuoteId(null);
+              setCurrentTab('carrier-quote-repository');
+            }}
+          />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'feedback':
         return <FeedbackManager initialTab={feedbackInitialTab} />;
       
@@ -899,7 +947,7 @@ function AuthenticatedApp() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.4.2
+              v3.4.5
             </Typography>
           </Typography>
           
@@ -1328,8 +1376,8 @@ function AuthenticatedApp() {
               </>
             )}
 
-            {/* CNX Colocation */}
-            {hasModuleAccess('cnx_colocation') && (
+            {/* CNX Colocation - show parent if user has access to ANY sub-module */}
+            {(hasModuleAccess('cnx_colocation_inventory') || hasModuleAccess('cnx_colocation_availability') || hasModuleAccess('cnx_colocation_pricing')) && (
               <>
                 <ListItem button onClick={() => setCnxColocationOpen(!cnxColocationOpen)}>
                   <ListItemIcon><BusinessCenterIcon /></ListItemIcon>
@@ -1338,14 +1386,36 @@ function AuthenticatedApp() {
                 </ListItem>
                 <Collapse in={cnxColocationOpen} timeout="auto" unmountOnExit>
                   <List component="div" disablePadding>
-                    <ListItem 
-                      button 
-                      onClick={() => setCurrentTab('cnx-colocation')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                    >
-                      <ListItemIcon><LocationOnIcon /></ListItemIcon>
-                      <ListItemText primary="Colocation Inventory" />
-                    </ListItem>
+                    {hasModuleAccess('cnx_colocation_inventory') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('cnx-colocation-inventory')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation-inventory' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><LocationOnIcon /></ListItemIcon>
+                        <ListItemText primary="Colocation Inventory" />
+                      </ListItem>
+                    )}
+                    {hasModuleAccess('cnx_colocation_availability') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('cnx-colocation-availability')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation-availability' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><DashboardIcon /></ListItemIcon>
+                        <ListItemText primary="Availability Dashboard" />
+                      </ListItem>
+                    )}
+                    {hasModuleAccess('cnx_colocation_pricing') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('cnx-colocation-pricing')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><CalculateIcon /></ListItemIcon>
+                        <ListItemText primary="Pricing Tool" />
+                      </ListItem>
+                    )}
                   </List>
                 </Collapse>
               </>
@@ -1368,6 +1438,37 @@ function AuthenticatedApp() {
                     >
                       <ListItemIcon><CurrencyExchangeIcon /></ListItemIcon>
                       <ListItemText primary="Manage Exchange Rates" />
+                    </ListItem>
+                  </List>
+                </Collapse>
+              </>
+            )}
+
+            {/* Carrier Quote Repository */}
+            {hasModuleAccess('carrier_quote_repository') && (
+              <>
+                <ListItem button onClick={() => setCarrierQuoteOpen(!carrierQuoteOpen)}>
+                  <ListItemIcon><RequestQuoteIcon /></ListItemIcon>
+                  <ListItemText primary="Carrier Quote Repository" />
+                  {carrierQuoteOpen ? <ExpandLess /> : <ExpandMore />}
+                </ListItem>
+                <Collapse in={carrierQuoteOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding>
+                    <ListItem 
+                      button 
+                      onClick={() => { setEditQuoteId(null); setCurrentTab('add-carrier-quote'); }}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'add-carrier-quote' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><NoteAddIcon /></ListItemIcon>
+                      <ListItemText primary="Add Quote" />
+                    </ListItem>
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('carrier-quote-repository')} 
+                      sx={{ pl: 4, backgroundColor: currentTab === 'carrier-quote-repository' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><RequestQuoteIcon /></ListItemIcon>
+                      <ListItemText primary="Quote Repository" />
                     </ListItem>
                   </List>
                 </Collapse>

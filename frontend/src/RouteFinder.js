@@ -4,7 +4,8 @@ import {
   Accordion, AccordionSummary, AccordionDetails, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Card, CardContent, CardHeader,
   RadioGroup, Radio, FormControlLabel, FormControl, FormLabel, Autocomplete,
-  Snackbar, Chip, IconButton, Collapse, Tabs, Tab
+  Snackbar, Chip, IconButton, Collapse, Tabs, Tab, Select, MenuItem, InputLabel,
+  Divider
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchIcon from '@mui/icons-material/Search';
@@ -17,9 +18,11 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import InfoIcon from '@mui/icons-material/Info';
+import SecurityIcon from '@mui/icons-material/Security';
+import CableIcon from '@mui/icons-material/Cable';
 import LoadingButton from '@mui/lab/LoadingButton';
 import { API_BASE_URL } from './config';
-import { getPromoRulesForSales, checkPromoMatch } from './api';
+import { getPromoRulesForSales, checkPromoMatch, calculateProtectedPromo, getCrossConnectInfo, networkDesignApi, exchangeRatesApi, saveRouteFinderSearchLog } from './api';
 
 const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
   // Form state - initialize from savedState if available
@@ -28,7 +31,8 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     destination: '',
     bandwidth: '',
     mtuRequired: '',
-    routeMode: 'standard' // 'fastest' or 'standard' - defaults to standard
+    routeMode: 'standard', // 'fastest' or 'standard' - defaults to standard
+    outputCurrency: 'USD'
   });
 
   // Data state
@@ -45,22 +49,31 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
   const [promoRules, setPromoRules] = useState([]);
   const [promoLoading, setPromoLoading] = useState(false);
   const [promoLocationFilter, setPromoLocationFilter] = useState('');
-  const [primaryPromo, setPrimaryPromo] = useState(savedState?.primaryPromo || null); // Promo for primary path
-  const [secondaryPromo, setSecondaryPromo] = useState(savedState?.secondaryPromo || null); // Promo for secondary path
+  const [primaryPromo, setPrimaryPromo] = useState(savedState?.primaryPromo || null);
+  const [secondaryPromo, setSecondaryPromo] = useState(savedState?.secondaryPromo || null);
+  const [protectedPromo, setProtectedPromo] = useState(savedState?.protectedPromo || null);
   const [expandedPromoRows, setExpandedPromoRows] = useState({});
   
+  // Cross connect state
+  const [crossConnectResults, setCrossConnectResults] = useState(savedState?.crossConnectResults || { source: null, destination: null });
+  
+  // Currency state
+  const [exchangeRates, setExchangeRates] = useState({});
+  const [availableCurrencies, setAvailableCurrencies] = useState(['USD']);
+
   // Tab state
   const [currentTab, setCurrentTab] = useState(0);
 
-  // Load locations and promo rules on mount
+  // Load locations, promo rules, and exchange rates on mount
   useEffect(() => {
     if (!savedState?.locations?.length) {
       loadLocations();
     }
     loadPromoRules();
+    loadExchangeRates();
   }, []);
 
-  // Save state to parent whenever key state changes (including promo pricing)
+  // Save state to parent whenever key state changes
   useEffect(() => {
     if (onStateChange) {
       onStateChange({
@@ -68,10 +81,12 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
         searchResults,
         locations,
         primaryPromo,
-        secondaryPromo
+        secondaryPromo,
+        protectedPromo,
+        crossConnectResults
       });
     }
-  }, [formData, searchResults, locations, primaryPromo, secondaryPromo, onStateChange]);
+  }, [formData, searchResults, locations, primaryPromo, secondaryPromo, protectedPromo, crossConnectResults, onStateChange]);
 
   const loadLocations = async () => {
     try {
@@ -95,6 +110,27 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     }
   };
 
+  const loadExchangeRates = async () => {
+    try {
+      const exchangeRatesData = await exchangeRatesApi.getExchangeRates();
+      
+      const ratesObj = {};
+      const currencyCodes = ['USD'];
+      
+      exchangeRatesData.forEach(rate => {
+        ratesObj[rate.currency_code] = rate.exchange_rate;
+        if (!currencyCodes.includes(rate.currency_code)) {
+          currencyCodes.push(rate.currency_code);
+        }
+      });
+      
+      setExchangeRates(ratesObj);
+      setAvailableCurrencies(currencyCodes);
+    } catch (err) {
+      console.error('Failed to load exchange rates:', err);
+    }
+  };
+
   const loadPromoRules = async () => {
     try {
       setPromoLoading(true);
@@ -102,38 +138,162 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
       setPromoRules(result.data || []);
     } catch (err) {
       console.error('Failed to load promo rules:', err);
-      // Don't show error - promo pricing is optional feature
     } finally {
       setPromoLoading(false);
     }
   };
 
-  const checkPromoForRoute = async (results) => {
-    // Check promo pricing INDEPENDENTLY for each path
+  // Currency conversion helpers
+  const convertFromUSD = (amountUSD, toCurrency) => {
+    if (!amountUSD || toCurrency === 'USD') return amountUSD;
+    if (exchangeRates[toCurrency]) {
+      return amountUSD * exchangeRates[toCurrency];
+    }
+    return amountUSD;
+  };
+
+  const convertCurrency = (amount, fromCurrency, toCurrency) => {
+    if (!amount || fromCurrency === toCurrency) return amount;
     
+    // Convert to USD first
+    let usdAmount = amount;
+    if (fromCurrency !== 'USD' && exchangeRates[fromCurrency]) {
+      usdAmount = amount / exchangeRates[fromCurrency];
+    }
+    
+    // Convert from USD to target
+    if (toCurrency !== 'USD' && exchangeRates[toCurrency]) {
+      return usdAmount * exchangeRates[toCurrency];
+    }
+    
+    return usdAmount;
+  };
+
+  const roundUpToNearest10 = (amount) => {
+    return Math.ceil(amount / 10) * 10;
+  };
+
+  // Load cross connect data for source and destination
+  const loadCrossConnects = async (sourceCode, destCode) => {
+    const results = { source: null, destination: null };
+    
+    try {
+      // Get pricing logic config for margins
+      const pricingConfig = await networkDesignApi.getPricingLogicConfig();
+      const margins = pricingConfig.data.crossConnect || { nrcMargin: 10, mrcMargin: 10 };
+
+      const calculateXCPrice = (basePrice, margin, fromCurrency, isCustomerOwned) => {
+        if (isCustomerOwned) return 'Customer must provide X/C';
+        if (!basePrice || basePrice === null) return 'POA';
+        
+        // Apply margin (not markup)
+        const priceWithMargin = basePrice / (1 - margin / 100);
+        
+        // Convert currency
+        const convertedPrice = convertCurrency(priceWithMargin, fromCurrency, formData.outputCurrency);
+        
+        // Round up to nearest $10
+        return roundUpToNearest10(convertedPrice);
+      };
+
+      // Fetch source cross connect
+      const sourceLocation = locations.find(loc => loc.location_code === sourceCode);
+      if (sourceLocation) {
+        try {
+          const sourceXC = await getCrossConnectInfo(sourceLocation.id);
+          const isCustomerOwned = sourceXC.customer_owned_xc;
+          const nrcPrice = calculateXCPrice(sourceXC.cross_connect_nrc, margins.nrcMargin, sourceXC.cross_connect_nrc_currency, isCustomerOwned);
+          const mrcPrice = calculateXCPrice(sourceXC.cross_connect_mrc, margins.mrcMargin, sourceXC.cross_connect_mrc_currency, isCustomerOwned);
+          
+          // Only show if NEITHER NRC nor MRC is POA (unless customer owned)
+          if (isCustomerOwned || (nrcPrice !== 'POA' && mrcPrice !== 'POA')) {
+            results.source = {
+              locationCode: sourceXC.location_code,
+              datacenterName: sourceXC.datacenter_name,
+              nrc: nrcPrice,
+              mrc: mrcPrice,
+              notes: sourceXC.cross_connect_notes,
+              currency: formData.outputCurrency,
+              mandatory: sourceXC.cross_connect_mandatory,
+              customerOwned: isCustomerOwned
+            };
+          }
+        } catch (err) {
+          console.error('Failed to load source cross connect:', err);
+        }
+      }
+
+      // Fetch destination cross connect
+      const destLocation = locations.find(loc => loc.location_code === destCode);
+      if (destLocation) {
+        try {
+          const destXC = await getCrossConnectInfo(destLocation.id);
+          const isCustomerOwned = destXC.customer_owned_xc;
+          const nrcPrice = calculateXCPrice(destXC.cross_connect_nrc, margins.nrcMargin, destXC.cross_connect_nrc_currency, isCustomerOwned);
+          const mrcPrice = calculateXCPrice(destXC.cross_connect_mrc, margins.mrcMargin, destXC.cross_connect_mrc_currency, isCustomerOwned);
+          
+          // Only show if NEITHER NRC nor MRC is POA (unless customer owned)
+          if (isCustomerOwned || (nrcPrice !== 'POA' && mrcPrice !== 'POA')) {
+            results.destination = {
+              locationCode: destXC.location_code,
+              datacenterName: destXC.datacenter_name,
+              nrc: nrcPrice,
+              mrc: mrcPrice,
+              notes: destXC.cross_connect_notes,
+              currency: formData.outputCurrency,
+              mandatory: destXC.cross_connect_mandatory,
+              customerOwned: isCustomerOwned
+            };
+          }
+        } catch (err) {
+          console.error('Failed to load destination cross connect:', err);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load pricing config for cross connects:', err);
+    }
+
+    setCrossConnectResults(results);
+    return results;
+  };
+
+  const checkPromoForRoute = async (results) => {
+    let primaryPromoResult = null;
+    let secondaryPromoResult = null;
+    let primaryMarginDetails = null;
+    let secondaryMarginDetails = null;
+    let protectedMarginDetails = null;
+    let primaryPromoReason = null;
+    let secondaryPromoReason = null;
+
     // Check Primary Path
     if (results.primaryPath?.route) {
       try {
         const primaryCircuitIds = results.primaryPath.route.map(seg => seg.circuit_id).filter(Boolean);
         
-        const primaryResult = await checkPromoMatch(
+        const result = await checkPromoMatch(
           formData.source,
           formData.destination,
           formData.bandwidth || 10,
           primaryCircuitIds,
-          [] // Empty secondary - checking primary only
+          []
         );
         
-        if (primaryResult.hasPromo && primaryResult.valid) {
-          setPrimaryPromo(primaryResult.prices);
+        primaryMarginDetails = result.marginDetails || null;
+        if (result.hasPromo && result.valid) {
+          primaryPromoResult = result.prices;
+          setPrimaryPromo(result.prices);
         } else {
+          primaryPromoReason = result.reason || (result.hasPromo ? 'margin_not_met' : 'no_promo_rule');
           setPrimaryPromo(null);
         }
       } catch (err) {
         console.error('Failed to check primary promo:', err);
+        primaryPromoReason = 'error';
         setPrimaryPromo(null);
       }
     } else {
+      primaryPromoReason = 'no_path';
       setPrimaryPromo(null);
     }
     
@@ -142,26 +302,103 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
       try {
         const secondaryCircuitIds = results.diversePath.route.map(seg => seg.circuit_id).filter(Boolean);
         
-        const secondaryResult = await checkPromoMatch(
+        const result = await checkPromoMatch(
           formData.source,
           formData.destination,
           formData.bandwidth || 10,
           secondaryCircuitIds,
-          [] // Empty - checking this path only
+          []
         );
         
-        if (secondaryResult.hasPromo && secondaryResult.valid) {
-          setSecondaryPromo(secondaryResult.prices);
+        secondaryMarginDetails = result.marginDetails || null;
+        if (result.hasPromo && result.valid) {
+          secondaryPromoResult = result.prices;
+          setSecondaryPromo(result.prices);
         } else {
+          secondaryPromoReason = result.reason || (result.hasPromo ? 'margin_not_met' : 'no_promo_rule');
           setSecondaryPromo(null);
         }
       } catch (err) {
         console.error('Failed to check secondary promo:', err);
+        secondaryPromoReason = 'error';
         setSecondaryPromo(null);
       }
     } else {
+      secondaryPromoReason = 'no_path';
       setSecondaryPromo(null);
     }
+
+    // Calculate Protected Promo via backend (only if BOTH paths have valid promo)
+    // Backend calculates Max(Primary, Secondary) x 1.7 per tier, then validates against
+    // per-bandwidth-tier protected service minimum margins from PricingLogicManager.
+    // If 1.7x doesn't meet the tier's minimum margin, the margin-based price is used instead.
+    let protectedPromoResult = null;
+    let protectedMethod = null;
+    if (primaryPromoResult && secondaryPromoResult) {
+      try {
+        const primaryCircuitIds = results.primaryPath.route.map(seg => seg.circuit_id).filter(Boolean);
+        const secondaryCircuitIds = results.diversePath.route.map(seg => seg.circuit_id).filter(Boolean);
+        
+        const protectedResult = await calculateProtectedPromo(
+          formData.source,
+          formData.destination,
+          formData.bandwidth || 10,
+          primaryCircuitIds,
+          secondaryCircuitIds,
+          primaryPromoResult,
+          secondaryPromoResult
+        );
+        
+        protectedMarginDetails = protectedResult.marginDetails || null;
+        protectedMethod = protectedResult.method || null;
+        
+        if (protectedResult.valid && protectedResult.prices) {
+          // Check that at least one tier has a valid (non-null) price
+          const prices = protectedResult.prices;
+          const hasAnyValidTier = prices.price_10mb !== null || prices.price_100mb !== null || 
+                                   prices.price_1000mb !== null || prices.price_10gb !== null;
+          if (hasAnyValidTier) {
+            protectedPromoResult = prices;
+            setProtectedPromo(prices);
+          } else {
+            setProtectedPromo(null);
+          }
+        } else {
+          setProtectedPromo(null);
+        }
+      } catch (err) {
+        console.error('Failed to calculate protected promo:', err);
+        setProtectedPromo(null);
+      }
+    } else {
+      setProtectedPromo(null);
+    }
+
+    return { 
+      primaryPromo: primaryPromoResult, 
+      secondaryPromo: secondaryPromoResult, 
+      protectedPromo: protectedPromoResult,
+      marginAnalysis: {
+        primary: {
+          prices: primaryPromoResult,
+          marginDetails: primaryMarginDetails,
+          reason: primaryPromoReason,
+          valid: !!primaryPromoResult
+        },
+        secondary: {
+          prices: secondaryPromoResult,
+          marginDetails: secondaryMarginDetails,
+          reason: secondaryPromoReason,
+          valid: !!secondaryPromoResult
+        },
+        protected: {
+          prices: protectedPromoResult,
+          marginDetails: protectedMarginDetails,
+          method: protectedMethod,
+          valid: !!protectedPromoResult
+        }
+      }
+    };
   };
 
   // Filter promo rules based on location filter
@@ -176,14 +413,23 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     );
   });
 
-  // Format currency helper
+  // Format currency helper - uses selected output currency
   const formatCurrency = (amount) => {
+    if (typeof amount === 'string') return amount; // Handle 'POA' or 'Customer must provide X/C'
+    const currencyCode = formData.outputCurrency || 'USD';
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: 'USD',
+      currency: currencyCode,
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
     }).format(amount || 0);
+  };
+
+  // Format promo price with currency conversion (null = margin not met for this tier)
+  const formatPromoPrice = (amountUSD) => {
+    if (amountUSD === null || amountUSD === undefined) return 'N/A';
+    const converted = convertFromUSD(amountUSD, formData.outputCurrency);
+    return formatCurrency(converted);
   };
 
   // Toggle expanded row for promo locations
@@ -217,6 +463,10 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     setLoading(true);
     setError(null);
     setSearchResults(null);
+    setCrossConnectResults({ source: null, destination: null });
+    setProtectedPromo(null);
+
+    const searchStartTime = Date.now();
 
     try {
       const token = localStorage.getItem('authToken');
@@ -228,12 +478,10 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
         bandwidth_unit: 'Mbps',
         mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500,
         route_mode: formData.routeMode,
-        // Fastest mode: include everything
-        // Standard mode: exclude Cisco and ULL routes
         include_ull: formData.routeMode === 'fastest',
         use_cisco_only_routes: formData.routeMode === 'fastest',
         constraints: {
-          protection_required: true, // Always try to find diverse path
+          protection_required: true,
           mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500
         }
       };
@@ -260,8 +508,35 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
       setSearchResults(results);
       setExpandedAccordion('results');
       
-      // Check for matching promo pricing
-      await checkPromoForRoute(results);
+      // Check for matching promo pricing (includes protected promo check)
+      const promoResults = await checkPromoForRoute(results);
+      
+      // Auto-load cross connect data
+      const xcResults = await loadCrossConnects(formData.source, formData.destination);
+
+      // Save search log to pricing logs (fire-and-forget, don't block UI)
+      const executionTime = Date.now() - searchStartTime;
+      try {
+        await saveRouteFinderSearchLog({
+          searchParameters: {
+            source: formData.source,
+            destination: formData.destination,
+            bandwidth: formData.bandwidth || null,
+            routeMode: formData.routeMode,
+            mtuRequired: formData.mtuRequired || null,
+            outputCurrency: formData.outputCurrency || 'USD'
+          },
+          searchResults: results,
+          primaryPromo: promoResults?.primaryPromo || null,
+          secondaryPromo: promoResults?.secondaryPromo || null,
+          protectedPromo: promoResults?.protectedPromo || null,
+          marginAnalysis: promoResults?.marginAnalysis || null,
+          crossConnectResults: xcResults || { source: null, destination: null },
+          executionTime
+        });
+      } catch (logErr) {
+        console.error('Failed to save search log (non-blocking):', logErr);
+      }
 
     } catch (err) {
       console.error('Search error:', err);
@@ -277,44 +552,41 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
       destination: '',
       bandwidth: '',
       mtuRequired: '',
-      routeMode: 'standard'
+      routeMode: 'standard',
+      outputCurrency: formData.outputCurrency // Preserve currency selection
     });
     setSearchResults(null);
     setPrimaryPromo(null);
     setSecondaryPromo(null);
+    setProtectedPromo(null);
+    setCrossConnectResults({ source: null, destination: null });
     setError(null);
     setSuccess(null);
     setExpandedAccordion('search');
   };
 
   const formatLatency = (latency) => {
-    return Math.round(latency * 1000) / 1000; // Round to 3 decimal places
+    return Math.round(latency * 1000) / 1000;
   };
 
-  // Helper function to format bandwidth from Mbps to readable format
   const formatBandwidth = (bandwidth) => {
     if (!bandwidth) return 'N/A';
     
-    // Handle "Dark Fiber" text
     if (typeof bandwidth === 'string' && bandwidth.toLowerCase().includes('dark fiber')) {
       return 'Dark Fiber';
     }
     
-    // Parse numeric value (stored in Mbps)
     const mbps = parseFloat(bandwidth);
-    if (isNaN(mbps)) return bandwidth; // Return as-is if not a number
+    if (isNaN(mbps)) return bandwidth;
     
-    // Convert to appropriate unit
     if (mbps >= 1000) {
       const gbps = mbps / 1000;
-      // Show whole number if it's an integer, otherwise show 1 decimal
       return Number.isInteger(gbps) ? `${gbps} Gbps` : `${gbps.toFixed(1)} Gbps`;
     }
     
     return `${mbps} Mbps`;
   };
 
-  // Helper function to get location display as "Datacenter Name (POP_CODE)"
   const getLocationDisplay = (locationCode) => {
     const location = locations.find(loc => loc.location_code === locationCode);
     if (location && location.datacenter_name) {
@@ -323,19 +595,70 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     return locationCode;
   };
 
+  // Render cross connect card for a location
+  const renderCrossConnectCard = (xcData, locationType) => {
+    if (!xcData) return null;
+
+    return (
+      <Card variant="outlined" sx={{ border: 1, borderColor: 'info.main' }}>
+        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+          <Box display="flex" alignItems="center" gap={1} mb={1}>
+            <CableIcon color="info" fontSize="small" />
+            <Typography variant="subtitle2" fontWeight="bold">
+              Cross Connect — {locationType === 'source' ? 'Source' : 'Destination'}: {xcData.datacenterName || xcData.locationCode}
+            </Typography>
+            {xcData.mandatory ? (
+              <Chip label="Required" size="small" color="warning" variant="filled" sx={{ height: 20, fontSize: '0.7rem' }} />
+            ) : null}
+            {xcData.customerOwned ? (
+              <Chip label="Customer Owned" size="small" color="secondary" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
+            ) : null}
+          </Box>
+          
+          {xcData.customerOwned ? (
+            <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+              Customer must provide X/C
+            </Typography>
+          ) : (
+            <Grid container spacing={2}>
+              <Grid item xs={6}>
+                <Typography variant="caption" color="text.secondary" display="block">NRC (One-time)</Typography>
+                <Typography variant="body2" fontWeight="bold" color="info.dark">
+                  {typeof xcData.nrc === 'number' ? formatCurrency(xcData.nrc) : xcData.nrc}
+                </Typography>
+              </Grid>
+              <Grid item xs={6}>
+                <Typography variant="caption" color="text.secondary" display="block">MRC (Monthly)</Typography>
+                <Typography variant="body2" fontWeight="bold" color="info.dark">
+                  {typeof xcData.mrc === 'number' ? formatCurrency(xcData.mrc) : xcData.mrc}
+                </Typography>
+              </Grid>
+            </Grid>
+          )}
+          
+          {xcData.notes && (
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1, fontStyle: 'italic' }}>
+              {xcData.notes}
+            </Typography>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
   const handleExport = () => {
     if (!searchResults) return;
 
     try {
-      // Common table styles for HTML email
+      const currencyCode = formData.outputCurrency || 'USD';
       const tableStyle = 'border-collapse: collapse; width: 100%; margin-bottom: 20px; font-family: Arial, sans-serif;';
       const thStyle = 'border: 1px solid #ddd; padding: 10px; background-color: #4472C4; color: white; text-align: left; font-weight: bold;';
       const tdStyle = 'border: 1px solid #ddd; padding: 8px; text-align: left;';
       const headerStyle = 'color: #2E5090; margin-top: 20px; margin-bottom: 10px; font-family: Arial, sans-serif;';
       const promoHeaderStyle = 'color: #228B22; margin-top: 15px; margin-bottom: 10px; font-family: Arial, sans-serif;';
       const noPromoStyle = 'color: #666; font-style: italic; margin-bottom: 20px; font-family: Arial, sans-serif;';
+      const xcHeaderStyle = 'color: #0277BD; margin-top: 15px; margin-bottom: 10px; font-family: Arial, sans-serif;';
 
-      // Helper function to generate route table in HTML
       const generateRouteTable = (pathData, pathType) => {
         if (!pathData || !pathData.route) return '';
         
@@ -366,7 +689,6 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
         return tableHtml;
       };
 
-      // Helper function to generate promo pricing table
       const generatePromoPricingTable = (promo, pathType) => {
         if (!promo) return '';
         
@@ -375,14 +697,42 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
         html += `<table style="${tableStyle}">`;
         html += `<thead><tr>`;
         html += `<th style="${thStyle}">Bandwidth</th>`;
-        html += `<th style="${thStyle}">Price (USD/month)</th>`;
+        html += `<th style="${thStyle}">Price (${currencyCode}/month)</th>`;
         html += `</tr></thead>`;
         html += `<tbody>`;
-        html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}">10 Mbps</td><td style="${tdStyle}">${formatCurrency(promo.price_10mb)}</td></tr>`;
-        html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}">100 Mbps</td><td style="${tdStyle}">${formatCurrency(promo.price_100mb)}</td></tr>`;
-        html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}">1000 Mbps</td><td style="${tdStyle}">${formatCurrency(promo.price_1000mb)}</td></tr>`;
-        html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}">10 Gbps</td><td style="${tdStyle}">${formatCurrency(promo.price_10gb)}</td></tr>`;
+        html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}">10 Mbps</td><td style="${tdStyle}">${formatPromoPrice(promo.price_10mb)}</td></tr>`;
+        html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}">100 Mbps</td><td style="${tdStyle}">${formatPromoPrice(promo.price_100mb)}</td></tr>`;
+        html += `<tr style="background-color: #ffffff;"><td style="${tdStyle}">1000 Mbps</td><td style="${tdStyle}">${formatPromoPrice(promo.price_1000mb)}</td></tr>`;
+        html += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}">10 Gbps</td><td style="${tdStyle}">${formatPromoPrice(promo.price_10gb)}</td></tr>`;
         html += `</tbody></table>`;
+        
+        return html;
+      };
+
+      const generateCrossConnectSection = (xcData, locationType) => {
+        if (!xcData) return '';
+        
+        let html = `<h4 style="${xcHeaderStyle}">Cross Connect — ${locationType}: ${xcData.datacenterName || xcData.locationCode}`;
+        if (xcData.mandatory) html += ` <span style="color: #ed6c02; font-size: 12px;">[REQUIRED]</span>`;
+        html += `</h4>`;
+        
+        if (xcData.customerOwned) {
+          html += `<p style="font-family: Arial, sans-serif; font-style: italic; color: #666;">Customer must provide X/C</p>`;
+        } else {
+          html += `<table style="${tableStyle}">`;
+          html += `<thead><tr>`;
+          html += `<th style="${thStyle}">NRC (One-time)</th>`;
+          html += `<th style="${thStyle}">MRC (Monthly)</th>`;
+          html += `</tr></thead>`;
+          html += `<tbody>`;
+          html += `<tr><td style="${tdStyle}">${typeof xcData.nrc === 'number' ? formatCurrency(xcData.nrc) : xcData.nrc}</td>`;
+          html += `<td style="${tdStyle}">${typeof xcData.mrc === 'number' ? formatCurrency(xcData.mrc) : xcData.mrc}</td></tr>`;
+          html += `</tbody></table>`;
+        }
+        
+        if (xcData.notes) {
+          html += `<p style="font-family: Arial, sans-serif; font-style: italic; font-size: 12px; color: #666;">${xcData.notes}</p>`;
+        }
         
         return html;
       };
@@ -390,22 +740,29 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
       // Build HTML email body
       let emailBody = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family: Arial, sans-serif; padding: 20px;">`;
       
-      // Header information
       emailBody += `<h2 style="color: #2E5090; border-bottom: 2px solid #4472C4; padding-bottom: 10px;">Route Finder Results</h2>`;
       emailBody += `<table style="margin-bottom: 20px; font-family: Arial, sans-serif;">`;
       emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Source Location:</td><td>${getLocationDisplay(formData.source)}</td></tr>`;
       emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Destination Location:</td><td>${getLocationDisplay(formData.destination)}</td></tr>`;
       emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Bandwidth:</td><td>${formData.bandwidth || 'Not specified'} Mbps</td></tr>`;
       emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Route Mode:</td><td>${formData.routeMode === 'fastest' ? 'Fastest Route' : 'Standard Route'}</td></tr>`;
+      emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Currency:</td><td>${currencyCode}</td></tr>`;
       emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Search Date:</td><td>${new Date().toLocaleString()}</td></tr>`;
       emailBody += `</table>`;
+
+      // Cross Connect Pricing
+      if (crossConnectResults.source || crossConnectResults.destination) {
+        emailBody += `<hr style="margin-top: 20px; margin-bottom: 20px; border: none; border-top: 1px solid #ccc;">`;
+        emailBody += `<h3 style="${headerStyle}">Cross Connect Pricing</h3>`;
+        emailBody += generateCrossConnectSection(crossConnectResults.source, 'Source');
+        emailBody += generateCrossConnectSection(crossConnectResults.destination, 'Destination');
+      }
 
       // Primary Path
       if (searchResults.primaryPath) {
         emailBody += generateRouteTable(searchResults.primaryPath, 'Primary');
       }
 
-      // Primary Path Promo Pricing
       if (primaryPromo) {
         emailBody += generatePromoPricingTable(primaryPromo, 'PRIMARY PATH');
       } else {
@@ -416,7 +773,6 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
       if (searchResults.diversePath) {
         emailBody += generateRouteTable(searchResults.diversePath, 'Secondary');
         
-        // Secondary Path Promo Pricing
         if (secondaryPromo) {
           emailBody += generatePromoPricingTable(secondaryPromo, 'SECONDARY PATH');
         } else {
@@ -426,9 +782,27 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
         emailBody += `<p style="${noPromoStyle}">Secondary Route: No diverse path available</p>`;
       }
 
+      // Protected Promo Pricing
+      if (protectedPromo) {
+        emailBody += `<hr style="margin-top: 20px; margin-bottom: 20px; border: none; border-top: 2px solid #1565C0;">`;
+        emailBody += `<h3 style="color: #1565C0; margin-top: 15px; margin-bottom: 10px; font-family: Arial, sans-serif;">PROTECTED SERVICE - PROMO PRICING</h3>`;
+        emailBody += `<p style="font-family: Arial, sans-serif; font-size: 13px; color: #555; margin-bottom: 10px;">Protected pricing based on Max(Primary, Secondary) × 1.7 formula. Subject to margin requirements.</p>`;
+        emailBody += `<table style="${tableStyle}">`;
+        emailBody += `<thead><tr>`;
+        emailBody += `<th style="${thStyle}">Bandwidth</th>`;
+        emailBody += `<th style="${thStyle}">Protected Price (${currencyCode}/month)</th>`;
+        emailBody += `</tr></thead>`;
+        emailBody += `<tbody>`;
+        emailBody += `<tr style="background-color: #ffffff;"><td style="${tdStyle}">10 Mbps</td><td style="${tdStyle}">${formatPromoPrice(protectedPromo.price_10mb)}</td></tr>`;
+        emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}">100 Mbps</td><td style="${tdStyle}">${formatPromoPrice(protectedPromo.price_100mb)}</td></tr>`;
+        emailBody += `<tr style="background-color: #ffffff;"><td style="${tdStyle}">1000 Mbps</td><td style="${tdStyle}">${formatPromoPrice(protectedPromo.price_1000mb)}</td></tr>`;
+        emailBody += `<tr style="background-color: #f9f9f9;"><td style="${tdStyle}">10 Gbps</td><td style="${tdStyle}">${formatPromoPrice(protectedPromo.price_10gb)}</td></tr>`;
+        emailBody += `</tbody></table>`;
+      }
+
       emailBody += `<p style="font-family: Arial, sans-serif; color: #666; margin-top: 20px;"><em>Note: Promo pricing is budgetary and subject to capacity confirmation.</em></p>`;
 
-      // Add Promo Pricing Terms and Conditions
+      // Terms and Conditions
       emailBody += `<hr style="margin-top: 30px; margin-bottom: 20px; border: none; border-top: 1px solid #ccc;">`;
       emailBody += `<div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; font-family: Arial, sans-serif;">`;
       emailBody += `<h3 style="color: #333; margin-top: 0;">Ethernet backhaul between IPC fibre / high capacity connected DC's:</h3>`;
@@ -455,11 +829,9 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
 
       emailBody += `</body></html>`;
 
-      // Generate subject line
       const today = new Date().toLocaleDateString();
       const subject = `Route Finder - ${formData.source} to ${formData.destination} - ${today}`;
       
-      // Create .eml file with HTML content
       const timestamp = new Date().toISOString();
       const emailContent = [
         `From: Route Finder <noreply@ipc.com>`,
@@ -473,15 +845,12 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
         emailBody
       ].join('\r\n');
       
-      // Create blob as .eml file
       const blob = new Blob([emailContent], { type: 'message/rfc822' });
       const url = window.URL.createObjectURL(blob);
       
-      // Create download link
       const downloadLink = document.createElement('a');
       downloadLink.href = url;
       
-      // Generate filename with timestamp
       const fileTimestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
       const sourceCode = formData.source.replace(/[^a-zA-Z0-9]/g, '_');
       const destCode = formData.destination.replace(/[^a-zA-Z0-9]/g, '_');
@@ -491,7 +860,6 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
       document.body.appendChild(downloadLink);
       downloadLink.click();
       
-      // Cleanup
       setTimeout(() => {
         document.body.removeChild(downloadLink);
         window.URL.revokeObjectURL(url);
@@ -505,7 +873,6 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     }
   };
 
-  // Get location display label
   const getLocationLabel = (location) => {
     if (!location) return '';
     return `${location.location_code} - ${location.datacenter_name || location.city}`;
@@ -635,7 +1002,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
             </Grid>
 
             {/* Bandwidth */}
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} md={4}>
               <TextField
                 fullWidth
                 label="Bandwidth (Mbps)"
@@ -648,7 +1015,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
             </Grid>
 
             {/* MTU Required */}
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} md={4}>
               <TextField
                 fullWidth
                 label="MTU Required (minimum)"
@@ -657,6 +1024,22 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
                 onChange={(e) => handleInputChange('mtuRequired', e.target.value)}
                 helperText="Default: 1500 if not specified - Maximum service MTU is 9000"
               />
+            </Grid>
+
+            {/* Currency Selector */}
+            <Grid item xs={12} md={4}>
+              <FormControl fullWidth>
+                <InputLabel>Output Currency</InputLabel>
+                <Select
+                  value={formData.outputCurrency}
+                  label="Output Currency"
+                  onChange={(e) => handleInputChange('outputCurrency', e.target.value)}
+                >
+                  {availableCurrencies.map(currency => (
+                    <MenuItem key={currency} value={currency}>{currency}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
             </Grid>
 
             {/* Search Button */}
@@ -717,7 +1100,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
               )}
             </Box>
 
-            {/* Route Lifecycle Notes - Display provisioning route warnings */}
+            {/* Route Lifecycle Notes */}
             {searchResults.routeLifecycleNotes?.provisioningRoutesUsed?.length > 0 && (
               <Alert 
                 severity="info" 
@@ -806,19 +1189,19 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
                         <Grid container spacing={1}>
                           <Grid item xs={3}>
                             <Typography variant="caption" color="text.secondary" display="block">10 Mbps</Typography>
-                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(primaryPromo.price_10mb)}</Typography>
+                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(primaryPromo.price_10mb)}</Typography>
                           </Grid>
                           <Grid item xs={3}>
                             <Typography variant="caption" color="text.secondary" display="block">100 Mbps</Typography>
-                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(primaryPromo.price_100mb)}</Typography>
+                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(primaryPromo.price_100mb)}</Typography>
                           </Grid>
                           <Grid item xs={3}>
                             <Typography variant="caption" color="text.secondary" display="block">1000 Mbps</Typography>
-                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(primaryPromo.price_1000mb)}</Typography>
+                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(primaryPromo.price_1000mb)}</Typography>
                           </Grid>
                           <Grid item xs={3}>
                             <Typography variant="caption" color="text.secondary" display="block">10 Gbps</Typography>
-                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(primaryPromo.price_10gb)}</Typography>
+                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(primaryPromo.price_10gb)}</Typography>
                           </Grid>
                         </Grid>
                       </Box>
@@ -902,19 +1285,19 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
                           <Grid container spacing={1}>
                             <Grid item xs={3}>
                               <Typography variant="caption" color="text.secondary" display="block">10 Mbps</Typography>
-                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(secondaryPromo.price_10mb)}</Typography>
+                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_10mb)}</Typography>
                             </Grid>
                             <Grid item xs={3}>
                               <Typography variant="caption" color="text.secondary" display="block">100 Mbps</Typography>
-                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(secondaryPromo.price_100mb)}</Typography>
+                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_100mb)}</Typography>
                             </Grid>
                             <Grid item xs={3}>
                               <Typography variant="caption" color="text.secondary" display="block">1000 Mbps</Typography>
-                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(secondaryPromo.price_1000mb)}</Typography>
+                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_1000mb)}</Typography>
                             </Grid>
                             <Grid item xs={3}>
                               <Typography variant="caption" color="text.secondary" display="block">10 Gbps</Typography>
-                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatCurrency(secondaryPromo.price_10gb)}</Typography>
+                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_10gb)}</Typography>
                             </Grid>
                           </Grid>
                         </Box>
@@ -933,6 +1316,76 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
                   <Alert severity="info">
                     No diverse secondary path found. The primary path is available but no alternative route exists.
                   </Alert>
+                </Grid>
+              )}
+
+              {/* Protected Service Promo Pricing - Only when BOTH paths have promo */}
+              {protectedPromo && primaryPromo && secondaryPromo && (
+                <Grid item xs={12}>
+                  <Card sx={{ border: 2, borderColor: 'primary.main', bgcolor: 'primary.50' }}>
+                    <CardHeader 
+                      title={
+                        <Box display="flex" alignItems="center" gap={1}>
+                          <SecurityIcon color="primary" />
+                          <span>Protected Service Pricing</span>
+                          <Chip 
+                            icon={<LocalOfferIcon />} 
+                            label="Promo Protected" 
+                            color="primary" 
+                            size="small" 
+                          />
+                        </Box>
+                      }
+                      subheader="Protected pricing available — Both primary and secondary paths qualify for promo pricing"
+                    />
+                    <CardContent>
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 2 }}>
+                        $1,000 NRC applicable for each option - X/Cs Excluded - Full Terms available from Pricing Team
+                      </Typography>
+                      <Grid container spacing={1}>
+                        <Grid item xs={3}>
+                          <Typography variant="caption" color="text.secondary" display="block">10 Mbps</Typography>
+                          <Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPrice(protectedPromo.price_10mb)}</Typography>
+                        </Grid>
+                        <Grid item xs={3}>
+                          <Typography variant="caption" color="text.secondary" display="block">100 Mbps</Typography>
+                          <Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPrice(protectedPromo.price_100mb)}</Typography>
+                        </Grid>
+                        <Grid item xs={3}>
+                          <Typography variant="caption" color="text.secondary" display="block">1000 Mbps</Typography>
+                          <Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPrice(protectedPromo.price_1000mb)}</Typography>
+                        </Grid>
+                        <Grid item xs={3}>
+                          <Typography variant="caption" color="text.secondary" display="block">10 Gbps</Typography>
+                          <Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPrice(protectedPromo.price_10gb)}</Typography>
+                        </Grid>
+                      </Grid>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              )}
+
+              {/* Cross Connect Pricing - Below all pricing cards */}
+              {(crossConnectResults.source || crossConnectResults.destination) && (
+                <Grid item xs={12}>
+                  <Box>
+                    <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <CableIcon color="info" fontSize="small" />
+                      Cross Connect Pricing
+                    </Typography>
+                    <Grid container spacing={2}>
+                      {crossConnectResults.source && (
+                        <Grid item xs={12} md={6}>
+                          {renderCrossConnectCard(crossConnectResults.source, 'source')}
+                        </Grid>
+                      )}
+                      {crossConnectResults.destination && (
+                        <Grid item xs={12} md={6}>
+                          {renderCrossConnectCard(crossConnectResults.destination, 'destination')}
+                        </Grid>
+                      )}
+                    </Grid>
+                  </Box>
                 </Grid>
               )}
             </Grid>
@@ -1029,22 +1482,22 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
                         </TableCell>
                         <TableCell align="right">
                           <Typography variant="body2" color="success.dark" fontWeight="medium">
-                            {formatCurrency(rule.price_10mb)}
+                            {formatPromoPrice(rule.price_10mb)}
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
                           <Typography variant="body2" color="success.dark" fontWeight="medium">
-                            {formatCurrency(rule.price_100mb)}
+                            {formatPromoPrice(rule.price_100mb)}
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
                           <Typography variant="body2" color="success.dark" fontWeight="medium">
-                            {formatCurrency(rule.price_1000mb)}
+                            {formatPromoPrice(rule.price_1000mb)}
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
                           <Typography variant="body2" color="success.dark" fontWeight="medium">
-                            {formatCurrency(rule.price_10gb)}
+                            {formatPromoPrice(rule.price_10gb)}
                           </Typography>
                         </TableCell>
                       </TableRow>
@@ -1187,4 +1640,3 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
 };
 
 export default RouteFinder;
-

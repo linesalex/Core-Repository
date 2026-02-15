@@ -68,12 +68,15 @@ const UserManagement = () => {
     { key: 'kmz_viewer', label: 'KMZ Viewer' },
     { key: 'locations', label: 'Manage Locations' },
     { key: 'carriers', label: 'Manage Carriers' },
-    { key: 'cnx_colocation', label: 'CNX Colocation' },
+    { key: 'cnx_colocation_inventory', label: 'CNX Colocation — Inventory', group: 'CNX Colocation' },
+    { key: 'cnx_colocation_availability', label: 'CNX Colocation — Availability', group: 'CNX Colocation' },
+    { key: 'cnx_colocation_pricing', label: 'CNX Colocation — Pricing Tool', group: 'CNX Colocation' },
     { key: 'exchange_rates', label: 'Manage Exchange Rates' },
     { key: 'exchange_data', label: 'Exchange Data' },
     { key: 'extranet_data', label: 'Extranet Data' },
     { key: 'change_logs', label: 'Change Logs' },
-    { key: 'core_outages', label: 'Core Outages' }
+    { key: 'core_outages', label: 'Core Outages' },
+    { key: 'carrier_quote_repository', label: 'Carrier Quote Repository' }
     // Admin-only modules excluded: user_management, bulk_upload, 
     // minimum_pricing, pricing_logic, promo_pricing, live_latency_admin
   ]);
@@ -1025,35 +1028,78 @@ const UserManagement = () => {
               
               <Divider sx={{ mb: 2 }} />
               <Grid container spacing={2}>
-                {availableModules.filter(module => module.key !== 'live_latency_admin').map((module) => {
-                  const hasSalesOption = ['network_routes', 'locations'].includes(module.key);
+                {(() => {
+                  const modules = availableModules.filter(module => module.key !== 'live_latency_admin');
+                  const ungrouped = modules.filter(m => !m.group);
+                  const groups = [...new Set(modules.filter(m => m.group).map(m => m.group))];
+                  
                   return (
-                    <Grid item xs={12} sm={6} key={module.key}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel shrink>{module.label}</InputLabel>
-                        <Select
-                          value={modulePermissions[module.key] || ''}
-                          onChange={(e) => handlePermissionChange(module.key, e.target.value)}
-                          label={module.label}
-                          displayEmpty
-                          notched
-                          renderValue={(selected) => {
-                            if (!selected || selected === '') {
-                              return 'No Access';
-                            }
-                            if (selected === 'sales') return 'Sales';
-                            return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
-                          }}
-                        >
-                          <MenuItem value="">No Access</MenuItem>
-                          {hasSalesOption && <MenuItem value="sales">Sales</MenuItem>}
-                          <MenuItem value="read_only">Read-Only</MenuItem>
-                          <MenuItem value="provisioner">Provisioner</MenuItem>
-                        </Select>
-                      </FormControl>
-                    </Grid>
+                    <>
+                      {ungrouped.map((module) => {
+                        const hasSalesOption = ['network_routes', 'locations'].includes(module.key);
+                        return (
+                          <Grid item xs={12} sm={6} key={module.key}>
+                            <FormControl fullWidth size="small">
+                              <InputLabel shrink>{module.label}</InputLabel>
+                              <Select
+                                value={modulePermissions[module.key] || ''}
+                                onChange={(e) => handlePermissionChange(module.key, e.target.value)}
+                                label={module.label}
+                                displayEmpty
+                                notched
+                                renderValue={(selected) => {
+                                  if (!selected || selected === '') return 'No Access';
+                                  if (selected === 'sales') return 'Sales';
+                                  return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                                }}
+                              >
+                                <MenuItem value="">No Access</MenuItem>
+                                {hasSalesOption && <MenuItem value="sales">Sales</MenuItem>}
+                                <MenuItem value="read_only">Read-Only</MenuItem>
+                                <MenuItem value="provisioner">Provisioner</MenuItem>
+                              </Select>
+                            </FormControl>
+                          </Grid>
+                        );
+                      })}
+                      {groups.map(groupName => {
+                        const groupModules = modules.filter(m => m.group === groupName);
+                        return (
+                          <React.Fragment key={groupName}>
+                            <Grid item xs={12}>
+                              <Typography variant="subtitle2" sx={{ mt: 1, mb: -0.5, fontWeight: 600, color: 'text.secondary', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                {groupName}
+                              </Typography>
+                              <Divider sx={{ mt: 0.5 }} />
+                            </Grid>
+                            {groupModules.map((module) => (
+                              <Grid item xs={12} sm={6} key={module.key}>
+                                <FormControl fullWidth size="small">
+                                  <InputLabel shrink>{module.label.replace(`${groupName} — `, '')}</InputLabel>
+                                  <Select
+                                    value={modulePermissions[module.key] || ''}
+                                    onChange={(e) => handlePermissionChange(module.key, e.target.value)}
+                                    label={module.label.replace(`${groupName} — `, '')}
+                                    displayEmpty
+                                    notched
+                                    renderValue={(selected) => {
+                                      if (!selected || selected === '') return 'No Access';
+                                      return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                                    }}
+                                  >
+                                    <MenuItem value="">No Access</MenuItem>
+                                    <MenuItem value="read_only">Read-Only</MenuItem>
+                                    <MenuItem value="provisioner">Provisioner</MenuItem>
+                                  </Select>
+                                </FormControl>
+                              </Grid>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
+                    </>
                   );
-                })}
+                })()}
               </Grid>
               <Alert severity="info" sx={{ mt: 2 }}>
                 <strong>Sales:</strong> Limited view access (available for Network Routes & Locations only)<br />
@@ -1146,35 +1192,78 @@ const UserManagement = () => {
               <Divider sx={{ mb: 2 }} />
               
               <Grid container spacing={2}>
-                {availableModules.filter(module => module.key !== 'live_latency_admin').map((module) => {
-                  const hasSalesOption = ['network_routes', 'locations'].includes(module.key);
+                {(() => {
+                  const modules = availableModules.filter(module => module.key !== 'live_latency_admin');
+                  const ungrouped = modules.filter(m => !m.group);
+                  const groups = [...new Set(modules.filter(m => m.group).map(m => m.group))];
+                  
                   return (
-                    <Grid item xs={12} sm={6} key={module.key}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel shrink>{module.label}</InputLabel>
-                        <Select
-                          value={approvalModulePermissions[module.key] || ''}
-                          onChange={(e) => handleApprovalModulePermissionChange(module.key, e.target.value)}
-                          label={module.label}
-                          displayEmpty
-                          notched
-                          renderValue={(selected) => {
-                            if (!selected || selected === '') {
-                              return 'No Access';
-                            }
-                            if (selected === 'sales') return 'Sales';
-                            return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
-                          }}
-                        >
-                          <MenuItem value="">No Access</MenuItem>
-                          {hasSalesOption && <MenuItem value="sales">Sales</MenuItem>}
-                          <MenuItem value="read_only">Read-Only</MenuItem>
-                          <MenuItem value="provisioner">Provisioner</MenuItem>
-                        </Select>
-                      </FormControl>
-                    </Grid>
+                    <>
+                      {ungrouped.map((module) => {
+                        const hasSalesOption = ['network_routes', 'locations'].includes(module.key);
+                        return (
+                          <Grid item xs={12} sm={6} key={module.key}>
+                            <FormControl fullWidth size="small">
+                              <InputLabel shrink>{module.label}</InputLabel>
+                              <Select
+                                value={approvalModulePermissions[module.key] || ''}
+                                onChange={(e) => handleApprovalModulePermissionChange(module.key, e.target.value)}
+                                label={module.label}
+                                displayEmpty
+                                notched
+                                renderValue={(selected) => {
+                                  if (!selected || selected === '') return 'No Access';
+                                  if (selected === 'sales') return 'Sales';
+                                  return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                                }}
+                              >
+                                <MenuItem value="">No Access</MenuItem>
+                                {hasSalesOption && <MenuItem value="sales">Sales</MenuItem>}
+                                <MenuItem value="read_only">Read-Only</MenuItem>
+                                <MenuItem value="provisioner">Provisioner</MenuItem>
+                              </Select>
+                            </FormControl>
+                          </Grid>
+                        );
+                      })}
+                      {groups.map(groupName => {
+                        const groupModules = modules.filter(m => m.group === groupName);
+                        return (
+                          <React.Fragment key={groupName}>
+                            <Grid item xs={12}>
+                              <Typography variant="subtitle2" sx={{ mt: 1, mb: -0.5, fontWeight: 600, color: 'text.secondary', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                {groupName}
+                              </Typography>
+                              <Divider sx={{ mt: 0.5 }} />
+                            </Grid>
+                            {groupModules.map((module) => (
+                              <Grid item xs={12} sm={6} key={module.key}>
+                                <FormControl fullWidth size="small">
+                                  <InputLabel shrink>{module.label.replace(`${groupName} — `, '')}</InputLabel>
+                                  <Select
+                                    value={approvalModulePermissions[module.key] || ''}
+                                    onChange={(e) => handleApprovalModulePermissionChange(module.key, e.target.value)}
+                                    label={module.label.replace(`${groupName} — `, '')}
+                                    displayEmpty
+                                    notched
+                                    renderValue={(selected) => {
+                                      if (!selected || selected === '') return 'No Access';
+                                      return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                                    }}
+                                  >
+                                    <MenuItem value="">No Access</MenuItem>
+                                    <MenuItem value="read_only">Read-Only</MenuItem>
+                                    <MenuItem value="provisioner">Provisioner</MenuItem>
+                                  </Select>
+                                </FormControl>
+                              </Grid>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
+                    </>
                   );
-                })}
+                })()}
               </Grid>
               <Alert severity="info" sx={{ mt: 2 }}>
                 <strong>Sales:</strong> Limited view access (available for Network Routes & Locations only)<br />
@@ -1251,35 +1340,78 @@ const UserManagement = () => {
                 Module Permissions
               </Typography>
               <Grid container spacing={2}>
-                {availableModules.filter(module => module.key !== 'live_latency_admin').map((module) => {
-                  const hasSalesOption = ['network_routes', 'locations'].includes(module.key);
+                {(() => {
+                  const modules = availableModules.filter(module => module.key !== 'live_latency_admin');
+                  const ungrouped = modules.filter(m => !m.group);
+                  const groups = [...new Set(modules.filter(m => m.group).map(m => m.group))];
+                  
                   return (
-                    <Grid item xs={12} sm={6} key={module.key}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel shrink>{module.label}</InputLabel>
-                        <Select
-                          value={templateFormData.permissions[module.key] || ''}
-                          onChange={(e) => handleTemplatePermissionChange(module.key, e.target.value)}
-                          label={module.label}
-                          displayEmpty
-                          notched
-                          renderValue={(selected) => {
-                            if (!selected || selected === '') {
-                              return 'No Access';
-                            }
-                            if (selected === 'sales') return 'Sales';
-                            return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
-                          }}
-                        >
-                          <MenuItem value="">No Access</MenuItem>
-                          {hasSalesOption && <MenuItem value="sales">Sales</MenuItem>}
-                          <MenuItem value="read_only">Read-Only</MenuItem>
-                          <MenuItem value="provisioner">Provisioner</MenuItem>
-                        </Select>
-                      </FormControl>
-                    </Grid>
+                    <>
+                      {ungrouped.map((module) => {
+                        const hasSalesOption = ['network_routes', 'locations'].includes(module.key);
+                        return (
+                          <Grid item xs={12} sm={6} key={module.key}>
+                            <FormControl fullWidth size="small">
+                              <InputLabel shrink>{module.label}</InputLabel>
+                              <Select
+                                value={templateFormData.permissions[module.key] || ''}
+                                onChange={(e) => handleTemplatePermissionChange(module.key, e.target.value)}
+                                label={module.label}
+                                displayEmpty
+                                notched
+                                renderValue={(selected) => {
+                                  if (!selected || selected === '') return 'No Access';
+                                  if (selected === 'sales') return 'Sales';
+                                  return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                                }}
+                              >
+                                <MenuItem value="">No Access</MenuItem>
+                                {hasSalesOption && <MenuItem value="sales">Sales</MenuItem>}
+                                <MenuItem value="read_only">Read-Only</MenuItem>
+                                <MenuItem value="provisioner">Provisioner</MenuItem>
+                              </Select>
+                            </FormControl>
+                          </Grid>
+                        );
+                      })}
+                      {groups.map(groupName => {
+                        const groupModules = modules.filter(m => m.group === groupName);
+                        return (
+                          <React.Fragment key={groupName}>
+                            <Grid item xs={12}>
+                              <Typography variant="subtitle2" sx={{ mt: 1, mb: -0.5, fontWeight: 600, color: 'text.secondary', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                {groupName}
+                              </Typography>
+                              <Divider sx={{ mt: 0.5 }} />
+                            </Grid>
+                            {groupModules.map((module) => (
+                              <Grid item xs={12} sm={6} key={module.key}>
+                                <FormControl fullWidth size="small">
+                                  <InputLabel shrink>{module.label.replace(`${groupName} — `, '')}</InputLabel>
+                                  <Select
+                                    value={templateFormData.permissions[module.key] || ''}
+                                    onChange={(e) => handleTemplatePermissionChange(module.key, e.target.value)}
+                                    label={module.label.replace(`${groupName} — `, '')}
+                                    displayEmpty
+                                    notched
+                                    renderValue={(selected) => {
+                                      if (!selected || selected === '') return 'No Access';
+                                      return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                                    }}
+                                  >
+                                    <MenuItem value="">No Access</MenuItem>
+                                    <MenuItem value="read_only">Read-Only</MenuItem>
+                                    <MenuItem value="provisioner">Provisioner</MenuItem>
+                                  </Select>
+                                </FormControl>
+                              </Grid>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
+                    </>
                   );
-                })}
+                })()}
               </Grid>
               <Alert severity="info" sx={{ mt: 2 }}>
                 <strong>Sales:</strong> Limited view access (available for Network Routes & Locations only)<br />
