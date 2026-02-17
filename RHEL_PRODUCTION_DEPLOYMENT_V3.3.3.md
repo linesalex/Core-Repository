@@ -197,6 +197,15 @@ npm install
 # If npm install fails:
 npm install --no-optional
 
+# Install adm-zip (required for KMZ file parsing in Carrier Quote Repository)
+npm install adm-zip
+
+# Install which-country (required for KMZ route country detection in Carrier Quote Repository)
+npm install which-country
+
+# Install all-the-cities (required for KMZ transit city detection in Carrier Quote Repository)
+npm install all-the-cities
+
 # Initialize database (first time only)
 node init_db.js
 

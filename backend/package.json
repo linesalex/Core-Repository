@@ -1,12 +1,14 @@
 {
   "name": "network-inventory-backend",
-  "version": "3.4.5",
+  "version": "3.4.6",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js"
   },
   "dependencies": {
+    "adm-zip": "^0.5.16",
+    "all-the-cities": "^3.1.0",
     "archiver": "^5.3.2",
     "axios": "^1.10.0",
     "bcrypt": "^6.0.0",
@@ -20,7 +22,8 @@
     "jszip": "^3.10.1",
     "multer": "^1.4.5-lts.1",
     "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "which-country": "^1.0.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"

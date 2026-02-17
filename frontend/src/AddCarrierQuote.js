@@ -16,14 +16,78 @@ import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import DeleteIcon from '@mui/icons-material/Delete';
 import TimelineIcon from '@mui/icons-material/Timeline';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import DownloadIcon from '@mui/icons-material/Download';
+import FileUploadIcon from '@mui/icons-material/FileUpload';
 import { useAuth } from './AuthContext';
 import { carrierQuoteApi } from './api';
+
+// CSV template rows: { label, field, instruction }
+// Vertical format: Column A = Field, Column B = Value, Column C = Instructions
+const CSV_ROWS = [
+  { label: 'Internal Reference (QR)', field: 'quote_reference', instruction: 'Optional - auto-generated if left blank' },
+  { label: 'Carrier Name', field: 'carrier_name', instruction: 'Required - will be matched to existing carriers on import' },
+  { label: 'Carrier Quote Reference', field: 'carrier_quote_ref', instruction: 'The carrier\'s own reference number' },
+  { label: 'Service Type', field: 'service_type', instruction: 'MPLS | Ethernet | Dark Fiber | Wavelength' },
+  { label: 'Region', field: 'region', instruction: 'AMERs | APAC | EMEA | INTER' },
+  { label: 'Location A POP Code', field: 'location_a_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) OR fill in Name/Address/City/Country below' },
+  { label: 'Location A Name', field: '_loc_a_name', instruction: 'Only required if POP code is not provided - a custom location will be created' },
+  { label: 'Location A Address', field: '_loc_a_address', instruction: 'Street address for custom location' },
+  { label: 'Location A City', field: '_loc_a_city', instruction: 'City for custom location' },
+  { label: 'Location A Country', field: '_loc_a_country', instruction: 'Country for custom location' },
+  { label: 'Location B POP Code', field: 'location_b_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) OR fill in Name/Address/City/Country below' },
+  { label: 'Location B Name', field: '_loc_b_name', instruction: 'Only required if POP code is not provided - a custom location will be created' },
+  { label: 'Location B Address', field: '_loc_b_address', instruction: 'Street address for custom location' },
+  { label: 'Location B City', field: '_loc_b_city', instruction: 'City for custom location' },
+  { label: 'Location B Country', field: '_loc_b_country', instruction: 'Country for custom location' },
+  { label: 'Bandwidth Unit', field: 'bandwidth_unit', instruction: 'Mbps | Gbps | Dark Fiber' },
+  { label: 'Bandwidth Value', field: 'bandwidth_value', instruction: 'Not required if Bandwidth Unit is Dark Fiber' },
+  { label: 'Currency', field: 'currency', instruction: 'e.g. USD, EUR, GBP' },
+  { label: 'NRC', field: 'nrc', instruction: 'Non-Recurring Cost' },
+  { label: 'MRC', field: 'mrc', instruction: 'Monthly Recurring Cost' },
+  { label: 'Contract Term (Months)', field: 'contract_term', instruction: '12 | 24 | 36' },
+  { label: 'Expected Latency (ms)', field: 'expected_latency', instruction: 'Round-trip latency in milliseconds' },
+  { label: 'Protection', field: 'protection', instruction: 'Unprotected | Protected' },
+  { label: 'Cable System', field: 'cable_system', instruction: 'Name of submarine cable system if applicable' },
+  { label: 'Quote Date', field: 'quote_date', instruction: 'YYYY-MM-DD' },
+  { label: 'Expiry Date', field: 'expiry_date', instruction: 'YYYY-MM-DD' },
+  { label: 'MTU', field: 'mtu', instruction: 'Maximum Transmission Unit' },
+  { label: 'Notes', field: 'notes', instruction: 'Any additional notes' }
+];
+
+// Simple CSV value escaper
+const escapeCsv = (val) => {
+  const s = String(val ?? '');
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+};
+
+// Parse a single CSV line respecting quoted fields
+const parseCsvLine = (line) => {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') { current += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { current += ch; }
+    } else {
+      if (ch === '"') { inQuotes = true; }
+      else if (ch === ',') { values.push(current.trim()); current = ''; }
+      else { current += ch; }
+    }
+  }
+  values.push(current.trim());
+  return values;
+};
 
 const SERVICE_TYPES = ['MPLS', 'Ethernet', 'Dark Fiber', 'Wavelength'];
 const REGIONS = ['AMERs', 'APAC', 'EMEA', 'INTER'];
 const BANDWIDTH_UNITS = ['Mbps', 'Gbps', 'Dark Fiber'];
 const CONTRACT_TERMS = [12, 24, 36];
-const PROTECTION_TYPES = ['Unprotected', 'Protected', 'Diverse'];
+const PROTECTION_TYPES = ['Unprotected', 'Protected'];
 const PRICE_STAGE_PRESETS = ['Initial Offer', 'Counter Offer', 'Discounted', 'Best and Final', 'Accepted', 'Rejected'];
 
 const emptyFormData = {
@@ -54,6 +118,7 @@ const emptyFormData = {
   expiry_date: '',
   transit_cities: '',
   transit_countries: '',
+  mtu: '',
   notes: ''
 };
 
@@ -82,6 +147,10 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
   // KMZ parsing state
   const [kmzParsing, setKmzParsing] = useState(false);
   const kmzInputRef = useRef(null);
+
+  // CSV import state
+  const csvInputRef = useRef(null);
+  const [csvDragActive, setCsvDragActive] = useState(false);
 
   // New custom location dialog
   const [customLocDialogOpen, setCustomLocDialogOpen] = useState(false);
@@ -148,6 +217,7 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
         expiry_date: quote.expiry_date || '',
         transit_cities: quote.transit_cities || '',
         transit_countries: quote.transit_countries || '',
+        mtu: quote.mtu || '',
         notes: quote.notes || ''
       });
       // Load price stages
@@ -218,6 +288,7 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
       if (submitData.nrc) submitData.nrc = parseFloat(submitData.nrc);
       if (submitData.expected_latency) submitData.expected_latency = parseFloat(submitData.expected_latency);
       if (submitData.contract_term) submitData.contract_term = parseInt(submitData.contract_term);
+      if (submitData.mtu) submitData.mtu = parseInt(submitData.mtu);
       // Clear bandwidth value for Dark Fiber
       if (isDarkFiber) submitData.bandwidth_value = null;
 
@@ -252,14 +323,170 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
     }
   };
 
+  // Download CSV template (vertical: A = Field, B = Value, C = Instructions)
+  const handleDownloadTemplate = () => {
+    const rows = [['Field', 'Value', 'Instructions']];
+    CSV_ROWS.forEach(r => {
+      rows.push([r.label, '', r.instruction]);
+    });
+    const csv = rows.map(row => row.map(v => escapeCsv(v)).join(',')).join('\n');
+    // BOM + UTF-8 ensures Excel opens with correct encoding and characters
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'carrier_quote_template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Import CSV / TXT file and populate form (vertical format)
+  const handleCsvImport = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target.result;
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (lines.length < 2) {
+          setError('CSV file must have at least a header row and one data row');
+          return;
+        }
+
+        // Build label -> value map from vertical rows
+        const dataMap = {};
+        const startIdx = parseCsvLine(lines[0])[0].trim().toLowerCase() === 'field' ? 1 : 0;
+        for (let i = startIdx; i < lines.length; i++) {
+          const cols = parseCsvLine(lines[i]);
+          const label = (cols[0] || '').trim();
+          const value = (cols[1] || '').trim();
+          if (label) dataMap[label] = value;
+        }
+
+        // Map to form fields, skip empty values
+        const updates = {};
+        let fieldsPopulated = 0;
+        CSV_ROWS.forEach(row => {
+          const val = dataMap[row.label];
+          if (val !== undefined && val !== '') {
+            if (!row.field.startsWith('_')) {
+              updates[row.field] = val;
+            }
+            fieldsPopulated++;
+          }
+        });
+
+        // Handle Location A: POP code vs custom location
+        const locAName = dataMap['Location A Name'] || '';
+        const locAAddress = dataMap['Location A Address'] || '';
+        const locACity = dataMap['Location A City'] || '';
+        const locACountry = dataMap['Location A Country'] || '';
+        if (updates.location_a_pop_code) {
+          updates.location_a_type = 'pop';
+        } else if (locAName) {
+          // Create custom location via API
+          try {
+            const result = await carrierQuoteApi.createCustomLocation({
+              location_name: locAName, address: locAAddress, city: locACity, country: locACountry
+            });
+            updates.location_a_type = 'custom';
+            updates.location_a_custom_id = result.id;
+            updates.location_a_custom_name = result.location_name;
+            updates.location_a_pop_code = result.location_name;
+          } catch (locErr) {
+            console.warn('Failed to create custom Location A:', locErr);
+          }
+        }
+
+        // Handle Location B: POP code vs custom location
+        const locBName = dataMap['Location B Name'] || '';
+        const locBAddress = dataMap['Location B Address'] || '';
+        const locBCity = dataMap['Location B City'] || '';
+        const locBCountry = dataMap['Location B Country'] || '';
+        if (updates.location_b_pop_code) {
+          updates.location_b_type = 'pop';
+        } else if (locBName) {
+          try {
+            const result = await carrierQuoteApi.createCustomLocation({
+              location_name: locBName, address: locBAddress, city: locBCity, country: locBCountry
+            });
+            updates.location_b_type = 'custom';
+            updates.location_b_custom_id = result.id;
+            updates.location_b_custom_name = result.location_name;
+            updates.location_b_pop_code = result.location_name;
+          } catch (locErr) {
+            console.warn('Failed to create custom Location B:', locErr);
+          }
+        }
+
+        if (fieldsPopulated === 0) {
+          setError('No matching data found — ensure field names match the template');
+          return;
+        }
+
+        // Carrier name fuzzy lookup
+        if (updates.carrier_name) {
+          try {
+            const matches = await carrierQuoteApi.getCarriers(updates.carrier_name);
+            if (matches && matches.length > 0) {
+              // Find best match: exact first, then starts-with, then first result
+              const inputLower = updates.carrier_name.toLowerCase();
+              const exact = matches.find(m => m.carrier_name.toLowerCase() === inputLower);
+              const startsWith = matches.find(m => m.carrier_name.toLowerCase().startsWith(inputLower));
+              const best = exact || startsWith || matches[0];
+              updates.carrier_name = best.carrier_name;
+              updates.carrier_id = best.id;
+              setCarriers(matches);
+            }
+          } catch (carrierErr) {
+            console.warn('Carrier lookup failed:', carrierErr);
+          }
+        }
+
+        setFormData(prev => ({ ...prev, ...updates }));
+        setSuccess(`CSV imported — ${fieldsPopulated} field${fieldsPopulated !== 1 ? 's' : ''} populated. Please review all fields before submitting.`);
+      } catch (err) {
+        console.error('CSV parse error:', err);
+        setError('Failed to parse CSV file: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleCsvFileSelect = (event) => {
+    const file = event.target.files[0];
+    if (file) handleCsvImport(file);
+    if (csvInputRef.current) csvInputRef.current.value = '';
+  };
+
+  // CSV drag-and-drop handlers
+  const handleCsvDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setCsvDragActive(true); };
+  const handleCsvDragLeave = () => { setCsvDragActive(false); };
+  const handleCsvDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCsvDragActive(false);
+    const file = e.dataTransfer.files[0];
+    if (file && (file.name.endsWith('.csv') || file.name.endsWith('.txt'))) {
+      handleCsvImport(file);
+    } else {
+      setError('Please drop a .csv or .txt file');
+    }
+  };
+
   // Handle KMZ file parsing
   const handleKmzParse = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
+    console.log('[KMZ Upload] File selected:', file.name, 'Size:', file.size, 'bytes', 'Type:', file.type);
     setKmzParsing(true);
     try {
+      console.log('[KMZ Upload] Sending parse request...');
+      const startTime = Date.now();
       const result = await carrierQuoteApi.parseKmz(file);
+      console.log(`[KMZ Upload] Parse response received in ${Date.now() - startTime}ms:`, result);
       setFormData(prev => ({
         ...prev,
         transit_cities: result.transit_cities || prev.transit_cities,
@@ -268,8 +495,15 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
       
       // Add KMZ file to upload list
       setUploadFiles(prev => [...prev, file]);
-      setSuccess('KMZ uploaded and parsed - route data extracted');
+      setSuccess('KMZ locations updated');
     } catch (err) {
+      console.error('[KMZ Upload] Parse error:', err);
+      console.error('[KMZ Upload] Error details:', { 
+        message: err.message, 
+        code: err.code, 
+        status: err.response?.status,
+        responseData: err.response?.data 
+      });
       setError('Failed to parse KMZ: ' + (err.response?.data?.error || err.message));
     } finally {
       setKmzParsing(false);
@@ -287,6 +521,71 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
   // Remove file from upload list
   const removeUploadFile = (index) => {
     setUploadFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Drag-and-drop state
+  const [kmzDragActive, setKmzDragActive] = useState(false);
+  const [fileDragActive, setFileDragActive] = useState(false);
+
+  // KMZ drag-and-drop handlers
+  const handleKmzDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setKmzDragActive(true); };
+  const handleKmzDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setKmzDragActive(false); };
+  const handleKmzDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setKmzDragActive(false);
+    const files = Array.from(e.dataTransfer.files);
+    console.log('[KMZ Drop] Files dropped:', files.map(f => ({ name: f.name, size: f.size, type: f.type })));
+    const kmzFile = files.find(f => f.name.endsWith('.kmz') || f.name.endsWith('.kml'));
+    if (kmzFile) {
+      console.log('[KMZ Drop] Found KMZ/KML file:', kmzFile.name, 'Size:', kmzFile.size, 'bytes');
+      setKmzParsing(true);
+      try {
+        console.log('[KMZ Drop] Sending parse request...');
+        const startTime = Date.now();
+        const result = await carrierQuoteApi.parseKmz(kmzFile);
+        console.log(`[KMZ Drop] Parse response received in ${Date.now() - startTime}ms:`, result);
+        setFormData(prev => ({
+          ...prev,
+          transit_cities: result.transit_cities || prev.transit_cities,
+          transit_countries: result.transit_countries || prev.transit_countries
+        }));
+        setUploadFiles(prev => [...prev, kmzFile]);
+        setSuccess('KMZ locations updated');
+      } catch (err) {
+        console.error('[KMZ Drop] Parse error after', Date.now(), 'ms:', err);
+        console.error('[KMZ Drop] Error details:', { 
+          message: err.message, 
+          code: err.code, 
+          status: err.response?.status,
+          responseData: err.response?.data 
+        });
+        setError('Failed to parse KMZ: ' + (err.response?.data?.error || err.message));
+      } finally {
+        setKmzParsing(false);
+      }
+    } else {
+      console.log('[KMZ Drop] No .kmz or .kml file found in dropped files');
+      setError('Please drop a .kmz or .kml file');
+    }
+  };
+
+  // File attachment drag-and-drop handlers
+  const handleFileDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setFileDragActive(true); };
+  const handleFileDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setFileDragActive(false); };
+  const handleFileDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setFileDragActive(false);
+    const files = Array.from(e.dataTransfer.files);
+    const validExtensions = ['.kmz', '.kml', '.pdf', '.eml', '.doc', '.docx', '.xls', '.xlsx', '.png', '.jpg', '.jpeg', '.msg', '.txt', '.csv'];
+    const validFiles = files.filter(f => validExtensions.some(ext => f.name.toLowerCase().endsWith(ext)));
+    if (validFiles.length > 0) {
+      setUploadFiles(prev => [...prev, ...validFiles]);
+    }
+    if (validFiles.length < files.length) {
+      setError(`${files.length - validFiles.length} file(s) skipped - unsupported format`);
+    }
   };
 
   // Add a price stage
@@ -423,6 +722,53 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
           <Chip label={formData.quote_reference} color="primary" variant="outlined" />
         )}
       </Box>
+
+      {/* CSV Template & Import */}
+      <Paper sx={{ p: 2, mb: 2, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+        <Button
+          variant="outlined"
+          size="small"
+          startIcon={<DownloadIcon />}
+          onClick={handleDownloadTemplate}
+        >
+          Download CSV Template
+        </Button>
+        <Divider orientation="vertical" flexItem />
+        <Box
+          onDragOver={handleCsvDragOver}
+          onDragLeave={handleCsvDragLeave}
+          onDrop={handleCsvDrop}
+          onClick={() => csvInputRef.current?.click()}
+          sx={{
+            flex: 1,
+            minWidth: 200,
+            border: '1.5px dashed',
+            borderColor: csvDragActive ? 'primary.main' : 'divider',
+            borderRadius: 1,
+            px: 2,
+            py: 1,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            cursor: 'pointer',
+            bgcolor: csvDragActive ? 'action.hover' : 'transparent',
+            transition: 'all 0.2s ease',
+            '&:hover': { borderColor: 'primary.light', bgcolor: 'action.hover' }
+          }}
+        >
+          <FileUploadIcon sx={{ color: csvDragActive ? 'primary.main' : 'text.secondary', fontSize: 20 }} />
+          <Typography variant="body2" color="text.secondary">
+            Import CSV — drag & drop or click to browse (.csv / .txt)
+          </Typography>
+        </Box>
+        <input
+          ref={csvInputRef}
+          type="file"
+          accept=".csv,.txt"
+          style={{ display: 'none' }}
+          onChange={handleCsvFileSelect}
+        />
+      </Paper>
 
       {/* Section 1: Carrier & Service */}
       <Paper sx={{ p: 3, mb: 2 }}>
@@ -704,6 +1050,18 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
             <TextField
               fullWidth
               size="small"
+              label="MTU"
+              type="number"
+              value={formData.mtu}
+              onChange={(e) => setFormData(prev => ({ ...prev, mtu: e.target.value }))}
+              helperText="Maximum Transmission Unit (bytes)"
+              InputProps={{ inputProps: { min: 0 } }}
+            />
+          </Grid>
+          <Grid item xs={12} md={3}>
+            <TextField
+              fullWidth
+              size="small"
               type="date"
               label="Quote Date"
               value={formData.quote_date}
@@ -755,43 +1113,75 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
 
       {/* Section 6: KMZ Route Data */}
       <Paper sx={{ p: 3, mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>KMZ Route Data</Typography>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={kmzParsing ? <CircularProgress size={16} /> : <UploadFileIcon />}
-            onClick={() => kmzInputRef.current?.click()}
-            disabled={kmzParsing}
-          >
-            {kmzParsing ? 'Uploading...' : 'Upload KMZ'}
-          </Button>
-          <input
-            ref={kmzInputRef}
-            type="file"
-            accept=".kmz,.kml"
-            style={{ display: 'none' }}
-            onChange={handleKmzParse}
-          />
+        <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>KMZ Route Data</Typography>
+        <Box
+          onDragOver={handleKmzDragOver}
+          onDragLeave={handleKmzDragLeave}
+          onDrop={handleKmzDrop}
+          onClick={() => !kmzParsing && kmzInputRef.current?.click()}
+          sx={{
+            border: '2px dashed',
+            borderColor: kmzDragActive ? 'primary.main' : 'divider',
+            borderRadius: 2,
+            p: 3,
+            mb: 2,
+            textAlign: 'center',
+            cursor: kmzParsing ? 'wait' : 'pointer',
+            bgcolor: kmzDragActive ? 'action.hover' : 'transparent',
+            transition: 'all 0.2s ease',
+            '&:hover': { borderColor: 'primary.light', bgcolor: 'action.hover' }
+          }}
+        >
+          {kmzParsing ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+              <CircularProgress size={28} />
+              <Typography variant="body2" color="text.secondary">
+                Parsing KMZ file — detecting transit countries and cities...
+              </Typography>
+            </Box>
+          ) : (
+            <>
+              <CloudUploadIcon sx={{ fontSize: 36, color: kmzDragActive ? 'primary.main' : 'text.secondary', mb: 0.5 }} />
+              <Typography variant="body2" color="text.secondary">
+                Drag & drop a KMZ/KML file here, or click to browse
+              </Typography>
+              <Typography variant="caption" color="text.disabled">
+                Transit countries, cities and route distance will be auto-extracted
+              </Typography>
+            </>
+          )}
         </Box>
+        <input
+          ref={kmzInputRef}
+          type="file"
+          accept=".kmz,.kml"
+          style={{ display: 'none' }}
+          onChange={handleKmzParse}
+        />
         <Grid container spacing={2.5}>
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              size="small"
-              label="Transit Cities"
-              value={formData.transit_cities}
-              onChange={(e) => setFormData(prev => ({ ...prev, transit_cities: e.target.value }))}
-              helperText="Auto-populated from KMZ upload, editable"
-            />
-          </Grid>
-          <Grid item xs={12} md={6}>
+          <Grid item xs={12}>
             <TextField
               fullWidth
               size="small"
               label="Transit Countries"
               value={formData.transit_countries}
               onChange={(e) => setFormData(prev => ({ ...prev, transit_countries: e.target.value }))}
+              multiline
+              minRows={1}
+              maxRows={3}
+              helperText="Auto-populated from KMZ upload, editable"
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Transit Cities"
+              value={formData.transit_cities}
+              onChange={(e) => setFormData(prev => ({ ...prev, transit_cities: e.target.value }))}
+              multiline
+              minRows={1}
+              maxRows={4}
               helperText="Auto-populated from KMZ upload, editable"
             />
           </Grid>
@@ -943,26 +1333,42 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
 
       {/* Section 9: Attachments */}
       <Paper sx={{ p: 3, mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Attachments</Typography>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<UploadFileIcon />}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            Add Files
-          </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".kmz,.kml,.pdf,.eml,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.msg,.txt,.csv"
-            style={{ display: 'none' }}
-            onChange={handleFileSelect}
-          />
+        <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Attachments</Typography>
+        <Box
+          onDragOver={handleFileDragOver}
+          onDragLeave={handleFileDragLeave}
+          onDrop={handleFileDrop}
+          onClick={() => fileInputRef.current?.click()}
+          sx={{
+            border: '2px dashed',
+            borderColor: fileDragActive ? 'primary.main' : 'divider',
+            borderRadius: 2,
+            p: 3,
+            mb: uploadFiles.length > 0 ? 2 : 0,
+            textAlign: 'center',
+            cursor: 'pointer',
+            bgcolor: fileDragActive ? 'action.hover' : 'transparent',
+            transition: 'all 0.2s ease',
+            '&:hover': { borderColor: 'primary.light', bgcolor: 'action.hover' }
+          }}
+        >
+          <CloudUploadIcon sx={{ fontSize: 36, color: fileDragActive ? 'primary.main' : 'text.secondary', mb: 0.5 }} />
+          <Typography variant="body2" color="text.secondary">
+            Drag & drop files here, or click to browse
+          </Typography>
+          <Typography variant="caption" color="text.disabled">
+            KMZ, PDF, documents, images, emails
+          </Typography>
         </Box>
-        {uploadFiles.length > 0 ? (
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept=".kmz,.kml,.pdf,.eml,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.msg,.txt,.csv"
+          style={{ display: 'none' }}
+          onChange={handleFileSelect}
+        />
+        {uploadFiles.length > 0 && (
           <List dense>
             {uploadFiles.map((file, idx) => (
               <ListItem key={idx}>
@@ -979,8 +1385,6 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
               </ListItem>
             ))}
           </List>
-        ) : (
-          <Typography variant="body2" color="text.secondary">No files attached yet. Upload KMZ, PDF, documents, or images.</Typography>
         )}
       </Paper>
 
@@ -1137,11 +1541,11 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
       </Dialog>
 
       {/* Success/Error Snackbars */}
-      <Snackbar open={!!success} autoHideDuration={4000} onClose={() => setSuccess('')} anchorOrigin={{ vertical: 'top', horizontal: 'center' }}>
-        <Alert severity="success" onClose={() => setSuccess('')}>{success}</Alert>
+      <Snackbar open={!!success} autoHideDuration={6000} onClose={() => setSuccess('')} anchorOrigin={{ vertical: 'top', horizontal: 'center' }}>
+        <Alert severity="success" onClose={() => setSuccess('')} sx={{ width: '100%' }}>{success}</Alert>
       </Snackbar>
-      <Snackbar open={!!error} autoHideDuration={6000} onClose={() => setError('')} anchorOrigin={{ vertical: 'top', horizontal: 'center' }}>
-        <Alert severity="error" onClose={() => setError('')}>{error}</Alert>
+      <Snackbar open={!!error} autoHideDuration={10000} onClose={() => setError('')} anchorOrigin={{ vertical: 'top', horizontal: 'center' }}>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>{error}</Alert>
       </Snackbar>
     </Box>
   );

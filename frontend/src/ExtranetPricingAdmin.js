@@ -64,7 +64,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
 
   const regions = ['AMERs', 'APAC', 'EMEA'];
   const tiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
-  const bandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '50Mb', '100Mb'];
+  const bandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '30Mb', '40Mb', '50Mb', '75Mb', '100Mb', '150Mb', '200Mb'];
 
   // Load data on mount
   useEffect(() => {
@@ -986,7 +986,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                     Discounts applied independently from adjusted base (additive, not compounding)
                   </Typography>
                   <Grid container spacing={2}>
-                    <Grid item xs={6}>
+                    <Grid item xs={12}>
                       <TextField
                         fullWidth
                         size="small"
@@ -998,21 +998,6 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
                         sx={{ backgroundColor: editedParameters['cloud_discount'] !== undefined ? '#fff3e0' : 'transparent' }}
-                      />
-                    </Grid>
-                    <Grid item xs={6}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Max User Discount"
-                        type="number"
-                        value={getParameterValue('max_user_discount')}
-                        onChange={(e) => handleParameterChange('max_user_discount', e.target.value)}
-                        InputProps={{
-                          endAdornment: <InputAdornment position="end">%</InputAdornment>
-                        }}
-                        helperText="Maximum discount users can request"
-                        sx={{ backgroundColor: editedParameters['max_user_discount'] !== undefined ? '#fff3e0' : 'transparent' }}
                       />
                     </Grid>
                   </Grid>
@@ -1032,8 +1017,51 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                     Maximum MRC discount users can select per bundle size. NRC discount is applied automatically in the background.
                   </Typography>
 
+                  {/* Tier Range Configuration */}
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    <Typography variant="body2">
+                      <strong>Tier Ranges:</strong> Define item count boundaries for each discount tier
+                    </Typography>
+                  </Alert>
+                  <Grid container spacing={2} sx={{ mb: 2 }}>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Tier 1 Upper Bound"
+                        type="number"
+                        value={getParameterValue('bundle_tier_1_max')}
+                        onChange={(e) => handleParameterChange('bundle_tier_1_max', e.target.value)}
+                        helperText={`Tier 1: 1 to ${getParameterValue('bundle_tier_1_max') || '3'} items`}
+                        InputProps={{
+                          endAdornment: <InputAdornment position="end">items</InputAdornment>
+                        }}
+                        inputProps={{ min: 1 }}
+                        sx={{ backgroundColor: editedParameters['bundle_tier_1_max'] !== undefined ? '#fff3e0' : 'transparent' }}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Tier 2 Upper Bound"
+                        type="number"
+                        value={getParameterValue('bundle_tier_2_max')}
+                        onChange={(e) => handleParameterChange('bundle_tier_2_max', e.target.value)}
+                        helperText={`Tier 2: ${(parseInt(getParameterValue('bundle_tier_1_max')) || 3) + 1} to ${getParameterValue('bundle_tier_2_max') || '5'} items | Tier 3: ${(parseInt(getParameterValue('bundle_tier_2_max')) || 5) + 1}+ items`}
+                        InputProps={{
+                          endAdornment: <InputAdornment position="end">items</InputAdornment>
+                        }}
+                        inputProps={{ min: 2 }}
+                        sx={{ backgroundColor: editedParameters['bundle_tier_2_max'] !== undefined ? '#fff3e0' : 'transparent' }}
+                      />
+                    </Grid>
+                  </Grid>
+
                   <Divider sx={{ my: 2 }} />
-                  <Typography variant="subtitle2" sx={{ mb: 1 }}>1–3 Items</Typography>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Tier 1: 1–{getParameterValue('bundle_tier_1_max') || '3'} Items
+                  </Typography>
                   <Grid container spacing={2} sx={{ mb: 2 }}>
                     <Grid item xs={6}>
                       <TextField
@@ -1066,7 +1094,9 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                   </Grid>
 
                   <Divider sx={{ my: 2 }} />
-                  <Typography variant="subtitle2" sx={{ mb: 1 }}>4–5 Items</Typography>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Tier 2: {(parseInt(getParameterValue('bundle_tier_1_max')) || 3) + 1}–{getParameterValue('bundle_tier_2_max') || '5'} Items
+                  </Typography>
                   <Grid container spacing={2} sx={{ mb: 2 }}>
                     <Grid item xs={6}>
                       <TextField
@@ -1099,7 +1129,9 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                   </Grid>
 
                   <Divider sx={{ my: 2 }} />
-                  <Typography variant="subtitle2" sx={{ mb: 1 }}>6+ Items</Typography>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Tier 3: {(parseInt(getParameterValue('bundle_tier_2_max')) || 5) + 1}+ Items
+                  </Typography>
                   <Grid container spacing={2}>
                     <Grid item xs={6}>
                       <TextField

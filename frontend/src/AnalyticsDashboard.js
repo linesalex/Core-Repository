@@ -1770,7 +1770,7 @@ const AnalyticsDashboard = () => {
                                   <Chip 
                                     label={`${item.size} items`} 
                                     size="small" 
-                                    color={item.size === '6+' ? 'success' : item.size === '4-5' ? 'warning' : 'default'}
+                                    color={item.size.includes('+') ? 'success' : index === 1 ? 'warning' : 'default'}
                                     variant="outlined"
                                     sx={{ fontSize: '0.7rem' }}
                                   />

@@ -735,11 +735,24 @@ export const carrierQuoteApi = {
 
   // Parse KMZ file for route data
   parseKmz: (file) => {
+    console.log('[KMZ API] Preparing FormData for file:', file.name, 'Size:', file.size);
     const formData = new FormData();
     formData.append('kmz_file', file);
+    console.log('[KMZ API] Sending POST to', `${API_BASE_URL}/carrier_quotes/parse_kmz`);
     return api.post(`${API_BASE_URL}/carrier_quotes/parse_kmz`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    }).then(res => res.data);
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000 // 2 minute timeout
+    }).then(res => {
+      console.log('[KMZ API] Response received:', res.status, res.data);
+      return res.data;
+    }).catch(err => {
+      if (err.code === 'ECONNABORTED') {
+        console.error('[KMZ API] Request timed out after 120 seconds');
+        err.message = 'KMZ parsing timed out after 2 minutes. The file may be too large.';
+      }
+      console.error('[KMZ API] Request failed:', err.code, err.message);
+      throw err;
+    });
   },
 
   // Get POP locations for autocomplete

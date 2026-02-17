@@ -328,13 +328,14 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
       setSecondaryPromo(null);
     }
 
-    // Calculate Protected Promo via backend (only if BOTH paths have valid promo)
+    // Calculate Protected Promo via backend (only if BOTH paths have valid promo AND route mode is standard)
+    // Protected pricing is not applicable for fastest route mode since it uses ULL/Cisco-only paths.
     // Backend calculates Max(Primary, Secondary) x 1.7 per tier, then validates against
     // per-bandwidth-tier protected service minimum margins from PricingLogicManager.
     // If 1.7x doesn't meet the tier's minimum margin, the margin-based price is used instead.
     let protectedPromoResult = null;
     let protectedMethod = null;
-    if (primaryPromoResult && secondaryPromoResult) {
+    if (primaryPromoResult && secondaryPromoResult && formData.routeMode !== 'fastest') {
       try {
         const primaryCircuitIds = results.primaryPath.route.map(seg => seg.circuit_id).filter(Boolean);
         const secondaryCircuitIds = results.diversePath.route.map(seg => seg.circuit_id).filter(Boolean);
@@ -413,16 +414,17 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     );
   });
 
-  // Format currency helper - uses selected output currency
+  // Format currency helper - uses selected output currency, rounds up to nearest 10
   const formatCurrency = (amount) => {
     if (typeof amount === 'string') return amount; // Handle 'POA' or 'Customer must provide X/C'
+    const rounded = roundUpToNearest10(amount || 0);
     const currencyCode = formData.outputCurrency || 'USD';
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: currencyCode,
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
-    }).format(amount || 0);
+    }).format(rounded);
   };
 
   // Format promo price with currency conversion (null = margin not met for this tier)

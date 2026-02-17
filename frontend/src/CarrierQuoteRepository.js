@@ -30,7 +30,7 @@ import { carrierQuoteApi } from './api';
 const SERVICE_TYPES = ['MPLS', 'Ethernet', 'Dark Fiber', 'Wavelength'];
 const REGIONS = ['AMERs', 'APAC', 'EMEA', 'INTER'];
 const BANDWIDTH_UNITS = ['Mbps', 'Gbps', 'Dark Fiber'];
-const PROTECTION_TYPES = ['Unprotected', 'Protected', 'Diverse'];
+const PROTECTION_TYPES = ['Unprotected', 'Protected'];
 const CONTRACT_TERMS = [12, 24, 36];
 
 const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
@@ -742,6 +742,10 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
               <Grid item xs={6} md={3}>
                 <Typography variant="caption" color="text.secondary">Cable System</Typography>
                 <Typography variant="body2">{viewQuote.cable_system || '-'}</Typography>
+              </Grid>
+              <Grid item xs={6} md={3}>
+                <Typography variant="caption" color="text.secondary">MTU</Typography>
+                <Typography variant="body2">{viewQuote.mtu || '-'}</Typography>
               </Grid>
               <Grid item xs={6} md={3}>
                 <Typography variant="caption" color="text.secondary">Quote Date</Typography>

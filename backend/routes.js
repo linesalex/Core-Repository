@@ -235,7 +235,8 @@ router.post('/login', async (req, res) => {
           'cnx_colocation_inventory', 'cnx_colocation_availability', 'cnx_colocation_pricing',
           'exchange_rates', 'exchange_data', 'extranet_data', 'change_logs', 'user_management', 
           'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
-          'allocated_cost_calculator', 'kmz_viewer', 'route_finder', 'carrier_quote_repository'
+          'allocated_cost_calculator', 'kmz_viewer', 'route_finder', 'carrier_quote_repository',
+          'voice_one_directory', 'voice_one_directory_admin'
         ];
         
         allModules.forEach(module => {
@@ -299,7 +300,8 @@ router.get('/me', authenticateToken, (req, res) => {
         'cnx_colocation_inventory', 'cnx_colocation_availability', 'cnx_colocation_pricing',
         'exchange_rates', 'exchange_data', 'extranet_data', 'change_logs', 'user_management', 
         'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
-        'allocated_cost_calculator', 'kmz_viewer', 'route_finder', 'carrier_quote_repository'
+        'allocated_cost_calculator', 'kmz_viewer', 'route_finder', 'carrier_quote_repository',
+        'voice_one_directory', 'voice_one_directory_admin'
       ];
       
       // For administrators, all modules are visible
@@ -3026,7 +3028,7 @@ async function validateRowForeignKeys(row, module) {
       errors.push(`Invalid tier: "${row.tier}". Must be one of: ${validTiers.join(', ')}`);
     }
   } else if (module === 'extranet_rate_card') {
-    const validBandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '50Mb', '100Mb'];
+    const validBandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '30Mb', '40Mb', '50Mb', '75Mb', '100Mb', '150Mb', '200Mb'];
     const validRegions = ['AMERs', 'APAC', 'EMEA'];
     const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
     if (row.provider_region && !validRegions.includes(row.provider_region.trim())) {
@@ -14936,7 +14938,7 @@ router.post('/extranet-pricing/rate-card/bulk', authenticateToken, authorizeModu
     return res.status(400).json({ error: 'Rates array is required' });
   }
   
-  const validBandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '50Mb', '100Mb'];
+  const validBandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '30Mb', '40Mb', '50Mb', '75Mb', '100Mb', '150Mb', '200Mb'];
   const validRegions = ['AMERs', 'APAC', 'EMEA'];
   const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
   
@@ -15109,9 +15111,17 @@ router.get('/extranet-pricing/products/:providerId', authenticateToken, authoriz
 
 // Get available bandwidths
 router.get('/extranet-pricing/bandwidths', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
-  db.all('SELECT DISTINCT bandwidth FROM extranet_rate_card ORDER BY id', [], (err, bandwidths) => {
+  db.all('SELECT DISTINCT bandwidth FROM extranet_rate_card', [], (err, bandwidths) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(bandwidths.map(b => b.bandwidth));
+    // Sort bandwidths by numeric value (convert Kb/Mb to comparable numbers)
+    const parseBw = (bw) => {
+      const match = bw.match(/^([\d.]+)(Kb|Mb)$/);
+      if (!match) return 0;
+      const val = parseFloat(match[1]);
+      return match[2] === 'Kb' ? val / 1000 : val;
+    };
+    const sorted = bandwidths.map(b => b.bandwidth).sort((a, b) => parseBw(a) - parseBw(b));
+    res.json(sorted);
   });
 });
 
@@ -15707,14 +15717,16 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
       });
     });
     
-    // Determine bundle discount tiers based on item count
+    // Determine bundle discount tiers based on item count (configurable boundaries)
     const itemCount = items.length;
+    const tier1Max = typeof params.bundle_tier_1_max === 'number' ? params.bundle_tier_1_max : 3;
+    const tier2Max = typeof params.bundle_tier_2_max === 'number' ? params.bundle_tier_2_max : 5;
     let maxMrcDiscount, autoNrcDiscount;
     
-    if (itemCount >= 6) {
+    if (itemCount > tier2Max) {
       maxMrcDiscount = typeof params.bundle_discount_mrc_6_plus === 'number' ? params.bundle_discount_mrc_6_plus : 0;
       autoNrcDiscount = typeof params.bundle_discount_nrc_6_plus === 'number' ? params.bundle_discount_nrc_6_plus : 0;
-    } else if (itemCount >= 4) {
+    } else if (itemCount > tier1Max) {
       maxMrcDiscount = typeof params.bundle_discount_mrc_4_5 === 'number' ? params.bundle_discount_mrc_4_5 : 0;
       autoNrcDiscount = typeof params.bundle_discount_nrc_4_5 === 'number' ? params.bundle_discount_nrc_4_5 : 0;
     } else {
@@ -15796,7 +15808,7 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
         const pricingRegion = providerTierRank >= memberTierRank ? providerCity.region : memberCity.region;
         const providerRateCardRegion = item.provider_region || providerCity.region;
         
-        // Bandwidth adjustment for Off Net
+        // Bandwidth adjustment for Off Net - enforce 10Mb minimum
         let adjustedBandwidth = item.bandwidth;
         if (item.member_on_off_net === 'Off Net') {
           const bwVal = parseFloat(item.bandwidth.replace(/[^0-9.]/g, ''));
@@ -15804,33 +15816,9 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
           let bwMb = bwVal;
           if (bwUnit.includes('kb')) bwMb = bwVal / 1000;
           
-          const offNetMultiplier = params.off_net_bandwidth_multiplier || 2;
-          let newBwMb = bwMb * offNetMultiplier;
-          
-          // Find nearest available bandwidth
-          const allBandwidths = await new Promise((resolve, reject) => {
-            db.all('SELECT DISTINCT bandwidth FROM extranet_rate_card ORDER BY id', [], (err, rows) => {
-              if (err) reject(err);
-              else resolve(rows.map(r => r.bandwidth));
-            });
-          });
-          
-          // Convert to comparable format
-          const parseBw = (bw) => {
-            const v = parseFloat(bw.replace(/[^0-9.]/g, ''));
-            return bw.toLowerCase().includes('kb') ? v / 1000 : v;
-          };
-          
-          let closestBw = allBandwidths[allBandwidths.length - 1];
-          let closestDiff = Infinity;
-          for (const bw of allBandwidths) {
-            const diff = Math.abs(parseBw(bw) - newBwMb);
-            if (diff < closestDiff) {
-              closestDiff = diff;
-              closestBw = bw;
-            }
+          if (bwMb < 10) {
+            adjustedBandwidth = '10Mb';
           }
-          adjustedBandwidth = closestBw;
         }
         
         // Get rate card price
@@ -16142,7 +16130,7 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
 router.get('/extranet-pricing/bundle-discounts', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), async (req, res) => {
   try {
     const params = await new Promise((resolve, reject) => {
-      db.all("SELECT param_key, param_value FROM extranet_pricing_parameters WHERE param_key LIKE 'bundle_discount_%'", [], (err, rows) => {
+      db.all("SELECT param_key, param_value FROM extranet_pricing_parameters WHERE param_key LIKE 'bundle_discount_%' OR param_key LIKE 'bundle_tier_%'", [], (err, rows) => {
         if (err) reject(err);
         else {
           const p = {};
@@ -16155,7 +16143,14 @@ router.get('/extranet-pricing/bundle-discounts', authenticateToken, authorizeMod
       });
     });
     
+    const tier1Max = typeof params.bundle_tier_1_max === 'number' ? params.bundle_tier_1_max : 3;
+    const tier2Max = typeof params.bundle_tier_2_max === 'number' ? params.bundle_tier_2_max : 5;
+    
     res.json({
+      tiers: {
+        tier_1_max: tier1Max,
+        tier_2_max: tier2Max
+      },
       mrc: {
         '1_3': typeof params.bundle_discount_mrc_1_3 === 'number' ? params.bundle_discount_mrc_1_3 : 0,
         '4_5': typeof params.bundle_discount_mrc_4_5 === 'number' ? params.bundle_discount_mrc_4_5 : 0,
@@ -17186,6 +17181,20 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
       bundleParams = [start_date, end_date];
     }
     
+    // Get configurable tier boundaries
+    const tierParams = await new Promise((resolve, reject) => {
+      db.all("SELECT param_key, param_value FROM extranet_pricing_parameters WHERE param_key LIKE 'bundle_tier_%'", [], (err, rows) => {
+        if (err) reject(err);
+        else {
+          const p = {};
+          (rows || []).forEach(r => { const n = parseFloat(r.param_value); p[r.param_key] = !isNaN(n) ? n : 0; });
+          resolve(p);
+        }
+      });
+    });
+    const tier1Max = typeof tierParams.bundle_tier_1_max === 'number' ? tierParams.bundle_tier_1_max : 3;
+    const tier2Max = typeof tierParams.bundle_tier_2_max === 'number' ? tierParams.bundle_tier_2_max : 5;
+    
     // Get all pricing lookups (individual items, not bundle items for some metrics)
     const lookups = await new Promise((resolve, reject) => {
       db.all(
@@ -17331,8 +17340,8 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
       totalBundleMrc += bundle.total_mrc || 0;
       totalBundleNrc += bundle.total_nrc || 0;
       
-      // Bundle size distribution
-      const sizeKey = bundle.item_count >= 6 ? '6+' : bundle.item_count >= 4 ? '4-5' : '1-3';
+      // Bundle size distribution (use configurable tier boundaries)
+      const sizeKey = bundle.item_count > tier2Max ? `${tier2Max + 1}+` : bundle.item_count > tier1Max ? `${tier1Max + 1}-${tier2Max}` : `1-${tier1Max}`;
       bundleSizeDistribution[sizeKey] = (bundleSizeDistribution[sizeKey] || 0) + 1;
       
       // Discount distribution
@@ -19405,7 +19414,7 @@ router.post('/carrier_quotes', authenticateToken, authorizeModulePermission('car
     location_b_type, location_b_pop_code, location_b_custom_id,
     bandwidth_value, bandwidth_unit, mrc, nrc, currency, contract_term,
     expected_latency, protection, cable_system, quote_date, expiry_date,
-    transit_cities, transit_countries, route_distance_km, notes
+    transit_cities, transit_countries, route_distance_km, mtu, notes
   } = req.body;
   
   // Validate required fields
@@ -19424,16 +19433,16 @@ router.post('/carrier_quotes', authenticateToken, authorizeModulePermission('car
         location_b_type, location_b_pop_code, location_b_custom_id,
         bandwidth_value, bandwidth_unit, mrc, nrc, currency, contract_term,
         expected_latency, protection, cable_system, quote_date, expiry_date,
-        transit_cities, transit_countries, route_distance_km, notes,
+        transit_cities, transit_countries, route_distance_km, mtu, notes,
         created_by, updated_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       ref, carrier_id || null, carrier_name, carrier_quote_ref || null,
       service_type, region, location_a_type || 'pop', location_a_pop_code || null, location_a_custom_id || null,
       location_b_type || 'pop', location_b_pop_code || null, location_b_custom_id || null,
       bandwidth_value, bandwidth_unit, mrc || null, nrc || null, currency || 'USD', contract_term || null,
       expected_latency || null, protection || null, cable_system || null, quote_date || null, expiry_date || null,
-      transit_cities || null, transit_countries || null, route_distance_km || null, notes || null,
+      transit_cities || null, transit_countries || null, route_distance_km || null, mtu || null, notes || null,
       req.user.id, req.user.id
     ], function(err) {
       if (err) return res.status(500).json({ error: err.message });
@@ -19483,7 +19492,7 @@ router.put('/carrier_quotes/:id', authenticateToken, authorizeModulePermission('
     location_b_type, location_b_pop_code, location_b_custom_id,
     bandwidth_value, bandwidth_unit, mrc, nrc, currency, contract_term,
     expected_latency, protection, cable_system, quote_date, expiry_date,
-    transit_cities, transit_countries, route_distance_km, notes
+    transit_cities, transit_countries, route_distance_km, mtu, notes
   } = req.body;
   
   // Get old values for logging
@@ -19498,7 +19507,7 @@ router.put('/carrier_quotes/:id', authenticateToken, authorizeModulePermission('
         location_b_type = ?, location_b_pop_code = ?, location_b_custom_id = ?,
         bandwidth_value = ?, bandwidth_unit = ?, mrc = ?, nrc = ?, currency = ?, contract_term = ?,
         expected_latency = ?, protection = ?, cable_system = ?, quote_date = ?, expiry_date = ?,
-        transit_cities = ?, transit_countries = ?, route_distance_km = ?, notes = ?,
+        transit_cities = ?, transit_countries = ?, route_distance_km = ?, mtu = ?, notes = ?,
         updated_by = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [
@@ -19507,7 +19516,7 @@ router.put('/carrier_quotes/:id', authenticateToken, authorizeModulePermission('
       location_b_type || 'pop', location_b_pop_code || null, location_b_custom_id || null,
       bandwidth_value, bandwidth_unit, mrc || null, nrc || null, currency || 'USD', contract_term || null,
       expected_latency || null, protection || null, cable_system || null, quote_date || null, expiry_date || null,
-      transit_cities || null, transit_countries || null, route_distance_km || null, notes || null,
+      transit_cities || null, transit_countries || null, route_distance_km || null, mtu || null, notes || null,
       req.user.id, id
     ], function(err) {
       if (err) return res.status(500).json({ error: err.message });
@@ -19640,90 +19649,237 @@ router.delete('/carrier_quotes/attachments/:attachmentId', authenticateToken, au
   });
 });
 
+// ---- KMZ Parsing Helpers ----
+
+// Haversine distance in km between two lat/lon points
+function haversineDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Cached major cities (loaded once on first KMZ parse)
+let majorCitiesCache = null;
+function getMajorCities() {
+  if (!majorCitiesCache) {
+    const allCities = require('all-the-cities');
+    majorCitiesCache = allCities
+      .filter(c => c.population >= 350000)
+      .map(c => ({
+        name: c.name,
+        country: c.country,
+        lat: c.loc.coordinates[1],
+        lon: c.loc.coordinates[0],
+        population: c.population
+      }));
+    console.log(`[City Detection] Loaded ${majorCitiesCache.length} cities with population >= 350,000`);
+  }
+  return majorCitiesCache;
+}
+
+// ISO 3166-1 alpha-2 to country name mapping (for city display)
+const countryNamesAlpha2 = {
+  'AF': 'Afghanistan', 'AL': 'Albania', 'DZ': 'Algeria', 'AO': 'Angola', 'AR': 'Argentina',
+  'AM': 'Armenia', 'AU': 'Australia', 'AT': 'Austria', 'AZ': 'Azerbaijan', 'BH': 'Bahrain',
+  'BD': 'Bangladesh', 'BY': 'Belarus', 'BE': 'Belgium', 'BA': 'Bosnia and Herzegovina',
+  'BR': 'Brazil', 'BN': 'Brunei', 'BG': 'Bulgaria', 'KH': 'Cambodia', 'CM': 'Cameroon',
+  'CA': 'Canada', 'CL': 'Chile', 'CN': 'China', 'CO': 'Colombia', 'CD': 'DR Congo',
+  'HR': 'Croatia', 'CU': 'Cuba', 'CY': 'Cyprus', 'CZ': 'Czech Republic', 'DK': 'Denmark',
+  'DJ': 'Djibouti', 'EC': 'Ecuador', 'EG': 'Egypt', 'EE': 'Estonia', 'ET': 'Ethiopia',
+  'FI': 'Finland', 'FR': 'France', 'GA': 'Gabon', 'GE': 'Georgia', 'DE': 'Germany',
+  'GH': 'Ghana', 'GR': 'Greece', 'GT': 'Guatemala', 'GN': 'Guinea', 'HK': 'Hong Kong',
+  'HU': 'Hungary', 'IS': 'Iceland', 'IN': 'India', 'ID': 'Indonesia', 'IR': 'Iran',
+  'IQ': 'Iraq', 'IE': 'Ireland', 'IL': 'Israel', 'IT': 'Italy', 'JP': 'Japan',
+  'JO': 'Jordan', 'KZ': 'Kazakhstan', 'KE': 'Kenya', 'KW': 'Kuwait', 'KG': 'Kyrgyzstan',
+  'LA': 'Laos', 'LV': 'Latvia', 'LB': 'Lebanon', 'LY': 'Libya', 'LT': 'Lithuania',
+  'LU': 'Luxembourg', 'MY': 'Malaysia', 'ML': 'Mali', 'MT': 'Malta', 'MR': 'Mauritania',
+  'MX': 'Mexico', 'MD': 'Moldova', 'MN': 'Mongolia', 'ME': 'Montenegro', 'MA': 'Morocco',
+  'MZ': 'Mozambique', 'MM': 'Myanmar', 'NA': 'Namibia', 'NP': 'Nepal', 'NL': 'Netherlands',
+  'NZ': 'New Zealand', 'NG': 'Nigeria', 'NO': 'Norway', 'OM': 'Oman', 'PK': 'Pakistan',
+  'PA': 'Panama', 'PY': 'Paraguay', 'PE': 'Peru', 'PH': 'Philippines', 'PL': 'Poland',
+  'PT': 'Portugal', 'QA': 'Qatar', 'RO': 'Romania', 'RU': 'Russia', 'SA': 'Saudi Arabia',
+  'SN': 'Senegal', 'RS': 'Serbia', 'SG': 'Singapore', 'SK': 'Slovakia', 'SI': 'Slovenia',
+  'SO': 'Somalia', 'ZA': 'South Africa', 'KR': 'South Korea', 'ES': 'Spain', 'LK': 'Sri Lanka',
+  'SD': 'Sudan', 'SE': 'Sweden', 'CH': 'Switzerland', 'SY': 'Syria', 'TW': 'Taiwan',
+  'TJ': 'Tajikistan', 'TZ': 'Tanzania', 'TH': 'Thailand', 'TN': 'Tunisia', 'TR': 'Turkey',
+  'TM': 'Turkmenistan', 'UG': 'Uganda', 'UA': 'Ukraine', 'AE': 'UAE', 'GB': 'United Kingdom',
+  'US': 'United States', 'UY': 'Uruguay', 'UZ': 'Uzbekistan', 'VE': 'Venezuela',
+  'VN': 'Vietnam', 'YE': 'Yemen', 'ZM': 'Zambia', 'ZW': 'Zimbabwe', 'SS': 'South Sudan',
+  'PS': 'Palestine', 'MK': 'North Macedonia', 'XK': 'Kosovo', 'SZ': 'Eswatini',
+  'TL': 'Timor-Leste', 'CR': 'Costa Rica', 'DO': 'Dominican Republic', 'SV': 'El Salvador',
+  'HN': 'Honduras', 'NI': 'Nicaragua', 'BO': 'Bolivia', 'GY': 'Guyana', 'SR': 'Suriname',
+  'CI': 'Ivory Coast', 'JM': 'Jamaica', 'HT': 'Haiti', 'TT': 'Trinidad and Tobago',
+  'MO': 'Macau', 'PR': 'Puerto Rico'
+};
+
 // Parse KMZ file and extract route data (transit cities, countries, distance)
-router.post('/carrier_quotes/parse_kmz', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), quoteUpload.single('kmz_file'), async (req, res) => {
+router.post('/carrier_quotes/parse_kmz', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res, next) => {
+  console.log('[KMZ DEBUG] === Parse KMZ request received ===');
+  console.log('[KMZ DEBUG] Content-Type:', req.headers['content-type']);
+  console.log('[KMZ DEBUG] Content-Length:', req.headers['content-length']);
+  const uploadStart = Date.now();
+  
+  quoteUpload.single('kmz_file')(req, res, (err) => {
+    const uploadDuration = Date.now() - uploadStart;
+    if (err) {
+      console.error(`[KMZ DEBUG] Multer upload error after ${uploadDuration}ms:`, err.message);
+      return res.status(400).json({ error: 'File upload failed: ' + err.message });
+    }
+    console.log(`[KMZ DEBUG] Multer upload completed in ${uploadDuration}ms`);
+    if (req.file) {
+      console.log('[KMZ DEBUG] File received:', {
+        originalname: req.file.originalname,
+        filename: req.file.filename,
+        size: req.file.size,
+        mimetype: req.file.mimetype
+      });
+    } else {
+      console.log('[KMZ DEBUG] No file in request after multer processing');
+    }
+    next();
+  });
+}, async (req, res) => {
+  const parseStart = Date.now();
+  
   if (!req.file) {
+    console.log('[KMZ DEBUG] No file uploaded - returning 400');
     return res.status(400).json({ error: 'No KMZ file uploaded' });
   }
   
   try {
-    const { XMLParser } = require('fast-xml-parser');
+    console.log('[KMZ DEBUG] Starting KMZ parsing...');
     const AdmZip = require('adm-zip');
+    const whichCountry = require('which-country');
+    
+    // ISO 3166-1 alpha-3 to country name mapping
+    const countryNames = {
+      'AFG': 'Afghanistan', 'ALB': 'Albania', 'DZA': 'Algeria', 'AGO': 'Angola', 'ARG': 'Argentina',
+      'ARM': 'Armenia', 'AUS': 'Australia', 'AUT': 'Austria', 'AZE': 'Azerbaijan', 'BHR': 'Bahrain',
+      'BGD': 'Bangladesh', 'BLR': 'Belarus', 'BEL': 'Belgium', 'BIH': 'Bosnia and Herzegovina',
+      'BRA': 'Brazil', 'BRN': 'Brunei', 'BGR': 'Bulgaria', 'KHM': 'Cambodia', 'CMR': 'Cameroon',
+      'CAN': 'Canada', 'CHL': 'Chile', 'CHN': 'China', 'COL': 'Colombia', 'COD': 'DR Congo',
+      'HRV': 'Croatia', 'CUB': 'Cuba', 'CYP': 'Cyprus', 'CZE': 'Czech Republic', 'DNK': 'Denmark',
+      'DJI': 'Djibouti', 'ECU': 'Ecuador', 'EGY': 'Egypt', 'EST': 'Estonia', 'ETH': 'Ethiopia',
+      'FIN': 'Finland', 'FRA': 'France', 'GAB': 'Gabon', 'GEO': 'Georgia', 'DEU': 'Germany',
+      'GHA': 'Ghana', 'GRC': 'Greece', 'GTM': 'Guatemala', 'GIN': 'Guinea', 'HKG': 'Hong Kong',
+      'HUN': 'Hungary', 'ISL': 'Iceland', 'IND': 'India', 'IDN': 'Indonesia', 'IRN': 'Iran',
+      'IRQ': 'Iraq', 'IRL': 'Ireland', 'ISR': 'Israel', 'ITA': 'Italy', 'JPN': 'Japan',
+      'JOR': 'Jordan', 'KAZ': 'Kazakhstan', 'KEN': 'Kenya', 'KWT': 'Kuwait', 'KGZ': 'Kyrgyzstan',
+      'LAO': 'Laos', 'LVA': 'Latvia', 'LBN': 'Lebanon', 'LBY': 'Libya', 'LTU': 'Lithuania',
+      'LUX': 'Luxembourg', 'MYS': 'Malaysia', 'MLI': 'Mali', 'MLT': 'Malta', 'MRT': 'Mauritania',
+      'MEX': 'Mexico', 'MDA': 'Moldova', 'MNG': 'Mongolia', 'MNE': 'Montenegro', 'MAR': 'Morocco',
+      'MOZ': 'Mozambique', 'MMR': 'Myanmar', 'NAM': 'Namibia', 'NPL': 'Nepal', 'NLD': 'Netherlands',
+      'NZL': 'New Zealand', 'NGA': 'Nigeria', 'NOR': 'Norway', 'OMN': 'Oman', 'PAK': 'Pakistan',
+      'PAN': 'Panama', 'PRY': 'Paraguay', 'PER': 'Peru', 'PHL': 'Philippines', 'POL': 'Poland',
+      'PRT': 'Portugal', 'QAT': 'Qatar', 'ROU': 'Romania', 'RUS': 'Russia', 'SAU': 'Saudi Arabia',
+      'SEN': 'Senegal', 'SRB': 'Serbia', 'SGP': 'Singapore', 'SVK': 'Slovakia', 'SVN': 'Slovenia',
+      'SOM': 'Somalia', 'ZAF': 'South Africa', 'KOR': 'South Korea', 'ESP': 'Spain', 'LKA': 'Sri Lanka',
+      'SDN': 'Sudan', 'SWE': 'Sweden', 'CHE': 'Switzerland', 'SYR': 'Syria', 'TWN': 'Taiwan',
+      'TJK': 'Tajikistan', 'TZA': 'Tanzania', 'THA': 'Thailand', 'TUN': 'Tunisia', 'TUR': 'Turkey',
+      'TKM': 'Turkmenistan', 'UGA': 'Uganda', 'UKR': 'Ukraine', 'ARE': 'UAE', 'GBR': 'United Kingdom',
+      'USA': 'United States', 'URY': 'Uruguay', 'UZB': 'Uzbekistan', 'VEN': 'Venezuela',
+      'VNM': 'Vietnam', 'YEM': 'Yemen', 'ZMB': 'Zambia', 'ZWE': 'Zimbabwe', 'SSD': 'South Sudan',
+      'PSE': 'Palestine', 'MKD': 'North Macedonia', 'XKX': 'Kosovo', 'SWZ': 'Eswatini',
+      'TLS': 'Timor-Leste', 'CRI': 'Costa Rica', 'DOM': 'Dominican Republic', 'SLV': 'El Salvador',
+      'HND': 'Honduras', 'NIC': 'Nicaragua', 'BOL': 'Bolivia', 'GUY': 'Guyana', 'SUR': 'Suriname',
+      'BEN': 'Benin', 'BFA': 'Burkina Faso', 'BDI': 'Burundi', 'CPV': 'Cape Verde', 'CAF': 'Central African Republic',
+      'TCD': 'Chad', 'COM': 'Comoros', 'COG': 'Congo', 'CIV': 'Ivory Coast', 'GNQ': 'Equatorial Guinea',
+      'ERI': 'Eritrea', 'GMB': 'Gambia', 'GNB': 'Guinea-Bissau', 'LSO': 'Lesotho', 'LBR': 'Liberia',
+      'MDG': 'Madagascar', 'MWI': 'Malawi', 'NER': 'Niger', 'RWA': 'Rwanda', 'STP': 'Sao Tome and Principe',
+      'SLE': 'Sierra Leone', 'TGO': 'Togo', 'BTN': 'Bhutan', 'BRB': 'Barbados', 'BHS': 'Bahamas',
+      'BLZ': 'Belize', 'JAM': 'Jamaica', 'HTI': 'Haiti', 'TTO': 'Trinidad and Tobago',
+      'FJI': 'Fiji', 'PNG': 'Papua New Guinea', 'SLB': 'Solomon Islands', 'AND': 'Andorra',
+      'LIE': 'Liechtenstein', 'MCO': 'Monaco', 'SMR': 'San Marino', 'MAC': 'Macau'
+    };
     
     const filePath = path.join(__dirname, 'quote_attachments', req.file.filename);
     const ext = path.extname(req.file.originalname).toLowerCase();
+    console.log('[KMZ DEBUG] File path:', filePath);
+    console.log('[KMZ DEBUG] File extension:', ext);
+    console.log('[KMZ DEBUG] File exists:', fs.existsSync(filePath));
     
+    // Step 1: Extract KML text from file
     let kmlText;
     if (ext === '.kmz') {
+      console.log('[KMZ DEBUG] Extracting KML from KMZ archive...');
+      const zipStart = Date.now();
       const zip = new AdmZip(filePath);
-      const kmlEntry = zip.getEntries().find(e => e.entryName.endsWith('.kml'));
+      const entries = zip.getEntries();
+      console.log(`[KMZ DEBUG] Archive entries (${entries.length}):`, entries.map(e => e.entryName));
+      const kmlEntry = entries.find(e => e.entryName.endsWith('.kml'));
       if (!kmlEntry) {
+        console.log('[KMZ DEBUG] No KML entry found in archive');
         return res.status(400).json({ error: 'No KML file found inside KMZ archive' });
       }
+      console.log(`[KMZ DEBUG] Found KML entry: ${kmlEntry.entryName} (${kmlEntry.header.size} bytes)`);
       kmlText = kmlEntry.getData().toString('utf8');
+      console.log(`[KMZ DEBUG] KML extracted in ${Date.now() - zipStart}ms, text length: ${kmlText.length} chars`);
     } else if (ext === '.kml') {
+      console.log('[KMZ DEBUG] Reading KML file directly...');
       kmlText = fs.readFileSync(filePath, 'utf8');
+      console.log(`[KMZ DEBUG] KML text length: ${kmlText.length} chars`);
     } else {
+      console.log(`[KMZ DEBUG] Unsupported extension: ${ext}`);
       return res.status(400).json({ error: 'File must be .kmz or .kml' });
     }
     
-    const parser = new XMLParser({
-      ignoreAttributes: false,
-      attributeNamePrefix: '@_'
-    });
-    const kmlObj = parser.parse(kmlText);
-    
-    // Extract route coordinates
-    const routes = [];
-    function findPlacemarks(obj) {
-      if (!obj || typeof obj !== 'object') return [];
-      let placemarks = [];
-      if (obj.Placemark) {
-        placemarks = Array.isArray(obj.Placemark) ? obj.Placemark : [obj.Placemark];
-      }
-      if (obj.Document) placemarks = placemarks.concat(findPlacemarks(obj.Document));
-      if (obj.Folder) {
-        const folders = Array.isArray(obj.Folder) ? obj.Folder : [obj.Folder];
-        folders.forEach(f => { placemarks = placemarks.concat(findPlacemarks(f)); });
-      }
-      return placemarks;
-    }
-    
-    const placemarks = findPlacemarks(kmlObj.kml);
+    // Step 2: Extract coordinates using regex (replaces slow XML parser)
+    // Uses per-block extraction to preserve segment structure for accurate country detection
+    console.log('[KMZ DEBUG] Extracting coordinates with regex...');
+    const regexStart = Date.now();
     const allCoords = [];
-    const pointNames = [];
+    const coordBlocks = []; // Track individual coordinate blocks for per-block country sampling
     
-    for (const pm of placemarks) {
-      // Extract LineString coordinates
-      if (pm.LineString && pm.LineString.coordinates) {
-        const coords = pm.LineString.coordinates.toString().trim().split(/\s+/).map(c => {
-          const parts = c.split(',');
-          return { lon: parseFloat(parts[0]), lat: parseFloat(parts[1]) };
-        }).filter(c => !isNaN(c.lon) && !isNaN(c.lat));
-        allCoords.push(...coords);
-      }
-      
-      // Extract MultiGeometry LineStrings
-      if (pm.MultiGeometry && pm.MultiGeometry.LineString) {
-        const lines = Array.isArray(pm.MultiGeometry.LineString) ? pm.MultiGeometry.LineString : [pm.MultiGeometry.LineString];
-        for (const ls of lines) {
-          if (ls.coordinates) {
-            const coords = ls.coordinates.toString().trim().split(/\s+/).map(c => {
-              const parts = c.split(',');
-              return { lon: parseFloat(parts[0]), lat: parseFloat(parts[1]) };
-            }).filter(c => !isNaN(c.lon) && !isNaN(c.lat));
-            allCoords.push(...coords);
+    // Match all <coordinates> blocks (inside LineString, MultiGeometry, etc.)
+    const coordBlockRegex = /<coordinates[^>]*>([\s\S]*?)<\/coordinates>/gi;
+    let coordMatch;
+    while ((coordMatch = coordBlockRegex.exec(kmlText)) !== null) {
+      const coordText = coordMatch[1].trim();
+      const blockCoords = [];
+      // Each coordinate is "lon,lat,alt" separated by whitespace
+      const points = coordText.split(/\s+/);
+      for (const point of points) {
+        const parts = point.split(',');
+        if (parts.length >= 2) {
+          const lon = parseFloat(parts[0]);
+          const lat = parseFloat(parts[1]);
+          if (!isNaN(lon) && !isNaN(lat)) {
+            const coord = { lon, lat };
+            allCoords.push(coord);
+            blockCoords.push(coord);
           }
         }
       }
-      
-      // Extract named points
-      if (pm.Point && pm.Point.coordinates && pm.name) {
-        pointNames.push(pm.name.toString());
+      if (blockCoords.length > 0) {
+        coordBlocks.push(blockCoords);
       }
     }
     
-    // Calculate total distance from coordinates (Haversine formula)
+    // Extract named points (Placemark names with Point geometry)
+    const pointNames = [];
+    const placemarkRegex = /<Placemark[^>]*>([\s\S]*?)<\/Placemark>/gi;
+    let pmMatch;
+    while ((pmMatch = placemarkRegex.exec(kmlText)) !== null) {
+      const pmContent = pmMatch[1];
+      // Only extract names from placemarks that contain a <Point> element
+      if (/<Point[\s>]/i.test(pmContent)) {
+        const nameMatch = pmContent.match(/<name[^>]*>([\s\S]*?)<\/name>/i);
+        if (nameMatch) {
+          const name = nameMatch[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim();
+          if (name) pointNames.push(name);
+        }
+      }
+    }
+    
+    console.log(`[KMZ DEBUG] Regex extraction completed in ${Date.now() - regexStart}ms`);
+    console.log(`[KMZ DEBUG] Extracted ${allCoords.length} coordinates in ${coordBlocks.length} blocks, ${pointNames.length} named points`);
+    
+    // Step 3: Calculate total distance (Haversine formula)
+    const distStart = Date.now();
     let totalDistance = 0;
     for (let i = 1; i < allCoords.length; i++) {
       const R = 6371; // Earth radius in km
@@ -19735,13 +19891,104 @@ router.post('/carrier_quotes/parse_kmz', authenticateToken, authorizeModulePermi
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
       totalDistance += R * c;
     }
+    console.log(`[KMZ DEBUG] Distance calculated in ${Date.now() - distStart}ms: ${Math.round(totalDistance * 10) / 10} km`);
     
-    // Extract transit info from point names (these are typically city/location labels in the KMZ)
-    const transitCities = pointNames.length > 0 ? pointNames.join(', ') : '';
+    // Step 4: Detect transit countries using per-block sampling
+    // KMZ files have multiple <coordinates> blocks with very uneven distribution.
+    // A transit route block may have 172 coords while local routing has 17,000+.
+    // Per-block sampling ensures every segment gets adequate coverage.
+    const countryStart = Date.now();
+    const detectedCountryCodes = new Set();
+    let totalSamples = 0;
+    
+    for (let b = 0; b < coordBlocks.length; b++) {
+      const block = coordBlocks[b];
+      // Sample up to 100 points per block, always including first and last
+      const step = Math.max(1, Math.floor(block.length / 100));
+      
+      // First and last of each block
+      const firstCode = whichCountry([block[0].lon, block[0].lat]);
+      if (firstCode) detectedCountryCodes.add(firstCode);
+      const lastCode = whichCountry([block[block.length - 1].lon, block[block.length - 1].lat]);
+      if (lastCode) detectedCountryCodes.add(lastCode);
+      totalSamples += 2;
+      
+      // Evenly spaced samples through the block
+      for (let i = 0; i < block.length; i += step) {
+        const code = whichCountry([block[i].lon, block[i].lat]);
+        if (code) detectedCountryCodes.add(code);
+        totalSamples++;
+      }
+    }
+    
+    console.log(`[KMZ DEBUG] Per-block country sampling: ${coordBlocks.length} blocks, ${totalSamples} total samples`);
+    
+    // Convert ISO alpha-3 codes to country names
+    const transitCountries = Array.from(detectedCountryCodes)
+      .map(code => countryNames[code] || code)
+      .join(', ');
+    
+    console.log(`[KMZ DEBUG] Country detection completed in ${Date.now() - countryStart}ms`);
+    console.log(`[KMZ DEBUG] Detected countries: ${transitCountries} (codes: ${Array.from(detectedCountryCodes).join(', ')})`);
+    
+    // Step 5: Detect transit cities (350K+ population within 50km of route)
+    const cityStart = Date.now();
+    const cities = getMajorCities();
+    const detectedCities = []; // Maintains route order
+    const detectedCityKeys = new Set(); // For deduplication
+    const PROXIMITY_KM = 50;
+    
+    // Per-block sampling for city detection (same approach as country detection)
+    for (const block of coordBlocks) {
+      const step = Math.max(1, Math.floor(block.length / 100));
+      for (let i = 0; i < block.length; i += step) {
+        const coord = block[i];
+        for (const city of cities) {
+          const dist = haversineDistance(coord.lat, coord.lon, city.lat, city.lon);
+          if (dist <= PROXIMITY_KM) {
+            const key = `${city.name}-${city.country}`;
+            if (!detectedCityKeys.has(key)) {
+              detectedCityKeys.add(key);
+              detectedCities.push(city);
+            }
+          }
+        }
+      }
+      // Also check first and last coordinates of each block
+      for (const coord of [block[0], block[block.length - 1]]) {
+        for (const city of cities) {
+          const dist = haversineDistance(coord.lat, coord.lon, city.lat, city.lon);
+          if (dist <= PROXIMITY_KM) {
+            const key = `${city.name}-${city.country}`;
+            if (!detectedCityKeys.has(key)) {
+              detectedCityKeys.add(key);
+              detectedCities.push(city);
+            }
+          }
+        }
+      }
+    }
+    
+    // Format as "City (Country)" in route order
+    const transitCities = detectedCities
+      .map(c => `${c.name} (${countryNamesAlpha2[c.country] || c.country})`)
+      .join(', ');
+    
+    console.log(`[KMZ DEBUG] City detection completed in ${Date.now() - cityStart}ms`);
+    console.log(`[KMZ DEBUG] Detected ${detectedCities.length} transit cities: ${transitCities}`);
+    
+    const totalDuration = Date.now() - parseStart;
+    console.log(`[KMZ DEBUG] === Parse complete in ${totalDuration}ms === Result:`, {
+      transit_cities: transitCities,
+      transit_countries: transitCountries,
+      route_distance_km: Math.round(totalDistance * 10) / 10,
+      coordinates_count: allCoords.length,
+      point_names: pointNames
+    });
     
     res.json({
       transit_cities: transitCities,
-      transit_countries: '',
+      transit_countries: transitCountries,
       route_distance_km: Math.round(totalDistance * 10) / 10,
       coordinates_count: allCoords.length,
       point_names: pointNames,
@@ -19749,7 +19996,8 @@ router.post('/carrier_quotes/parse_kmz', authenticateToken, authorizeModulePermi
     });
     
   } catch (error) {
-    console.error('KMZ parsing error:', error);
+    const totalDuration = Date.now() - parseStart;
+    console.error(`[KMZ DEBUG] === Parse FAILED after ${totalDuration}ms ===`, error);
     res.status(500).json({ error: 'Failed to parse KMZ file: ' + error.message });
   }
 });
@@ -19847,6 +20095,980 @@ router.post('/carrier_quotes/custom_locations', authenticateToken, authorizeModu
       address,
       city,
       country
+    });
+  });
+});
+
+// ====================================
+// VOICE — ONE DIRECTORY MODULE
+// ====================================
+
+// Get all One Directory parameters
+router.get('/voice/one-directory/parameters', authenticateToken, authorizeModulePermission('voice_one_directory', 'read_only'), (req, res) => {
+  db.all('SELECT * FROM one_directory_parameters ORDER BY id', [], (err, params) => {
+    if (err) return res.status(500).json({ error: err.message });
+    // Convert to object for easier frontend consumption (same format as extranet)
+    const paramsObject = {};
+    params.forEach(p => {
+      paramsObject[p.param_key] = {
+        id: p.id,
+        value: p.param_value,
+        type: p.param_type,
+        description: p.description
+      };
+    });
+    res.json(paramsObject);
+  });
+});
+
+// Update One Directory parameters (admin)
+router.put('/voice/one-directory/parameters', authenticateToken, authorizeModulePermission('voice_one_directory_admin', 'provisioner'), async (req, res) => {
+  const { parameters } = req.body;
+
+  if (!parameters || typeof parameters !== 'object') {
+    return res.status(400).json({ error: 'Parameters object is required' });
+  }
+
+  try {
+    const updates = Object.entries(parameters);
+
+    for (const [key, value] of updates) {
+      const oldValue = await new Promise((resolve, reject) => {
+        db.get('SELECT * FROM one_directory_parameters WHERE param_key = ?', [key], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+
+      await new Promise((resolve, reject) => {
+        db.run(
+          'UPDATE one_directory_parameters SET param_value = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE param_key = ?',
+          [value.toString(), req.user.id, key],
+          function(err) {
+            if (err) reject(err);
+            else resolve(this.changes);
+          }
+        );
+      });
+
+      if (oldValue) {
+        logChange(req.user.id, 'one_directory_parameters', oldValue.id, 'UPDATE',
+          { param_key: key, param_value: oldValue.param_value },
+          { param_key: key, param_value: value.toString() }, req);
+      }
+    }
+
+    res.json({ success: true, message: 'One Directory parameters updated successfully' });
+  } catch (error) {
+    console.error('Error updating One Directory parameters:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get One Directory bundle discount configuration (derived from parameters)
+router.get('/voice/one-directory/bundle-discounts', authenticateToken, authorizeModulePermission('voice_one_directory', 'read_only'), (req, res) => {
+  db.all("SELECT param_key, param_value FROM one_directory_parameters WHERE param_key LIKE 'bundle_discount_%' OR param_key LIKE 'bundle_tier_%'", [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const p = {};
+    rows.forEach(r => {
+      const numVal = parseFloat(r.param_value);
+      p[r.param_key] = !isNaN(numVal) ? numVal : 0;
+    });
+
+    const tier1Max = typeof p.bundle_tier_1_max === 'number' ? p.bundle_tier_1_max : 3;
+    const tier2Max = typeof p.bundle_tier_2_max === 'number' ? p.bundle_tier_2_max : 5;
+
+    res.json({
+      tiers: { tier_1_max: tier1Max, tier_2_max: tier2Max },
+      mrc: {
+        '1_3': typeof p.bundle_discount_mrc_1_3 === 'number' ? p.bundle_discount_mrc_1_3 : 0,
+        '4_5': typeof p.bundle_discount_mrc_4_5 === 'number' ? p.bundle_discount_mrc_4_5 : 0,
+        '6_plus': typeof p.bundle_discount_mrc_6_plus === 'number' ? p.bundle_discount_mrc_6_plus : 0
+      },
+      nrc: {
+        '1_3': typeof p.bundle_discount_nrc_1_3 === 'number' ? p.bundle_discount_nrc_1_3 : 0,
+        '4_5': typeof p.bundle_discount_nrc_4_5 === 'number' ? p.bundle_discount_nrc_4_5 : 0,
+        '6_plus': typeof p.bundle_discount_nrc_6_plus === 'number' ? p.bundle_discount_nrc_6_plus : 0
+      }
+    });
+  });
+});
+
+// Calculate pricing for a single One Directory item
+router.post('/voice/one-directory/calculate', authenticateToken, authorizeModulePermission('voice_one_directory', 'read_only'), async (req, res) => {
+  const {
+    directory_users,
+    customer_location,
+    member_resiliency,
+    member_on_off_net,
+    b2b_agility,
+    safe_connect_bandwidth,
+    contract_term,
+    currency_requested
+  } = req.body;
+
+  if (!directory_users || !customer_location || !member_resiliency || !contract_term) {
+    return res.status(400).json({ error: 'Missing required fields: directory_users, customer_location, member_resiliency, contract_term' });
+  }
+
+  try {
+    // 1. Get One Directory parameters
+    const params = await new Promise((resolve, reject) => {
+      db.all('SELECT param_key, param_value, param_type FROM one_directory_parameters', [], (err, rows) => {
+        if (err) reject(err);
+        else {
+          const p = {};
+          rows.forEach(r => {
+            // Keep json-type params as strings (e.g. '10Mb', '["3Mb","5Mb","10Mb"]')
+            if (r.param_type === 'json') {
+              p[r.param_key] = r.param_value;
+            } else {
+              const numVal = parseFloat(r.param_value);
+              p[r.param_key] = !isNaN(numVal) ? numVal : r.param_value;
+            }
+          });
+          resolve(p);
+        }
+      });
+    });
+
+    // 2. Calculate required bandwidth from directory users
+    const avgCalls = params.avg_calls_per_user || 2;
+    const callBw = params.call_bandwidth_kbps || 100;
+    const growthPct = params.growth_percentage || 20;
+
+    const rawBandwidthKbps = directory_users * avgCalls * callBw * (1 + growthPct / 100);
+    const rawBandwidthMb = rawBandwidthKbps / 1000;
+
+    // 3. Get all rate card bandwidths (sorted ascending by Mb)
+    const allBandwidths = await new Promise((resolve, reject) => {
+      db.all('SELECT DISTINCT bandwidth FROM extranet_rate_card ORDER BY id', [], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows.map(r => r.bandwidth));
+      });
+    });
+
+    const parseBw = (bw) => {
+      const v = parseFloat(bw.replace(/[^0-9.]/g, ''));
+      return bw.toLowerCase().includes('kb') ? v / 1000 : v;
+    };
+    const sortedBws = allBandwidths.map(bw => ({ label: bw, mb: parseBw(bw) })).sort((a, b) => a.mb - b.mb);
+
+    const findBandwidth = (targetMb) => {
+      for (const bw of sortedBws) {
+        if (bw.mb >= targetMb) return bw;
+      }
+      return sortedBws[sortedBws.length - 1]; // Use highest if target exceeds all
+    };
+
+    // 4. Round up to next rate card bandwidth
+    let directoryBw = findBandwidth(rawBandwidthMb);
+
+    // B2B Agility bandwidth
+    const b2bBwLabel = params.b2b_agility_bandwidth || '10Mb';
+    const b2bBwMb = b2b_agility ? parseBw(b2bBwLabel) : 0;
+
+    // Safe Connect bandwidth
+    const scBwMb = safe_connect_bandwidth ? parseBw(safe_connect_bandwidth) : 0;
+
+    // 5. Off Net: enforce minimum 10Mb total bandwidth (excludes One Control)
+    const offNetMinMb = params.off_net_min_bandwidth_mb || 10;
+    if (member_on_off_net === 'Off Net') {
+      const totalBwMb = directoryBw.mb + b2bBwMb + scBwMb;
+      if (totalBwMb < offNetMinMb) {
+        // Bump directory bandwidth to 10Mb (find nearest rate card BW >= 10Mb)
+        directoryBw = findBandwidth(offNetMinMb);
+      }
+    }
+
+    // 6. Get customer location info
+    const customerCity = await new Promise((resolve, reject) => {
+      db.get('SELECT * FROM extranet_pricing_cities WHERE LOWER(city_name) = LOWER(?)', [customer_location], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+
+    if (!customerCity) {
+      return res.status(400).json({ error: `Customer location "${customer_location}" not found in city tiers` });
+    }
+
+    const pricingRegion = customerCity.region;
+    const pricingTier = customerCity.tier;
+
+    // Helper: look up rate card price
+    const getRateCardPrice = async (bandwidth) => {
+      const row = await new Promise((resolve, reject) => {
+        db.get(
+          'SELECT price_usd FROM extranet_rate_card WHERE bandwidth = ? AND region = ? AND tier = ? AND provider_region = ?',
+          [bandwidth, pricingRegion, pricingTier, pricingRegion],
+          (err, row) => { if (err) reject(err); else resolve(row); }
+        );
+      });
+      if (!row || row.price_usd === 'POA' || row.price_usd === 0) return null;
+      return parseFloat(row.price_usd);
+    };
+
+    // Resiliency multiplier
+    let resiliencyMultiplier = 100;
+    switch (member_resiliency) {
+      case 'Non-Resilient': resiliencyMultiplier = params.resiliency_non_resilient || 70; break;
+      case 'Single Site Resilient': resiliencyMultiplier = params.resiliency_single_site || 100; break;
+    }
+
+    // Contract discount percentage
+    let contractDiscountPct = 0;
+    if (contract_term === 24) contractDiscountPct = params.contract_24_discount || 0;
+    else if (contract_term === 36) contractDiscountPct = params.contract_36_discount || 0;
+
+    // ISF display names
+    const isfNames = {
+      directory: params.isf_name_directory || 'One Directory ISF',
+      b2b: params.isf_name_b2b_agility || 'B2B Agility ISF',
+      safe_connect: params.isf_name_safe_connect || 'Safe Connect ISF',
+      one_control: params.isf_name_one_control || 'One Control ISF'
+    };
+
+    // One Control config
+    const oneControlMrc = typeof params.one_control_mrc === 'number' ? params.one_control_mrc : 100;
+    const oneControlBw = params.one_control_bandwidth || '5Mb';
+
+    // ========== BUILD SERVICES ==========
+    const services = [];
+    let totalMrcUsd = 0;
+    let hasPoa = false;
+
+    // --- SERVICE 1: One Directory ISF ---
+    const directoryRateCardPrice = await getRateCardPrice(directoryBw.label);
+    if (!directoryRateCardPrice) {
+      return res.status(400).json({
+        error: 'Price not available for calculated bandwidth/tier combination. Please contact sales for a quote.',
+        poa: true,
+        calculated_bandwidth: directoryBw.label,
+        raw_bandwidth_mb: rawBandwidthMb
+      });
+    }
+
+    // Deduct One Control MRC from Directory rate card price before applying multipliers
+    const directoryBase = directoryRateCardPrice - oneControlMrc;
+    const directoryAfterResiliency = directoryBase * (resiliencyMultiplier / 100);
+    const directoryContractDiscount = directoryAfterResiliency * (contractDiscountPct / 100);
+    const directoryMrc = directoryAfterResiliency - directoryContractDiscount;
+
+    services.push({
+      type: 'directory',
+      name: isfNames.directory,
+      bandwidth: directoryBw.label,
+      bandwidth_mb: directoryBw.mb,
+      rate_card_price: directoryRateCardPrice,
+      base_after_deduction: directoryBase,
+      resiliency_multiplier: resiliencyMultiplier,
+      after_resiliency: directoryAfterResiliency,
+      contract_discount: directoryContractDiscount,
+      mrc_usd: directoryMrc,
+      poa: false,
+      discountable: true
+    });
+    totalMrcUsd += directoryMrc;
+
+    // --- SERVICE 2: One Control ISF (mandatory) ---
+    services.push({
+      type: 'one_control',
+      name: isfNames.one_control,
+      bandwidth: oneControlBw,
+      bandwidth_mb: parseBw(oneControlBw),
+      mrc_usd: oneControlMrc,
+      poa: false,
+      discountable: false
+    });
+    totalMrcUsd += oneControlMrc;
+
+    // --- SERVICE 3: B2B Agility ISF (optional) ---
+    if (b2b_agility) {
+      const b2bRateCardPrice = await getRateCardPrice(b2bBwLabel);
+      if (b2bRateCardPrice) {
+        const b2bAfterResiliency = b2bRateCardPrice * (resiliencyMultiplier / 100);
+        const b2bContractDiscount = b2bAfterResiliency * (contractDiscountPct / 100);
+        const b2bMrc = b2bAfterResiliency - b2bContractDiscount;
+
+        services.push({
+          type: 'b2b',
+          name: isfNames.b2b,
+          bandwidth: b2bBwLabel,
+          bandwidth_mb: b2bBwMb,
+          rate_card_price: b2bRateCardPrice,
+          resiliency_multiplier: resiliencyMultiplier,
+          after_resiliency: b2bAfterResiliency,
+          contract_discount: b2bContractDiscount,
+          mrc_usd: b2bMrc,
+          poa: false,
+          discountable: true
+        });
+        totalMrcUsd += b2bMrc;
+      } else {
+        services.push({ type: 'b2b', name: isfNames.b2b, bandwidth: b2bBwLabel, bandwidth_mb: b2bBwMb, poa: true, discountable: true });
+        hasPoa = true;
+      }
+    }
+
+    // --- SERVICE 4: Safe Connect ISF (optional) ---
+    if (safe_connect_bandwidth) {
+      const scRateCardPrice = await getRateCardPrice(safe_connect_bandwidth);
+      if (scRateCardPrice) {
+        const scAfterResiliency = scRateCardPrice * (resiliencyMultiplier / 100);
+        const scContractDiscount = scAfterResiliency * (contractDiscountPct / 100);
+        const scMrc = scAfterResiliency - scContractDiscount;
+
+        services.push({
+          type: 'safe_connect',
+          name: isfNames.safe_connect,
+          bandwidth: safe_connect_bandwidth,
+          bandwidth_mb: scBwMb,
+          rate_card_price: scRateCardPrice,
+          resiliency_multiplier: resiliencyMultiplier,
+          after_resiliency: scAfterResiliency,
+          contract_discount: scContractDiscount,
+          mrc_usd: scMrc,
+          poa: false,
+          discountable: true
+        });
+        totalMrcUsd += scMrc;
+      } else {
+        services.push({ type: 'safe_connect', name: isfNames.safe_connect, bandwidth: safe_connect_bandwidth, bandwidth_mb: scBwMb, poa: true, discountable: true });
+        hasPoa = true;
+      }
+    }
+
+    // NRC - only on One Directory ISF
+    let nrc = typeof params.nrc_12_month === 'number' ? params.nrc_12_month : 1000;
+    if (contract_term === 24) nrc = typeof params.nrc_24_month === 'number' ? params.nrc_24_month : 500;
+    else if (contract_term === 36) nrc = typeof params.nrc_36_month === 'number' ? params.nrc_36_month : 0;
+
+    // Currency conversion
+    let exchangeRate = 1;
+    if (currency_requested && currency_requested !== 'USD') {
+      const currencyRow = await new Promise((resolve, reject) => {
+        db.get('SELECT exchange_rate FROM exchange_rates WHERE currency_code = ?', [currency_requested], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+      if (currencyRow) exchangeRate = parseFloat(currencyRow.exchange_rate);
+    }
+
+    const finalMrc = Math.round(totalMrcUsd * exchangeRate * 100) / 100;
+    const finalNrc = Math.round(nrc * exchangeRate * 100) / 100;
+
+    // Build breakdown
+    const breakdown = {
+      directory_users: parseInt(directory_users),
+      avg_calls_per_user: avgCalls,
+      call_bandwidth_kbps: callBw,
+      growth_percentage: growthPct,
+      raw_bandwidth_kbps: rawBandwidthKbps,
+      raw_bandwidth_mb: rawBandwidthMb,
+      directory_bandwidth: directoryBw.label,
+      region_used: pricingRegion,
+      tier_used: pricingTier,
+      resiliency_multiplier: resiliencyMultiplier,
+      contract_discount_pct: contractDiscountPct,
+      one_control_mrc: oneControlMrc,
+      services: services,
+      total_mrc_usd: totalMrcUsd,
+      nrc_usd: nrc,
+      exchange_rate: exchangeRate,
+      currency: currency_requested || 'USD'
+    };
+
+    // Log
+    db.run(
+      `INSERT INTO one_directory_pricing_logs (
+        user_id, directory_users, calculated_bandwidth, customer_location, customer_region, customer_tier,
+        member_resiliency, member_on_off_net, b2b_agility, safe_connect_bandwidth, bandwidth,
+        contract_term, currency_requested, base_price_usd, final_mrc, final_nrc, calculation_breakdown
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.user.id, directory_users, `${rawBandwidthMb.toFixed(2)}Mb`, customer_location,
+        pricingRegion, pricingTier, member_resiliency, member_on_off_net || 'On Net',
+        b2b_agility ? 1 : 0, safe_connect_bandwidth || null, directoryBw.label,
+        contract_term, currency_requested || 'USD', directoryRateCardPrice, finalMrc, finalNrc,
+        JSON.stringify(breakdown)
+      ],
+      (err) => {
+        if (err) console.error('Error logging One Directory pricing:', err);
+      }
+    );
+
+    // Response
+    res.json({
+      pricing: {
+        mrc: finalMrc,
+        nrc: finalNrc,
+        currency: currency_requested || 'USD',
+        has_poa: hasPoa
+      },
+      services: services.map(s => ({
+        ...s,
+        mrc_converted: s.poa ? null : Math.round(s.mrc_usd * exchangeRate * 100) / 100
+      })),
+      calculated_bandwidth: {
+        raw_mb: rawBandwidthMb,
+        directory: directoryBw.label,
+        directory_mb: directoryBw.mb
+      },
+      location: {
+        city: customer_location,
+        region: pricingRegion,
+        tier: pricingTier
+      },
+      breakdown
+    });
+  } catch (error) {
+    console.error('Error calculating One Directory pricing:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Calculate bundle pricing for One Directory
+router.post('/voice/one-directory/calculate-bundle', authenticateToken, authorizeModulePermission('voice_one_directory', 'read_only'), async (req, res) => {
+  try {
+    const { items, currency_requested } = req.body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'At least one item is required in the bundle' });
+    }
+
+    // Get One Directory parameters
+    const params = await new Promise((resolve, reject) => {
+      db.all('SELECT param_key, param_value, param_type FROM one_directory_parameters', [], (err, rows) => {
+        if (err) reject(err);
+        else {
+          const p = {};
+          rows.forEach(r => {
+            // Keep json-type params as strings (e.g. '10Mb', '["3Mb","5Mb","10Mb"]')
+            if (r.param_type === 'json') {
+              p[r.param_key] = r.param_value;
+            } else {
+              const numVal = parseFloat(r.param_value);
+              p[r.param_key] = !isNaN(numVal) ? numVal : r.param_value;
+            }
+          });
+          resolve(p);
+        }
+      });
+    });
+
+    // Determine bundle discount tier
+    const itemCount = items.length;
+    const tier1Max = typeof params.bundle_tier_1_max === 'number' ? params.bundle_tier_1_max : 3;
+    const tier2Max = typeof params.bundle_tier_2_max === 'number' ? params.bundle_tier_2_max : 5;
+    let appliedMrcDiscount, autoNrcDiscount;
+
+    if (itemCount > tier2Max) {
+      appliedMrcDiscount = typeof params.bundle_discount_mrc_6_plus === 'number' ? params.bundle_discount_mrc_6_plus : 0;
+      autoNrcDiscount = typeof params.bundle_discount_nrc_6_plus === 'number' ? params.bundle_discount_nrc_6_plus : 0;
+    } else if (itemCount > tier1Max) {
+      appliedMrcDiscount = typeof params.bundle_discount_mrc_4_5 === 'number' ? params.bundle_discount_mrc_4_5 : 0;
+      autoNrcDiscount = typeof params.bundle_discount_nrc_4_5 === 'number' ? params.bundle_discount_nrc_4_5 : 0;
+    } else {
+      appliedMrcDiscount = typeof params.bundle_discount_mrc_1_3 === 'number' ? params.bundle_discount_mrc_1_3 : 0;
+      autoNrcDiscount = typeof params.bundle_discount_nrc_1_3 === 'number' ? params.bundle_discount_nrc_1_3 : 0;
+    }
+
+    // Exchange rate
+    let exchangeRate = 1;
+    if (currency_requested && currency_requested !== 'USD') {
+      const currencyRow = await new Promise((resolve, reject) => {
+        db.get('SELECT exchange_rate FROM exchange_rates WHERE currency_code = ?', [currency_requested], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+      if (currencyRow) exchangeRate = parseFloat(currencyRow.exchange_rate);
+    }
+
+    // Bandwidth helpers
+    const allBandwidths = await new Promise((resolve, reject) => {
+      db.all('SELECT DISTINCT bandwidth FROM extranet_rate_card ORDER BY id', [], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows.map(r => r.bandwidth));
+      });
+    });
+    const parseBw = (bw) => {
+      const v = parseFloat(bw.replace(/[^0-9.]/g, ''));
+      return bw.toLowerCase().includes('kb') ? v / 1000 : v;
+    };
+    const sortedBws = allBandwidths.map(bw => ({ label: bw, mb: parseBw(bw) })).sort((a, b) => a.mb - b.mb);
+    const findBandwidth = (targetMb) => {
+      for (const bw of sortedBws) { if (bw.mb >= targetMb) return bw; }
+      return sortedBws[sortedBws.length - 1];
+    };
+
+    const avgCalls = params.avg_calls_per_user || 2;
+    const callBw = params.call_bandwidth_kbps || 100;
+    const growthPct = params.growth_percentage || 20;
+
+    // ISF display names
+    const isfNames = {
+      directory: params.isf_name_directory || 'One Directory ISF',
+      b2b: params.isf_name_b2b_agility || 'B2B Agility ISF',
+      safe_connect: params.isf_name_safe_connect || 'Safe Connect ISF',
+      one_control: params.isf_name_one_control || 'One Control ISF'
+    };
+
+    // One Control config
+    const oneControlMrc = typeof params.one_control_mrc === 'number' ? params.one_control_mrc : 100;
+    const oneControlBw = params.one_control_bandwidth || '5Mb';
+    const offNetMinMb = params.off_net_min_bandwidth_mb || 10;
+
+    // Rate card helper
+    const getRateCardPrice = async (bandwidth, region, tier) => {
+      const row = await new Promise((resolve, reject) => {
+        db.get(
+          'SELECT price_usd FROM extranet_rate_card WHERE bandwidth = ? AND region = ? AND tier = ? AND provider_region = ?',
+          [bandwidth, region, tier, region],
+          (err, row) => { if (err) reject(err); else resolve(row); }
+        );
+      });
+      if (!row || row.price_usd === 'POA' || row.price_usd === 0) return null;
+      return parseFloat(row.price_usd);
+    };
+
+    // Calculate each item
+    const calculatedItems = [];
+    let totalMrcUsd = 0;
+    let totalNrcUsd = 0;
+    let totalMrcUsdBeforeDiscount = 0;
+    let totalNrcUsdBeforeDiscount = 0;
+    let hasPoaItems = false;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      try {
+        // Calculate bandwidth from directory users
+        const rawBwKbps = item.directory_users * avgCalls * callBw * (1 + growthPct / 100);
+        const rawBwMb = rawBwKbps / 1000;
+
+        let directoryBw = findBandwidth(rawBwMb);
+
+        // B2B and Safe Connect bandwidths
+        const b2bBwLabel = params.b2b_agility_bandwidth || '10Mb';
+        const b2bBwMb = item.b2b_agility ? parseBw(b2bBwLabel) : 0;
+        const scBwMb = item.safe_connect_bandwidth ? parseBw(item.safe_connect_bandwidth) : 0;
+
+        // Off Net: enforce minimum total bandwidth (excludes One Control)
+        if (item.member_on_off_net === 'Off Net') {
+          const totalBwMb = directoryBw.mb + b2bBwMb + scBwMb;
+          if (totalBwMb < offNetMinMb) {
+            directoryBw = findBandwidth(offNetMinMb);
+          }
+        }
+
+        // Get customer city
+        const customerCity = await new Promise((resolve, reject) => {
+          db.get('SELECT * FROM extranet_pricing_cities WHERE LOWER(city_name) = LOWER(?)', [item.customer_location], (err, row) => {
+            if (err) reject(err); else resolve(row);
+          });
+        });
+
+        if (!customerCity) {
+          calculatedItems.push({ index: i, error: `Customer location "${item.customer_location}" not found`, poa: true });
+          hasPoaItems = true;
+          continue;
+        }
+
+        const pricingRegion = customerCity.region;
+        const pricingTier = customerCity.tier;
+
+        // Resiliency
+        let resiliencyMultiplier = 100;
+        switch (item.member_resiliency) {
+          case 'Non-Resilient': resiliencyMultiplier = params.resiliency_non_resilient || 70; break;
+          case 'Single Site Resilient': resiliencyMultiplier = params.resiliency_single_site || 100; break;
+        }
+
+        // Contract discount
+        const itemContractTerm = item.contract_term;
+        let contractDiscountPct = 0;
+        if (itemContractTerm === 24) contractDiscountPct = params.contract_24_discount || 0;
+        else if (itemContractTerm === 36) contractDiscountPct = params.contract_36_discount || 0;
+
+        // ========== BUILD SERVICES FOR THIS ITEM ==========
+        const itemServices = [];
+        let discountableMrcUsd = 0; // Sum of MRC for discountable services
+        let nonDiscountableMrcUsd = 0; // One Control MRC
+
+        // --- One Directory ISF ---
+        const directoryRateCardPrice = await getRateCardPrice(directoryBw.label, pricingRegion, pricingTier);
+        if (!directoryRateCardPrice) {
+          calculatedItems.push({
+            index: i, poa: true, error: 'Price On Application - contact sales',
+            item_summary: { customer_location: item.customer_location, bandwidth: directoryBw.label, directory_users: item.directory_users }
+          });
+          hasPoaItems = true;
+          continue;
+        }
+
+        const directoryBase = directoryRateCardPrice - oneControlMrc;
+        const directoryAfterResiliency = directoryBase * (resiliencyMultiplier / 100);
+        const directoryContractDiscount = directoryAfterResiliency * (contractDiscountPct / 100);
+        const directoryMrc = directoryAfterResiliency - directoryContractDiscount;
+
+        itemServices.push({
+          type: 'directory', name: isfNames.directory, bandwidth: directoryBw.label,
+          bandwidth_mb: directoryBw.mb, rate_card_price: directoryRateCardPrice,
+          base_after_deduction: directoryBase, mrc_usd: directoryMrc, poa: false, discountable: true
+        });
+        discountableMrcUsd += directoryMrc;
+
+        // --- One Control ISF (mandatory) ---
+        itemServices.push({
+          type: 'one_control', name: isfNames.one_control, bandwidth: oneControlBw,
+          bandwidth_mb: parseBw(oneControlBw), mrc_usd: oneControlMrc, poa: false, discountable: false
+        });
+        nonDiscountableMrcUsd += oneControlMrc;
+
+        // --- B2B Agility ISF (optional) ---
+        if (item.b2b_agility) {
+          const b2bRateCardPrice = await getRateCardPrice(b2bBwLabel, pricingRegion, pricingTier);
+          if (b2bRateCardPrice) {
+            const b2bAfterRes = b2bRateCardPrice * (resiliencyMultiplier / 100);
+            const b2bContractDisc = b2bAfterRes * (contractDiscountPct / 100);
+            const b2bMrc = b2bAfterRes - b2bContractDisc;
+            itemServices.push({
+              type: 'b2b', name: isfNames.b2b, bandwidth: b2bBwLabel,
+              bandwidth_mb: b2bBwMb, rate_card_price: b2bRateCardPrice,
+              mrc_usd: b2bMrc, poa: false, discountable: true
+            });
+            discountableMrcUsd += b2bMrc;
+          } else {
+            itemServices.push({ type: 'b2b', name: isfNames.b2b, bandwidth: b2bBwLabel, bandwidth_mb: b2bBwMb, poa: true, discountable: true });
+          }
+        }
+
+        // --- Safe Connect ISF (optional) ---
+        if (item.safe_connect_bandwidth) {
+          const scRateCardPrice = await getRateCardPrice(item.safe_connect_bandwidth, pricingRegion, pricingTier);
+          if (scRateCardPrice) {
+            const scAfterRes = scRateCardPrice * (resiliencyMultiplier / 100);
+            const scContractDisc = scAfterRes * (contractDiscountPct / 100);
+            const scMrc = scAfterRes - scContractDisc;
+            itemServices.push({
+              type: 'safe_connect', name: isfNames.safe_connect, bandwidth: item.safe_connect_bandwidth,
+              bandwidth_mb: scBwMb, rate_card_price: scRateCardPrice,
+              mrc_usd: scMrc, poa: false, discountable: true
+            });
+            discountableMrcUsd += scMrc;
+          } else {
+            itemServices.push({ type: 'safe_connect', name: isfNames.safe_connect, bandwidth: item.safe_connect_bandwidth, bandwidth_mb: scBwMb, poa: true, discountable: true });
+          }
+        }
+
+        // Apply bundle MRC discount (only to discountable services)
+        const bundleMrcDiscount = discountableMrcUsd * (appliedMrcDiscount / 100);
+        const discountedMrcUsd = discountableMrcUsd - bundleMrcDiscount;
+        const itemTotalMrc = discountedMrcUsd + nonDiscountableMrcUsd;
+
+        // NRC - only on One Directory ISF, one per basket item
+        let itemNrc = typeof params.nrc_12_month === 'number' ? params.nrc_12_month : 1000;
+        if (itemContractTerm === 24) itemNrc = typeof params.nrc_24_month === 'number' ? params.nrc_24_month : 500;
+        else if (itemContractTerm === 36) itemNrc = typeof params.nrc_36_month === 'number' ? params.nrc_36_month : 0;
+
+        const nrcBundleDiscount = itemNrc * (autoNrcDiscount / 100);
+        itemNrc -= nrcBundleDiscount;
+
+        // Convert currency
+        const itemMrcConverted = Math.round(itemTotalMrc * exchangeRate * 100) / 100;
+        const itemNrcConverted = Math.round(itemNrc * exchangeRate * 100) / 100;
+
+        // Track before-discount totals
+        const mrcBeforeBundleDiscount = discountableMrcUsd + nonDiscountableMrcUsd;
+        const nrcBeforeBundleDiscount = itemNrc + nrcBundleDiscount;
+        totalMrcUsdBeforeDiscount += mrcBeforeBundleDiscount;
+        totalNrcUsdBeforeDiscount += nrcBeforeBundleDiscount;
+
+        totalMrcUsd += itemTotalMrc;
+        totalNrcUsd += itemNrc;
+
+        calculatedItems.push({
+          index: i,
+          poa: false,
+          pricing: {
+            mrc: itemMrcConverted,
+            nrc: itemNrcConverted,
+            currency: currency_requested || 'USD'
+          },
+          services: itemServices.map(s => ({
+            ...s,
+            mrc_converted: s.poa ? null : Math.round(s.mrc_usd * exchangeRate * 100) / 100
+          })),
+          isf_count: itemServices.length,
+          item_summary: {
+            customer_location: item.customer_location,
+            directory_users: item.directory_users,
+            bandwidth: directoryBw.label,
+            raw_bandwidth_mb: rawBwMb,
+            member_resiliency: item.member_resiliency,
+            member_on_off_net: item.member_on_off_net || 'On Net',
+            b2b_agility: item.b2b_agility || false,
+            safe_connect_bandwidth: item.safe_connect_bandwidth || null,
+            contract_term: itemContractTerm
+          },
+          breakdown: {
+            directory_rate_card_base: directoryRateCardPrice,
+            one_control_mrc: oneControlMrc,
+            region_used: pricingRegion,
+            tier_used: pricingTier,
+            resiliency_multiplier: resiliencyMultiplier,
+            contract_discount_pct: contractDiscountPct,
+            discountable_mrc_usd: discountableMrcUsd,
+            non_discountable_mrc_usd: nonDiscountableMrcUsd,
+            bundle_mrc_discount: bundleMrcDiscount,
+            bundle_nrc_discount: nrcBundleDiscount,
+            total_mrc_usd: itemTotalMrc,
+            nrc_usd: itemNrc
+          }
+        });
+      } catch (itemError) {
+        calculatedItems.push({ index: i, error: `Calculation error: ${itemError.message}`, poa: true });
+        hasPoaItems = true;
+      }
+    }
+
+    // Totals
+    const totalMrcConverted = Math.round(totalMrcUsd * exchangeRate * 100) / 100;
+    const totalNrcConverted = Math.round(totalNrcUsd * exchangeRate * 100) / 100;
+
+    // Log bundle
+    let bundleLogId = null;
+    try {
+      bundleLogId = await new Promise((resolve, reject) => {
+        db.run(
+          `INSERT INTO one_directory_bundle_logs (
+            user_id, item_count, currency, mrc_discount_percent, nrc_discount_percent,
+            total_mrc, total_nrc, total_mrc_usd_before_discount, total_nrc_usd_before_discount,
+            exchange_rate, has_poa_items
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            req.user.id, items.length, currency_requested || 'USD',
+            appliedMrcDiscount, autoNrcDiscount,
+            totalMrcConverted, totalNrcConverted,
+            Math.round(totalMrcUsdBeforeDiscount * 100) / 100,
+            Math.round(totalNrcUsdBeforeDiscount * 100) / 100,
+            exchangeRate, hasPoaItems ? 1 : 0
+          ],
+          function(err) {
+            if (err) reject(err);
+            else resolve(this.lastID);
+          }
+        );
+      });
+
+      // Log individual items linked to bundle
+      for (let i = 0; i < calculatedItems.length; i++) {
+        const calcItem = calculatedItems[i];
+        const origItem = items[i];
+        if (calcItem.poa) continue;
+
+        db.run(
+          `INSERT INTO one_directory_pricing_logs (
+            user_id, directory_users, calculated_bandwidth, customer_location, customer_region, customer_tier,
+            member_resiliency, member_on_off_net, b2b_agility, safe_connect_bandwidth, bandwidth,
+            contract_term, currency_requested, base_price_usd, final_mrc, final_nrc,
+            calculation_breakdown, bundle_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            req.user.id, origItem.directory_users,
+            calcItem.item_summary.raw_bandwidth_mb ? `${calcItem.item_summary.raw_bandwidth_mb.toFixed(2)}Mb` : null,
+            origItem.customer_location,
+            calcItem.breakdown ? calcItem.breakdown.region_used : null,
+            calcItem.breakdown ? calcItem.breakdown.tier_used : null,
+            origItem.member_resiliency, origItem.member_on_off_net || 'On Net',
+            origItem.b2b_agility ? 1 : 0, origItem.safe_connect_bandwidth || null,
+            calcItem.item_summary.bandwidth,
+            origItem.contract_term, currency_requested || 'USD',
+            calcItem.breakdown ? calcItem.breakdown.directory_rate_card_base : null,
+            calcItem.pricing.mrc, calcItem.pricing.nrc,
+            JSON.stringify(calcItem.breakdown), bundleLogId
+          ],
+          (err) => { if (err) console.error('Error logging bundle item:', err); }
+        );
+      }
+    } catch (logError) {
+      console.error('Error creating bundle log:', logError);
+    }
+
+    res.json({
+      bundle: {
+        total_mrc: totalMrcConverted,
+        total_nrc: totalNrcConverted,
+        currency: currency_requested || 'USD',
+        item_count: items.length,
+        mrc_discount_percent: appliedMrcDiscount,
+        nrc_discount_percent: autoNrcDiscount,
+        has_poa_items: hasPoaItems,
+        exchange_rate: exchangeRate,
+        total_mrc_before_discount: Math.round(totalMrcUsdBeforeDiscount * exchangeRate * 100) / 100,
+        total_nrc_before_discount: Math.round(totalNrcUsdBeforeDiscount * exchangeRate * 100) / 100
+      },
+      items: calculatedItems
+    });
+  } catch (error) {
+    console.error('Error calculating One Directory bundle:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get One Directory pricing logs (admin)
+router.get('/voice/one-directory/logs', authenticateToken, authorizeModulePermission('voice_one_directory_admin', 'read_only'), async (req, res) => {
+  try {
+    const { limit = 100, offset = 0, user_id, start_date, end_date } = req.query;
+
+    let conditions = [];
+    let queryParams = [];
+
+    if (user_id) { conditions.push('odl.user_id = ?'); queryParams.push(user_id); }
+    if (start_date) { conditions.push('odl.lookup_timestamp >= ?'); queryParams.push(start_date); }
+    if (end_date) { conditions.push('odl.lookup_timestamp <= ?'); queryParams.push(end_date); }
+
+    // Fetch individual (non-bundle) logs
+    let individualConditions = [...conditions, 'odl.bundle_id IS NULL'];
+    let individualWhere = individualConditions.length > 0 ? ' WHERE ' + individualConditions.join(' AND ') : '';
+
+    const individualLogs = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT odl.*, u.username, u.full_name, 'individual' as log_type
+         FROM one_directory_pricing_logs odl
+         LEFT JOIN users u ON odl.user_id = u.id
+         ${individualWhere}
+         ORDER BY odl.lookup_timestamp DESC`,
+        queryParams,
+        (err, rows) => err ? reject(err) : resolve(rows || [])
+      );
+    });
+
+    // Fetch bundle logs
+    let bundleConditions = [];
+    let bundleParams = [];
+    if (user_id) { bundleConditions.push('obl.user_id = ?'); bundleParams.push(user_id); }
+    if (start_date) { bundleConditions.push('obl.created_at >= ?'); bundleParams.push(start_date); }
+    if (end_date) { bundleConditions.push('obl.created_at <= ?'); bundleParams.push(end_date); }
+    let bundleWhere = bundleConditions.length > 0 ? ' WHERE ' + bundleConditions.join(' AND ') : '';
+
+    const bundleLogs = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT obl.*, u.username, u.full_name, 'bundle' as log_type
+         FROM one_directory_bundle_logs obl
+         LEFT JOIN users u ON obl.user_id = u.id
+         ${bundleWhere}
+         ORDER BY obl.created_at DESC`,
+        bundleParams,
+        (err, rows) => err ? reject(err) : resolve(rows || [])
+      );
+    });
+
+    // Fetch items for each bundle
+    for (const bundle of bundleLogs) {
+      bundle.items = await new Promise((resolve, reject) => {
+        db.all(
+          `SELECT odl.*, u.username, u.full_name
+           FROM one_directory_pricing_logs odl
+           LEFT JOIN users u ON odl.user_id = u.id
+           WHERE odl.bundle_id = ?
+           ORDER BY odl.id ASC`,
+          [bundle.id],
+          (err, rows) => err ? reject(err) : resolve(rows || [])
+        );
+      });
+    }
+
+    const allLogs = [
+      ...individualLogs.map(log => ({ ...log, timestamp: log.lookup_timestamp })),
+      ...bundleLogs.map(bundle => ({ ...bundle, timestamp: bundle.created_at }))
+    ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    const totalCount = allLogs.length;
+    const paginatedLogs = allLogs.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+
+    res.json({
+      data: paginatedLogs,
+      pagination: {
+        page: Math.floor(offset / limit) + 1,
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching One Directory logs:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Export One Directory pricing logs to CSV (admin)
+router.get('/voice/one-directory/logs/export', authenticateToken, authorizeModulePermission('voice_one_directory_admin', 'read_only'), async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+
+    const escapeCsv = (str) => {
+      if (str === null || str === undefined) return '';
+      return `"${String(str).replace(/"/g, '""')}"`;
+    };
+
+    let query = `SELECT odl.*, u.username, u.full_name FROM one_directory_pricing_logs odl LEFT JOIN users u ON odl.user_id = u.id`;
+    let queryParams = [];
+    let conditions = [];
+
+    if (start_date) { conditions.push('odl.lookup_timestamp >= ?'); queryParams.push(start_date); }
+    if (end_date) { conditions.push('odl.lookup_timestamp <= ?'); queryParams.push(end_date); }
+    if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
+    query += ' ORDER BY odl.lookup_timestamp DESC';
+
+    const rows = await new Promise((resolve, reject) => {
+      db.all(query, queryParams, (err, rows) => err ? reject(err) : resolve(rows || []));
+    });
+
+    const headers = [
+      'ID', 'Username', 'Full Name', 'Directory Users', 'Calculated Bandwidth', 'Customer Location',
+      'Region', 'Tier', 'Resiliency', 'On/Off Net', 'B2B Agility', 'Safe Connect BW',
+      'Bandwidth', 'Contract Term', 'Currency', 'Base Price USD', 'Final MRC', 'Final NRC',
+      'Bundle ID', 'Timestamp'
+    ];
+
+    let csv = headers.join(',') + '\n';
+    for (const row of rows) {
+      csv += [
+        row.id, escapeCsv(row.username), escapeCsv(row.full_name), row.directory_users,
+        escapeCsv(row.calculated_bandwidth), escapeCsv(row.customer_location),
+        escapeCsv(row.customer_region), escapeCsv(row.customer_tier),
+        escapeCsv(row.member_resiliency), escapeCsv(row.member_on_off_net),
+        row.b2b_agility ? 'Yes' : 'No', escapeCsv(row.safe_connect_bandwidth),
+        escapeCsv(row.bandwidth), row.contract_term, escapeCsv(row.currency_requested),
+        row.base_price_usd, row.final_mrc, row.final_nrc, row.bundle_id || '',
+        escapeCsv(row.lookup_timestamp)
+      ].join(',') + '\n';
+    }
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=one_directory_pricing_logs.csv');
+    res.send(csv);
+  } catch (error) {
+    console.error('Error exporting One Directory logs:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Clear One Directory pricing logs (admin)
+router.delete('/voice/one-directory/logs', authenticateToken, authorizeModulePermission('voice_one_directory_admin', 'provisioner'), (req, res) => {
+  db.run('DELETE FROM one_directory_pricing_logs', [], function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    const lookupsDeleted = this.changes;
+    db.run('DELETE FROM one_directory_bundle_logs', [], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      const bundlesDeleted = this.changes;
+      logChange(req.user.id, 'one_directory_pricing_logs', null, 'BULK_DELETE', null,
+        { lookups_deleted: lookupsDeleted, bundles_deleted: bundlesDeleted }, req);
+      res.json({ success: true, message: `Cleared ${lookupsDeleted} pricing logs and ${bundlesDeleted} bundle logs` });
     });
   });
 });

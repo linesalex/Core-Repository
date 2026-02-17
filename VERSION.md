@@ -2,7 +2,7 @@
 
 ## Current Version: **3.4.6**
 
-**Release Date:** February 15, 2026
+**Release Date:** February 17, 2026
 
 ---
 
@@ -27,13 +27,12 @@ Major overhaul of the Extranet Pricing Tool with provider/product selection, sho
 - Items in the basket can have different member locations, resiliency types, and providers
 - All items share the same contract term and currency
 - Session-only basket (one active basket per user)
-- Bundle discount replaces per-item discount
-- Tiered MRC discount based on item count:
-  - 1–3 items: configurable maximum discount % (default 20%)
-  - 4–5 items: configurable maximum discount % (default 35%)
-  - 6+ items: configurable maximum discount % (default 50%)
+- Bundle discount replaces per-item discount (max user discount field removed from admin)
+- Configurable bundle discount tier boundaries (item count ranges are editable, not hardcoded)
+- Three configurable tiers with editable item count ranges (defaults: 1–3, 4–5, 6+)
+- Each tier has configurable maximum MRC discount and automatic NRC discount
 - NRC charged per item with automatic configurable bundle NRC discount (not displayed to users)
-- Bundle discount tiers configurable in Extranet Pricing Admin
+- Bundle discount tiers and tier boundaries configurable in Extranet Pricing Admin
 - Basket submitted when user selects a discount %
 
 **Datacenter Field Update:**
@@ -45,6 +44,7 @@ Major overhaul of the Extranet Pricing Tool with provider/product selection, sho
 **Analytics & Pricing Logs — Bundle Support:**
 - Analytics Dashboard rebuilt with bundle-specific metrics: total bundles, total items in bundles, MRC/NRC from bundles, discount statistics, POA count
 - Pricing Logs rebuilt to display bundles as expandable parent rows with individual items nested
+- **Reload Basket**: Admins can reload a previous bundle from the Pricing Logs back into the shopping basket to re-price with a different discount %
 - Bundle logs stored in new `extranet_bundle_logs` table
 - Individual item lookups linked to bundles via `bundle_id`
 - CSV export includes both standalone lookups and bundles with nested items
@@ -54,6 +54,8 @@ Major overhaul of the Extranet Pricing Tool with provider/product selection, sho
 - Migration 028: Splits `source_datacenters` into `primary_datacenter`, `secondary_datacenters`, and `primary_pricing_city` columns in `extranet_products`
 - Migration 029: Adds bundle discount parameters (MRC and NRC tiers) to `extranet_parameters`
 - Migration 030: Creates `extranet_bundle_logs` table and adds `bundle_id` column to `extranet_pricing_lookups`
+- Migration 031: Adds configurable bundle tier boundary parameters (`bundle_tier_1_max`, `bundle_tier_2_max`) to `extranet_parameters`
+- Migration 032: Adds new bandwidth levels (30Mb, 40Mb, 75Mb, 150Mb, 200Mb) to all three provider region rate cards as POA
 
 **Backend:**
 - New endpoint: `/extranet-pricing/resolve-pop-city` — resolves POP codes to city names
@@ -61,9 +63,12 @@ Major overhaul of the Extranet Pricing Tool with provider/product selection, sho
 - New endpoint: `/extranet-pricing/bundle-discounts` — fetches configurable bundle discount tiers
 - Updated `/extranet-pricing/logs` — returns both individual lookups and bundle logs with nested items
 - Updated `/extranet-pricing/logs/export` — exports bundles and items in structured CSV
-- Updated `/analytics/extranet-pricing` — includes bundle-specific metrics
+- Updated `/analytics/extranet-pricing` — includes bundle-specific metrics with dynamic tier labels
+- Updated `/extranet-pricing/bundle-discounts` — now returns configurable tier boundaries alongside discount values
+- Updated `/extranet-pricing/bandwidths` — now sorts bandwidths by numeric value for correct ordering
 - Fixed 0% discount override bug (JavaScript falsy `0` handled with explicit `undefined` checks)
 - Product CRUD endpoints updated for new datacenter fields
+- Added 5 new bandwidth levels: 30Mb, 40Mb, 75Mb, 150Mb, 200Mb (all validated in bulk upload and rate card endpoints)
 
 **Files Modified:**
 - `frontend/src/ExtranetPricingTool.js` — Provider/product selection, shopping basket, bundle UI, pricing logs with expandable bundles
@@ -324,6 +329,7 @@ The Carrier Quote system is split into two dedicated modules under the "Carrier 
 
 ### 🛡️ **Route Finder: Protected Promo Pricing**
 
+- Only available in Standard Route mode — protected pricing is skipped entirely when Fastest Route is selected
 - New third pricing card displayed when BOTH primary and secondary paths qualify for promo pricing
 - Protected pricing base: Max(Primary Promo, Secondary Promo) × 1.7 for each bandwidth tier (10Mb, 100Mb, 1Gb, 10Gb)
 - Enforces per-bandwidth-tier protected service minimum margins from Pricing Logic Manager
@@ -368,6 +374,7 @@ The Carrier Quote system is split into two dedicated modules under the "Carrier 
 - All promo pricing and cross connect pricing converted to selected currency
 - Exchange rates loaded from system Exchange Rates module
 - Defaults to USD
+- All displayed prices (promo, cross connect, protected) are rounded up to the nearest 10 in any currency including USD (e.g. $421 → $430)
 
 ### 🌐 **New Feature: Extranet Pricing Tool**
 

@@ -71,6 +71,8 @@ const UserManagement = () => {
     { key: 'cnx_colocation_inventory', label: 'CNX Colocation — Inventory', group: 'CNX Colocation' },
     { key: 'cnx_colocation_availability', label: 'CNX Colocation — Availability', group: 'CNX Colocation' },
     { key: 'cnx_colocation_pricing', label: 'CNX Colocation — Pricing Tool', group: 'CNX Colocation' },
+    { key: 'voice_one_directory', label: 'Voice — One Directory', group: 'Voice' },
+    { key: 'voice_one_directory_admin', label: 'Voice — One Directory Admin', group: 'Voice' },
     { key: 'exchange_rates', label: 'Manage Exchange Rates' },
     { key: 'exchange_data', label: 'Exchange Data' },
     { key: 'extranet_data', label: 'Extranet Data' },

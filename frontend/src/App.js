@@ -69,9 +69,12 @@ import AnalyticsDashboard from './AnalyticsDashboard';
 import SystemSettingsManager from './SystemSettingsManager';
 import CarrierQuoteRepository from './CarrierQuoteRepository';
 import AddCarrierQuote from './AddCarrierQuote';
+import OneDirectoryPricingTool from './OneDirectoryPricingTool';
+import OneDirectoryAdmin from './OneDirectoryAdmin';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 import RequestQuoteIcon from '@mui/icons-material/RequestQuote';
 import NoteAddIcon from '@mui/icons-material/NoteAdd';
+import PhoneIcon from '@mui/icons-material/Phone';
 
 import { fetchRoutes, fetchRoutesWithKMZ, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking, getFeedbackNotificationCount } from './api';
 import { API_BASE_URL } from './config';
@@ -122,6 +125,7 @@ function AuthenticatedApp() {
   const [exchangeRatesOpen, setExchangeRatesOpen] = useState(false);
   const [networkDataOpen, setNetworkDataOpen] = useState(false);
   const [cnxColocationOpen, setCnxColocationOpen] = useState(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [carrierQuoteOpen, setCarrierQuoteOpen] = useState(false);
   const [editQuoteId, setEditQuoteId] = useState(null);
@@ -761,6 +765,20 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
+      case 'voice-one-directory':
+        return hasModuleAccess('voice_one_directory') ? (
+          <OneDirectoryPricingTool />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'voice-one-directory-admin':
+        return hasModuleAccess('voice_one_directory_admin') ? (
+          <OneDirectoryAdmin hasPermission={hasPermission} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
       case 'carriers':
         return hasModuleAccess('carriers') ? (
           <CarriersManager hasPermission={hasPermission} />
@@ -947,7 +965,7 @@ function AuthenticatedApp() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.4.5
+              v3.4.6
             </Typography>
           </Typography>
           
@@ -1414,6 +1432,41 @@ function AuthenticatedApp() {
                       >
                         <ListItemIcon><CalculateIcon /></ListItemIcon>
                         <ListItemText primary="Pricing Tool" />
+                      </ListItem>
+                    )}
+                  </List>
+                </Collapse>
+              </>
+            )}
+
+            {/* Voice - show parent if user has access to ANY sub-module */}
+            {(hasModuleAccess('voice_one_directory') || hasModuleAccess('voice_one_directory_admin')) && (
+              <>
+                <ListItem button onClick={() => setVoiceOpen(!voiceOpen)}>
+                  <ListItemIcon><PhoneIcon /></ListItemIcon>
+                  <ListItemText primary="Voice" />
+                  {voiceOpen ? <ExpandLess /> : <ExpandMore />}
+                </ListItem>
+                <Collapse in={voiceOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding>
+                    {hasModuleAccess('voice_one_directory') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('voice-one-directory')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'voice-one-directory' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><CalculateIcon /></ListItemIcon>
+                        <ListItemText primary="One Directory" />
+                      </ListItem>
+                    )}
+                    {hasModuleAccess('voice_one_directory_admin') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('voice-one-directory-admin')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'voice-one-directory-admin' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><AdminPanelSettingsIcon /></ListItemIcon>
+                        <ListItemText primary="One Directory Admin" />
                       </ListItem>
                     )}
                   </List>

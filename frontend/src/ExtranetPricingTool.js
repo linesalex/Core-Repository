@@ -30,6 +30,7 @@ import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowRightIcon from '@mui/icons-material/KeyboardArrowRight';
 import ShoppingBasketIcon from '@mui/icons-material/ShoppingBasket';
+import ReplayIcon from '@mui/icons-material/Replay';
 import { API_BASE_URL } from './config';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
@@ -81,7 +82,7 @@ const ExtranetPricingTool = () => {
   const [cities, setCities] = useState([]);
   const [bandwidths, setBandwidths] = useState([]);
   const [currencies, setCurrencies] = useState([{ currency_code: 'USD', currency_name: 'US Dollar' }]);
-  const [maxDiscount, setMaxDiscount] = useState(15);
+  const [bundleTiers, setBundleTiers] = useState({ tier_1_max: 3, tier_2_max: 5 });
   
   // Provider/product selection states
   const [availableProviders, setAvailableProviders] = useState([]);
@@ -202,12 +203,11 @@ const ExtranetPricingTool = () => {
       }
       setCurrencies(currencyData);
       
-      if (parametersRes.data.max_user_discount) {
-        setMaxDiscount(parseFloat(parametersRes.data.max_user_discount.value) || 15);
-      }
-      
       if (bundleDiscountsRes.data) {
         setBundleDiscounts(bundleDiscountsRes.data);
+        if (bundleDiscountsRes.data.tiers) {
+          setBundleTiers(bundleDiscountsRes.data.tiers);
+        }
       }
     } catch (err) {
       console.error('Failed to load initial data:', err);
@@ -674,11 +674,13 @@ const ExtranetPricingTool = () => {
     setSelectedBundleDiscount('');
   };
 
-  // Get max discount available based on basket size
+  // Get max discount available based on basket size (uses configurable tier boundaries)
   const getMaxBundleDiscount = () => {
     const count = basketItems.length;
-    if (count >= 6) return bundleDiscounts.mrc['6_plus'];
-    if (count >= 4) return bundleDiscounts.mrc['4_5'];
+    const t1Max = bundleTiers.tier_1_max || 3;
+    const t2Max = bundleTiers.tier_2_max || 5;
+    if (count > t2Max) return bundleDiscounts.mrc['6_plus'];
+    if (count > t1Max) return bundleDiscounts.mrc['4_5'];
     return bundleDiscounts.mrc['1_3'];
   };
 
@@ -736,6 +738,73 @@ const ExtranetPricingTool = () => {
     } finally {
       setBundleLoading(false);
     }
+  };
+
+  // Reload a bundle from pricing logs back into the basket for re-pricing with a different discount
+  const handleReloadBasket = (bundleLog) => {
+    if (!bundleLog || !bundleLog.items || bundleLog.items.length === 0) {
+      setError('No items found in this bundle to reload');
+      return;
+    }
+
+    // Helper to find a city object from the loaded cities list by name
+    const findCity = (cityName) => {
+      if (!cityName) return null;
+      const found = cities.find(c => c.city_name.toLowerCase() === cityName.toLowerCase());
+      // If exact match found, use it; otherwise create a minimal object so the basket can display it
+      return found || { city_name: cityName, country: '', region: '', tier: '' };
+    };
+
+    // Reconstruct basket items from the bundle's log items
+    const reconstructedItems = bundleLog.items.map((item, idx) => {
+      // Parse calculation_breakdown for provider_region info
+      let breakdown = {};
+      try {
+        breakdown = item.calculation_breakdown ? JSON.parse(item.calculation_breakdown) : {};
+      } catch (e) { /* ignore parse errors */ }
+
+      const formSnapshot = {
+        provider_primary_city: findCity(item.provider_primary_city),
+        provider_secondary_city: item.provider_secondary_city ? findCity(item.provider_secondary_city) : null,
+        provider_region: breakdown.provider_rate_card || '',
+        selected_provider: null,
+        selected_product: null,
+        isf: item.isf_code || '',
+        provider_name: item.provider_name || '',
+        product_name: item.product_name || '',
+        member_primary_city: findCity(item.member_primary_city),
+        member_secondary_city: item.member_secondary_city ? findCity(item.member_secondary_city) : null,
+        member_resiliency: item.member_resiliency || '',
+        member_on_off_net: item.member_on_off_net || 'On Net',
+        member_cloud: item.member_cloud === 1 || item.member_cloud === true,
+        bandwidth: item.bandwidth || '',
+        traffic_type: item.traffic_type || 'Live/Standby',
+        ipsec_required: item.ipsec_required === 1 || item.ipsec_required === true,
+        contract_term: item.contract_term || bundleLog.contract_term || 12,
+        currency_requested: item.currency_requested || bundleLog.currency || 'USD'
+      };
+
+      return {
+        id: Date.now() + idx,
+        formSnapshot,
+        result: null, // Will be recalculated when bundle is completed
+        poa: false
+      };
+    });
+
+    // Set basket items and form parameters
+    setBasketItems(reconstructedItems);
+    setBundleResult(null);
+    setSelectedBundleDiscount('');
+    setFormData(prev => ({
+      ...prev,
+      contract_term: bundleLog.contract_term || prev.contract_term,
+      currency_requested: bundleLog.currency || prev.currency_requested
+    }));
+    setParametersLocked(false);
+    setCurrentTab(0);
+    setExpandedAccordion('basket');
+    setSuccess(`Basket reloaded with ${reconstructedItems.length} items from bundle — select a discount % and complete`);
   };
 
   const handleRefresh = () => {
@@ -1335,7 +1404,7 @@ const ExtranetPricingTool = () => {
                       </Typography>
                     </Alert>
                     <Typography variant="caption" color="text.secondary">
-                      Max MRC discount available: <strong>{getMaxBundleDiscount()}%</strong> (based on {basketItems.length} items)
+                      Max MRC discount available: <strong>{getMaxBundleDiscount()}%</strong> (based on {basketItems.length} item{basketItems.length !== 1 ? 's' : ''} — Tier {basketItems.length > (bundleTiers.tier_2_max || 5) ? '3' : basketItems.length > (bundleTiers.tier_1_max || 3) ? '2' : '1'}: {basketItems.length > (bundleTiers.tier_2_max || 5) ? `${(bundleTiers.tier_2_max || 5) + 1}+` : basketItems.length > (bundleTiers.tier_1_max || 3) ? `${(bundleTiers.tier_1_max || 3) + 1}–${bundleTiers.tier_2_max || 5}` : `1–${bundleTiers.tier_1_max || 3}`} items)
                     </Typography>
                   </Box>
                 )}
@@ -1908,12 +1977,13 @@ const ExtranetPricingTool = () => {
                     <TableCell><strong>Discount</strong></TableCell>
                     <TableCell align="right"><strong>MRC</strong></TableCell>
                     <TableCell align="right"><strong>NRC</strong></TableCell>
+                    <TableCell align="center"><strong>Actions</strong></TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {pricingLogs.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={12} align="center" sx={{ py: 4 }}>
+                      <TableCell colSpan={13} align="center" sx={{ py: 4 }}>
                         <Typography color="text.secondary">No pricing logs found</Typography>
                       </TableCell>
                     </TableRow>
@@ -1992,6 +2062,21 @@ const ExtranetPricingTool = () => {
                                   {log.currency || 'USD'} {roundUpToNearest5(log.total_nrc || 0).toLocaleString()}
                                 </Typography>
                               </TableCell>
+                              <TableCell align="center">
+                                <Tooltip title="Reload basket — re-price with a different discount">
+                                  <IconButton 
+                                    size="small" 
+                                    color="primary"
+                                    onClick={(e) => {
+                                      e.stopPropagation(); // Don't toggle expand
+                                      handleReloadBasket(log);
+                                    }}
+                                    sx={{ p: 0.5 }}
+                                  >
+                                    <ReplayIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              </TableCell>
                             </TableRow>
                             {/* Expanded bundle items */}
                             {isExpanded && log.items && log.items.map((item, idx) => (
@@ -2051,6 +2136,7 @@ const ExtranetPricingTool = () => {
                                     {item.currency_requested} {roundUpToNearest5(item.final_nrc || 0).toLocaleString()}
                                   </Typography>
                                 </TableCell>
+                                <TableCell></TableCell>
                               </TableRow>
                             ))}
                           </React.Fragment>
@@ -2128,6 +2214,7 @@ const ExtranetPricingTool = () => {
                               {log.currency_requested} {roundUpToNearest5(log.final_nrc || 0).toLocaleString()}
                             </Typography>
                           </TableCell>
+                          <TableCell></TableCell>
                         </TableRow>
                       );
                     })
