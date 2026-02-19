@@ -1767,44 +1767,181 @@ const AllocatedCostCalculator = () => {
     });
   };
   
-  const handleDownloadText = () => {
-    const emailBody = generateEmailBody();
-    
-    // Generate subject line
-    const today = new Date().toLocaleDateString();
-    const subject = `Allocated Cost - ${formData.quoteRequestId || 'Quote'} - ${formData.customerName || 'Customer'} - ${today}`;
-    
-    // Create .eml file with HTML content
-    const timestamp = new Date().toISOString();
-    const emailContent = [
-      `From: Allocated Cost Calculator <noreply@ipc.com>`,
-      `To: `,
-      `Subject: ${subject}`,
-      `Date: ${timestamp}`,
-      `MIME-Version: 1.0`,
-      `Content-Type: text/html; charset=utf-8`,
-      `Content-Transfer-Encoding: 8bit`,
-      ``,
-      emailBody
-    ].join('\r\n');
-    
-    // Create blob as .eml file
-    const blob = new Blob([emailContent], { type: 'message/rfc822' });
+  const generateCSV = () => {
+    // Helper to escape CSV values
+    const escapeCSV = (value) => {
+      if (value === null || value === undefined) return '';
+      const str = String(value);
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const rows = [];
+
+    // CSV Header
+    const headers = [
+      'Customer Name',
+      'Quote Request ID',
+      'Source',
+      'Destination',
+      'Bandwidth (Mbps)',
+      'Currency',
+      'Contract Term (Months)',
+      'Pricing Type',
+      'Path',
+      'Circuit ID',
+      'Segment From',
+      'Segment To',
+      'Carrier',
+      'Cable System',
+      'Latency (ms)',
+      'Segment Bandwidth (Mbps)',
+      'Original Cost',
+      'Original Currency',
+      'Converted Cost',
+      'Utilization Factor',
+      'Utilization Factor Type',
+      'Allocation Ratio',
+      'Allocated Cost',
+      'Allocation Ratio (No Utilization Factor)',
+      'Allocated Cost (No Utilization Factor)',
+      'Is Incremental Cost',
+      'Incremental Cost Type',
+      'Path Total Allocated Cost',
+      'Path Minimum Price',
+      'Path Minimum Margin (%)',
+      'Path Suggested Price',
+      'Path Suggested Margin (%)',
+      'Path NRC Charge'
+    ];
+
+    rows.push(headers);
+
+    // Common request parameters
+    const pricingTypeLabel = formData.pricingType === 'protected' ? 'Protected' :
+                             formData.pricingType === 'primary_secondary' ? 'Primary + Secondary' : 'Primary';
+    const commonFields = [
+      formData.customerName || '',
+      formData.quoteRequestId || '',
+      formData.source,
+      formData.destination,
+      formData.bandwidth,
+      formData.outputCurrency,
+      formData.contractTerm,
+      pricingTypeLabel
+    ];
+
+    const bandwidth = parseFloat(formData.bandwidth);
+
+    // Process each path result
+    const pathsToExport = pricingResults.results.filter(result => {
+      if (result.pathType === 'primary' && exportOptions.primaryPricing) return true;
+      if (result.pathType === 'protection' && exportOptions.secondaryPricing) return true;
+      return false;
+    });
+
+    pathsToExport.forEach(result => {
+      const detailedCalcs = result.pricing?.detailedCalculations;
+      if (!detailedCalcs || !detailedCalcs.allocatedCostBreakdown) return;
+
+      const pathLabel = result.pathType === 'primary' ? 'Primary' : 'Secondary';
+      const segments = detailedCalcs.allocatedCostBreakdown.segments;
+
+      segments.forEach(segment => {
+        // Calculate "no utilization factor" values
+        const isAggregateCost = segment.isIncrementalCost && !segment.segmentBandwidth;
+        let noFactorRatio = '';
+        let noFactorCost = '';
+
+        if (isAggregateCost) {
+          noFactorRatio = '1 (Full Cost)';
+          noFactorCost = segment.convertedCost != null ? segment.convertedCost.toFixed(2) : '';
+        } else if (segment.segmentBandwidth) {
+          noFactorRatio = (bandwidth / segment.segmentBandwidth).toFixed(6);
+          noFactorCost = (segment.convertedCost * (bandwidth / segment.segmentBandwidth)).toFixed(2);
+        }
+
+        const segFrom = segment.location ? segment.location.split(' → ')[0] : '';
+        const segTo = segment.location ? segment.location.split(' → ')[1] : '';
+
+        const row = [
+          ...commonFields,
+          pathLabel,
+          segment.circuit || '',
+          segFrom,
+          segTo,
+          segment.carrier || '',
+          segment.cable_system || '',
+          segment.latency != null ? segment.latency : '',
+          segment.segmentBandwidth || '',
+          segment.originalCost != null ? segment.originalCost.toFixed(2) : '',
+          segment.originalCurrency || '',
+          segment.convertedCost != null ? segment.convertedCost.toFixed(2) : '',
+          segment.utilizationFactor || '',
+          segment.utilizationFactorType || '',
+          segment.allocationRatio != null ? segment.allocationRatio.toFixed(6) : (segment.allocationFactor != null ? segment.allocationFactor : ''),
+          segment.allocatedCost != null ? segment.allocatedCost.toFixed(2) : '',
+          noFactorRatio,
+          noFactorCost,
+          segment.isIncrementalCost ? 'Yes' : 'No',
+          segment.isIncrementalCost ? (segment.costType || '') : '',
+          result.pricing.allocatedCost != null ? result.pricing.allocatedCost.toFixed(2) : '',
+          result.pricing.minimumPrice != null ? result.pricing.minimumPrice.toFixed(2) : '',
+          result.pricing.minimumMargin != null ? result.pricing.minimumMargin : '',
+          result.pricing.suggestedPrice != null ? result.pricing.suggestedPrice.toFixed(2) : '',
+          result.pricing.suggestedMargin != null ? result.pricing.suggestedMargin : '',
+          result.pricing.nrcCharge != null ? result.pricing.nrcCharge.toFixed(2) : '0.00'
+        ];
+
+        rows.push(row);
+      });
+    });
+
+    // Add protected service pricing row if applicable
+    if (exportOptions.protectedPricing && pricingResults.protectionPricing) {
+      const pp = pricingResults.protectionPricing;
+      const protectedRow = [
+        ...commonFields,
+        'Protected Service',
+        '', '', '', '', '', '', '',
+        '', '', '', '', '', '', '',
+        '', '', '', '',
+        pp.allocatedCost != null ? pp.allocatedCost.toFixed(2) : '',
+        pp.minimumPrice != null ? pp.minimumPrice.toFixed(2) : '',
+        pp.minimumMargin != null ? pp.minimumMargin : '',
+        pp.suggestedPrice != null ? pp.suggestedPrice.toFixed(2) : '',
+        pp.suggestedMargin != null ? pp.suggestedMargin : '',
+        ''
+      ];
+      rows.push(protectedRow);
+    }
+
+    // Convert to CSV string
+    return rows.map(row => row.map(escapeCSV).join(',')).join('\n');
+  };
+
+  const handleDownloadCSV = () => {
+    const csvContent = generateCSV();
+
+    // Create blob as .csv file
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' }); // BOM for Excel compatibility
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    
+
     // Generate filename with timestamp
     const fileTimestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
     const customerName = (formData.customerName || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
     const quoteId = (formData.quoteRequestId || 'Quote').replace(/[^a-zA-Z0-9]/g, '_');
-    link.download = `AllocatedCost_${quoteId}_${customerName}_${fileTimestamp}.eml`;
-    
+    link.download = `AllocatedCost_${quoteId}_${customerName}_${fileTimestamp}.csv`;
+
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    setSuccess('Email file (.eml) downloaded - double-click to open in your email client');
+    setSuccess('CSV file downloaded successfully');
     handleExportClose();
   };
   
@@ -3496,8 +3633,8 @@ const AllocatedCostCalculator = () => {
           <Button onClick={handleCopyToClipboard} startIcon={<ContentCopyIcon />}>
             Copy to Clipboard
           </Button>
-          <Button onClick={handleDownloadText} startIcon={<FileDownloadIcon />} variant="contained">
-            Download as Text
+          <Button onClick={handleDownloadCSV} startIcon={<FileDownloadIcon />} variant="contained">
+            Download as CSV
           </Button>
         </DialogActions>
       </Dialog>

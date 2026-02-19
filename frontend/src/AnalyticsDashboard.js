@@ -11,6 +11,7 @@ import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import PeopleIcon from '@mui/icons-material/People';
 import CalculateIcon from '@mui/icons-material/Calculate';
 import ShoppingBasketIcon from '@mui/icons-material/ShoppingBasket';
+import PhoneIcon from '@mui/icons-material/Phone';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
@@ -22,7 +23,8 @@ import {
   getAnalyticsUsers,
   getAnalyticsPerformance,
   getAnalyticsRouteFinder,
-  getAnalyticsExtranetPricing
+  getAnalyticsExtranetPricing,
+  getAnalyticsOneDirectory
 } from './api';
 
 // Color palette for charts
@@ -95,6 +97,7 @@ const AnalyticsDashboard = () => {
   const [performanceDateRange, setPerformanceDateRange] = useState('all');
   const [routeFinderDateRange, setRouteFinderDateRange] = useState('all');
   const [extranetPricingDateRange, setExtranetPricingDateRange] = useState('all');
+  const [oneDirectoryDateRange, setOneDirectoryDateRange] = useState('all');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
 
@@ -106,6 +109,7 @@ const AnalyticsDashboard = () => {
   const [performanceData, setPerformanceData] = useState(null);
   const [routeFinderData, setRouteFinderData] = useState(null);
   const [extranetPricingData, setExtranetPricingData] = useState(null);
+  const [oneDirectoryData, setOneDirectoryData] = useState(null);
 
   // Get date range based on selection
   const getDateRange = (rangeType, customStart, customEnd) => {
@@ -246,6 +250,21 @@ const AnalyticsDashboard = () => {
     }
   };
 
+  const loadOneDirectoryData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { startDate, endDate } = getDateRange(oneDirectoryDateRange, customStartDate, customEndDate);
+      const data = await getAnalyticsOneDirectory(startDate, endDate);
+      setOneDirectoryData(data);
+    } catch (err) {
+      console.error('Error loading One Directory data:', err);
+      setError('Failed to load One Directory analytics: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Load data when tab changes or date range changes
   useEffect(() => {
     if (currentTab === 0) loadOverviewData();
@@ -281,6 +300,11 @@ const AnalyticsDashboard = () => {
     if (currentTab === 6) loadExtranetPricingData();
     // eslint-disable-next-line
   }, [currentTab, extranetPricingDateRange, customStartDate, customEndDate]);
+
+  useEffect(() => {
+    if (currentTab === 7) loadOneDirectoryData();
+    // eslint-disable-next-line
+  }, [currentTab, oneDirectoryDateRange, customStartDate, customEndDate]);
 
   const handleTabChange = (event, newValue) => {
     setCurrentTab(newValue);
@@ -383,6 +407,7 @@ const AnalyticsDashboard = () => {
           <Tab label="Performance" />
           <Tab label="Route Finder" />
           <Tab label="Extranet Pricing" />
+          <Tab label="One Directory" />
         </Tabs>
       </Box>
 
@@ -1608,6 +1633,587 @@ const AnalyticsDashboard = () => {
                     </TableContainer>
                   </CardContent>
                 </Card>
+              </Grid>
+            </Grid>
+          </>
+        ) : null}
+      </TabPanel>
+
+      {/* One Directory Tab */}
+      <TabPanel value={currentTab} index={7}>
+        {renderDateRangeSelector(oneDirectoryDateRange, setOneDirectoryDateRange)}
+        
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : oneDirectoryData ? (
+          <>
+            {/* Key Metrics Summary Cards - Row 1 */}
+            <Grid container spacing={2} sx={{ mb: 2 }}>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Total Pricing Events</Typography>
+                    <Typography variant="h5" fontWeight="bold">{oneDirectoryData.totalLookups?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      Individual + Bundle quotes
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Connections Priced</Typography>
+                    <Typography variant="h5" fontWeight="bold">{oneDirectoryData.totalConnectionsPriced?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      All individual connections
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#e1f5fe', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                      <ShoppingBasketIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                      <Typography color="textSecondary" variant="body2">Bundles Created</Typography>
+                    </Box>
+                    <Typography variant="h5" fontWeight="bold">{oneDirectoryData.bundleStats?.totalBundles?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {oneDirectoryData.bundleStats?.bundlePercentage || 0}% of pricing events
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Bundle Items Total</Typography>
+                    <Typography variant="h5" fontWeight="bold">{oneDirectoryData.bundleStats?.totalBundleItems?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      Avg {oneDirectoryData.bundleStats?.averageBundleSize || 0} items/bundle
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#fce4ec', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Off-Net Requests</Typography>
+                    <Typography variant="h5" fontWeight="bold">{oneDirectoryData.offNetCount?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {oneDirectoryData.totalConnectionsPriced > 0 ? `${((oneDirectoryData.offNetCount / oneDirectoryData.totalConnectionsPriced) * 100).toFixed(1)}% of connections` : ''}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Active Users</Typography>
+                    <Typography variant="h5" fontWeight="bold">{oneDirectoryData.topUsers?.length || 0}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+
+            {/* Key Metrics Summary Cards - Row 2 */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#e0f7fa', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>B2B Agility</Typography>
+                    <Typography variant="h5" fontWeight="bold">{oneDirectoryData.b2bAgilityCount?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {oneDirectoryData.totalConnectionsPriced > 0 ? `${((oneDirectoryData.b2bAgilityCount / oneDirectoryData.totalConnectionsPriced) * 100).toFixed(1)}% of connections` : ''}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#fff8e1', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Safe Connect</Typography>
+                    <Typography variant="h5" fontWeight="bold">{oneDirectoryData.safeConnectCount?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {oneDirectoryData.totalConnectionsPriced > 0 ? `${((oneDirectoryData.safeConnectCount / oneDirectoryData.totalConnectionsPriced) * 100).toFixed(1)}% of connections` : ''}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#efebe9', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Individual Lookups</Typography>
+                    <Typography variant="h5" fontWeight="bold">{oneDirectoryData.individualLookups?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      Non-bundle quotes
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Card sx={{ bgcolor: '#e8eaf6', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Total MRC Generated</Typography>
+                    <Typography variant="h5" fontWeight="bold">${oneDirectoryData.totalMrcSum?.toLocaleString() || 0}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      USD (all connections)
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+
+            {/* Bundle Analytics Section */}
+            {oneDirectoryData.bundleStats?.totalBundles > 0 && (
+              <Card sx={{ mb: 3 }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                    <ShoppingBasketIcon color="primary" />
+                    <Typography variant="h6">Bundle Analytics</Typography>
+                  </Box>
+                  <Grid container spacing={3}>
+                    {/* Bundle Size Distribution */}
+                    <Grid item xs={12} md={4}>
+                      <Typography variant="subtitle2" color="textSecondary" gutterBottom>Bundle Size Distribution</Typography>
+                      <TableContainer>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Size</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {oneDirectoryData.bundleStats.bundleSizeDistribution.map((item, index) => (
+                              <TableRow key={index}>
+                                <TableCell>
+                                  <Chip 
+                                    label={`${item.size} items`} 
+                                    size="small" 
+                                    color={item.size.includes('+') ? 'success' : index === 1 ? 'warning' : 'default'}
+                                    variant="outlined"
+                                    sx={{ fontSize: '0.7rem' }}
+                                  />
+                                </TableCell>
+                                <TableCell align="right">{item.count}</TableCell>
+                                <TableCell align="right">
+                                  {oneDirectoryData.bundleStats.totalBundles > 0 
+                                    ? `${((item.count / oneDirectoryData.bundleStats.totalBundles) * 100).toFixed(1)}%` 
+                                    : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Grid>
+
+                    {/* Bundle Discount Distribution */}
+                    <Grid item xs={12} md={4}>
+                      <Typography variant="subtitle2" color="textSecondary" gutterBottom>Discount Tier Usage</Typography>
+                      <TableContainer>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Discount</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {oneDirectoryData.bundleStats.bundleDiscountDistribution.map((item, index) => (
+                              <TableRow key={index}>
+                                <TableCell>
+                                  <Chip 
+                                    label={item.discount} 
+                                    size="small" 
+                                    color={item.discount !== 'No Discount' ? 'success' : 'default'}
+                                    variant="outlined"
+                                    sx={{ fontSize: '0.7rem' }}
+                                  />
+                                </TableCell>
+                                <TableCell align="right">{item.count}</TableCell>
+                                <TableCell align="right">
+                                  {oneDirectoryData.bundleStats.totalBundles > 0 
+                                    ? `${((item.count / oneDirectoryData.bundleStats.totalBundles) * 100).toFixed(1)}%` 
+                                    : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Grid>
+
+                    {/* Bundle Summary */}
+                    <Grid item xs={12} md={4}>
+                      <Typography variant="subtitle2" color="textSecondary" gutterBottom>Bundle Summary</Typography>
+                      <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
+                          <Typography variant="body2" color="text.secondary">Total Bundles:</Typography>
+                          <Typography variant="body2" fontWeight="bold">{oneDirectoryData.bundleStats.totalBundles}</Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
+                          <Typography variant="body2" color="text.secondary">Total Items in Bundles:</Typography>
+                          <Typography variant="body2" fontWeight="bold">{oneDirectoryData.bundleStats.totalBundleItems}</Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
+                          <Typography variant="body2" color="text.secondary">Avg Bundle Size:</Typography>
+                          <Typography variant="body2" fontWeight="bold">{oneDirectoryData.bundleStats.averageBundleSize} items</Typography>
+                        </Box>
+                        <Divider sx={{ my: 1.5 }} />
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                          <Typography variant="body2" color="text.secondary">Total Bundle MRC:</Typography>
+                          <Typography variant="body2" fontWeight="bold" color="success.main">
+                            ${oneDirectoryData.bundleStats.totalBundleMrc?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <Typography variant="body2" color="text.secondary">Total Bundle NRC:</Typography>
+                          <Typography variant="body2" fontWeight="bold">
+                            ${oneDirectoryData.bundleStats.totalBundleNrc?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Main Data Tables in 2-Column Layout */}
+            <Grid container spacing={3}>
+              {/* Left Column */}
+              <Grid item xs={12} lg={6}>
+                {/* Top Customer Locations */}
+                {oneDirectoryData.topLocations && oneDirectoryData.topLocations.length > 0 && (
+                  <Card sx={{ mb: 3 }}>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">Top Customer Locations</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(oneDirectoryData.topLocations, 'one_directory_locations')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 350 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Location</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {oneDirectoryData.topLocations.slice(0, 10).map((item, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{index + 1}</TableCell>
+                                <TableCell>{item.location}</TableCell>
+                                <TableCell align="right">{item.count}</TableCell>
+                                <TableCell align="right">
+                                  {oneDirectoryData.totalConnectionsPriced > 0 ? `${((item.count / oneDirectoryData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Top Customers */}
+                {oneDirectoryData.topCustomers && oneDirectoryData.topCustomers.length > 0 && (
+                  <Card sx={{ mb: 3 }}>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">Top Customers</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(oneDirectoryData.topCustomers, 'one_directory_customers')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 300 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Customer</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Quotes</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {oneDirectoryData.topCustomers.slice(0, 10).map((item, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{index + 1}</TableCell>
+                                <TableCell sx={{ textTransform: 'capitalize' }}>{item.customer}</TableCell>
+                                <TableCell align="right">{item.count}</TableCell>
+                                <TableCell align="right">
+                                  {oneDirectoryData.totalConnectionsPriced > 0 ? `${((item.count / oneDirectoryData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* User Activity */}
+                {oneDirectoryData.topUsers && oneDirectoryData.topUsers.length > 0 && (
+                  <Card>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">User Activity</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(oneDirectoryData.topUsers, 'one_directory_users')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 300 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Username</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Total</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Bundles</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>% of Total</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {oneDirectoryData.topUsers.map((user, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{index + 1}</TableCell>
+                                <TableCell>{user.username}</TableCell>
+                                <TableCell align="right">{user.count}</TableCell>
+                                <TableCell align="right">
+                                  {user.bundleCount > 0 ? (
+                                    <Chip label={user.bundleCount} size="small" color="primary" variant="outlined" sx={{ fontSize: '0.7rem', height: 20 }} />
+                                  ) : '-'}
+                                </TableCell>
+                                <TableCell align="right">
+                                  {oneDirectoryData.totalLookups > 0 ? `${((user.count / oneDirectoryData.totalLookups) * 100).toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </CardContent>
+                  </Card>
+                )}
+              </Grid>
+
+              {/* Right Column */}
+              <Grid item xs={12} lg={6}>
+                {/* Request Breakdown Summary */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>Request Breakdown Summary</Typography>
+                    
+                    {/* Resiliency Breakdown */}
+                    {oneDirectoryData.resiliencyDistribution && oneDirectoryData.resiliencyDistribution.length > 0 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" color="textSecondary" gutterBottom>By Resiliency Type</Typography>
+                        <TableContainer>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell sx={{ fontWeight: 'bold' }}>Type</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {oneDirectoryData.resiliencyDistribution.map((item, index) => (
+                                <TableRow key={index}>
+                                  <TableCell>{item.resiliency || 'Unknown'}</TableCell>
+                                  <TableCell align="right">{item.count}</TableCell>
+                                  <TableCell align="right">
+                                    {oneDirectoryData.totalConnectionsPriced > 0 ? `${((item.count / oneDirectoryData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </Box>
+                    )}
+
+                    {/* Contract Term Breakdown */}
+                    {oneDirectoryData.contractTermDistribution && oneDirectoryData.contractTermDistribution.length > 0 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" color="textSecondary" gutterBottom>By Contract Term</Typography>
+                        <TableContainer>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell sx={{ fontWeight: 'bold' }}>Term</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {oneDirectoryData.contractTermDistribution.map((item, index) => (
+                                <TableRow key={index}>
+                                  <TableCell>{item.term} months</TableCell>
+                                  <TableCell align="right">{item.count}</TableCell>
+                                  <TableCell align="right">
+                                    {oneDirectoryData.totalConnectionsPriced > 0 ? `${((item.count / oneDirectoryData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </Box>
+                    )}
+
+                    {/* Directory Users Distribution */}
+                    {oneDirectoryData.directoryUsersDistribution && oneDirectoryData.directoryUsersDistribution.length > 0 && (
+                      <Box>
+                        <Typography variant="subtitle2" color="textSecondary" gutterBottom>By Directory Users Range</Typography>
+                        <TableContainer>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell sx={{ fontWeight: 'bold' }}>Range</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {oneDirectoryData.directoryUsersDistribution.map((item, index) => (
+                                <TableRow key={index}>
+                                  <TableCell>{item.range} users</TableCell>
+                                  <TableCell align="right">{item.count}</TableCell>
+                                  <TableCell align="right">
+                                    {oneDirectoryData.totalConnectionsPriced > 0 ? `${((item.count / oneDirectoryData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </Box>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Bandwidth Distribution */}
+                {oneDirectoryData.bandwidthDistribution && oneDirectoryData.bandwidthDistribution.length > 0 && (
+                  <Card sx={{ mb: 3 }}>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">Bandwidth Distribution</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(oneDirectoryData.bandwidthDistribution, 'one_directory_bandwidth')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 250 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Bandwidth</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {oneDirectoryData.bandwidthDistribution.map((item, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{item.bandwidth}</TableCell>
+                                <TableCell align="right">{item.count}</TableCell>
+                                <TableCell align="right">
+                                  {oneDirectoryData.totalConnectionsPriced > 0 ? `${((item.count / oneDirectoryData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Region Distribution */}
+                {oneDirectoryData.regionDistribution && oneDirectoryData.regionDistribution.length > 0 && (
+                  <Card sx={{ mb: 3 }}>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">Region Distribution</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(oneDirectoryData.regionDistribution, 'one_directory_regions')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 200 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Region</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {oneDirectoryData.regionDistribution.map((item, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{item.region}</TableCell>
+                                <TableCell align="right">{item.count}</TableCell>
+                                <TableCell align="right">
+                                  {oneDirectoryData.totalConnectionsPriced > 0 ? `${((item.count / oneDirectoryData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Currency Distribution */}
+                {oneDirectoryData.currencyDistribution && oneDirectoryData.currencyDistribution.length > 0 && (
+                  <Card>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6">Currency Distribution</Typography>
+                        <IconButton size="small" onClick={() => exportToCSV(oneDirectoryData.currencyDistribution, 'one_directory_currencies')}>
+                          <DownloadIcon />
+                        </IconButton>
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 200 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 'bold' }}>Currency</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>Count</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {oneDirectoryData.currencyDistribution.map((item, index) => (
+                              <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                <TableCell>{item.currency}</TableCell>
+                                <TableCell align="right">{item.count}</TableCell>
+                                <TableCell align="right">
+                                  {oneDirectoryData.totalConnectionsPriced > 0 ? `${((item.count / oneDirectoryData.totalConnectionsPriced) * 100).toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </CardContent>
+                  </Card>
+                )}
               </Grid>
             </Grid>
           </>

@@ -1,8 +1,38 @@
 # Network Inventory Management System
 
-## Current Version: **3.4.6**
+## Current Version: **3.4.7**
 
-**Release Date:** February 17, 2026
+**Release Date:** February 19, 2026
+
+---
+
+## What's New in v3.4.7
+
+### 🔒 **Extranet Pricing Logs — Role-Based Access Control**
+
+Pricing Logs are now accessible to all users with `extranet_data` module permission, with visibility and features scoped by permission level:
+
+- **read_only users**: Can view the Pricing Logs tab and see only their own logs. User filter, export, and clear controls are hidden.
+- **provisioner users**: Can view all user logs, use the user filter dropdown, and export logs to CSV.
+- **admin users**: Can view all user logs, export, clear logs, and access a new **Calculation Breakdown (JSON)** viewer showing full pricing math for bundles and individual lookups.
+
+**Frontend:**
+- Pricing Logs tab now visible to all users with `extranet_data` permission (previously admin-only)
+- "Your Logs Only" indicator shown for read_only users
+- User filter dropdown shown only for provisioner and admin users
+- Export CSV button shown for provisioner and admin users
+- Clear Logs button shown for admin users only
+- New JSON Calculation Breakdown dialog for admin users — accessible via a code icon on each log row
+- JSON dialog includes structured calculation data with copy-to-clipboard functionality
+
+**Backend:**
+- `/extranet-pricing/logs` endpoint now uses module-level permission (`extranet_data` read_only) instead of role-based admin check
+- Backend enforces user-only filtering for read_only permission users (server-side, not just UI)
+- `calculation_breakdown` field stripped from responses for non-admin users
+- Response includes `caller_permission` and `can_see_all_logs` flags for frontend
+- `/extranet-pricing/users` endpoint opened to provisioner-level extranet_data permission
+- `/extranet-pricing/logs/export` endpoint opened to provisioner-level extranet_data permission
+- Clear logs remains admin-only
 
 ---
 
@@ -41,6 +71,13 @@ Major overhaul of the Extranet Pricing Tool with provider/product selection, sho
 - `primary_pricing_city` field added to products for manual city override
 - Legacy `source_datacenters` field fully removed from codebase
 
+**Member Customer Name:**
+- New "Member Customer Name" field added to Quote Parameters (locked once basket has items, shared across all items)
+- Customer name stored in both `extranet_bundle_logs` and `extranet_pricing_lookups`
+- Displayed in Pricing Logs table as a dedicated "Customer" column
+- Included in CSV export and text file bundle quote export
+- Restored when reloading a basket from Pricing Logs
+
 **Analytics & Pricing Logs — Bundle Support:**
 - Analytics Dashboard rebuilt with bundle-specific metrics: total bundles, total items in bundles, MRC/NRC from bundles, discount statistics, POA count
 - Pricing Logs rebuilt to display bundles as expandable parent rows with individual items nested
@@ -56,6 +93,7 @@ Major overhaul of the Extranet Pricing Tool with provider/product selection, sho
 - Migration 030: Creates `extranet_bundle_logs` table and adds `bundle_id` column to `extranet_pricing_lookups`
 - Migration 031: Adds configurable bundle tier boundary parameters (`bundle_tier_1_max`, `bundle_tier_2_max`) to `extranet_parameters`
 - Migration 032: Adds new bandwidth levels (30Mb, 40Mb, 75Mb, 150Mb, 200Mb) to all three provider region rate cards as POA
+- Migration 036: Adds `customer_name` column to `extranet_bundle_logs` and `extranet_pricing_lookups`
 
 **Backend:**
 - New endpoint: `/extranet-pricing/resolve-pop-city` — resolves POP codes to city names
@@ -67,6 +105,7 @@ Major overhaul of the Extranet Pricing Tool with provider/product selection, sho
 - Updated `/extranet-pricing/bundle-discounts` — now returns configurable tier boundaries alongside discount values
 - Updated `/extranet-pricing/bandwidths` — now sorts bandwidths by numeric value for correct ordering
 - Fixed 0% discount override bug (JavaScript falsy `0` handled with explicit `undefined` checks)
+- Fixed "Items in Bundle: undefined" in text export (was referencing `bundle_pricing.item_count` instead of `bundle.item_count`)
 - Product CRUD endpoints updated for new datacenter fields
 - Added 5 new bandwidth levels: 30Mb, 40Mb, 75Mb, 150Mb, 200Mb (all validated in bulk upload and rate card endpoints)
 
@@ -476,6 +515,40 @@ Resolved KMZ export hanging or crashing the application when amalgamating circui
 - `backend/kmzGenerator.js` - Rewrote buildKMZ with MultiGeometry, parallel processing, event loop yielding, and lower compression
 - `frontend/src/api.js` - Added 5-minute timeout and AbortController signal to KMZ export API call
 - `frontend/src/NetworkDesignTool.js` - Added cancel button during export, AbortController integration, timeout error handling
+
+---
+
+### 📋 **Carrier Quote Repository — CSV Template & Filter Improvements**
+
+**CSV Template Fixes:**
+- Added UTF-8 BOM to exported CSV template for correct character display in Excel
+- Replaced em dash characters with regular dashes to prevent encoding issues
+- POP code example changed to IPCLON7
+- Reordered fields: Bandwidth Unit before Bandwidth Value; Currency, NRC, MRC order
+- Removed Transit Cities and Transit Countries from template (auto-populated via KMZ upload)
+
+**CSV Import Date Fix:**
+- Added date normalization (`normaliseDateValue`) to handle various date formats (MM/DD/YYYY, DD-MMM-YYYY, etc.) and convert to YYYY-MM-DD for HTML date inputs
+- Quote Date and Expiry Date now correctly populate when importing CSV files with Excel-formatted dates
+- BOM character stripped from imported CSV files for robust parsing
+
+**Transit Country & City Filters:**
+- New "Transit Countries" text filter in Advanced Filters — searches quotes by transit country
+- New "Transit Cities" text filter in Advanced Filters — searches quotes by transit city
+- Both filters support comma-separated values for multiple search terms (e.g. "France, Germany")
+- Each comma-separated term must match (AND logic) for a quote to appear in results
+- Filters included in CSV export, active filter count badge, and clear filters action
+
+**Quote Reference Auto-Suffix:**
+- User-provided internal references now automatically receive a sequential suffix (-01, -02, -03, etc.)
+- First quote with reference "1234" is stored as "1234-01", second as "1234-02", and so on
+- System queries existing quotes with same base reference to determine next suffix number
+- Auto-generated references (QR-YYYYMMDD-XXXX) are unaffected
+
+**Files Modified:**
+- `frontend/src/AddCarrierQuote.js` — CSV template field order/encoding fixes, date normalization, BOM stripping, transit field helper text
+- `frontend/src/CarrierQuoteRepository.js` — Transit country/city filter state, UI fields, loadQuotes params, export params
+- `backend/routes.js` — Quote reference auto-suffix logic, transit country/city filtering
 
 ---
 

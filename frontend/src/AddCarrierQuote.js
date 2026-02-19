@@ -342,12 +342,32 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
   };
 
   // Import CSV / TXT file and populate form (vertical format)
+  // Normalise a date value from various formats to YYYY-MM-DD for HTML date inputs
+  const normaliseDateValue = (val) => {
+    if (!val) return val;
+    const s = val.trim();
+    // Already YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    // Try to parse with Date (handles many formats: MM/DD/YYYY, DD-MMM-YYYY, etc.)
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+    // Return original if unparseable
+    return s;
+  };
+
   const handleCsvImport = (file) => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
-        const text = e.target.result;
+        // Strip BOM if present
+        let text = e.target.result;
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
         const lines = text.split(/\r?\n/).filter(l => l.trim());
         if (lines.length < 2) {
           setError('CSV file must have at least a header row and one data row');
@@ -367,11 +387,12 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
         // Map to form fields, skip empty values
         const updates = {};
         let fieldsPopulated = 0;
+        const dateFields = ['quote_date', 'expiry_date'];
         CSV_ROWS.forEach(row => {
           const val = dataMap[row.label];
           if (val !== undefined && val !== '') {
             if (!row.field.startsWith('_')) {
-              updates[row.field] = val;
+              updates[row.field] = dateFields.includes(row.field) ? normaliseDateValue(val) : val;
             }
             fieldsPopulated++;
           }
@@ -1169,7 +1190,7 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
               multiline
               minRows={1}
               maxRows={3}
-              helperText="Auto-populated from KMZ upload, editable"
+              helperText="Auto-populated from KMZ upload, editable. Enter as comma-separated country names e.g. United Kingdom, France, Spain"
             />
           </Grid>
           <Grid item xs={12}>
@@ -1182,7 +1203,7 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
               multiline
               minRows={1}
               maxRows={4}
-              helperText="Auto-populated from KMZ upload, editable"
+              helperText="Auto-populated from KMZ upload, editable. Enter as City (Country) e.g. London (United Kingdom), Paris (France)"
             />
           </Grid>
         </Grid>

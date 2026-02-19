@@ -46,8 +46,12 @@ function TabPanel(props) {
 }
 
 const ExtranetPricingTool = () => {
-  const { user } = useAuth();
+  const { user, modulePermissions } = useAuth();
   const isAdmin = user && user.role === 'administrator';
+  const extranetPermission = isAdmin ? 'admin' : (modulePermissions?.['extranet_data'] || null);
+  const canViewLogs = extranetPermission !== null; // Any extranet_data permission can view logs
+  const canViewAllLogs = isAdmin || extranetPermission === 'provisioner'; // Provisioner + Admin see all
+  const canManageLogs = isAdmin; // Only admins can clear logs and see calculation data
   
   // Tab state
   const [currentTab, setCurrentTab] = useState(0);
@@ -65,6 +69,7 @@ const ExtranetPricingTool = () => {
     provider_name: '',
     product_name: '',
     // Member
+    customer_name: '',
     member_primary_city: null,
     member_secondary_city: null,
     member_resiliency: '',
@@ -107,6 +112,9 @@ const ExtranetPricingTool = () => {
   const [selectedUser, setSelectedUser] = useState('');
   const [providerCityFilter, setProviderCityFilter] = useState('');
   const [memberCityFilter, setMemberCityFilter] = useState('');
+  const [customerNameFilter, setCustomerNameFilter] = useState('');
+  const [startDateFilter, setStartDateFilter] = useState('');
+  const [endDateFilter, setEndDateFilter] = useState('');
   const [expandedBundles, setExpandedBundles] = useState({});
   const [pagination, setPagination] = useState({
     page: 1,
@@ -164,13 +172,15 @@ const ExtranetPricingTool = () => {
     }
   }, [formData.member_resiliency]);
 
-  // Load pricing logs when tab changes to logs (admin only)
+  // Load pricing logs when tab changes to logs
   useEffect(() => {
-    if (currentTab === 1 && isAdmin) {
+    if (currentTab === 1 && canViewLogs) {
       loadPricingLogs();
-      loadUsersListForFilter();
+      if (canViewAllLogs) {
+        loadUsersListForFilter();
+      }
     }
-  }, [currentTab, pagination.page, pagination.limit, selectedUser, providerCityFilter, memberCityFilter]);
+  }, [currentTab, pagination.page, pagination.limit, selectedUser, providerCityFilter, memberCityFilter, customerNameFilter, startDateFilter, endDateFilter]);
 
   const loadInitialData = async () => {
     try {
@@ -272,7 +282,7 @@ const ExtranetPricingTool = () => {
   }, []);
 
   const loadPricingLogs = async () => {
-    if (!isAdmin) return;
+    if (!canViewLogs) return;
     
     try {
       setLogsLoading(true);
@@ -281,9 +291,12 @@ const ExtranetPricingTool = () => {
         offset: (pagination.page - 1) * pagination.limit
       });
       
-      if (selectedUser) params.append('user_id', selectedUser);
+      if (selectedUser && canViewAllLogs) params.append('user_id', selectedUser);
       if (providerCityFilter) params.append('provider_city', providerCityFilter);
       if (memberCityFilter) params.append('member_city', memberCityFilter);
+      if (customerNameFilter) params.append('customer_name', customerNameFilter);
+      if (startDateFilter) params.append('start_date', startDateFilter);
+      if (endDateFilter) params.append('end_date', endDateFilter);
       
       const response = await axios.get(`${API_BASE_URL}/extranet-pricing/logs?${params.toString()}`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
@@ -304,7 +317,7 @@ const ExtranetPricingTool = () => {
   };
 
   const loadUsersListForFilter = async () => {
-    if (!isAdmin) return;
+    if (!canViewAllLogs) return;
     
     try {
       const response = await axios.get(`${API_BASE_URL}/extranet-pricing/users`, {
@@ -367,6 +380,9 @@ const ExtranetPricingTool = () => {
     setSelectedUser('');
     setProviderCityFilter('');
     setMemberCityFilter('');
+    setCustomerNameFilter('');
+    setStartDateFilter('');
+    setEndDateFilter('');
     setPagination(prev => ({ ...prev, page: 1 }));
   };
 
@@ -374,10 +390,16 @@ const ExtranetPricingTool = () => {
     setExpandedBundles(prev => ({ ...prev, [bundleId]: !prev[bundleId] }));
   };
 
+  // Helper to parse calculation_breakdown JSON safely
+  const parseBreakdown = (raw) => {
+    if (!raw) return null;
+    try { return typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return { raw }; }
+  };
+
   const handleInputChange = (field, value) => {
     if (parametersLocked && field !== 'provider_region' && field !== 'selected_provider' && field !== 'selected_product') return;
-    // Lock contract_term and currency after first basket item
-    if (basketItems.length > 0 && (field === 'contract_term' || field === 'currency_requested')) return;
+    // Lock contract_term, currency, and customer_name after first basket item
+    if (basketItems.length > 0 && (field === 'contract_term' || field === 'currency_requested' || field === 'customer_name')) return;
     
     setFormData(prev => {
       const updated = { ...prev, [field]: value };
@@ -568,6 +590,7 @@ const ExtranetPricingTool = () => {
         provider_primary_city: formData.provider_primary_city?.city_name,
         provider_secondary_city: formData.provider_secondary_city?.city_name || null,
         provider_region: formData.provider_region,
+        customer_name: formData.customer_name || null,
         member_primary_city: formData.member_primary_city?.city_name,
         member_secondary_city: formData.member_secondary_city?.city_name || null,
         member_resiliency: formData.member_resiliency,
@@ -582,7 +605,8 @@ const ExtranetPricingTool = () => {
         discount_percent: 0,
         isf: formData.isf || null,
         provider_name: formData.provider_name || null,
-        product_name: formData.product_name || null
+        product_name: formData.product_name || null,
+        skip_log: true  // Don't log individual basket items — bundle endpoint logs them
       }, {
         headers: { 
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
@@ -718,11 +742,15 @@ const ExtranetPricingTool = () => {
         product_name: item.formSnapshot.product_name || null
       }));
 
+      // Use customer_name from formData or from the first basket item's snapshot
+      const customerName = formData.customer_name || basketItems[0]?.formSnapshot?.customer_name || '';
+
       const response = await axios.post(`${API_BASE_URL}/extranet-pricing/calculate-bundle`, {
         items,
         contract_term: formData.contract_term,
         currency_requested: formData.currency_requested,
-        discount_percent: parseFloat(selectedBundleDiscount) || 0
+        discount_percent: parseFloat(selectedBundleDiscount) || 0,
+        customer_name: customerName || null
       }, {
         headers: { 
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
@@ -772,6 +800,7 @@ const ExtranetPricingTool = () => {
         isf: item.isf_code || '',
         provider_name: item.provider_name || '',
         product_name: item.product_name || '',
+        customer_name: bundleLog.customer_name || '',
         member_primary_city: findCity(item.member_primary_city),
         member_secondary_city: item.member_secondary_city ? findCity(item.member_secondary_city) : null,
         member_resiliency: item.member_resiliency || '',
@@ -798,6 +827,7 @@ const ExtranetPricingTool = () => {
     setSelectedBundleDiscount('');
     setFormData(prev => ({
       ...prev,
+      customer_name: bundleLog.customer_name || prev.customer_name,
       contract_term: bundleLog.contract_term || prev.contract_term,
       currency_requested: bundleLog.currency || prev.currency_requested
     }));
@@ -817,6 +847,7 @@ const ExtranetPricingTool = () => {
       isf: '',
       provider_name: '',
       product_name: '',
+      customer_name: '',
       member_primary_city: null,
       member_secondary_city: null,
       member_resiliency: '',
@@ -845,10 +876,11 @@ const ExtranetPricingTool = () => {
     const timestamp = new Date().toLocaleString();
     const currency = formData.currency_requested || 'USD';
     
-    let content = `EXTRANET PRICING BUNDLE QUOTE\nGenerated: ${timestamp}\nContract Term: ${formData.contract_term} months\nCurrency: ${currency}\n================================================\n\n`;
+    const customerName = formData.customer_name || basketItems[0]?.formSnapshot?.customer_name || '';
+    let content = `EXTRANET PRICING BUNDLE QUOTE\nGenerated: ${timestamp}\n${customerName ? `Customer: ${customerName}\n` : ''}Contract Term: ${formData.contract_term} months\nCurrency: ${currency}\n================================================\n\n`;
 
     if (bundleResult) {
-      content += `BUNDLE SUMMARY\n--------------\nItems in Bundle: ${bundleResult.bundle_pricing.item_count}\nMRC Discount Applied: ${bundleResult.bundle_pricing.mrc_discount_percent}%\nTotal MRC: ${formatCurrency(bundleResult.bundle_pricing.total_mrc, currency)}\nTotal NRC: ${formatCurrency(bundleResult.bundle_pricing.total_nrc, currency)}\n`;
+      content += `BUNDLE SUMMARY\n--------------\nItems in Bundle: ${bundleResult.bundle.item_count}\nMRC Discount Applied: ${bundleResult.bundle_pricing.mrc_discount_percent}%\nTotal MRC: ${formatCurrency(bundleResult.bundle_pricing.total_mrc, currency)}\nTotal NRC: ${formatCurrency(bundleResult.bundle_pricing.total_nrc, currency)}\n`;
       if (bundleResult.bundle.has_poa_items) content += '⚠ Some items are POA (Price On Application)\n';
       content += '\n================================================\n\n';
     }
@@ -1018,8 +1050,8 @@ const ExtranetPricingTool = () => {
         )}
       </Box>
 
-      {/* Tabs - only show Pricing Logs tab for admins */}
-      {isAdmin && (
+      {/* Tabs - show Pricing Logs tab for all users with extranet_data access */}
+      {canViewLogs && (
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
           <Tabs value={currentTab} onChange={(e, v) => setCurrentTab(v)}>
             <Tab icon={<CalculateIcon />} label="Pricing Calculator" />
@@ -1202,6 +1234,18 @@ const ExtranetPricingTool = () => {
                 <Box sx={{ mb: 3 }}>
                   <SectionHeader icon={PersonIcon} title="Member Location & Details" color="secondary" />
                   <Grid container spacing={2}>
+                    <Grid item xs={12}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Member Customer Name"
+                        value={formData.customer_name}
+                        onChange={(e) => handleInputChange('customer_name', e.target.value)}
+                        disabled={parametersLocked || basketItems.length > 0}
+                        placeholder="Enter customer name"
+                        helperText={basketItems.length > 0 ? 'Locked — shared across all basket items' : ''}
+                      />
+                    </Grid>
                     <Grid item xs={12}>
                       <Autocomplete
                         options={cities}
@@ -1861,34 +1905,43 @@ const ExtranetPricingTool = () => {
         )}
       </TabPanel>
 
-      {/* Pricing Logs Tab (Admin Only) */}
-      {isAdmin && (
+      {/* Pricing Logs Tab */}
+      {canViewLogs && (
         <TabPanel value={currentTab} index={1}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-            <Typography variant="h6">Pricing Logs</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="h6">Pricing Logs</Typography>
+              {!canViewAllLogs && (
+                <Chip label="Your Logs Only" size="small" color="warning" variant="outlined" />
+              )}
+            </Box>
             <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
               <Chip 
                 label={`Showing ${pricingLogs.length} of ${pagination.total} entries (Page ${pagination.page}/${pagination.totalPages || 1})`} 
                 color="info" 
                 size="small"
               />
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={handleExportLogs}
-                startIcon={<DownloadIcon />}
-              >
-                Export CSV
-              </Button>
-              <Button
-                variant="outlined"
-                color="error"
-                size="small"
-                onClick={handleClearLogs}
-                startIcon={<DeleteIcon />}
-              >
-                Clear Logs
-              </Button>
+              {canViewAllLogs && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={handleExportLogs}
+                  startIcon={<DownloadIcon />}
+                >
+                  Export CSV
+                </Button>
+              )}
+              {canManageLogs && (
+                <Button
+                  variant="outlined"
+                  color="error"
+                  size="small"
+                  onClick={handleClearLogs}
+                  startIcon={<DeleteIcon />}
+                >
+                  Clear Logs
+                </Button>
+              )}
             </Box>
           </Box>
 
@@ -1896,23 +1949,39 @@ const ExtranetPricingTool = () => {
           <Card sx={{ mb: 3 }}>
             <CardContent>
               <Grid container spacing={2} alignItems="center">
-                <Grid item xs={12} md={3}>
+                {canViewAllLogs && (
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      select
+                      size="small"
+                      label="User"
+                      value={selectedUser}
+                      onChange={(e) => { setSelectedUser(e.target.value); setPagination(prev => ({ ...prev, page: 1 })); }}
+                    >
+                      <MenuItem value="">All Users</MenuItem>
+                      {usersList.map(u => (
+                        <MenuItem key={u.id} value={u.id}>{u.username}</MenuItem>
+                      ))}
+                    </TextField>
+                  </Grid>
+                )}
+                
+                <Grid item xs={12} sm={6} md={3}>
                   <TextField
                     fullWidth
-                    select
                     size="small"
-                    label="User"
-                    value={selectedUser}
-                    onChange={(e) => { setSelectedUser(e.target.value); setPagination(prev => ({ ...prev, page: 1 })); }}
-                  >
-                    <MenuItem value="">All Users</MenuItem>
-                    {usersList.map(u => (
-                      <MenuItem key={u.id} value={u.id}>{u.username}</MenuItem>
-                    ))}
-                  </TextField>
+                    label="Customer Name"
+                    value={customerNameFilter}
+                    onChange={(e) => { setCustomerNameFilter(e.target.value); setPagination(prev => ({ ...prev, page: 1 })); }}
+                    placeholder="Search customer..."
+                    InputProps={{
+                      startAdornment: <InputAdornment position="start"><SearchIcon /></InputAdornment>,
+                    }}
+                  />
                 </Grid>
                 
-                <Grid item xs={12} md={3}>
+                <Grid item xs={12} sm={6} md={3}>
                   <TextField
                     fullWidth
                     size="small"
@@ -1926,7 +1995,7 @@ const ExtranetPricingTool = () => {
                   />
                 </Grid>
                 
-                <Grid item xs={12} md={3}>
+                <Grid item xs={12} sm={6} md={3}>
                   <TextField
                     fullWidth
                     size="small"
@@ -1940,7 +2009,31 @@ const ExtranetPricingTool = () => {
                   />
                 </Grid>
                 
-                <Grid item xs={12} md={3}>
+                <Grid item xs={12} sm={6} md={3}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Start Date"
+                    type="date"
+                    value={startDateFilter}
+                    onChange={(e) => { setStartDateFilter(e.target.value); setPagination(prev => ({ ...prev, page: 1 })); }}
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+                
+                <Grid item xs={12} sm={6} md={3}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="End Date"
+                    type="date"
+                    value={endDateFilter}
+                    onChange={(e) => { setEndDateFilter(e.target.value); setPagination(prev => ({ ...prev, page: 1 })); }}
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+                
+                <Grid item xs={12} sm={6} md={3}>
                   <Button
                     fullWidth
                     variant="outlined"
@@ -1969,6 +2062,7 @@ const ExtranetPricingTool = () => {
                     <TableCell><strong>Type</strong></TableCell>
                     <TableCell><strong>Timestamp</strong></TableCell>
                     <TableCell><strong>User</strong></TableCell>
+                    <TableCell><strong>Customer</strong></TableCell>
                     <TableCell><strong>Provider City</strong></TableCell>
                     <TableCell><strong>Member City</strong></TableCell>
                     <TableCell><strong>Resiliency</strong></TableCell>
@@ -1983,7 +2077,7 @@ const ExtranetPricingTool = () => {
                 <TableBody>
                   {pricingLogs.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={13} align="center" sx={{ py: 4 }}>
+                      <TableCell colSpan={14} align="center" sx={{ py: 4 }}>
                         <Typography color="text.secondary">No pricing logs found</Typography>
                       </TableCell>
                     </TableRow>
@@ -2028,6 +2122,11 @@ const ExtranetPricingTool = () => {
                                   {log.username || log.full_name || 'Unknown'}
                                 </Typography>
                               </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                  {log.customer_name || '-'}
+                                </Typography>
+                              </TableCell>
                               <TableCell colSpan={2}>
                                 <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.7rem', fontStyle: 'italic' }}>
                                   {log.item_count} connections — click to expand
@@ -2068,7 +2167,7 @@ const ExtranetPricingTool = () => {
                                     size="small" 
                                     color="primary"
                                     onClick={(e) => {
-                                      e.stopPropagation(); // Don't toggle expand
+                                      e.stopPropagation();
                                       handleReloadBasket(log);
                                     }}
                                     sx={{ p: 0.5 }}
@@ -2079,143 +2178,231 @@ const ExtranetPricingTool = () => {
                               </TableCell>
                             </TableRow>
                             {/* Expanded bundle items */}
-                            {isExpanded && log.items && log.items.map((item, idx) => (
-                              <TableRow 
-                                key={`bundle-${log.id}-item-${item.id || idx}`}
-                                sx={{ backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.02) }}
-                              >
-                                <TableCell></TableCell>
-                                <TableCell>
-                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                    <Box sx={{ width: 16, borderLeft: '2px solid', borderBottom: '2px solid', borderColor: 'divider', height: 12, ml: 1 }} />
-                                    <Typography variant="body2" sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
-                                      Item {idx + 1}
-                                    </Typography>
-                                    {item.provider_name && (
-                                      <Chip label={item.provider_name} size="small" variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
-                                    )}
-                                  </Box>
-                                </TableCell>
-                                <TableCell>
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
-                                    {new Date(item.lookup_timestamp).toLocaleString()}
-                                  </Typography>
-                                </TableCell>
-                                <TableCell></TableCell>
-                                <TableCell>
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {item.provider_primary_city}
-                                  </Typography>
-                                </TableCell>
-                                <TableCell>
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {item.member_primary_city}
-                                  </Typography>
-                                </TableCell>
-                                <TableCell>
-                                  <Chip label={item.member_resiliency} size="small" sx={{ fontSize: '0.6rem', height: 18 }} />
-                                </TableCell>
-                                <TableCell>
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {item.bandwidth}
-                                  </Typography>
-                                </TableCell>
-                                <TableCell>
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {item.contract_term}m
-                                  </Typography>
-                                </TableCell>
-                                <TableCell></TableCell>
-                                <TableCell align="right">
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {item.currency_requested} {roundUpToNearest5(item.final_mrc || 0).toLocaleString()}
-                                  </Typography>
-                                </TableCell>
-                                <TableCell align="right">
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {item.currency_requested} {roundUpToNearest5(item.final_nrc || 0).toLocaleString()}
-                                  </Typography>
-                                </TableCell>
-                                <TableCell></TableCell>
-                              </TableRow>
-                            ))}
+                            {isExpanded && log.items && log.items.map((item, idx) => {
+                              const itemBreakdown = canManageLogs ? parseBreakdown(item.calculation_breakdown) : null;
+                              return (
+                                <React.Fragment key={`bundle-${log.id}-item-${item.id || idx}`}>
+                                  <TableRow 
+                                    sx={{ backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.02) }}
+                                  >
+                                    <TableCell></TableCell>
+                                    <TableCell>
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                        <Box sx={{ width: 16, borderLeft: '2px solid', borderBottom: '2px solid', borderColor: 'divider', height: 12, ml: 1 }} />
+                                        <Typography variant="body2" sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
+                                          Item {idx + 1}
+                                        </Typography>
+                                        {item.provider_name && (
+                                          <Chip label={item.provider_name} size="small" variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+                                        )}
+                                      </Box>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Typography variant="body2" sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
+                                        {new Date(item.lookup_timestamp).toLocaleString()}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell></TableCell>
+                                    <TableCell></TableCell>
+                                    <TableCell>
+                                      <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                        {item.provider_primary_city}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                        {item.member_primary_city}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Chip label={item.member_resiliency} size="small" sx={{ fontSize: '0.6rem', height: 18 }} />
+                                    </TableCell>
+                                    <TableCell>
+                                      <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                        {item.bandwidth}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                        {item.contract_term}m
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell></TableCell>
+                                    <TableCell align="right">
+                                      <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                        {item.currency_requested} {roundUpToNearest5(item.final_mrc || 0).toLocaleString()}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell align="right">
+                                      <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                        {item.currency_requested} {roundUpToNearest5(item.final_nrc || 0).toLocaleString()}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell></TableCell>
+                                  </TableRow>
+                                  {/* Admin only: Inline calculation breakdown JSON */}
+                                  {canManageLogs && itemBreakdown && (
+                                    <TableRow sx={{ backgroundColor: (theme) => alpha(theme.palette.grey[500], 0.06) }}>
+                                      <TableCell></TableCell>
+                                      <TableCell colSpan={13}>
+                                        <Box sx={{ pl: 4 }}>
+                                          <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                                            Calculation Breakdown (JSON)
+                                          </Typography>
+                                          <Box
+                                            component="pre"
+                                            sx={{
+                                              fontSize: '0.65rem',
+                                              backgroundColor: 'grey.100',
+                                              border: '1px solid',
+                                              borderColor: 'grey.300',
+                                              borderRadius: 1,
+                                              p: 1.5,
+                                              m: 0,
+                                              maxHeight: 300,
+                                              overflow: 'auto',
+                                              whiteSpace: 'pre-wrap',
+                                              wordBreak: 'break-word',
+                                              fontFamily: 'monospace'
+                                            }}
+                                          >
+                                            {JSON.stringify(itemBreakdown, null, 2)}
+                                          </Box>
+                                        </Box>
+                                      </TableCell>
+                                    </TableRow>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
                           </React.Fragment>
                         );
                       }
                       
                       // Individual log row
+                      const individualBreakdown = canManageLogs ? parseBreakdown(log.calculation_breakdown) : null;
+                      const isIndividualExpanded = canManageLogs && expandedBundles[`ind-${log.id}`];
                       return (
-                        <TableRow key={`log-${log.id}`} hover>
-                          <TableCell></TableCell>
-                          <TableCell>
-                            <Chip
-                              label="Individual"
-                              size="small"
-                              variant="outlined"
-                              sx={{ fontSize: '0.65rem' }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {new Date(log.lookup_timestamp).toLocaleString()}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {log.username || log.full_name || 'Unknown'}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {log.provider_primary_city}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {log.member_primary_city}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Chip 
-                              label={log.member_resiliency} 
-                              size="small" 
-                              sx={{ fontSize: '0.65rem' }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {log.bandwidth}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {log.contract_term}m
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            {log.discount_requested ? (
-                              <Chip 
-                                label={`${log.discount_percent || 0}%`} 
-                                size="small" 
-                                color="success"
+                        <React.Fragment key={`log-${log.id}`}>
+                          <TableRow 
+                            hover
+                            onClick={canManageLogs ? () => setExpandedBundles(prev => ({ ...prev, [`ind-${log.id}`]: !prev[`ind-${log.id}`] })) : undefined}
+                            sx={{ cursor: canManageLogs ? 'pointer' : 'default' }}
+                          >
+                            <TableCell sx={{ width: 30, px: 1 }}>
+                              {canManageLogs && individualBreakdown && (
+                                <IconButton size="small" sx={{ p: 0 }}>
+                                  {isIndividualExpanded ? <KeyboardArrowDownIcon fontSize="small" /> : <KeyboardArrowRightIcon fontSize="small" />}
+                                </IconButton>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Chip
+                                label="Individual"
+                                size="small"
+                                variant="outlined"
                                 sx={{ fontSize: '0.65rem' }}
                               />
-                            ) : (
-                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
-                            )}
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                              {log.currency_requested} {roundUpToNearest5(log.final_mrc || 0).toLocaleString()}
-                            </Typography>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {log.currency_requested} {roundUpToNearest5(log.final_nrc || 0).toLocaleString()}
-                            </Typography>
-                          </TableCell>
-                          <TableCell></TableCell>
-                        </TableRow>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {new Date(log.lookup_timestamp).toLocaleString()}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {log.username || log.full_name || 'Unknown'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {log.customer_name || '-'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {log.provider_primary_city}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {log.member_primary_city}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Chip 
+                                label={log.member_resiliency} 
+                                size="small" 
+                                sx={{ fontSize: '0.65rem' }}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {log.bandwidth}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {log.contract_term}m
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              {log.discount_requested ? (
+                                <Chip 
+                                  label={`${log.discount_percent || 0}%`} 
+                                  size="small" 
+                                  color="success"
+                                  sx={{ fontSize: '0.65rem' }}
+                                />
+                              ) : (
+                                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
+                              )}
+                            </TableCell>
+                            <TableCell align="right">
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                {log.currency_requested} {roundUpToNearest5(log.final_mrc || 0).toLocaleString()}
+                              </Typography>
+                            </TableCell>
+                            <TableCell align="right">
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {log.currency_requested} {roundUpToNearest5(log.final_nrc || 0).toLocaleString()}
+                              </Typography>
+                            </TableCell>
+                            <TableCell></TableCell>
+                          </TableRow>
+                          {/* Admin only: Inline calculation breakdown JSON */}
+                          {isIndividualExpanded && individualBreakdown && (
+                            <TableRow sx={{ backgroundColor: (theme) => alpha(theme.palette.grey[500], 0.06) }}>
+                              <TableCell></TableCell>
+                              <TableCell colSpan={13}>
+                                <Box sx={{ pl: 2 }}>
+                                  <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                                    Calculation Breakdown (JSON)
+                                  </Typography>
+                                  <Box
+                                    component="pre"
+                                    sx={{
+                                      fontSize: '0.65rem',
+                                      backgroundColor: 'grey.100',
+                                      border: '1px solid',
+                                      borderColor: 'grey.300',
+                                      borderRadius: 1,
+                                      p: 1.5,
+                                      m: 0,
+                                      maxHeight: 300,
+                                      overflow: 'auto',
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-word',
+                                      fontFamily: 'monospace'
+                                    }}
+                                  >
+                                    {JSON.stringify(individualBreakdown, null, 2)}
+                                  </Box>
+                                </Box>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </React.Fragment>
                       );
                     })
                   )}

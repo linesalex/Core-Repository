@@ -556,6 +556,13 @@ export const getAnalyticsExtranetPricing = (startDate, endDate) => {
   return api.get(`${API_BASE_URL}/analytics/extranet-pricing`, { params }).then(res => res.data);
 };
 
+export const getAnalyticsOneDirectory = (startDate, endDate) => {
+  const params = {};
+  if (startDate) params.start_date = startDate;
+  if (endDate) params.end_date = endDate;
+  return api.get(`${API_BASE_URL}/analytics/one-directory`, { params }).then(res => res.data);
+};
+
 // ====================================
 // EXTRANET PRICING TOOL API
 // ====================================

@@ -63,6 +63,8 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
   const [filterCurrency, setFilterCurrency] = useState('');
   const [filterContractTerm, setFilterContractTerm] = useState('');
   const [filterCableSystem, setFilterCableSystem] = useState('');
+  const [filterTransitCountries, setFilterTransitCountries] = useState('');
+  const [filterTransitCities, setFilterTransitCities] = useState('');
   const [filterMinMrc, setFilterMinMrc] = useState('');
   const [filterMaxMrc, setFilterMaxMrc] = useState('');
   const [filterMinNrc, setFilterMinNrc] = useState('');
@@ -98,8 +100,8 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
   const activeFilterCount = [
     filterRegion, filterServiceType, filterCarrier, filterDateFrom, filterDateTo,
     filterLocation, filterLocationA, filterLocationB, filterProtection, filterBandwidthUnit, filterCurrency,
-    filterContractTerm, filterCableSystem, filterMinMrc, filterMaxMrc,
-    filterMinNrc, filterMaxNrc
+    filterContractTerm, filterCableSystem, filterTransitCountries, filterTransitCities,
+    filterMinMrc, filterMaxMrc, filterMinNrc, filterMaxNrc
   ].filter(Boolean).length;
 
   // Load quotes
@@ -121,6 +123,8 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
         currency: filterCurrency || undefined,
         contract_term: filterContractTerm || undefined,
         cable_system: filterCableSystem || undefined,
+        transit_countries: filterTransitCountries || undefined,
+        transit_cities: filterTransitCities || undefined,
         min_mrc: filterMinMrc || undefined,
         max_mrc: filterMaxMrc || undefined,
         min_nrc: filterMinNrc || undefined,
@@ -140,8 +144,8 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
     }
   }, [searchTerm, filterCarrier, filterRegion, filterServiceType, filterDateFrom, filterDateTo,
       filterLocation, filterLocationA, filterLocationB, filterProtection, filterBandwidthUnit, filterCurrency,
-      filterContractTerm, filterCableSystem, filterMinMrc, filterMaxMrc,
-      filterMinNrc, filterMaxNrc, orderBy, order, page, rowsPerPage]);
+      filterContractTerm, filterCableSystem, filterTransitCountries, filterTransitCities,
+      filterMinMrc, filterMaxMrc, filterMinNrc, filterMaxNrc, orderBy, order, page, rowsPerPage]);
 
   useEffect(() => {
     loadQuotes();
@@ -169,6 +173,8 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
     setFilterCurrency('');
     setFilterContractTerm('');
     setFilterCableSystem('');
+    setFilterTransitCountries('');
+    setFilterTransitCities('');
     setFilterMinMrc('');
     setFilterMaxMrc('');
     setFilterMinNrc('');
@@ -283,7 +289,9 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
         bandwidth_unit: filterBandwidthUnit,
         currency: filterCurrency,
         contract_term: filterContractTerm,
-        cable_system: filterCableSystem
+        cable_system: filterCableSystem,
+        transit_countries: filterTransitCountries,
+        transit_cities: filterTransitCities
       });
     } catch (err) {
       setError('Failed to export CSV');
@@ -464,6 +472,26 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
                 placeholder="Cable System..."
                 value={filterCableSystem}
                 onChange={(e) => setFilterCableSystem(e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={6} md={1.5}>
+              <TextField
+                fullWidth
+                size="small"
+                placeholder="Transit Countries..."
+                value={filterTransitCountries}
+                onChange={(e) => setFilterTransitCountries(e.target.value)}
+                helperText="Comma for multiple"
+              />
+            </Grid>
+            <Grid item xs={6} md={1.5}>
+              <TextField
+                fullWidth
+                size="small"
+                placeholder="Transit Cities..."
+                value={filterTransitCities}
+                onChange={(e) => setFilterTransitCities(e.target.value)}
+                helperText="Comma for multiple"
               />
             </Grid>
             <Grid item xs={6} md={1.5}>

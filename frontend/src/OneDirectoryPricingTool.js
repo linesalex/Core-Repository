@@ -16,6 +16,7 @@ import DownloadIcon from '@mui/icons-material/Download';
 import InfoIcon from '@mui/icons-material/Info';
 import HistoryIcon from '@mui/icons-material/History';
 import DeleteIcon from '@mui/icons-material/Delete';
+import EditIcon from '@mui/icons-material/Edit';
 import FilterListOffIcon from '@mui/icons-material/FilterListOff';
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
@@ -40,37 +41,46 @@ function TabPanel(props) {
 
 const OneDirectoryPricingTool = () => {
   const { user } = useAuth();
-  const isAdmin = user && user.role === 'administrator';
+  const [logsPermissionLevel, setLogsPermissionLevel] = useState('read_only'); // read_only | provisioner | admin
 
   // Tab state
   const [currentTab, setCurrentTab] = useState(0);
 
   // Form state
-  const [formData, setFormData] = useState({
-    directory_users: '',
-    customer_location: null,
-    member_resiliency: '',
-    member_on_off_net: 'On Net',
-    b2b_agility: false,
-    safe_connect_required: false,
-    safe_connect_bandwidth: '',
-    contract_term: 12,
-    currency_requested: 'USD'
+  const [formData, setFormData] = useState(() => {
+    const savedCurrency = sessionStorage.getItem('oneDirectoryCurrency');
+    return {
+      customer_name: '',
+      directory_users: '',
+      customer_location: null,
+      member_resiliency: '',
+      member_on_off_net: 'On Net',
+      b2b_agility: false,
+      safe_connect_required: false,
+      safe_connect_bandwidth: '',
+      contract_term: 12,
+      currency_requested: savedCurrency || 'USD'
+    };
   });
 
   // Data states
   const [cities, setCities] = useState([]);
   const [currencies, setCurrencies] = useState([{ currency_code: 'USD', currency_name: 'US Dollar' }]);
   const [safeConnectOptions, setSafeConnectOptions] = useState(['3Mb', '5Mb', '10Mb']);
-  const [bundleTiers, setBundleTiers] = useState({ tier_1_max: 3, tier_2_max: 5 });
 
-  // Shopping basket states
-  const [basketItems, setBasketItems] = useState([]);
-  const [bundleDiscounts, setBundleDiscounts] = useState({
-    mrc: { '1_3': 0, '4_5': 0, '6_plus': 0 },
-    nrc: { '1_3': 0, '4_5': 0, '6_plus': 0 }
+  // Shopping basket states — restore from sessionStorage on mount
+  const [basketItems, setBasketItems] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('oneDirectoryBasket');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
   });
-  const [bundleResult, setBundleResult] = useState(null);
+  const [bundleResult, setBundleResult] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('oneDirectoryBundleResult');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
   const [bundleLoading, setBundleLoading] = useState(false);
   const [expandedBasketItems, setExpandedBasketItems] = useState({});
 
@@ -78,12 +88,40 @@ const OneDirectoryPricingTool = () => {
     setExpandedBasketItems(prev => ({ ...prev, [itemId]: !prev[itemId] }));
   };
 
+  // Persist basket to sessionStorage whenever it changes
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('oneDirectoryBasket', JSON.stringify(basketItems));
+    } catch { /* ignore quota errors */ }
+  }, [basketItems]);
+
+  useEffect(() => {
+    try {
+      if (bundleResult) {
+        sessionStorage.setItem('oneDirectoryBundleResult', JSON.stringify(bundleResult));
+      } else {
+        sessionStorage.removeItem('oneDirectoryBundleResult');
+      }
+    } catch { /* ignore */ }
+  }, [bundleResult]);
+
+  // Persist currency selection when basket has items
+  useEffect(() => {
+    if (basketItems.length > 0) {
+      sessionStorage.setItem('oneDirectoryCurrency', formData.currency_requested);
+    }
+  }, [formData.currency_requested, basketItems.length]);
+
   // Pricing logs states
   const [pricingLogs, setPricingLogs] = useState([]);
   const [usersList, setUsersList] = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [selectedUser, setSelectedUser] = useState('');
+  const [customerNameFilter, setCustomerNameFilter] = useState('');
+  const [startDateFilter, setStartDateFilter] = useState('');
+  const [endDateFilter, setEndDateFilter] = useState('');
   const [expandedBundles, setExpandedBundles] = useState({});
+  const [expandedLogItems, setExpandedLogItems] = useState({});
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 100,
@@ -96,17 +134,24 @@ const OneDirectoryPricingTool = () => {
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [expandedAccordion, setExpandedAccordion] = useState('form');
+  const [editingItemId, setEditingItemId] = useState(null);
+  const [expandedAccordion, setExpandedAccordion] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('oneDirectoryBasket');
+      const items = saved ? JSON.parse(saved) : [];
+      return items.length > 0 ? 'basket' : 'form';
+    } catch { return 'form'; }
+  });
 
   // Pricing terms for display and export
   const pricingTerms = [
-    'Pricing is provided for connectivity between on-net locations with sufficient capacity.',
     'Off-net pricing is strictly budgetary, subject to site survey and official pricing confirmation.',
     'All terms are subject to MSA terms and conditions.',
     'All Pricing is exclusive of any applicable Taxes and Surcharges.',
     'Customer must provide all necessary rack space and power supply.',
     'Any additional 3rd Party costs incurred on order of the service will be chargeable to the customer.',
-    'Pricing is for connectivity only and does not include any fees associated with data feeds.'
+    'Pricing is for connectivity only and does not include any fees associated with data feeds.',
+    'Pricing valid for 30 days from issuance.'
   ];
 
   // Resiliency options
@@ -122,17 +167,19 @@ const OneDirectoryPricingTool = () => {
 
   // Load pricing logs when tab changes to logs (admin only)
   useEffect(() => {
-    if (currentTab === 1 && isAdmin) {
+    if (currentTab === 1) {
       loadPricingLogs();
-      loadUsersListForFilter();
+      if (logsPermissionLevel !== 'read_only') {
+        loadUsersListForFilter();
+      }
     }
-  }, [currentTab, pagination.page, pagination.limit, selectedUser]);
+  }, [currentTab, pagination.page, pagination.limit, selectedUser, customerNameFilter, startDateFilter, endDateFilter, logsPermissionLevel]);
 
   const loadInitialData = async () => {
     try {
       setInitialLoading(true);
 
-      const [citiesRes, currenciesRes, parametersRes, bundleDiscountsRes] = await Promise.all([
+      const [citiesRes, currenciesRes, parametersRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/extranet-pricing/cities`, {
           headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
         }),
@@ -141,10 +188,7 @@ const OneDirectoryPricingTool = () => {
         }),
         axios.get(`${API_BASE_URL}/voice/one-directory/parameters`, {
           headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
-        }),
-        axios.get(`${API_BASE_URL}/voice/one-directory/bundle-discounts`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
-        }).catch(() => ({ data: null }))
+        })
       ]);
 
       setCities(citiesRes.data);
@@ -162,13 +206,6 @@ const OneDirectoryPricingTool = () => {
           if (Array.isArray(parsed)) setSafeConnectOptions(parsed);
         } catch (e) { /* use defaults */ }
       }
-
-      if (bundleDiscountsRes.data) {
-        setBundleDiscounts(bundleDiscountsRes.data);
-        if (bundleDiscountsRes.data.tiers) {
-          setBundleTiers(bundleDiscountsRes.data.tiers);
-        }
-      }
     } catch (err) {
       console.error('Failed to load initial data:', err);
       setError('Failed to load initial data: ' + err.message);
@@ -178,20 +215,25 @@ const OneDirectoryPricingTool = () => {
   };
 
   const loadPricingLogs = async () => {
-    if (!isAdmin) return;
     try {
       setLogsLoading(true);
       const params = new URLSearchParams({
         limit: pagination.limit,
         offset: (pagination.page - 1) * pagination.limit
       });
-      if (selectedUser) params.append('user_id', selectedUser);
+      if (selectedUser && logsPermissionLevel !== 'read_only') params.append('user_id', selectedUser);
+      if (customerNameFilter) params.append('customer_name', customerNameFilter);
+      if (startDateFilter) params.append('start_date', startDateFilter);
+      if (endDateFilter) params.append('end_date', endDateFilter);
 
       const response = await axios.get(`${API_BASE_URL}/voice/one-directory/logs?${params.toString()}`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
       });
 
       setPricingLogs(response.data.data || []);
+      if (response.data.permission_level) {
+        setLogsPermissionLevel(response.data.permission_level);
+      }
       setPagination(prev => ({
         ...prev,
         total: response.data.pagination.total,
@@ -298,17 +340,23 @@ const OneDirectoryPricingTool = () => {
       });
 
       const newItem = {
-        id: Date.now(),
+        id: editingItemId || Date.now(),
         formSnapshot: { ...formData },
         result: response.data,
         poa: false
       };
 
-      setBasketItems(prev => [...prev, newItem]);
+      if (editingItemId) {
+        setBasketItems(prev => prev.map(item => item.id === editingItemId ? newItem : item));
+        setEditingItemId(null);
+        setSuccess('Item updated in basket');
+      } else {
+        setBasketItems(prev => [...prev, newItem]);
+        setSuccess(`Item added to basket (${basketItems.length + 1} items total)`);
+      }
       setBundleResult(null);
-      setSuccess(`Item added to basket (${basketItems.length + 1} items total)`);
 
-      // Reset form for next item (keep currency)
+      // Reset form for next item (keep currency and customer name)
       setFormData(prev => ({
         ...prev,
         directory_users: '',
@@ -323,15 +371,21 @@ const OneDirectoryPricingTool = () => {
     } catch (err) {
       if (err.response?.data?.poa) {
         const poaItem = {
-          id: Date.now(),
+          id: editingItemId || Date.now(),
           formSnapshot: { ...formData },
           result: err.response.data,
           poa: true,
           poaMessage: err.response.data.error
         };
-        setBasketItems(prev => [...prev, poaItem]);
+        if (editingItemId) {
+          setBasketItems(prev => prev.map(item => item.id === editingItemId ? poaItem : item));
+          setEditingItemId(null);
+          setSuccess('Item updated in basket (POA - Price On Application)');
+        } else {
+          setBasketItems(prev => [...prev, poaItem]);
+          setSuccess('Item added to basket (POA - Price On Application)');
+        }
         setBundleResult(null);
-        setSuccess('Item added to basket (POA - Price On Application)');
 
         setFormData(prev => ({
           ...prev,
@@ -355,6 +409,35 @@ const OneDirectoryPricingTool = () => {
   const handleRemoveFromBasket = (itemId) => {
     setBasketItems(prev => prev.filter(item => item.id !== itemId));
     setBundleResult(null);
+    if (editingItemId === itemId) {
+      setEditingItemId(null);
+    }
+  };
+
+  const handleEditBasketItem = (item) => {
+    // Populate the form with the item's snapshot data
+    setFormData({
+      ...item.formSnapshot,
+      // Ensure customer_location object is restored correctly
+      customer_location: item.formSnapshot.customer_location
+    });
+    setEditingItemId(item.id);
+    setBundleResult(null);
+    setExpandedAccordion('form');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingItemId(null);
+    setFormData(prev => ({
+      ...prev,
+      directory_users: '',
+      customer_location: null,
+      member_resiliency: '',
+      member_on_off_net: 'On Net',
+      b2b_agility: false,
+      safe_connect_required: false,
+      safe_connect_bandwidth: ''
+    }));
   };
 
   const handleCompleteBasket = async () => {
@@ -365,7 +448,7 @@ const OneDirectoryPricingTool = () => {
 
     const numericItems = basketItems.filter(item => !item.poa);
     if (numericItems.length === 0) {
-      setError('All items are POA - cannot apply bundle discount');
+      setError('All items are POA - cannot calculate bundle pricing');
       return;
     }
 
@@ -385,7 +468,8 @@ const OneDirectoryPricingTool = () => {
 
       const response = await axios.post(`${API_BASE_URL}/voice/one-directory/calculate-bundle`, {
         items,
-        currency_requested: formData.currency_requested
+        currency_requested: formData.currency_requested,
+        customer_name: formData.customer_name || basketItems[0]?.formSnapshot?.customer_name || null
       }, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
@@ -404,6 +488,7 @@ const OneDirectoryPricingTool = () => {
 
   const handleRefresh = () => {
     setFormData({
+      customer_name: '',
       directory_users: '',
       customer_location: null,
       member_resiliency: '',
@@ -416,8 +501,12 @@ const OneDirectoryPricingTool = () => {
     });
     setBasketItems([]);
     setBundleResult(null);
+    setEditingItemId(null);
     setError('');
     setExpandedAccordion('form');
+    sessionStorage.removeItem('oneDirectoryBasket');
+    sessionStorage.removeItem('oneDirectoryBundleResult');
+    sessionStorage.removeItem('oneDirectoryCurrency');
   };
 
   const handleExportToFile = () => {
@@ -426,10 +515,11 @@ const OneDirectoryPricingTool = () => {
     const timestamp = new Date().toLocaleString();
     const currency = formData.currency_requested || 'USD';
 
-    let content = `ONE DIRECTORY PRICING BUNDLE QUOTE\nGenerated: ${timestamp}\nCurrency: ${currency}\n================================================\n\n`;
+    const customerName = formData.customer_name || basketItems[0]?.formSnapshot?.customer_name || '';
+    let content = `ONE DIRECTORY PRICING BUNDLE QUOTE\nGenerated: ${timestamp}\n${customerName ? `Customer: ${customerName}\n` : ''}Currency: ${currency}\n================================================\n\n`;
 
     if (bundleResult) {
-      content += `BUNDLE SUMMARY\n--------------\nItems in Bundle: ${bundleResult.bundle.item_count}\nMRC Discount Applied: ${bundleResult.bundle.mrc_discount_percent}%\nTotal MRC: ${formatCurrency(bundleResult.bundle.total_mrc, currency)}\nTotal NRC: ${formatCurrency(bundleResult.bundle.total_nrc, currency)}\n`;
+      content += `BUNDLE SUMMARY\n--------------\nItems in Bundle: ${bundleResult.bundle.item_count}\nTotal MRC: ${formatCurrency(bundleResult.bundle.total_mrc, currency)}\nTotal NRC: ${formatCurrency(bundleResult.bundle.total_nrc, currency)}\n`;
       if (bundleResult.bundle.has_poa_items) content += '⚠ Some items are POA (Price On Application)\n';
       content += '\n================================================\n\n';
     }
@@ -450,7 +540,7 @@ const OneDirectoryPricingTool = () => {
         content += `ISFs: ${services.length}\n`;
         services.forEach(svc => {
           const mrc = svc.mrc_converted || svc.mrc_usd;
-          content += `  - ${svc.name}: ${svc.bandwidth} | MRC: ${svc.poa ? 'POA' : formatCurrency(mrc, currency)} | Discountable: ${svc.discountable ? 'Yes' : 'No'}\n`;
+          content += `  - ${svc.name}: ${svc.bandwidth} | MRC: ${svc.poa ? 'POA' : formatCurrency(mrc, currency)}\n`;
         });
         if (bItem?.pricing) {
           content += `Total MRC: ${formatCurrency(bItem.pricing.mrc, bItem.pricing.currency)}\nTotal NRC: ${formatCurrency(bItem.pricing.nrc, bItem.pricing.currency)}\n`;
@@ -553,15 +643,13 @@ const OneDirectoryPricingTool = () => {
         )}
       </Box>
 
-      {/* Tabs - only show Pricing Logs tab for admins */}
-      {isAdmin && (
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-          <Tabs value={currentTab} onChange={(e, v) => setCurrentTab(v)}>
-            <Tab icon={<CalculateIcon />} label="Pricing Calculator" />
-            <Tab icon={<HistoryIcon />} label="Pricing Logs" />
-          </Tabs>
-        </Box>
-      )}
+      {/* Tabs */}
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+        <Tabs value={currentTab} onChange={(e, v) => setCurrentTab(v)}>
+          <Tab icon={<CalculateIcon />} label="Pricing Calculator" />
+          <Tab icon={<HistoryIcon />} label="Pricing Logs" />
+        </Tabs>
+      </Box>
 
       {/* Error Display */}
       {error && (
@@ -580,14 +668,31 @@ const OneDirectoryPricingTool = () => {
         >
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <SettingsIcon />
-              <Typography variant="h6" sx={{ fontSize: '1rem' }}>Quote Parameters</Typography>
+              {editingItemId ? <EditIcon color="warning" /> : <SettingsIcon />}
+              <Typography variant="h6" sx={{ fontSize: '1rem' }}>
+                {editingItemId ? 'Edit Item' : 'Quote Parameters'}
+              </Typography>
+              {editingItemId && (
+                <Chip label="Editing" size="small" color="warning" sx={{ ml: 1 }} />
+              )}
             </Box>
           </AccordionSummary>
           <AccordionDetails>
             <Grid container spacing={3}>
               {/* Left Column */}
               <Grid item xs={12} md={6}>
+                {/* Customer Name Section */}
+                <Box sx={{ mb: 3 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Customer Name"
+                    value={formData.customer_name}
+                    onChange={(e) => setFormData(prev => ({ ...prev, customer_name: e.target.value }))}
+                    placeholder="Enter customer name"
+                  />
+                </Box>
+
                 {/* Directory Users Section */}
                 <Box sx={{ mb: 3 }}>
                   <SectionHeader icon={GroupIcon} title="Directory Users" color="primary" />
@@ -771,24 +876,30 @@ const OneDirectoryPricingTool = () => {
                     <SectionHeader icon={ShoppingCartIcon} title="Shopping Basket" color="success" />
                     <Alert severity="info" sx={{ mb: 1 }}>
                       <Typography variant="body2">
-                        <strong>{basketItems.length} item(s)</strong> in basket. 
-                        Bundle discount will be automatically applied when basket is completed (excludes One Control ISF).
+                        <strong>{basketItems.length} item(s)</strong> in basket.
                       </Typography>
                     </Alert>
-                    <Typography variant="caption" color="text.secondary">
-                      {(() => {
-                        const count = basketItems.length;
-                        const t1Max = bundleTiers.tier_1_max || 3;
-                        const t2Max = bundleTiers.tier_2_max || 5;
-                        const mrcDisc = count > t2Max ? bundleDiscounts.mrc['6_plus'] : count > t1Max ? bundleDiscounts.mrc['4_5'] : bundleDiscounts.mrc['1_3'];
-                        const nrcDisc = count > t2Max ? bundleDiscounts.nrc['6_plus'] : count > t1Max ? bundleDiscounts.nrc['4_5'] : bundleDiscounts.nrc['1_3'];
-                        const tierLabel = count > t2Max ? '3' : count > t1Max ? '2' : '1';
-                        return <>Tier {tierLabel} ({count} item{count !== 1 ? 's' : ''}): <strong>{mrcDisc}% MRC</strong> + <strong>{nrcDisc}% NRC</strong> discount applied automatically</>;
-                      })()}
-                    </Typography>
                   </Box>
                 )}
               </Grid>
+
+              {/* Edit mode banner */}
+              {editingItemId && (
+                <Grid item xs={12}>
+                  <Alert
+                    severity="warning"
+                    action={
+                      <Button color="inherit" size="small" onClick={handleCancelEdit}>
+                        Cancel Edit
+                      </Button>
+                    }
+                  >
+                    <Typography variant="body2">
+                      <strong>Editing item</strong> — modify the fields below and click "Update Item" to save changes.
+                    </Typography>
+                  </Alert>
+                </Grid>
+              )}
 
               {/* Action Buttons */}
               <Grid item xs={12}>
@@ -796,19 +907,32 @@ const OneDirectoryPricingTool = () => {
                   <Button
                     variant="contained"
                     size="large"
-                    startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <ShoppingCartIcon />}
+                    startIcon={loading ? <CircularProgress size={20} color="inherit" /> : editingItemId ? <EditIcon /> : <ShoppingCartIcon />}
                     onClick={handleCalculateAndAddToBasket}
                     disabled={loading || !formData.customer_location || !formData.directory_users || !formData.member_resiliency || (bundleResult !== null)}
                     sx={{ 
                       px: 4,
-                      background: (theme) => `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`,
+                      background: (theme) => editingItemId
+                        ? `linear-gradient(135deg, ${theme.palette.warning.main} 0%, ${theme.palette.warning.dark} 100%)`
+                        : `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`,
                       '&:hover': {
-                        background: (theme) => `linear-gradient(135deg, ${theme.palette.primary.dark} 0%, ${theme.palette.primary.main} 100%)`,
+                        background: (theme) => editingItemId
+                          ? `linear-gradient(135deg, ${theme.palette.warning.dark} 0%, ${theme.palette.warning.main} 100%)`
+                          : `linear-gradient(135deg, ${theme.palette.primary.dark} 0%, ${theme.palette.primary.main} 100%)`,
                       }
                     }}
                   >
-                    {loading ? 'Calculating...' : 'Calculate & Add to Basket'}
+                    {loading ? 'Calculating...' : editingItemId ? 'Update Item' : 'Calculate & Add to Basket'}
                   </Button>
+                  {editingItemId && (
+                    <Button
+                      variant="outlined"
+                      size="large"
+                      onClick={handleCancelEdit}
+                    >
+                      Cancel
+                    </Button>
+                  )}
                 </Box>
               </Grid>
             </Grid>
@@ -848,7 +972,7 @@ const OneDirectoryPricingTool = () => {
                       <TableCell align="center"><strong>ISFs</strong></TableCell>
                       <TableCell align="right"><strong>Total MRC</strong></TableCell>
                       <TableCell align="right"><strong>Total NRC</strong></TableCell>
-                      {!bundleResult && <TableCell sx={{ width: 40 }}></TableCell>}
+                      {!bundleResult && <TableCell sx={{ width: 70 }}></TableCell>}
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -866,7 +990,14 @@ const OneDirectoryPricingTool = () => {
                           <TableRow
                             hover
                             onClick={() => toggleBasketItemExpanded(item.id)}
-                            sx={{ cursor: 'pointer', '& > *': { borderBottom: isExpanded ? 'none' : undefined } }}
+                            sx={{
+                              cursor: 'pointer',
+                              '& > *': { borderBottom: isExpanded ? 'none' : undefined },
+                              ...(editingItemId === item.id && {
+                                backgroundColor: (theme) => alpha(theme.palette.warning.main, 0.08),
+                                '&:hover': { backgroundColor: (theme) => alpha(theme.palette.warning.main, 0.12) }
+                              })
+                            }}
                           >
                             <TableCell sx={{ px: 1 }}>
                               <IconButton size="small" sx={{ p: 0 }}>
@@ -933,13 +1064,26 @@ const OneDirectoryPricingTool = () => {
                             </TableCell>
                             {!bundleResult && (
                               <TableCell>
-                                <IconButton
-                                  size="small"
-                                  color="error"
-                                  onClick={(e) => { e.stopPropagation(); handleRemoveFromBasket(item.id); }}
-                                >
-                                  <DeleteIcon fontSize="small" />
-                                </IconButton>
+                                <Box sx={{ display: 'flex', gap: 0.5 }}>
+                                  <Tooltip title="Edit item">
+                                    <IconButton
+                                      size="small"
+                                      color="primary"
+                                      onClick={(e) => { e.stopPropagation(); handleEditBasketItem(item); }}
+                                    >
+                                      <EditIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                  <Tooltip title="Remove item">
+                                    <IconButton
+                                      size="small"
+                                      color="error"
+                                      onClick={(e) => { e.stopPropagation(); handleRemoveFromBasket(item.id); }}
+                                    >
+                                      <DeleteIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                </Box>
                               </TableCell>
                             )}
                           </TableRow>
@@ -955,7 +1099,6 @@ const OneDirectoryPricingTool = () => {
                                         <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Service (ISF)</TableCell>
                                         <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Bandwidth</TableCell>
                                         <TableCell align="right" sx={{ fontWeight: 600, color: 'text.secondary' }}>MRC</TableCell>
-                                        <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Discountable</TableCell>
                                       </TableRow>
                                     </TableHead>
                                     <TableBody>
@@ -978,34 +1121,28 @@ const OneDirectoryPricingTool = () => {
                                               formatCurrency(svc.mrc_converted || svc.mrc_usd, currency)
                                             )}
                                           </TableCell>
-                                          <TableCell>
-                                            {svc.discountable ? (
-                                              <Chip label="Yes" size="small" color="success" sx={{ fontSize: '0.6rem', height: 18 }} />
-                                            ) : (
-                                              <Chip label="No" size="small" color="default" sx={{ fontSize: '0.6rem', height: 18 }} />
-                                            )}
-                                          </TableCell>
                                         </TableRow>
                                       )) : (
                                         <>
                                           <TableRow>
                                             <TableCell>One Directory ISF</TableCell>
-                                            <TableCell>{item.result?.calculated_bandwidth?.directory || '-'}</TableCell>
+                                            <TableCell>
+                                              {typeof item.result?.calculated_bandwidth === 'object'
+                                                ? (item.result.calculated_bandwidth.directory || '-')
+                                                : (item.result?.calculated_bandwidth || '-')}
+                                            </TableCell>
                                             <TableCell align="right">—</TableCell>
-                                            <TableCell><Chip label="Yes" size="small" color="success" sx={{ fontSize: '0.6rem', height: 18 }} /></TableCell>
                                           </TableRow>
                                           <TableRow>
                                             <TableCell>One Control ISF</TableCell>
                                             <TableCell>5Mb</TableCell>
                                             <TableCell align="right">—</TableCell>
-                                            <TableCell><Chip label="No" size="small" color="default" sx={{ fontSize: '0.6rem', height: 18 }} /></TableCell>
                                           </TableRow>
                                           {snap.b2b_agility && (
                                             <TableRow>
                                               <TableCell>B2B Agility ISF</TableCell>
                                               <TableCell>10Mb</TableCell>
                                               <TableCell align="right">—</TableCell>
-                                              <TableCell><Chip label="Yes" size="small" color="success" sx={{ fontSize: '0.6rem', height: 18 }} /></TableCell>
                                             </TableRow>
                                           )}
                                           {snap.safe_connect_required && (
@@ -1013,7 +1150,6 @@ const OneDirectoryPricingTool = () => {
                                               <TableCell>Safe Connect ISF</TableCell>
                                               <TableCell>{snap.safe_connect_bandwidth}</TableCell>
                                               <TableCell align="right">—</TableCell>
-                                              <TableCell><Chip label="Yes" size="small" color="success" sx={{ fontSize: '0.6rem', height: 18 }} /></TableCell>
                                             </TableRow>
                                           )}
                                         </>
@@ -1038,7 +1174,10 @@ const OneDirectoryPricingTool = () => {
                     variant="outlined"
                     color="primary"
                     startIcon={<AddCircleOutlineIcon />}
-                    onClick={() => setExpandedAccordion('form')}
+                    onClick={() => {
+                      if (editingItemId) handleCancelEdit();
+                      setExpandedAccordion('form');
+                    }}
                     sx={{ borderStyle: 'dashed', px: 4, py: 1 }}
                   >
                     Add Additional Item
@@ -1057,7 +1196,7 @@ const OneDirectoryPricingTool = () => {
                     disabled={bundleLoading || basketItems.length === 0}
                     sx={{ px: 4 }}
                   >
-                    {bundleLoading ? 'Calculating...' : 'Complete Basket & Apply Discount'}
+                    {bundleLoading ? 'Calculating...' : 'Complete Basket'}
                   </Button>
                 </Box>
               )}
@@ -1140,18 +1279,6 @@ const OneDirectoryPricingTool = () => {
                             <Typography variant="body2" align="right" fontWeight={600}>{bundleResult.bundle.item_count}</Typography>
                           </Grid>
                           <Grid item xs={6}>
-                            <Typography variant="body2" color="text.secondary">MRC Discount</Typography>
-                          </Grid>
-                          <Grid item xs={6}>
-                            <Typography variant="body2" align="right" fontWeight={600}>{bundleResult.bundle.mrc_discount_percent}%</Typography>
-                          </Grid>
-                          <Grid item xs={6}>
-                            <Typography variant="body2" color="text.secondary">NRC Discount</Typography>
-                          </Grid>
-                          <Grid item xs={6}>
-                            <Typography variant="body2" align="right" fontWeight={600}>{bundleResult.bundle.nrc_discount_percent}%</Typography>
-                          </Grid>
-                          <Grid item xs={6}>
                             <Typography variant="body2" color="text.secondary">Currency</Typography>
                           </Grid>
                           <Grid item xs={6}>
@@ -1187,14 +1314,6 @@ const OneDirectoryPricingTool = () => {
                           <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
                             <span>Items in Bundle:</span>
                             <span style={{ fontWeight: 500 }}>{basketItems.length}</span>
-                          </Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                            <span>MRC Discount:</span>
-                            <span style={{ fontWeight: 500 }}>{bundleResult.bundle.mrc_discount_percent}%</span>
-                          </Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                            <span>NRC Discount:</span>
-                            <span style={{ fontWeight: 500 }}>{bundleResult.bundle.nrc_discount_percent}%</span>
                           </Box>
                           {bundleResult.bundle.exchange_rate && bundleResult.bundle.exchange_rate !== 1 && (
                             <>
@@ -1305,42 +1424,52 @@ const OneDirectoryPricingTool = () => {
         )}
       </TabPanel>
 
-      {/* Pricing Logs Tab (Admin Only) */}
-      {isAdmin && (
-        <TabPanel value={currentTab} index={1}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      {/* Pricing Logs Tab */}
+      <TabPanel value={currentTab} index={1}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography variant="h6">Pricing Logs</Typography>
-            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-              <Chip 
-                label={`Showing ${pricingLogs.length} of ${pagination.total} entries (Page ${pagination.page}/${pagination.totalPages || 1})`} 
-                color="info" 
-                size="small"
-              />
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={handleExportLogs}
-                startIcon={<DownloadIcon />}
-              >
-                Export CSV
-              </Button>
-              <Button
-                variant="outlined"
-                color="error"
-                size="small"
-                onClick={handleClearLogs}
-                startIcon={<DeleteIcon />}
-              >
-                Clear Logs
-              </Button>
-            </Box>
+            {logsPermissionLevel === 'read_only' && (
+              <Chip label="My Logs" size="small" color="default" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+            )}
           </Box>
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <Chip 
+              label={`Showing ${pricingLogs.length} of ${pagination.total} entries (Page ${pagination.page}/${pagination.totalPages || 1})`} 
+              color="info" 
+              size="small"
+            />
+            {logsPermissionLevel === 'admin' && (
+              <>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={handleExportLogs}
+                  startIcon={<DownloadIcon />}
+                >
+                  Export CSV
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  size="small"
+                  onClick={handleClearLogs}
+                  startIcon={<DeleteIcon />}
+                >
+                  Clear Logs
+                </Button>
+              </>
+            )}
+          </Box>
+        </Box>
 
-          {/* Search and Filter Controls */}
-          <Card sx={{ mb: 3 }}>
-            <CardContent>
-              <Grid container spacing={2} alignItems="center">
-                <Grid item xs={12} md={4}>
+        {/* Search and Filter Controls */}
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Grid container spacing={2} alignItems="center">
+              {/* User filter — only for provisioner/admin */}
+              {logsPermissionLevel !== 'read_only' && (
+                <Grid item xs={12} md={3}>
                   <TextField
                     fullWidth
                     select
@@ -1355,20 +1484,61 @@ const OneDirectoryPricingTool = () => {
                     ))}
                   </TextField>
                 </Grid>
-                <Grid item xs={12} md={4}>
-                  <Button
-                    fullWidth
-                    variant="outlined"
-                    size="small"
-                    onClick={() => { setSelectedUser(''); setPagination(prev => ({ ...prev, page: 1 })); }}
-                    startIcon={<FilterListOffIcon />}
-                  >
-                    Clear Filters
-                  </Button>
-                </Grid>
+              )}
+              {/* Customer name filter */}
+              <Grid item xs={12} md={logsPermissionLevel !== 'read_only' ? 3 : 4}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Customer Name"
+                  value={customerNameFilter}
+                  onChange={(e) => { setCustomerNameFilter(e.target.value); setPagination(prev => ({ ...prev, page: 1 })); }}
+                  placeholder="Search by customer name"
+                />
               </Grid>
-            </CardContent>
-          </Card>
+              {/* Date range filters */}
+              <Grid item xs={6} md={logsPermissionLevel !== 'read_only' ? 2 : 3}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="date"
+                  label="Start Date"
+                  value={startDateFilter}
+                  onChange={(e) => { setStartDateFilter(e.target.value); setPagination(prev => ({ ...prev, page: 1 })); }}
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+              <Grid item xs={6} md={logsPermissionLevel !== 'read_only' ? 2 : 3}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="date"
+                  label="End Date"
+                  value={endDateFilter}
+                  onChange={(e) => { setEndDateFilter(e.target.value); setPagination(prev => ({ ...prev, page: 1 })); }}
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+              <Grid item xs={12} md={2}>
+                <Button
+                  fullWidth
+                  variant="outlined"
+                  size="small"
+                  onClick={() => {
+                    setSelectedUser('');
+                    setCustomerNameFilter('');
+                    setStartDateFilter('');
+                    setEndDateFilter('');
+                    setPagination(prev => ({ ...prev, page: 1 }));
+                  }}
+                  startIcon={<FilterListOffIcon />}
+                >
+                  Clear Filters
+                </Button>
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
 
           {/* Logs Table */}
           {logsLoading ? (
@@ -1381,201 +1551,233 @@ const OneDirectoryPricingTool = () => {
                 <TableHead>
                   <TableRow sx={{ backgroundColor: 'grey.100' }}>
                     <TableCell sx={{ width: 30 }}></TableCell>
-                    <TableCell><strong>Type</strong></TableCell>
+                    <TableCell><strong>Bundle</strong></TableCell>
+                    <TableCell><strong>Customer</strong></TableCell>
                     <TableCell><strong>Timestamp</strong></TableCell>
                     <TableCell><strong>User</strong></TableCell>
-                    <TableCell><strong>Location</strong></TableCell>
-                    <TableCell><strong>Resiliency</strong></TableCell>
-                    <TableCell><strong>Bandwidth</strong></TableCell>
-                    <TableCell><strong>Term</strong></TableCell>
-                    <TableCell><strong>Discount</strong></TableCell>
-                    <TableCell align="right"><strong>MRC</strong></TableCell>
-                    <TableCell align="right"><strong>NRC</strong></TableCell>
+                    <TableCell><strong>Items</strong></TableCell>
+                    <TableCell><strong>Currency</strong></TableCell>
+                    <TableCell align="right"><strong>Total MRC</strong></TableCell>
+                    <TableCell align="right"><strong>Total NRC</strong></TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {pricingLogs.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={11} align="center" sx={{ py: 4 }}>
+                      <TableCell colSpan={9} align="center" sx={{ py: 4 }}>
                         <Typography color="text.secondary">No pricing logs found</Typography>
                       </TableCell>
                     </TableRow>
                   ) : (
                     pricingLogs.map((log) => {
-                      if (log.log_type === 'bundle') {
-                        const isExpanded = expandedBundles[log.id] || false;
-                        return (
-                          <React.Fragment key={`bundle-${log.id}`}>
-                            <TableRow 
-                              hover 
-                              onClick={() => setExpandedBundles(prev => ({ ...prev, [log.id]: !prev[log.id] }))}
-                              sx={{ 
-                                cursor: 'pointer',
-                                backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.04),
-                                '&:hover': { backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.08) }
-                              }}
-                            >
-                              <TableCell sx={{ width: 30, px: 1 }}>
-                                <IconButton size="small" sx={{ p: 0 }}>
-                                  {isExpanded ? <KeyboardArrowDownIcon fontSize="small" /> : <KeyboardArrowRightIcon fontSize="small" />}
-                                </IconButton>
-                              </TableCell>
-                              <TableCell>
-                                <Chip
-                                  icon={<ShoppingBasketIcon sx={{ fontSize: '0.85rem !important' }} />}
-                                  label={`Bundle (${log.item_count} items)`}
-                                  size="small"
-                                  color="primary"
-                                  variant="outlined"
-                                  sx={{ fontSize: '0.7rem' }}
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                                  {new Date(log.timestamp || log.created_at).toLocaleString()}
-                                </Typography>
-                              </TableCell>
-                              <TableCell>
-                                <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                                  {log.username || log.full_name || 'Unknown'}
-                                </Typography>
-                              </TableCell>
-                              <TableCell colSpan={2}>
-                                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.7rem', fontStyle: 'italic' }}>
-                                  {log.item_count} connections — click to expand
-                                </Typography>
-                              </TableCell>
-                              <TableCell></TableCell>
-                              <TableCell>
-                                <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                                  {log.contract_term}m
-                                </Typography>
-                              </TableCell>
-                              <TableCell>
-                                {log.mrc_discount_percent > 0 ? (
-                                  <Chip 
-                                    label={`${log.mrc_discount_percent}%`} 
-                                    size="small" 
-                                    color="success"
-                                    sx={{ fontSize: '0.65rem' }}
-                                  />
-                                ) : (
-                                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
-                                )}
-                              </TableCell>
-                              <TableCell align="right">
-                                <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600, color: 'primary.main' }}>
-                                  {log.currency || 'USD'} {roundUpToNearest5(log.total_mrc || 0).toLocaleString()}
-                                </Typography>
-                              </TableCell>
-                              <TableCell align="right">
-                                <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                                  {log.currency || 'USD'} {roundUpToNearest5(log.total_nrc || 0).toLocaleString()}
-                                </Typography>
-                              </TableCell>
-                            </TableRow>
-
-                            {/* Expanded bundle items */}
-                            {isExpanded && log.items?.map((bItem, bIdx) => (
-                              <TableRow key={`bundle-${log.id}-item-${bIdx}`} sx={{ backgroundColor: 'grey.50' }}>
-                                <TableCell></TableCell>
-                                <TableCell>
-                                  <Typography variant="caption" color="text.secondary">└ Item {bIdx + 1}</Typography>
-                                </TableCell>
-                                <TableCell>
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
-                                    {new Date(bItem.lookup_timestamp).toLocaleString()}
-                                  </Typography>
-                                </TableCell>
-                                <TableCell></TableCell>
-                                <TableCell>
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {bItem.customer_location}
-                                  </Typography>
-                                </TableCell>
-                                <TableCell>
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {bItem.member_resiliency}
-                                  </Typography>
-                                </TableCell>
-                                <TableCell>
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {bItem.bandwidth}
-                                  </Typography>
-                                </TableCell>
-                                <TableCell>
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {bItem.contract_term}m
-                                  </Typography>
-                                </TableCell>
-                                <TableCell></TableCell>
-                                <TableCell align="right">
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {formatCurrency(bItem.final_mrc, bItem.currency_requested)}
-                                  </Typography>
-                                </TableCell>
-                                <TableCell align="right">
-                                  <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                    {formatCurrency(bItem.final_nrc, bItem.currency_requested)}
-                                  </Typography>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </React.Fragment>
-                        );
-                      }
-
-                      // Single lookup row
+                      const isBundleExpanded = expandedBundles[log.id] || false;
                       return (
-                        <TableRow key={`single-${log.id}`} hover>
-                          <TableCell sx={{ width: 30 }}></TableCell>
-                          <TableCell>
-                            <Chip label="Single" size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {new Date(log.timestamp || log.lookup_timestamp).toLocaleString()}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {log.username || log.full_name || 'Unknown'}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {log.customer_location}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {log.member_resiliency}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {log.bandwidth}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {log.contract_term}m
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600 }}>
-                              {formatCurrency(log.final_mrc, log.currency_requested)}
-                            </Typography>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                              {formatCurrency(log.final_nrc, log.currency_requested)}
-                            </Typography>
-                          </TableCell>
-                        </TableRow>
+                        <React.Fragment key={`bundle-${log.id}`}>
+                          {/* Level 1: Bundle row */}
+                          <TableRow 
+                            hover 
+                            onClick={() => setExpandedBundles(prev => ({ ...prev, [log.id]: !prev[log.id] }))}
+                            sx={{ 
+                              cursor: 'pointer',
+                              backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.04),
+                              '&:hover': { backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.08) }
+                            }}
+                          >
+                            <TableCell sx={{ width: 30, px: 1 }}>
+                              <IconButton size="small" sx={{ p: 0 }}>
+                                {isBundleExpanded ? <KeyboardArrowDownIcon fontSize="small" /> : <KeyboardArrowRightIcon fontSize="small" />}
+                              </IconButton>
+                            </TableCell>
+                            <TableCell>
+                              <Chip
+                                icon={<ShoppingBasketIcon sx={{ fontSize: '0.85rem !important' }} />}
+                                label={`Bundle (${log.item_count} locations)`}
+                                size="small"
+                                color="primary"
+                                variant="outlined"
+                                sx={{ fontSize: '0.7rem' }}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                {log.customer_name || '-'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {new Date(log.timestamp || log.created_at).toLocaleString()}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {log.username || log.full_name || 'Unknown'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {log.item_count} location{log.item_count !== 1 ? 's' : ''}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {log.currency || 'USD'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell align="right">
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600, color: 'primary.main' }}>
+                                {log.currency || 'USD'} {roundUpToNearest5(log.total_mrc || 0).toLocaleString()}
+                              </Typography>
+                            </TableCell>
+                            <TableCell align="right">
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
+                                {log.currency || 'USD'} {roundUpToNearest5(log.total_nrc || 0).toLocaleString()}
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+
+                          {/* Level 2: Expanded location items within bundle */}
+                          {isBundleExpanded && log.items?.map((bItem, bIdx) => {
+                            const itemKey = `${log.id}-${bIdx}`;
+                            const isItemExpanded = expandedLogItems[itemKey] || false;
+                            const servicesList = bItem.services || [];
+                            return (
+                              <React.Fragment key={`bundle-${log.id}-item-${bIdx}`}>
+                                <TableRow 
+                                  hover
+                                  onClick={(e) => { e.stopPropagation(); setExpandedLogItems(prev => ({ ...prev, [itemKey]: !prev[itemKey] })); }}
+                                  sx={{ 
+                                    backgroundColor: 'grey.50', 
+                                    cursor: servicesList.length > 0 ? 'pointer' : 'default',
+                                    '&:hover': { backgroundColor: 'grey.100' }
+                                  }}
+                                >
+                                  <TableCell sx={{ width: 30, px: 1, pl: 3 }}>
+                                    {servicesList.length > 0 && (
+                                      <IconButton size="small" sx={{ p: 0 }}>
+                                        {isItemExpanded ? <KeyboardArrowDownIcon fontSize="small" /> : <KeyboardArrowRightIcon fontSize="small" />}
+                                      </IconButton>
+                                    )}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                      <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>└</Typography>
+                                      <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                        {bItem.customer_location || `Location ${bIdx + 1}`}
+                                      </Typography>
+                                    </Box>
+                                  </TableCell>
+                                  <TableCell></TableCell>
+                                  <TableCell>
+                                    <Typography variant="body2" sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
+                                      {bItem.directory_users} dir. users
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Chip 
+                                      label={bItem.member_on_off_net || 'On Net'} 
+                                      size="small" 
+                                      variant="outlined"
+                                      color={bItem.member_on_off_net === 'Off Net' ? 'warning' : 'default'}
+                                      sx={{ fontSize: '0.65rem', height: 20 }} 
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                      {servicesList.length} ISF{servicesList.length !== 1 ? 's' : ''}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                      {bItem.contract_term}m
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <Typography variant="body2" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
+                                      {formatCurrency(bItem.final_mrc, bItem.currency_requested)}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
+                                      {formatCurrency(bItem.final_nrc, bItem.currency_requested)}
+                                    </Typography>
+                                  </TableCell>
+                                </TableRow>
+
+                                {/* Level 3: Individual service elements within location */}
+                                {isItemExpanded && servicesList.map((svc, sIdx) => (
+                                  <TableRow key={`bundle-${log.id}-item-${bIdx}-svc-${sIdx}`} sx={{ backgroundColor: (theme) => alpha(theme.palette.info.main, 0.04) }}>
+                                    <TableCell></TableCell>
+                                    <TableCell sx={{ pl: 6 }}>
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                        <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>└</Typography>
+                                        <Box sx={{ 
+                                          width: 8, height: 8, borderRadius: '50%', 
+                                          backgroundColor: svc.name?.toLowerCase().includes('control') ? 'warning.main' 
+                                            : svc.name?.toLowerCase().includes('agility') ? 'info.main' 
+                                            : svc.name?.toLowerCase().includes('safe') ? 'success.main' 
+                                            : 'primary.main',
+                                          flexShrink: 0
+                                        }} />
+                                        <Typography variant="body2" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
+                                          {svc.name || 'Service'}
+                                        </Typography>
+                                      </Box>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Typography variant="body2" sx={{ fontSize: '0.65rem', color: 'text.secondary' }}>
+                                        {svc.bandwidth || '-'}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell colSpan={4}></TableCell>
+                                    <TableCell align="right">
+                                      <Typography variant="body2" sx={{ fontSize: '0.65rem', color: 'text.secondary' }}>
+                                        {svc.mrc != null ? formatCurrency(svc.mrc, bItem.currency_requested) : '-'}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell align="right">
+                                      <Typography variant="body2" sx={{ fontSize: '0.65rem', color: 'text.secondary' }}>
+                                        {svc.nrc != null && svc.nrc > 0 ? formatCurrency(svc.nrc, bItem.currency_requested) : '-'}
+                                      </Typography>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+
+                                {/* Admin only: Calculation breakdown JSON */}
+                                {isItemExpanded && logsPermissionLevel === 'admin' && bItem.calculation_breakdown_json && (
+                                  <TableRow key={`bundle-${log.id}-item-${bIdx}-breakdown`} sx={{ backgroundColor: (theme) => alpha(theme.palette.grey[500], 0.06) }}>
+                                    <TableCell></TableCell>
+                                    <TableCell colSpan={8}>
+                                      <Box sx={{ pl: 4 }}>
+                                        <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                                          Calculation Breakdown (JSON)
+                                        </Typography>
+                                        <Box
+                                          component="pre"
+                                          sx={{
+                                            fontSize: '0.65rem',
+                                            backgroundColor: 'grey.100',
+                                            border: '1px solid',
+                                            borderColor: 'grey.300',
+                                            borderRadius: 1,
+                                            p: 1.5,
+                                            m: 0,
+                                            maxHeight: 300,
+                                            overflow: 'auto',
+                                            whiteSpace: 'pre-wrap',
+                                            wordBreak: 'break-word',
+                                            fontFamily: 'monospace'
+                                          }}
+                                        >
+                                          {JSON.stringify(bItem.calculation_breakdown_json, null, 2)}
+                                        </Box>
+                                      </Box>
+                                    </TableCell>
+                                  </TableRow>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+                        </React.Fragment>
                       );
                     })
                   )}
@@ -1593,8 +1795,7 @@ const OneDirectoryPricingTool = () => {
               />
             </Box>
           )}
-        </TabPanel>
-      )}
+      </TabPanel>
 
       {/* Error / Success Snackbars */}
       <Snackbar open={!!error} autoHideDuration={6000} onClose={() => setError('')}>

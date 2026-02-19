@@ -15287,6 +15287,7 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
     provider_primary_city,
     provider_secondary_city,
     provider_region,
+    customer_name,
     member_primary_city,
     member_secondary_city,
     member_resiliency,
@@ -15301,7 +15302,8 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
     provider_name,
     product_name,
     discount_requested,
-    discount_percent
+    discount_percent,
+    skip_log
   } = req.body;
   
   // Validation
@@ -15572,41 +15574,44 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
       currency: currency_requested || 'USD'
     };
     
-    // 14. Log to extranet_pricing_lookups for analytics
-    db.run(
-      `INSERT INTO extranet_pricing_lookups (
-        user_id, provider_primary_city, provider_secondary_city, member_primary_city, member_secondary_city,
-        member_resiliency, member_on_off_net, member_cloud, bandwidth, traffic_type, ipsec_required,
-        contract_term, currency_requested, discount_requested, discount_percent, base_price_usd,
-        final_mrc, final_nrc, calculation_breakdown, region, tier
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        req.user.id,
-        provider_primary_city,
-        provider_secondary_city || null,
-        member_primary_city,
-        member_secondary_city || null,
-        member_resiliency,
-        member_on_off_net || 'On Net',
-        member_cloud ? 1 : 0,
-        adjustedBandwidth,
-        traffic_type,
-        ipsec_required ? 1 : 0,
-        contract_term,
-        currency_requested || 'USD',
-        discount_requested ? 1 : 0,
-        userDiscount,
-        basePrice,
-        finalMrcConverted,
-        nrcConverted,
-        JSON.stringify(breakdown),
-        pricingRegion,
-        highestTier
-      ],
-      (err) => {
-        if (err) console.error('Failed to log pricing calculation:', err);
-      }
-    );
+    // 14. Log to extranet_pricing_lookups for analytics (skip if this is a basket item — bundle endpoint will log it)
+    if (!skip_log) {
+      db.run(
+        `INSERT INTO extranet_pricing_lookups (
+          user_id, provider_primary_city, provider_secondary_city, member_primary_city, member_secondary_city,
+          member_resiliency, member_on_off_net, member_cloud, bandwidth, traffic_type, ipsec_required,
+          contract_term, currency_requested, discount_requested, discount_percent, base_price_usd,
+          final_mrc, final_nrc, calculation_breakdown, region, tier, customer_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.id,
+          provider_primary_city,
+          provider_secondary_city || null,
+          member_primary_city,
+          member_secondary_city || null,
+          member_resiliency,
+          member_on_off_net || 'On Net',
+          member_cloud ? 1 : 0,
+          adjustedBandwidth,
+          traffic_type,
+          ipsec_required ? 1 : 0,
+          contract_term,
+          currency_requested || 'USD',
+          discount_requested ? 1 : 0,
+          userDiscount,
+          basePrice,
+          finalMrcConverted,
+          nrcConverted,
+          JSON.stringify(breakdown),
+          pricingRegion,
+          highestTier,
+          customer_name || null
+        ],
+        (err) => {
+          if (err) console.error('Failed to log pricing calculation:', err);
+        }
+      );
+    }
     
     // 15. Return pricing result
     res.json({
@@ -15692,7 +15697,7 @@ router.get('/extranet-pricing/resolve-datacenter/:code', authenticateToken, auth
 // Calculates pricing for multiple items and applies bundle discounts
 router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), async (req, res) => {
   try {
-    const { items, contract_term, currency_requested, discount_percent } = req.body;
+    const { items, contract_term, currency_requested, discount_percent, customer_name } = req.body;
     
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'At least one item is required in the bundle' });
@@ -16017,15 +16022,15 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
             mrc_discount_percent, nrc_discount_percent,
             total_mrc, total_nrc, 
             total_mrc_usd_before_discount, total_nrc_usd_before_discount,
-            exchange_rate, has_poa_items
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            exchange_rate, has_poa_items, customer_name
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             req.user.id, items.length, contract_term, currency_requested || 'USD',
             requestedDiscount, autoNrcDiscount,
             totalMrcConverted, totalNrcConverted,
             Math.round(totalMrcUsdBeforeDiscount * 100) / 100,
             Math.round(totalNrcUsdBeforeDiscount * 100) / 100,
-            exchangeRate, hasPoaItems ? 1 : 0
+            exchangeRate, hasPoaItems ? 1 : 0, customer_name || null
           ],
           function(err) {
             if (err) reject(err);
@@ -16048,8 +16053,8 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
             ipsec_required, contract_term, currency_requested,
             discount_requested, discount_percent, base_price_usd,
             final_mrc, final_nrc, calculation_breakdown, region, tier,
-            bundle_id, provider_name, product_name, isf_code
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            bundle_id, provider_name, product_name, isf_code, customer_name
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             req.user.id,
             origItem.provider_primary_city,
@@ -16075,7 +16080,8 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
             bundleLogId,
             origItem.provider_name || null,
             origItem.product_name || null,
-            origItem.isf || null
+            origItem.isf || null,
+            customer_name || null
           ],
           (err) => {
             if (err) console.error('Failed to log bundle item:', err);
@@ -16172,15 +16178,41 @@ router.get('/extranet-pricing/bundle-discounts', authenticateToken, authorizeMod
 // ====================================
 
 // Get extranet pricing logs with pagination and filtering
-router.get('/extranet-pricing/logs', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+router.get('/extranet-pricing/logs', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), async (req, res) => {
   try {
-    const { limit = 100, offset = 0, user_id, provider_city, member_city, start_date, end_date, type } = req.query;
+    const { limit = 100, offset = 0, user_id, provider_city, member_city, start_date, end_date, type, customer_name } = req.query;
+    
+    // Determine the caller's extranet permission level
+    const callerRole = req.user.role;
+    const isAdminUser = callerRole === 'administrator';
+    
+    // For non-admin users, check their module permission level
+    let callerPermLevel = isAdminUser ? 'admin' : 'read_only'; // default
+    if (!isAdminUser) {
+      callerPermLevel = await new Promise((resolve, reject) => {
+        db.get(
+          'SELECT permission_level FROM user_module_permissions WHERE user_id = ? AND module_name = ?',
+          [req.user.id, 'extranet_data'],
+          (err, row) => {
+            if (err) reject(err);
+            else resolve(row ? row.permission_level : 'read_only');
+          }
+        );
+      });
+    }
+    
+    // read_only users can only see their own logs
+    const canSeeAllLogs = isAdminUser || callerPermLevel === 'provisioner';
     
     // Build conditions for individual lookups (exclude bundle items by default — they appear under bundles)
     let conditions = [];
     let params = [];
     
-    if (user_id) {
+    // Enforce user filter for read_only users
+    if (!canSeeAllLogs) {
+      conditions.push('epl.user_id = ?');
+      params.push(req.user.id);
+    } else if (user_id) {
       conditions.push('epl.user_id = ?');
       params.push(user_id);
     }
@@ -16191,6 +16223,10 @@ router.get('/extranet-pricing/logs', authenticateToken, authorizeRole('administr
     if (member_city) {
       conditions.push('(epl.member_primary_city LIKE ? OR epl.member_secondary_city LIKE ?)');
       params.push(`%${member_city}%`, `%${member_city}%`);
+    }
+    if (customer_name) {
+      conditions.push('epl.customer_name LIKE ?');
+      params.push(`%${customer_name}%`);
     }
     if (start_date) {
       conditions.push('epl.lookup_timestamp >= ?');
@@ -16228,9 +16264,17 @@ router.get('/extranet-pricing/logs', authenticateToken, authorizeRole('administr
     // Fetch bundle logs
     let bundleConditions = [];
     let bundleParams = [];
-    if (user_id) {
+    // Enforce user filter for read_only users
+    if (!canSeeAllLogs) {
+      bundleConditions.push('ebl.user_id = ?');
+      bundleParams.push(req.user.id);
+    } else if (user_id) {
       bundleConditions.push('ebl.user_id = ?');
       bundleParams.push(user_id);
+    }
+    if (customer_name) {
+      bundleConditions.push('ebl.customer_name LIKE ?');
+      bundleParams.push(`%${customer_name}%`);
     }
     if (start_date) {
       bundleConditions.push('ebl.created_at >= ?');
@@ -16295,7 +16339,22 @@ router.get('/extranet-pricing/logs', authenticateToken, authorizeRole('administr
     
     // Paginate the merged results
     const totalCount = allLogs.length;
-    const paginatedLogs = allLogs.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+    let paginatedLogs = allLogs.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+    
+    // Strip calculation_breakdown from non-admin users
+    if (!isAdminUser) {
+      paginatedLogs = paginatedLogs.map(log => {
+        const { calculation_breakdown, ...rest } = log;
+        // Also strip from bundle items
+        if (rest.items) {
+          rest.items = rest.items.map(item => {
+            const { calculation_breakdown: itemBreakdown, ...itemRest } = item;
+            return itemRest;
+          });
+        }
+        return rest;
+      });
+    }
     
     res.json({
       data: paginatedLogs,
@@ -16304,7 +16363,9 @@ router.get('/extranet-pricing/logs', authenticateToken, authorizeRole('administr
         limit: parseInt(limit),
         total: totalCount,
         totalPages: Math.ceil(totalCount / limit)
-      }
+      },
+      caller_permission: isAdminUser ? 'admin' : callerPermLevel,
+      can_see_all_logs: canSeeAllLogs
     });
     
   } catch (error) {
@@ -16313,8 +16374,8 @@ router.get('/extranet-pricing/logs', authenticateToken, authorizeRole('administr
   }
 });
 
-// Get users list for filter dropdown (Admin only)
-router.get('/extranet-pricing/users', authenticateToken, authorizeRole('administrator'), (req, res) => {
+// Get users list for filter dropdown (Provisioner and Admin)
+router.get('/extranet-pricing/users', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
   db.all('SELECT id, username, full_name FROM users WHERE status = "active" ORDER BY username', [], (err, users) => {
     if (err) {
       console.error('Error fetching users list:', err);
@@ -16324,8 +16385,8 @@ router.get('/extranet-pricing/users', authenticateToken, authorizeRole('administ
   });
 });
 
-// Export extranet pricing logs to CSV (Admin only)
-router.get('/extranet-pricing/logs/export', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+// Export extranet pricing logs to CSV (Provisioner and Admin)
+router.get('/extranet-pricing/logs/export', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
     
@@ -16375,7 +16436,7 @@ router.get('/extranet-pricing/logs/export', authenticateToken, authorizeRole('ad
       });
     }
     
-    const csvHeaders = 'Type,ID,Timestamp,User,Provider,Product,ISF,Provider Primary,Provider Secondary,Member Primary,Member Secondary,Resiliency,On/Off Net,Cloud,Bandwidth,Traffic Type,IPSec,Contract Term,Currency,Discount %,Base Price USD,Final MRC,Final NRC,Region,Tier,Bundle ID\n';
+    const csvHeaders = 'Type,ID,Timestamp,User,Customer,Provider,Product,ISF,Provider Primary,Provider Secondary,Member Primary,Member Secondary,Resiliency,On/Off Net,Cloud,Bandwidth,Traffic Type,IPSec,Contract Term,Currency,Discount %,Base Price USD,Final MRC,Final NRC,Region,Tier,Bundle ID\n';
     
     const csvRows = [];
     
@@ -16386,6 +16447,7 @@ router.get('/extranet-pricing/logs/export', authenticateToken, authorizeRole('ad
         row.id,
         row.lookup_timestamp,
         escapeCsv(row.username || row.full_name),
+        escapeCsv(row.customer_name),
         escapeCsv(row.provider_name),
         escapeCsv(row.product_name),
         escapeCsv(row.isf_code),
@@ -16418,6 +16480,7 @@ router.get('/extranet-pricing/logs/export', authenticateToken, authorizeRole('ad
         `B${bundle.id}`,
         bundle.created_at,
         escapeCsv(bundle.username || bundle.full_name),
+        escapeCsv(bundle.customer_name),
         '',
         '',
         '',
@@ -16448,6 +16511,7 @@ router.get('/extranet-pricing/logs/export', authenticateToken, authorizeRole('ad
           item.id,
           item.lookup_timestamp,
           escapeCsv(item.username || item.full_name),
+          escapeCsv(item.customer_name),
           escapeCsv(item.provider_name),
           escapeCsv(item.product_name),
           escapeCsv(item.isf_code),
@@ -17449,6 +17513,272 @@ router.get('/analytics/extranet-pricing', authenticateToken, authorizeRole('admi
     });
   } catch (error) {
     console.error('Error fetching extranet pricing analytics:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get One Directory Pricing analytics
+router.get('/analytics/one-directory', authenticateToken, authorizeRole('administrator'), async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+
+    let dateFilter = '';
+    let bundleDateFilter = '';
+    let params = [];
+    let bundleParams = [];
+    if (start_date && end_date) {
+      dateFilter = ' WHERE lookup_timestamp >= ? AND lookup_timestamp <= ?';
+      bundleDateFilter = ' WHERE created_at >= ? AND created_at <= ?';
+      params = [start_date, end_date];
+      bundleParams = [start_date, end_date];
+    }
+
+    // Get all pricing logs (individual items)
+    const logs = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT * FROM one_directory_pricing_logs${dateFilter} ORDER BY lookup_timestamp DESC`,
+        params,
+        (err, rows) => err ? reject(err) : resolve(rows || [])
+      );
+    });
+
+    // Get bundle logs
+    const bundles = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT * FROM one_directory_bundle_logs${bundleDateFilter} ORDER BY created_at DESC`,
+        bundleParams,
+        (err, rows) => err ? reject(err) : resolve(rows || [])
+      );
+    });
+
+    // Get configurable tier boundaries
+    const tierParams = await new Promise((resolve, reject) => {
+      db.all("SELECT param_key, param_value FROM one_directory_parameters WHERE param_key LIKE 'bundle_tier_%'", [], (err, rows) => {
+        if (err) reject(err);
+        else {
+          const p = {};
+          (rows || []).forEach(r => { const n = parseFloat(r.param_value); p[r.param_key] = !isNaN(n) ? n : 0; });
+          resolve(p);
+        }
+      });
+    });
+    const tier1Max = typeof tierParams.bundle_tier_1_max === 'number' ? tierParams.bundle_tier_1_max : 3;
+    const tier2Max = typeof tierParams.bundle_tier_2_max === 'number' ? tierParams.bundle_tier_2_max : 5;
+
+    // Process data from all pricing logs
+    const locationSearches = {};
+    const regionSearches = {};
+    const tierSearches = {};
+    const resiliencyTypes = {};
+    const contractTerms = {};
+    const currencyDistribution = {};
+    const directoryUsersRanges = {};
+    const bandwidthSearches = {};
+    const userActivity = {};
+    const customerNames = {};
+    let b2bAgilityCount = 0;
+    let safeConnectCount = 0;
+    let offNetCount = 0;
+    let totalMrcSum = 0;
+    let totalNrcSum = 0;
+
+    logs.forEach(log => {
+      // Customer locations
+      if (log.customer_location) {
+        locationSearches[log.customer_location] = (locationSearches[log.customer_location] || 0) + 1;
+      }
+
+      // Regions
+      if (log.customer_region) {
+        regionSearches[log.customer_region] = (regionSearches[log.customer_region] || 0) + 1;
+      }
+
+      // Tiers
+      if (log.customer_tier) {
+        tierSearches[log.customer_tier] = (tierSearches[log.customer_tier] || 0) + 1;
+      }
+
+      // Resiliency types
+      if (log.member_resiliency) {
+        resiliencyTypes[log.member_resiliency] = (resiliencyTypes[log.member_resiliency] || 0) + 1;
+      }
+
+      // Contract terms
+      if (log.contract_term) {
+        const termKey = `${log.contract_term}`;
+        contractTerms[termKey] = (contractTerms[termKey] || 0) + 1;
+      }
+
+      // Currency
+      if (log.currency_requested) {
+        currencyDistribution[log.currency_requested] = (currencyDistribution[log.currency_requested] || 0) + 1;
+      }
+
+      // Directory users ranges
+      if (log.directory_users) {
+        const users = parseInt(log.directory_users);
+        let range = 'Unknown';
+        if (users <= 50) range = '1-50';
+        else if (users <= 200) range = '51-200';
+        else if (users <= 500) range = '201-500';
+        else if (users <= 1000) range = '501-1000';
+        else range = '1000+';
+        directoryUsersRanges[range] = (directoryUsersRanges[range] || 0) + 1;
+      }
+
+      // Bandwidth distribution
+      if (log.bandwidth) {
+        bandwidthSearches[log.bandwidth] = (bandwidthSearches[log.bandwidth] || 0) + 1;
+      }
+
+      // B2B Agility
+      if (log.b2b_agility) b2bAgilityCount++;
+
+      // Safe Connect
+      if (log.safe_connect_bandwidth) safeConnectCount++;
+
+      // Off Net
+      if (log.member_on_off_net === 'Off Net') offNetCount++;
+
+      // MRC/NRC sums
+      if (log.final_mrc) totalMrcSum += log.final_mrc;
+      if (log.final_nrc) totalNrcSum += log.final_nrc;
+
+      // Customer names
+      if (log.customer_name) {
+        const normalized = log.customer_name.trim().toLowerCase();
+        if (normalized) {
+          customerNames[normalized] = (customerNames[normalized] || 0) + 1;
+        }
+      }
+
+      // User activity (individual non-bundle items)
+      if (log.user_id && !log.bundle_id) {
+        if (!userActivity[log.user_id]) {
+          userActivity[log.user_id] = { user_id: log.user_id, count: 0, bundleCount: 0 };
+        }
+        userActivity[log.user_id].count++;
+      }
+    });
+
+    // Process bundle analytics
+    let totalBundles = bundles.length;
+    let totalBundleItems = 0;
+    let totalBundleMrc = 0;
+    let totalBundleNrc = 0;
+    let avgBundleSize = 0;
+    const bundleSizeDistribution = {};
+    const bundleDiscountDistribution = {};
+
+    bundles.forEach(bundle => {
+      totalBundleItems += bundle.item_count;
+      totalBundleMrc += bundle.total_mrc || 0;
+      totalBundleNrc += bundle.total_nrc || 0;
+
+      // Bundle size distribution
+      const sizeKey = bundle.item_count > tier2Max ? `${tier2Max + 1}+` : bundle.item_count > tier1Max ? `${tier1Max + 1}-${tier2Max}` : `1-${tier1Max}`;
+      bundleSizeDistribution[sizeKey] = (bundleSizeDistribution[sizeKey] || 0) + 1;
+
+      // Discount distribution
+      const discPct = bundle.mrc_discount_percent || 0;
+      const discKey = discPct > 0 ? `${discPct}%` : 'No Discount';
+      bundleDiscountDistribution[discKey] = (bundleDiscountDistribution[discKey] || 0) + 1;
+
+      // Count bundle as user activity
+      if (bundle.user_id) {
+        if (!userActivity[bundle.user_id]) {
+          userActivity[bundle.user_id] = { user_id: bundle.user_id, count: 0, bundleCount: 0 };
+        }
+        userActivity[bundle.user_id].bundleCount++;
+        userActivity[bundle.user_id].count++;
+      }
+    });
+
+    if (totalBundles > 0) {
+      avgBundleSize = (totalBundleItems / totalBundles).toFixed(1);
+    }
+
+    // Get user names for activity
+    const userIds = Object.keys(userActivity);
+    if (userIds.length > 0) {
+      const users = await new Promise((resolve, reject) => {
+        db.all(
+          `SELECT id, username FROM users WHERE id IN (${userIds.map(() => '?').join(',')})`,
+          userIds,
+          (err, rows) => err ? reject(err) : resolve(rows || [])
+        );
+      });
+
+      users.forEach(user => {
+        if (userActivity[user.id]) {
+          userActivity[user.id].username = user.username;
+        }
+      });
+    }
+
+    // Calculate totals
+    const individualLookups = logs.filter(l => !l.bundle_id).length;
+    const totalLookupEvents = individualLookups + totalBundles;
+
+    res.json({
+      totalLookups: totalLookupEvents,
+      individualLookups,
+      totalConnectionsPriced: logs.length,
+
+      // Bundle analytics
+      bundleStats: {
+        totalBundles,
+        totalBundleItems,
+        averageBundleSize: parseFloat(avgBundleSize),
+        totalBundleMrc: Math.round(totalBundleMrc * 100) / 100,
+        totalBundleNrc: Math.round(totalBundleNrc * 100) / 100,
+        bundleSizeDistribution: Object.entries(bundleSizeDistribution)
+          .map(([size, count]) => ({ size, count })),
+        bundleDiscountDistribution: Object.entries(bundleDiscountDistribution)
+          .sort((a, b) => b[1] - a[1])
+          .map(([discount, count]) => ({ discount, count })),
+        bundlePercentage: totalLookupEvents > 0 ? ((totalBundles / totalLookupEvents) * 100).toFixed(1) : 0
+      },
+
+      topLocations: Object.entries(locationSearches)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([location, count]) => ({ location, count })),
+      regionDistribution: Object.entries(regionSearches)
+        .sort((a, b) => b[1] - a[1])
+        .map(([region, count]) => ({ region, count })),
+      tierDistribution: Object.entries(tierSearches)
+        .sort((a, b) => b[1] - a[1])
+        .map(([tier, count]) => ({ tier, count })),
+      resiliencyDistribution: Object.entries(resiliencyTypes)
+        .map(([resiliency, count]) => ({ resiliency, count })),
+      contractTermDistribution: Object.entries(contractTerms)
+        .map(([term, count]) => ({ term, count })),
+      currencyDistribution: Object.entries(currencyDistribution)
+        .sort((a, b) => b[1] - a[1])
+        .map(([currency, count]) => ({ currency, count })),
+      directoryUsersDistribution: Object.entries(directoryUsersRanges)
+        .map(([range, count]) => ({ range, count })),
+      bandwidthDistribution: Object.entries(bandwidthSearches)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([bandwidth, count]) => ({ bandwidth, count })),
+      topCustomers: Object.entries(customerNames)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([customer, count]) => ({ customer, count })),
+      b2bAgilityCount,
+      safeConnectCount,
+      offNetCount,
+      totalMrcSum: Math.round(totalMrcSum * 100) / 100,
+      totalNrcSum: Math.round(totalNrcSum * 100) / 100,
+      topUsers: Object.values(userActivity)
+        .filter(u => u.username)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 20)
+    });
+  } catch (error) {
+    console.error('Error fetching One Directory analytics:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -19035,6 +19365,7 @@ router.get('/carrier_quotes', authenticateToken, authorizeModulePermission('carr
   const { search, carrier, region, service_type, location, location_a, location_b,
           date_from, date_to,
           protection, bandwidth_unit, currency, contract_term, cable_system,
+          transit_countries, transit_cities,
           min_mrc, max_mrc, min_nrc, max_nrc, sort_by, sort_order,
           limit = 100, offset = 0 } = req.query;
   
@@ -19128,6 +19459,24 @@ router.get('/carrier_quotes', authenticateToken, authorizeModulePermission('carr
   if (cable_system) {
     conditions.push('cq.cable_system LIKE ?');
     params.push(`%${cable_system}%`);
+  }
+  
+  if (transit_countries) {
+    // Support comma-separated values: each term must match
+    const countryTerms = transit_countries.split(',').map(t => t.trim()).filter(Boolean);
+    countryTerms.forEach(term => {
+      conditions.push('cq.transit_countries LIKE ?');
+      params.push(`%${term}%`);
+    });
+  }
+  
+  if (transit_cities) {
+    // Support comma-separated values: each term must match
+    const cityTerms = transit_cities.split(',').map(t => t.trim()).filter(Boolean);
+    cityTerms.forEach(term => {
+      conditions.push('cq.transit_cities LIKE ?');
+      params.push(`%${term}%`);
+    });
   }
   
   if (min_mrc) {
@@ -19472,9 +19821,32 @@ router.post('/carrier_quotes', authenticateToken, authorizeModulePermission('car
     });
   };
   
-  // Use provided reference or auto-generate
+  // Use provided reference (with auto-suffix) or auto-generate
   if (quote_reference) {
-    insertQuote(quote_reference);
+    // Always append -XX suffix to user-provided references
+    const baseRef = quote_reference.trim();
+    db.all(
+      `SELECT quote_reference FROM carrier_quotes WHERE quote_reference LIKE ? ORDER BY quote_reference DESC`,
+      [`${baseRef}-%`],
+      (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        let nextNum = 1;
+        if (rows && rows.length > 0) {
+          // Find the highest existing suffix number
+          for (const row of rows) {
+            const suffix = row.quote_reference.substring(baseRef.length + 1);
+            const num = parseInt(suffix, 10);
+            if (!isNaN(num) && num >= nextNum) {
+              nextNum = num + 1;
+            }
+          }
+        }
+        
+        const ref = `${baseRef}-${String(nextNum).padStart(2, '0')}`;
+        insertQuote(ref);
+      }
+    );
   } else {
     generateQuoteReference((err, ref) => {
       if (err) return res.status(500).json({ error: 'Failed to generate quote reference' });
@@ -20341,11 +20713,27 @@ router.post('/voice/one-directory/calculate', authenticateToken, authorizeModule
     // --- SERVICE 1: One Directory ISF ---
     const directoryRateCardPrice = await getRateCardPrice(directoryBw.label);
     if (!directoryRateCardPrice) {
+      // Build partial services list so frontend can still display service breakdown
+      const poaServices = [
+        { type: 'directory', name: isfNames.directory, bandwidth: directoryBw.label, bandwidth_mb: directoryBw.mb, poa: true, mrc_usd: 0 },
+        { type: 'one_control', name: isfNames.one_control, bandwidth: oneControlBw, bandwidth_mb: parseBw(oneControlBw), mrc_usd: oneControlMrc, poa: false }
+      ];
+      if (b2b_agility) {
+        poaServices.push({ type: 'b2b', name: isfNames.b2b, bandwidth: b2bBwLabel, bandwidth_mb: b2bBwMb, poa: true, mrc_usd: 0 });
+      }
+      if (safe_connect_bandwidth) {
+        poaServices.push({ type: 'safe_connect', name: isfNames.safe_connect, bandwidth: safe_connect_bandwidth, bandwidth_mb: scBwMb, poa: true, mrc_usd: 0 });
+      }
       return res.status(400).json({
         error: 'Price not available for calculated bandwidth/tier combination. Please contact sales for a quote.',
         poa: true,
-        calculated_bandwidth: directoryBw.label,
-        raw_bandwidth_mb: rawBandwidthMb
+        calculated_bandwidth: {
+          raw_mb: rawBandwidthMb,
+          directory: directoryBw.label,
+          directory_mb: directoryBw.mb
+        },
+        raw_bandwidth_mb: rawBandwidthMb,
+        services: poaServices
       });
     }
 
@@ -20532,7 +20920,7 @@ router.post('/voice/one-directory/calculate', authenticateToken, authorizeModule
 // Calculate bundle pricing for One Directory
 router.post('/voice/one-directory/calculate-bundle', authenticateToken, authorizeModulePermission('voice_one_directory', 'read_only'), async (req, res) => {
   try {
-    const { items, currency_requested } = req.body;
+    const { items, currency_requested, customer_name } = req.body;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'At least one item is required in the bundle' });
@@ -20826,7 +21214,14 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
             bundle_mrc_discount: bundleMrcDiscount,
             bundle_nrc_discount: nrcBundleDiscount,
             total_mrc_usd: itemTotalMrc,
-            nrc_usd: itemNrc
+            nrc_usd: itemNrc,
+            services: itemServices.map(s => ({
+              name: s.name,
+              bandwidth: s.bandwidth,
+              mrc: s.poa ? null : Math.round(s.mrc_usd * exchangeRate * 100) / 100,
+              nrc: s.nrc_usd != null ? Math.round(s.nrc_usd * exchangeRate * 100) / 100 : 0,
+              discountable: s.discountable
+            }))
           }
         });
       } catch (itemError) {
@@ -20847,15 +21242,15 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
           `INSERT INTO one_directory_bundle_logs (
             user_id, item_count, currency, mrc_discount_percent, nrc_discount_percent,
             total_mrc, total_nrc, total_mrc_usd_before_discount, total_nrc_usd_before_discount,
-            exchange_rate, has_poa_items
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            exchange_rate, has_poa_items, customer_name
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             req.user.id, items.length, currency_requested || 'USD',
             appliedMrcDiscount, autoNrcDiscount,
             totalMrcConverted, totalNrcConverted,
             Math.round(totalMrcUsdBeforeDiscount * 100) / 100,
             Math.round(totalNrcUsdBeforeDiscount * 100) / 100,
-            exchangeRate, hasPoaItems ? 1 : 0
+            exchangeRate, hasPoaItems ? 1 : 0, customer_name || null
           ],
           function(err) {
             if (err) reject(err);
@@ -20919,55 +21314,94 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
   }
 });
 
-// Get One Directory pricing logs (admin)
-router.get('/voice/one-directory/logs', authenticateToken, authorizeModulePermission('voice_one_directory_admin', 'read_only'), async (req, res) => {
+// Get One Directory pricing logs
+// - read_only users: see only their own logs
+// - provisioner users: see all user logs
+// - admin users: see all user logs + calculation_breakdown JSON
+router.get('/voice/one-directory/logs', authenticateToken, authorizeModulePermission('voice_one_directory', 'read_only'), async (req, res) => {
   try {
-    const { limit = 100, offset = 0, user_id, start_date, end_date } = req.query;
+    const { limit = 100, offset = 0, user_id, start_date, end_date, customer_name } = req.query;
 
-    let conditions = [];
-    let queryParams = [];
-
-    if (user_id) { conditions.push('odl.user_id = ?'); queryParams.push(user_id); }
-    if (start_date) { conditions.push('odl.lookup_timestamp >= ?'); queryParams.push(start_date); }
-    if (end_date) { conditions.push('odl.lookup_timestamp <= ?'); queryParams.push(end_date); }
-
-    // Fetch individual (non-bundle) logs
-    let individualConditions = [...conditions, 'odl.bundle_id IS NULL'];
-    let individualWhere = individualConditions.length > 0 ? ' WHERE ' + individualConditions.join(' AND ') : '';
-
-    const individualLogs = await new Promise((resolve, reject) => {
-      db.all(
-        `SELECT odl.*, u.username, u.full_name, 'individual' as log_type
-         FROM one_directory_pricing_logs odl
-         LEFT JOIN users u ON odl.user_id = u.id
-         ${individualWhere}
-         ORDER BY odl.lookup_timestamp DESC`,
-        queryParams,
-        (err, rows) => err ? reject(err) : resolve(rows || [])
-      );
+    // Determine user's effective permission level
+    // admin (administrator role) → see all logs + JSON breakdown
+    // provisioner (voice_one_directory provisioner permission) → see all logs
+    // read_only (voice_one_directory read_only permission) → see own logs only
+    const callerRole = await new Promise((resolve, reject) => {
+      db.get('SELECT user_role FROM users WHERE id = ?', [req.user.id], (err, row) => {
+        if (err) return reject(err);
+        resolve(row?.user_role || 'read_only');
+      });
     });
 
-    // Fetch bundle logs
+    let effectivePermLevel = 'read_only';
+    if (callerRole === 'administrator') {
+      effectivePermLevel = 'admin';
+    } else {
+      // Check the voice_one_directory module permission level directly
+      const basePerm = await new Promise((resolve, reject) => {
+        db.get(
+          'SELECT permission_level FROM user_module_permissions WHERE user_id = ? AND module_name = ?',
+          [req.user.id, 'voice_one_directory'],
+          (err, row) => {
+            if (err) return reject(err);
+            resolve(row?.permission_level || 'read_only');
+          }
+        );
+      });
+      effectivePermLevel = basePerm === 'provisioner' ? 'provisioner' : 'read_only';
+    }
+
+    const canSeeAllLogs = effectivePermLevel === 'admin' || effectivePermLevel === 'provisioner';
+
+    // Only return bundle logs (all pricing goes through bundles)
     let bundleConditions = [];
     let bundleParams = [];
-    if (user_id) { bundleConditions.push('obl.user_id = ?'); bundleParams.push(user_id); }
+
+    // read_only users can only see their own logs
+    if (!canSeeAllLogs) {
+      bundleConditions.push('obl.user_id = ?');
+      bundleParams.push(req.user.id);
+    } else if (user_id) {
+      // provisioner/admin can filter by user
+      bundleConditions.push('obl.user_id = ?');
+      bundleParams.push(user_id);
+    }
+
+    // Customer name filter
+    if (customer_name) {
+      bundleConditions.push('obl.customer_name LIKE ?');
+      bundleParams.push(`%${customer_name}%`);
+    }
+
     if (start_date) { bundleConditions.push('obl.created_at >= ?'); bundleParams.push(start_date); }
-    if (end_date) { bundleConditions.push('obl.created_at <= ?'); bundleParams.push(end_date); }
+    if (end_date) { bundleConditions.push('obl.created_at <= ?'); bundleParams.push(end_date + ' 23:59:59'); }
     let bundleWhere = bundleConditions.length > 0 ? ' WHERE ' + bundleConditions.join(' AND ') : '';
+
+    // Get total count for pagination
+    const totalCount = await new Promise((resolve, reject) => {
+      db.get(
+        `SELECT COUNT(*) as count FROM one_directory_bundle_logs obl ${bundleWhere}`,
+        bundleParams,
+        (err, row) => err ? reject(err) : resolve(row?.count || 0)
+      );
+    });
 
     const bundleLogs = await new Promise((resolve, reject) => {
       db.all(
-        `SELECT obl.*, u.username, u.full_name, 'bundle' as log_type
+        `SELECT obl.*, u.username, u.full_name
          FROM one_directory_bundle_logs obl
          LEFT JOIN users u ON obl.user_id = u.id
          ${bundleWhere}
-         ORDER BY obl.created_at DESC`,
-        bundleParams,
+         ORDER BY obl.created_at DESC
+         LIMIT ? OFFSET ?`,
+        [...bundleParams, parseInt(limit), parseInt(offset)],
         (err, rows) => err ? reject(err) : resolve(rows || [])
       );
     });
 
-    // Fetch items for each bundle
+    // Fetch items for each bundle, including calculation_breakdown for service details
+    const includeBreakdown = effectivePermLevel === 'admin';
+
     for (const bundle of bundleLogs) {
       bundle.items = await new Promise((resolve, reject) => {
         db.all(
@@ -20977,26 +21411,82 @@ router.get('/voice/one-directory/logs', authenticateToken, authorizeModulePermis
            WHERE odl.bundle_id = ?
            ORDER BY odl.id ASC`,
           [bundle.id],
-          (err, rows) => err ? reject(err) : resolve(rows || [])
+          (err, rows) => {
+            if (err) return reject(err);
+            // Parse calculation_breakdown to extract services for each item
+            const parsed = (rows || []).map(row => {
+              let services = [];
+              let breakdownData = null;
+              if (row.calculation_breakdown) {
+                try {
+                  const breakdown = JSON.parse(row.calculation_breakdown);
+                  services = breakdown.services || [];
+                  if (includeBreakdown) {
+                    breakdownData = breakdown;
+                  }
+                } catch (e) { /* ignore parse errors */ }
+              }
+              // Fallback: reconstruct services from log row fields if breakdown didn't have them
+              if (services.length === 0) {
+                // Directory ISF is always present
+                services.push({
+                  name: 'One Directory ISF',
+                  bandwidth: row.bandwidth || row.calculated_bandwidth || '-',
+                  mrc: null, // can't split from total
+                  nrc: row.final_nrc || 0,
+                  discountable: true
+                });
+                // One Control ISF is mandatory
+                services.push({
+                  name: 'One Control ISF',
+                  bandwidth: '5Mb',
+                  mrc: null,
+                  nrc: 0,
+                  discountable: false
+                });
+                // B2B Agility if enabled
+                if (row.b2b_agility) {
+                  services.push({
+                    name: 'B2B Agility ISF',
+                    bandwidth: '-',
+                    mrc: null,
+                    nrc: 0,
+                    discountable: true
+                  });
+                }
+                // Safe Connect if enabled
+                if (row.safe_connect_bandwidth) {
+                  services.push({
+                    name: 'Safe Connect ISF',
+                    bandwidth: row.safe_connect_bandwidth,
+                    mrc: null,
+                    nrc: 0,
+                    discountable: true
+                  });
+                }
+              }
+              const result = { ...row, services };
+              if (includeBreakdown) {
+                result.calculation_breakdown_json = breakdownData;
+              } else {
+                delete result.calculation_breakdown; // Strip raw JSON for non-admin users
+              }
+              return result;
+            });
+            resolve(parsed);
+          }
         );
       });
     }
 
-    const allLogs = [
-      ...individualLogs.map(log => ({ ...log, timestamp: log.lookup_timestamp })),
-      ...bundleLogs.map(bundle => ({ ...bundle, timestamp: bundle.created_at }))
-    ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
-    const totalCount = allLogs.length;
-    const paginatedLogs = allLogs.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
-
     res.json({
-      data: paginatedLogs,
+      data: bundleLogs.map(b => ({ ...b, log_type: 'bundle', timestamp: b.created_at })),
+      permission_level: effectivePermLevel,
       pagination: {
         page: Math.floor(offset / limit) + 1,
         limit: parseInt(limit),
         total: totalCount,
-        totalPages: Math.ceil(totalCount / limit)
+        totalPages: Math.ceil(totalCount / parseInt(limit))
       }
     });
   } catch (error) {
