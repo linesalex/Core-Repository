@@ -12,7 +12,7 @@ import ErrorIcon from '@mui/icons-material/Error';
 import StorageIcon from '@mui/icons-material/Storage';
 import BoltIcon from '@mui/icons-material/Bolt';
 import PeopleIcon from '@mui/icons-material/People';
-import DevicesIcon from '@mui/icons-material/Devices';
+
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import { getColocationAvailability } from '../api';
 
@@ -277,8 +277,8 @@ const ColocationAvailabilityDashboard = () => {
                                     <TableCell align="center"><strong>Allocated Power</strong></TableCell>
                                     <TableCell align="center"><strong>Available Power</strong></TableCell>
                                     <TableCell align="center"><strong>Clients</strong></TableCell>
-                                    <TableCell align="center"><strong>Devices</strong></TableCell>
                                     <TableCell><strong>TOR</strong></TableCell>
+                                    <TableCell><strong>Exchange</strong></TableCell>
                                   </TableRow>
                                 </TableHead>
                                 <TableBody>
@@ -325,10 +325,15 @@ const ColocationAvailabilityDashboard = () => {
                                           </Typography>
                                         </TableCell>
                                         <TableCell align="center">{rack.client_count}</TableCell>
-                                        <TableCell align="center">{rack.device_count}</TableCell>
                                         <TableCell>
                                           {rack.tor_network_infrastructure && rack.tor_network_infrastructure !== 'No' 
                                             ? rack.tor_network_infrastructure 
+                                            : 'No'
+                                          }
+                                        </TableCell>
+                                        <TableCell>
+                                          {rack.exchange_facing_infrastructure && rack.exchange_facing_infrastructure !== 'No' 
+                                            ? rack.exchange_facing_infrastructure 
                                             : 'No'
                                           }
                                         </TableCell>

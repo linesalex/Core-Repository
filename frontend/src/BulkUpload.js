@@ -18,7 +18,9 @@ import {
   downloadBulkUploadDatabase,
   uploadBulkData,
   getBulkUploadProgress,
-  getBulkUploadHistory
+  getBulkUploadHistory,
+  getCNXRacksList,
+  downloadRackDeviceExport
 } from './api';
 
 const BulkUpload = ({ onDataRefresh }) => {
@@ -51,6 +53,11 @@ const BulkUpload = ({ onDataRefresh }) => {
   // Validation function
   const validate = createValidator(bulkUploadValidationRules);
   
+  // CNX Rack Devices dropdown states
+  const [cnxLocations, setCnxLocations] = useState([]);
+  const [selectedCnxLocation, setSelectedCnxLocation] = useState('');
+  const [selectedCnxRack, setSelectedCnxRack] = useState('');
+
   // History dialog state
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState([]);
@@ -95,6 +102,8 @@ const BulkUpload = ({ onDataRefresh }) => {
     setFormErrors({});
     setSelectedModule('');
     setUploadFile(null);
+    setSelectedCnxLocation('');
+    setSelectedCnxRack('');
     
     // Reset file input
     const fileInput = document.getElementById('bulk-upload-file');
@@ -111,7 +120,9 @@ const BulkUpload = ({ onDataRefresh }) => {
     setSelectedModule('');
     setUploadFile(null);
     setUploading(false);
-    setUploadCompleted(false); // Reset completion flag
+    setUploadCompleted(false);
+    setSelectedCnxLocation('');
+    setSelectedCnxRack('');
     
     // Clear any active polling and timeouts
     if (progressIntervalRef.current) {
@@ -155,6 +166,15 @@ const BulkUpload = ({ onDataRefresh }) => {
       setModules(moduleList);
     } catch (err) {
       setError('Failed to load available modules');
+    }
+  };
+
+  const loadCNXRacksList = async () => {
+    try {
+      const response = await getCNXRacksList();
+      setCnxLocations(response.data);
+    } catch (err) {
+      console.error('Failed to load CNX locations:', err);
     }
   };
 
@@ -590,13 +610,21 @@ const BulkUpload = ({ onDataRefresh }) => {
                   label="Choose Module *"
                   value={selectedModule}
                   onChange={(e) => {
-                    setSelectedModule(e.target.value);
+                    const newModule = e.target.value;
+                    setSelectedModule(newModule);
                     // Clear all state when module changes
                     setFormErrors({});
                     setError('');
                     setSuccess('');
                     setUploadResult(null);
                     setUploadProgress(null);
+                    setSelectedCnxLocation('');
+                    setSelectedCnxRack('');
+                    
+                    // Load CNX locations if rack devices module selected
+                    if (newModule === 'cnx_rack_devices') {
+                      loadCNXRacksList();
+                    }
                     
                     // Clear any existing progress polling
                     if (progressIntervalRef.current) {
@@ -633,6 +661,46 @@ const BulkUpload = ({ onDataRefresh }) => {
                 2. Download Template or Data
               </Typography>
               
+              {selectedModule === 'cnx_rack_devices' && (
+                <Box sx={{ mb: 2, p: 2, backgroundColor: 'grey.50', borderRadius: 1 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Select Rack for Export
+                  </Typography>
+                  <FormControl fullWidth size="small" sx={{ mb: 1 }}>
+                    <InputLabel>Location</InputLabel>
+                    <Select
+                      value={selectedCnxLocation}
+                      label="Location"
+                      onChange={(e) => {
+                        setSelectedCnxLocation(e.target.value);
+                        setSelectedCnxRack('');
+                      }}
+                    >
+                      {cnxLocations.map((loc) => (
+                        <MenuItem key={loc.id} value={loc.id}>
+                          {loc.location_code} - {loc.city}, {loc.country}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Rack</InputLabel>
+                    <Select
+                      value={selectedCnxRack}
+                      label="Rack"
+                      onChange={(e) => setSelectedCnxRack(e.target.value)}
+                      disabled={!selectedCnxLocation}
+                    >
+                      {(cnxLocations.find(l => l.id === selectedCnxLocation)?.racks || []).map((rack) => (
+                        <MenuItem key={rack.id} value={rack.id}>
+                          {rack.rack_id} ({rack.rack_type}, {rack.total_ru || 42} RU)
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
+              )}
+              
               <Stack spacing={2}>
                 <Button
                   variant="outlined"
@@ -644,18 +712,47 @@ const BulkUpload = ({ onDataRefresh }) => {
                   Download CSV Template
                 </Button>
                 
-                <Button
-                  variant="outlined"
-                  startIcon={<Download />}
-                  onClick={handleDatabaseDownload}
-                  disabled={!selectedModule}
-                  fullWidth
-                >
-                  Download Database Export
-                </Button>
+                {selectedModule === 'cnx_rack_devices' ? (
+                  <Button
+                    variant="outlined"
+                    startIcon={<Download />}
+                    onClick={async () => {
+                      if (!selectedCnxRack) {
+                        setError('Please select a location and rack first');
+                        return;
+                      }
+                      try {
+                        setError('');
+                        const loc = cnxLocations.find(l => l.id === selectedCnxLocation);
+                        const rack = loc?.racks?.find(r => r.id === selectedCnxRack);
+                        await downloadRackDeviceExport(selectedCnxRack, loc?.location_code || '', rack?.rack_id || '');
+                        setSuccess('Rack device export downloaded successfully');
+                      } catch (err) {
+                        setError('Failed to download rack device export: ' + (err.response?.data?.error || err.message));
+                      }
+                    }}
+                    disabled={!selectedCnxRack}
+                    fullWidth
+                  >
+                    Export Rack Devices (Per Rack)
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outlined"
+                    startIcon={<Download />}
+                    onClick={handleDatabaseDownload}
+                    disabled={!selectedModule}
+                    fullWidth
+                  >
+                    Download Database Export
+                  </Button>
+                )}
 
                 <Typography variant="caption" color="text.secondary">
-                  Use the template for new data or database export as a starting point for bulk edits.
+                  {selectedModule === 'cnx_rack_devices' 
+                    ? 'Select a rack above to export its devices with pre-populated RU rows, or use the template for a blank starting point.'
+                    : 'Use the template for new data or database export as a starting point for bulk edits.'
+                  }
                 </Typography>
               </Stack>
             </CardContent>

@@ -280,7 +280,15 @@ export const downloadBulkUploadTemplate = (module) => {
 export const downloadBulkUploadDatabase = (module, limit = 10000) => {
   return api.get(`${API_BASE_URL}/bulk-upload/database/${module}?limit=${limit}`, {
     responseType: 'blob'
-  }).then(response => {
+  }).then(async response => {
+    // Check if response is actually an error (JSON) disguised as blob
+    const contentType = response.headers['content-type'] || '';
+    if (contentType.includes('application/json')) {
+      const text = await response.data.text();
+      const errorData = JSON.parse(text);
+      throw new Error(errorData.error || 'Export failed');
+    }
+    
     const blob = new Blob([response.data], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -309,6 +317,27 @@ export const getBulkUploadProgress = (sessionId) => {
 // Get bulk upload history
 export const getBulkUploadHistory = (page = 1, limit = 50) => {
   return api.get(`${API_BASE_URL}/bulk-upload/history?page=${page}&limit=${limit}`);
+};
+
+// Get CNX colocation locations with racks for bulk upload dropdown
+export const getCNXRacksList = () => {
+  return api.get(`${API_BASE_URL}/bulk-upload/cnx-racks-list`);
+};
+
+// Download per-rack device export with pre-populated RU rows
+export const downloadRackDeviceExport = (rackId, locationCode, rackIdLabel) => {
+  return api.get(`${API_BASE_URL}/bulk-upload/rack-device-export/${rackId}`, {
+    responseType: 'blob'
+  }).then(response => {
+    const blob = new Blob([response.data], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `rack_devices_${locationCode}_${rackIdLabel}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    return response;
+  });
 };
 
 // ====================================
@@ -807,6 +836,19 @@ export const carrierQuoteApi = {
       window.URL.revokeObjectURL(url);
     });
   }
+};
+
+// Latency Matrix
+export const latencyMatrixApi = {
+  getMatrix: () => api.get(`${API_BASE_URL}/api/latency-matrix`).then(res => res.data),
+};
+
+export const latencyMatrixAdminApi = {
+  getLocations: () => api.get(`${API_BASE_URL}/api/admin/latency-matrix/locations`).then(res => res.data),
+  addLocation: (data) => api.post(`${API_BASE_URL}/api/admin/latency-matrix/locations`, data).then(res => res.data),
+  updateLocation: (id, data) => api.put(`${API_BASE_URL}/api/admin/latency-matrix/locations/${id}`, data).then(res => res.data),
+  deleteLocation: (id) => api.delete(`${API_BASE_URL}/api/admin/latency-matrix/locations/${id}`).then(res => res.data),
+  refreshMatrix: () => api.post(`${API_BASE_URL}/api/admin/latency-matrix/refresh`).then(res => res.data),
 };
 
 // Export the base api object for direct use

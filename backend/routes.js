@@ -9810,6 +9810,116 @@ const bulkUploadModules = {
   },
 };
 
+// Get CNX colocation locations with racks for bulk upload dropdowns
+router.get('/bulk-upload/cnx-racks-list', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const locationQuery = `
+    SELECT lr.id, lr.location_code, lr.city, lr.country
+    FROM location_reference lr
+    JOIN pop_capabilities pc ON lr.id = pc.location_id AND pc.cnx_colocation = 1
+    ORDER BY lr.location_code
+  `;
+  
+  db.all(locationQuery, [], (err, locations) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    if (locations.length === 0) {
+      return res.json([]);
+    }
+    
+    const locationIds = locations.map(l => l.id);
+    const rackQuery = `
+      SELECT r.id, r.location_id, r.rack_id, r.total_ru, r.rack_type
+      FROM cnx_colocation_racks r
+      WHERE r.location_id IN (${locationIds.map(() => '?').join(',')})
+      ORDER BY r.rack_id
+    `;
+    
+    db.all(rackQuery, locationIds, (rackErr, racks) => {
+      if (rackErr) return res.status(500).json({ error: rackErr.message });
+      
+      const result = locations.map(loc => ({
+        ...loc,
+        racks: racks.filter(r => r.location_id === loc.id)
+      }));
+      
+      res.json(result);
+    });
+  });
+});
+
+// Export per-rack device template with pre-populated RU rows
+router.get('/bulk-upload/rack-device-export/:rackId', authenticateToken, authorizeRole('administrator'), (req, res) => {
+  const { rackId } = req.params;
+  
+  db.get(
+    `SELECT r.*, lr.location_code 
+     FROM cnx_colocation_racks r 
+     JOIN location_reference lr ON r.location_id = lr.id 
+     WHERE r.id = ?`,
+    [rackId],
+    (err, rack) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!rack) return res.status(404).json({ error: 'Rack not found' });
+      
+      const totalRU = rack.total_ru || 42;
+      
+      // Get existing devices for this rack
+      db.all(
+        `SELECT d.*, COALESCE(cl.client_name, '') as client_name
+         FROM cnx_rack_devices d
+         LEFT JOIN cnx_colocation_clients cl ON d.client_id = cl.id
+         WHERE d.rack_id = ?
+         ORDER BY d.start_ru`,
+        [rackId],
+        (deviceErr, existingDevices) => {
+          if (deviceErr) return res.status(500).json({ error: deviceErr.message });
+          
+          // Build a map of existing devices by start_ru
+          const deviceMap = {};
+          existingDevices.forEach(d => {
+            deviceMap[d.start_ru] = d;
+          });
+          
+          // Generate rows for each RU
+          const rows = [];
+          for (let ru = 1; ru <= totalRU; ru++) {
+            const device = deviceMap[ru];
+            rows.push({
+              location_code: rack.location_code,
+              rack_id: rack.rack_id,
+              client_name: device ? device.client_name : '',
+              name: device ? device.name : '',
+              model: device ? (device.model || '') : '',
+              serial: device ? (device.serial || '') : '',
+              start_ru: ru,
+              height_ru: device ? device.height_ru : 1,
+              position: device ? device.position : 'front',
+              power_kw: device ? (device.power_kw || '') : '',
+              notes: device ? (device.notes || '') : ''
+            });
+          }
+          
+          try {
+            const fields = ['location_code', 'rack_id', 'client_name', 'name', 'model', 'serial',
+                          'start_ru', 'height_ru', 'position', 'power_kw', 'notes'];
+            const parser = new Parser({ fields });
+            const csv = parser.parse(rows);
+            
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="rack_devices_${rack.location_code}_${rack.rack_id}.csv"`);
+            res.send(csv);
+            
+            logChange(null, 'bulk_upload_database', null, 'EXPORT', null, 
+              { module: 'cnx_rack_devices', rack_id: rack.rack_id, location_code: rack.location_code, rows_exported: rows.length }, req);
+          } catch (parseErr) {
+            res.status(500).json({ error: 'Failed to generate CSV: ' + parseErr.message });
+          }
+        }
+      );
+    }
+  );
+});
+
 // Download CSV template for a module
 router.get('/bulk-upload/template/:module', authenticateToken, authorizeRole('administrator'), (req, res) => {
   const { module } = req.params;
@@ -9973,9 +10083,15 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
   }
   
   db.all(query, queryParams, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+    if (err) {
+      console.error(`[BULK EXPORT] Database error for module ${module}:`, err.message);
+      return res.status(500).json({ error: err.message });
+    }
     
     try {
+      // Ensure rows is an array
+      if (!rows) rows = [];
+      
       // Post-process CNX colocation racks to convert JSON ranges back to human-readable format
       if (module === 'cnx_colocation_racks') {
         rows = rows.map(row => {
@@ -11250,21 +11366,21 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               if (existingRack) {
                 sql = `UPDATE cnx_colocation_racks SET rack_type = ?, total_power_kva = ?, total_ru = ?, 
                        ipc_reserved_ru_ranges = ?, tor_network_infrastructure = ?, exchange_facing_infrastructure = ?,
-                       more_info = ?, updated_by = ?, updated_date = ? WHERE id = ?`;
+                       network_infrastructure = ?, more_info = ?, updated_by = ?, updated_date = ? WHERE id = ?`;
                 values = [
                   cleanRow.rack_type, parseFloat(cleanRow.total_power_kva), parseInt(cleanRow.total_ru),
-                  ipcRanges, cleanRow.tor_network_infrastructure || null, cleanRow.exchange_facing_infrastructure || null,
-                  cleanRow.more_info || null, req.user.id, new Date().toISOString(), existingRack.id
+                  ipcRanges, cleanRow.tor_network_infrastructure || 'No', cleanRow.exchange_facing_infrastructure || 'No',
+                  'N/A', cleanRow.more_info || null, req.user.id, new Date().toISOString(), existingRack.id
                 ];
               } else {
                 sql = `INSERT INTO cnx_colocation_racks (location_id, rack_id, rack_type, total_power_kva, total_ru, 
-                       ipc_reserved_ru_ranges, tor_network_infrastructure, exchange_facing_infrastructure, more_info, 
-                       updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                       ipc_reserved_ru_ranges, tor_network_infrastructure, exchange_facing_infrastructure, network_infrastructure,
+                       more_info, created_by, updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
                 values = [
                   location.location_id, cleanRow.rack_id, cleanRow.rack_type, parseFloat(cleanRow.total_power_kva),
-                  parseInt(cleanRow.total_ru), ipcRanges, cleanRow.tor_network_infrastructure || null,
-                  cleanRow.exchange_facing_infrastructure || null, cleanRow.more_info || null,
-                  req.user.id, new Date().toISOString()
+                  parseInt(cleanRow.total_ru), ipcRanges, cleanRow.tor_network_infrastructure || 'No',
+                  cleanRow.exchange_facing_infrastructure || 'No', 'N/A', cleanRow.more_info || null,
+                  req.user.id, req.user.id, new Date().toISOString()
                 ];
               }
             } catch (dbError) {
@@ -11308,13 +11424,13 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                 ];
               } else {
                 sql = `INSERT INTO cnx_colocation_clients (rack_id, client_name, ru_purchased, power_purchased, 
-                       space_power_ucn, design_sharepoint_link, more_info, updated_by, updated_date) 
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                       space_power_ucn, design_sharepoint_link, more_info, created_by, updated_by, updated_date) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
                 values = [
                   rack.rack_id_db, cleanRow.client_name, parseInt(cleanRow.ru_purchased),
                   parseFloat(cleanRow.power_purchased), cleanRow.space_power_ucn || null,
                   cleanRow.design_sharepoint_link || null, cleanRow.more_info || null,
-                  req.user.id, new Date().toISOString()
+                  req.user.id, req.user.id, new Date().toISOString()
                 ];
               }
             } catch (dbError) {
@@ -11376,12 +11492,12 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                 ];
               } else {
                 sql = `INSERT INTO cnx_rack_devices (rack_id, client_id, name, model, serial, start_ru, height_ru, 
-                       position, power_kw, notes, updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                       position, power_kw, notes, created_by, updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
                 values = [
                   rack.rack_id_db, clientId, cleanRow.name, cleanRow.model || null, cleanRow.serial || null,
                   parseInt(cleanRow.start_ru), parseInt(cleanRow.height_ru), cleanRow.position || 'front',
                   cleanRow.power_kw ? parseFloat(cleanRow.power_kw) : null, cleanRow.notes || null,
-                  req.user.id, new Date().toISOString()
+                  req.user.id, req.user.id, new Date().toISOString()
                 ];
               }
             } catch (dbError) {
@@ -21561,6 +21677,174 @@ router.delete('/voice/one-directory/logs', authenticateToken, authorizeModulePer
       res.json({ success: true, message: `Cleared ${lookupsDeleted} pricing logs and ${bundlesDeleted} bundle logs` });
     });
   });
+});
+
+// ========================================
+// LATENCY MATRIX
+// ========================================
+
+const latencyMatrixService = require('./latencyMatrixService');
+
+// Get latency matrix data (all authenticated users)
+router.get('/api/latency-matrix', authenticateToken, (req, res) => {
+  db.all(
+    `SELECT lmc.*, lr.datacenter_name as source_datacenter
+     FROM latency_matrix_cache lmc
+     LEFT JOIN location_reference lr ON lmc.source_pop = lr.location_code
+     ORDER BY lmc.source_city, lmc.destination_city`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      db.all(
+        `SELECT lml.*, lr.datacenter_name, lr.location_code
+         FROM latency_matrix_locations lml
+         LEFT JOIN location_reference lr ON lml.pop_code = lr.location_code
+         ORDER BY lml.display_order ASC, lml.city_name ASC`,
+        [],
+        (err2, locations) => {
+          if (err2) return res.status(500).json({ error: err2.message });
+
+          const matrix = rows.map(row => ({
+            ...row,
+            route_1g: row.route_1g ? JSON.parse(row.route_1g) : null,
+            route_10g: row.route_10g ? JSON.parse(row.route_10g) : null
+          }));
+
+          res.json({
+            locations: locations || [],
+            matrix,
+            lastComputed: rows.length > 0 ? rows[0].last_computed : null
+          });
+        }
+      );
+    }
+  );
+});
+
+// ========================================
+// ADMIN: LATENCY MATRIX LOCATIONS
+// ========================================
+
+// List all configured cities
+router.get('/api/admin/latency-matrix/locations', authenticateToken, authorizeRole(['administrator']), (req, res) => {
+  db.all(
+    `SELECT lml.*, lr.datacenter_name, lr.city as lr_city, lr.country, lr.region
+     FROM latency_matrix_locations lml
+     LEFT JOIN location_reference lr ON lml.pop_code = lr.location_code
+     ORDER BY lml.display_order ASC, lml.city_name ASC`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows || []);
+    }
+  );
+});
+
+// Add a city/POP pair
+router.post('/api/admin/latency-matrix/locations', authenticateToken, authorizeRole(['administrator']), (req, res) => {
+  const { city_name, pop_code, display_order } = req.body;
+
+  if (!city_name || !pop_code) {
+    return res.status(400).json({ error: 'city_name and pop_code are required' });
+  }
+
+  db.get('SELECT location_code FROM location_reference WHERE location_code = ?', [pop_code], (err, locRow) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!locRow) return res.status(400).json({ error: `POP code ${pop_code} not found in location reference` });
+
+    db.run(
+      `INSERT INTO latency_matrix_locations (city_name, pop_code, display_order, created_at, updated_at)
+       VALUES (?, ?, ?, datetime('now'), datetime('now'))`,
+      [city_name.trim(), pop_code.trim(), display_order || 0],
+      function(err) {
+        if (err) {
+          if (err.message.includes('UNIQUE')) {
+            return res.status(400).json({ error: `City "${city_name}" already exists` });
+          }
+          return res.status(500).json({ error: err.message });
+        }
+        logChange(req.user.id, 'latency_matrix_locations', this.lastID, 'CREATE', null,
+          { city_name, pop_code, display_order }, req);
+        res.json({ id: this.lastID, city_name, pop_code, display_order: display_order || 0 });
+      }
+    );
+  });
+});
+
+// Update a city/POP pair
+router.put('/api/admin/latency-matrix/locations/:id', authenticateToken, authorizeRole(['administrator']), (req, res) => {
+  const { id } = req.params;
+  const { city_name, pop_code, display_order } = req.body;
+
+  if (!city_name || !pop_code) {
+    return res.status(400).json({ error: 'city_name and pop_code are required' });
+  }
+
+  db.get('SELECT * FROM latency_matrix_locations WHERE id = ?', [id], (err, existing) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!existing) return res.status(404).json({ error: 'Location not found' });
+
+    db.get('SELECT location_code FROM location_reference WHERE location_code = ?', [pop_code], (err, locRow) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!locRow) return res.status(400).json({ error: `POP code ${pop_code} not found in location reference` });
+
+      db.run(
+        `UPDATE latency_matrix_locations 
+         SET city_name = ?, pop_code = ?, display_order = ?, updated_at = datetime('now')
+         WHERE id = ?`,
+        [city_name.trim(), pop_code.trim(), display_order || 0, id],
+        function(err) {
+          if (err) {
+            if (err.message.includes('UNIQUE')) {
+              return res.status(400).json({ error: `City "${city_name}" already exists` });
+            }
+            return res.status(500).json({ error: err.message });
+          }
+          logChange(req.user.id, 'latency_matrix_locations', id, 'UPDATE',
+            { city_name: existing.city_name, pop_code: existing.pop_code, display_order: existing.display_order },
+            { city_name, pop_code, display_order }, req);
+          res.json({ id: parseInt(id), city_name, pop_code, display_order: display_order || 0 });
+        }
+      );
+    });
+  });
+});
+
+// Delete a city
+router.delete('/api/admin/latency-matrix/locations/:id', authenticateToken, authorizeRole(['administrator']), (req, res) => {
+  const { id } = req.params;
+
+  db.get('SELECT * FROM latency_matrix_locations WHERE id = ?', [id], (err, existing) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!existing) return res.status(404).json({ error: 'Location not found' });
+
+    db.run('DELETE FROM latency_matrix_locations WHERE id = ?', [id], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+
+      // Clean cache entries for this location
+      db.run(
+        'DELETE FROM latency_matrix_cache WHERE source_pop = ? OR destination_pop = ?',
+        [existing.pop_code, existing.pop_code],
+        (err) => {
+          if (err) console.error('Warning: failed to clean cache entries:', err.message);
+
+          logChange(req.user.id, 'latency_matrix_locations', id, 'DELETE', existing, null, req);
+          res.json({ success: true, message: `Deleted ${existing.city_name}` });
+        }
+      );
+    });
+  });
+});
+
+// Trigger manual matrix recomputation
+router.post('/api/admin/latency-matrix/refresh', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    await latencyMatrixService.computeMatrix();
+    res.json({ success: true, message: 'Matrix recomputed successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

@@ -85,6 +85,10 @@ import KMZMapViewer from './KMZMapViewer';
 import RouteFinder from './RouteFinder';
 import RouteChanges from './RouteChanges';
 import ForcedPasswordChange from './ForcedPasswordChange';
+import HomePage from './HomePage';
+import LatencyMatrixAdmin from './LatencyMatrixAdmin';
+import HomeIcon from '@mui/icons-material/Home';
+import GridOnIcon from '@mui/icons-material/GridOn';
 
 const drawerWidth = 280;
 
@@ -118,7 +122,10 @@ function AuthenticatedApp() {
   const [routeFinderState, setRouteFinderState] = useState(null);
   
   // New state for tab management
-  const [currentTab, setCurrentTab] = useState('welcome');
+  const [currentTab, setCurrentTab] = useState('home');
+  
+  // Pre-computed route data from latency matrix click-through
+  const [matrixRouteData, setMatrixRouteData] = useState(null);
   const [networkDesignOpen, setNetworkDesignOpen] = useState(false);
   const [exchangeDataOpen, setExchangeDataOpen] = useState(false);
   const [extranetDataOpen, setExtranetDataOpen] = useState(false);
@@ -879,10 +886,12 @@ function AuthenticatedApp() {
       
       case 'route-finder':
         return hasModuleAccess('route_finder') ? (
-          <RouteFinder 
+          <RouteFinder
             onViewMap={handleRouteFinderViewMap}
             savedState={routeFinderState}
             onStateChange={setRouteFinderState}
+            preComputedRoute={matrixRouteData}
+            onClearPreComputed={() => setMatrixRouteData(null)}
           />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
@@ -940,17 +949,23 @@ function AuthenticatedApp() {
       case 'feedback':
         return <FeedbackManager initialTab={feedbackInitialTab} />;
       
+      case 'latency-matrix-admin':
+        return hasRole('administrator') ? (
+          <LatencyMatrixAdmin />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+
+      case 'home':
       case 'welcome':
       default:
         return (
-          <Paper sx={{ p: 4, textAlign: 'center' }}>
-            <Typography variant="h4" gutterBottom color="primary">
-              Welcome to the Network Repository
-            </Typography>
-            <Typography variant="h6" color="text.secondary" sx={{ mt: 2 }}>
-              Please use the left sidebar to view available modules
-            </Typography>
-          </Paper>
+          <HomePage
+            onRouteClick={(routeData) => {
+              setMatrixRouteData(routeData);
+              setCurrentTab('route-finder');
+            }}
+          />
         );
     }
   };
@@ -965,7 +980,7 @@ function AuthenticatedApp() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.4.6
+              v3.4.7
             </Typography>
           </Typography>
           
@@ -1094,6 +1109,17 @@ function AuthenticatedApp() {
         <Toolbar />
         <Box sx={{ overflow: 'auto' }}>
           <List>
+            {/* Home */}
+            <ListItem
+              button
+              onClick={() => setCurrentTab('home')}
+              sx={{ backgroundColor: currentTab === 'home' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+            >
+              <ListItemIcon><HomeIcon /></ListItemIcon>
+              <ListItemText primary="Home" />
+            </ListItem>
+            <Divider sx={{ my: 1 }} />
+
             {/* Network Routes Repository */}
             {hasModuleAccess('network_routes') && (
               <>
@@ -1589,6 +1615,14 @@ function AuthenticatedApp() {
                     >
                       <ListItemIcon><PeopleIcon /></ListItemIcon>
                       <ListItemText primary="User Management" />
+                    </ListItem>
+                    <ListItem
+                      button
+                      onClick={() => setCurrentTab('latency-matrix-admin')}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'latency-matrix-admin' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    >
+                      <ListItemIcon><GridOnIcon /></ListItemIcon>
+                      <ListItemText primary="Latency Matrix" />
                     </ListItem>
                   </List>
                 </Collapse>

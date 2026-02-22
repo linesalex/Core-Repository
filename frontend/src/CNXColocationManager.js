@@ -1044,6 +1044,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                                   <TableCell><strong>Clients</strong></TableCell>
                                   <TableCell><strong>RU Allocated</strong></TableCell>
                                   <TableCell><strong>TOR Network</strong></TableCell>
+                                  <TableCell><strong>Exchange</strong></TableCell>
                                   <TableCell><strong>More Info</strong></TableCell>
                                   <TableCell align="center"><strong>Actions</strong></TableCell>
                                 </TableRow>
@@ -1072,8 +1073,18 @@ const CNXColocationManager = ({ hasPermission }) => {
                                       <TableCell>{rack.total_power_kva}</TableCell>
                                       <TableCell>{rack.allocated_power}</TableCell>
                                       <TableCell>{rack.client_count}</TableCell>
-                                      <TableCell>{rack.ru_allocated}/{rack.total_ru || 42}</TableCell>
+                                      <TableCell>{(() => {
+                                        let ipcRU = 0;
+                                        if (rack.ipc_reserved_ru_ranges) {
+                                          try {
+                                            const ranges = JSON.parse(rack.ipc_reserved_ru_ranges);
+                                            ipcRU = ranges.reduce((sum, r) => sum + (r.end - r.start + 1), 0);
+                                          } catch (e) { /* ignore parse errors */ }
+                                        }
+                                        return `${rack.ru_allocated + ipcRU}/${rack.total_ru || 42}`;
+                                      })()}</TableCell>
                                       <TableCell>{rack.tor_network_infrastructure && rack.tor_network_infrastructure !== 'No' ? rack.tor_network_infrastructure : 'No'}</TableCell>
+                                      <TableCell>{rack.exchange_facing_infrastructure && rack.exchange_facing_infrastructure !== 'No' ? rack.exchange_facing_infrastructure : 'No'}</TableCell>
                                       <TableCell align="center">
                                         <IconButton 
                                           size="small"
@@ -1116,7 +1127,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                                     
                                     {/* Expandable Section for Clients */}
                                     <TableRow>
-                                      <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={10}>
+                                      <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={11}>
                                         <Collapse in={expandedRacks[rack.id]} timeout="auto" unmountOnExit>
                                           <Box sx={{ margin: 1 }}>
                                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
@@ -1247,6 +1258,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                                   <TableCell><strong>Client Name</strong></TableCell>
                                   <TableCell><strong>Space & Power UCN</strong></TableCell>
                                   <TableCell><strong>RU Allocated</strong></TableCell>
+                                  <TableCell><strong>Exchange</strong></TableCell>
                                   <TableCell><strong>More Info</strong></TableCell>
                                   <TableCell align="center"><strong>Actions</strong></TableCell>
                                 </TableRow>
@@ -1284,6 +1296,7 @@ const CNXColocationManager = ({ hasPermission }) => {
                                         )}
                                       </TableCell>
                                       <TableCell>{rack.total_ru || 42}</TableCell>
+                                      <TableCell>{rack.exchange_facing_infrastructure && rack.exchange_facing_infrastructure !== 'No' ? rack.exchange_facing_infrastructure : 'No'}</TableCell>
                                       <TableCell align="center">
                                         <IconButton 
                                           size="small"
