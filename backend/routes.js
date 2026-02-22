@@ -8113,18 +8113,23 @@ router.get('/cnx-colocation/racks/:rackId/devices', authenticateToken, authorize
 // Create device
 router.post('/cnx-colocation/racks/:rackId/devices', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const rackId = req.params.rackId;
-  const { client_id, name, model, serial, start_ru, height_ru, position, power_kw, notes } = req.body;
+  const { client_id, name, model, serial, start_ru, height_ru, position, power_kw, notes, device_label } = req.body;
   
   if (!name || !start_ru || !height_ru) {
-    return res.status(400).json({ error: 'Name, Start RU, and Height RU are required' });
+    return res.status(400).json({ error: 'Device Type, Start RU, and Height RU are required' });
   }
   
+  if (!client_id && client_id !== 'ipc_reserved') {
+    return res.status(400).json({ error: 'Client selection is required' });
+  }
+  
+  const isIPC = client_id === 'ipc_reserved';
+  const actualClientId = isIPC ? null : client_id;
   const startRU = parseInt(start_ru);
   const heightRU = parseInt(height_ru);
   const endRU = startRU + heightRU - 1;
   
-  // Get rack to validate
-  db.get('SELECT total_ru FROM cnx_colocation_racks WHERE id = ?', [rackId], (rackErr, rack) => {
+  db.get('SELECT total_ru, ipc_reserved_ru_ranges FROM cnx_colocation_racks WHERE id = ?', [rackId], (rackErr, rack) => {
     if (rackErr) return res.status(500).json({ error: rackErr.message });
     if (!rack) return res.status(404).json({ error: 'Rack not found' });
     
@@ -8133,7 +8138,6 @@ router.post('/cnx-colocation/racks/:rackId/devices', authenticateToken, authoriz
       return res.status(400).json({ error: `Device must be within rack bounds (1-${totalRU})` });
     }
     
-    // Check for overlaps with other devices
     db.all('SELECT * FROM cnx_rack_devices WHERE rack_id = ?', [rackId], (err, existingDevices) => {
       if (err) return res.status(500).json({ error: err.message });
       
@@ -8146,9 +8150,21 @@ router.post('/cnx-colocation/racks/:rackId/devices', authenticateToken, authoriz
         }
       }
       
-      // If client_id provided, validate device is within client's RU allocation
-      if (client_id) {
-        db.get('SELECT ru_ranges FROM cnx_colocation_clients WHERE id = ? AND rack_id = ?', [client_id, rackId], (clientErr, client) => {
+      if (isIPC) {
+        const ipcRanges = rack.ipc_reserved_ru_ranges ? JSON.parse(rack.ipc_reserved_ru_ranges) : [];
+        let withinIPC = false;
+        for (const range of ipcRanges) {
+          if (startRU >= range.start && endRU <= range.end) {
+            withinIPC = true;
+            break;
+          }
+        }
+        if (!withinIPC) {
+          return res.status(400).json({ error: 'Device must be within IPC reserved RU allocation' });
+        }
+        proceedWithInsert();
+      } else if (actualClientId) {
+        db.get('SELECT ru_ranges FROM cnx_colocation_clients WHERE id = ? AND rack_id = ?', [actualClientId, rackId], (clientErr, client) => {
           if (clientErr) return res.status(500).json({ error: clientErr.message });
           if (!client) return res.status(400).json({ error: 'Client not found for this rack' });
           
@@ -8175,15 +8191,15 @@ router.post('/cnx-colocation/racks/:rackId/devices', authenticateToken, authoriz
       function proceedWithInsert() {
         db.run(
           `INSERT INTO cnx_rack_devices 
-           (rack_id, client_id, name, model, serial, start_ru, height_ru, position, power_kw, notes, created_by, updated_by, updated_date)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [rackId, client_id || null, name, model || null, serial || null, startRU, heightRU, position || 'front', power_kw ? parseFloat(power_kw) : null, notes || null, req.user.id, req.user.id, new Date().toISOString()],
+           (rack_id, client_id, name, model, serial, start_ru, height_ru, position, power_kw, notes, device_label, created_by, updated_by, updated_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [rackId, actualClientId, name, model || null, serial || null, startRU, heightRU, position || 'front', power_kw ? parseFloat(power_kw) : null, notes || null, device_label || null, req.user.id, req.user.id, new Date().toISOString()],
           function(err) {
             if (err) return res.status(500).json({ error: err.message });
             
             try {
               logChange(req.user.id, 'cnx_rack_devices', this.lastID || name, 'CREATE', null,
-                { rack_id: rackId, client_id, name, model, start_ru: startRU, height_ru: heightRU }, req);
+                { rack_id: rackId, client_id: actualClientId, name, model, device_label, start_ru: startRU, height_ru: heightRU }, req);
             } catch (logError) {
               console.error('Failed to log device creation:', logError);
             }
@@ -8199,9 +8215,11 @@ router.post('/cnx-colocation/racks/:rackId/devices', authenticateToken, authoriz
 // Update device
 router.put('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModulePermission('cnx_colocation_inventory', 'provisioner'), (req, res) => {
   const deviceId = req.params.deviceId;
-  const { client_id, name, model, serial, start_ru, height_ru, position, power_kw, notes } = req.body;
+  const { client_id, name, model, serial, start_ru, height_ru, position, power_kw, notes, device_label } = req.body;
   
-  // Get current device
+  const isIPC = client_id === 'ipc_reserved';
+  const actualClientId = isIPC ? null : (client_id || null);
+  
   db.get('SELECT * FROM cnx_rack_devices WHERE id = ?', [deviceId], (err, device) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!device) return res.status(404).json({ error: 'Device not found' });
@@ -8210,8 +8228,7 @@ router.put('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModu
     const heightRU = height_ru ? parseInt(height_ru) : device.height_ru;
     const endRU = startRU + heightRU - 1;
     
-    // Validate within rack bounds
-    db.get('SELECT total_ru FROM cnx_colocation_racks WHERE id = ?', [device.rack_id], (rackErr, rack) => {
+    db.get('SELECT total_ru, ipc_reserved_ru_ranges FROM cnx_colocation_racks WHERE id = ?', [device.rack_id], (rackErr, rack) => {
       if (rackErr) return res.status(500).json({ error: rackErr.message });
       
       const totalRU = rack ? (rack.total_ru || 42) : 42;
@@ -8219,7 +8236,6 @@ router.put('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModu
         return res.status(400).json({ error: `Device must be within rack bounds (1-${totalRU})` });
       }
       
-      // Check for overlaps with other devices (excluding current)
       db.all('SELECT * FROM cnx_rack_devices WHERE rack_id = ? AND id != ?', [device.rack_id, deviceId], (overlapErr, existingDevices) => {
         if (overlapErr) return res.status(500).json({ error: overlapErr.message });
         
@@ -8232,9 +8248,8 @@ router.put('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModu
           }
         }
         
-        // Build update data
         let updateData = {};
-        if (client_id !== undefined) updateData.client_id = client_id || null;
+        if (client_id !== undefined) updateData.client_id = actualClientId;
         if (name) updateData.name = name;
         if (model !== undefined) updateData.model = model;
         if (serial !== undefined) updateData.serial = serial;
@@ -8243,6 +8258,7 @@ router.put('/cnx-colocation/devices/:deviceId', authenticateToken, authorizeModu
         if (position) updateData.position = position;
         if (power_kw !== undefined) updateData.power_kw = power_kw ? parseFloat(power_kw) : null;
         if (notes !== undefined) updateData.notes = notes;
+        if (device_label !== undefined) updateData.device_label = device_label || null;
         
         const updateFields = Object.keys(updateData);
         const updateValues = Object.values(updateData);
@@ -9790,15 +9806,16 @@ const bulkUploadModules = {
   cnx_rack_devices: {
     table: 'cnx_rack_devices',
     templateFields: [
-      'location_code', 'rack_id', 'client_name', 'name', 'model', 'serial',
+      'location_code', 'rack_id', 'client_name', 'name', 'device_label', 'model', 'serial',
       'start_ru', 'height_ru', 'position', 'power_kw', 'notes'
     ],
-    requiredFields: ['location_code', 'rack_id', 'name', 'start_ru', 'height_ru'],
+    requiredFields: ['location_code', 'rack_id', 'name', 'start_ru'],
     sampleData: {
       location_code: 'LON1',
       rack_id: 'R01',
       client_name: 'Acme Corp',
-      name: 'Core Switch',
+      name: 'Switch',
+      device_label: 'Core-SW-01',
       model: 'Cisco 9300',
       serial: 'SN12345678',
       start_ru: '5',
@@ -9889,18 +9906,19 @@ router.get('/bulk-upload/rack-device-export/:rackId', authenticateToken, authori
               rack_id: rack.rack_id,
               client_name: device ? device.client_name : '',
               name: device ? device.name : '',
+              device_label: device ? (device.device_label || '') : '',
               model: device ? (device.model || '') : '',
               serial: device ? (device.serial || '') : '',
               start_ru: ru,
-              height_ru: device ? device.height_ru : 1,
-              position: device ? device.position : 'front',
+              height_ru: device ? device.height_ru : '',
+              position: device ? device.position : '',
               power_kw: device ? (device.power_kw || '') : '',
               notes: device ? (device.notes || '') : ''
             });
           }
           
           try {
-            const fields = ['location_code', 'rack_id', 'client_name', 'name', 'model', 'serial',
+            const fields = ['location_code', 'rack_id', 'client_name', 'name', 'device_label', 'model', 'serial',
                           'start_ru', 'height_ru', 'position', 'power_kw', 'notes'];
             const parser = new Parser({ fields });
             const csv = parser.parse(rows);
@@ -10073,7 +10091,7 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
              LIMIT ?`;
   } else if (module === 'cnx_rack_devices') {
     query = `SELECT lr.location_code, r.rack_id, COALESCE(cl.client_name, '') as client_name,
-             d.name, d.model, d.serial, d.start_ru, d.height_ru, d.position, d.power_kw, d.notes
+             d.name, d.device_label, d.model, d.serial, d.start_ru, d.height_ru, d.position, d.power_kw, d.notes
              FROM cnx_rack_devices d
              JOIN cnx_colocation_racks r ON d.rack_id = r.id
              JOIN location_reference lr ON r.location_id = lr.id
@@ -10236,6 +10254,10 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
         const allRowErrors = [];
         
         try {
+          if (module === 'cnx_rack_devices' && (!row.name || !String(row.name).trim())) {
+            continue;
+          }
+          
           // Step 1: Required fields validation
           const missingFields = config.requiredFields.filter(field => {
             if (!row[field]) return true;
@@ -11438,6 +11460,9 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               continue;
             }
           } else if (module === 'cnx_rack_devices') {
+            if (!cleanRow.name || !cleanRow.name.trim()) {
+              continue;
+            }
             try {
               // Look up rack by location_code + rack_id
               const rack = await new Promise((resolve, reject) => {
@@ -11481,21 +11506,21 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               });
               
               if (existingDevice) {
-                sql = `UPDATE cnx_rack_devices SET client_id = ?, name = ?, model = ?, serial = ?, 
+                sql = `UPDATE cnx_rack_devices SET client_id = ?, name = ?, device_label = ?, model = ?, serial = ?, 
                        start_ru = ?, height_ru = ?, position = ?, power_kw = ?, notes = ?,
                        updated_by = ?, updated_date = ? WHERE id = ?`;
                 values = [
-                  clientId, cleanRow.name, cleanRow.model || null, cleanRow.serial || null,
-                  parseInt(cleanRow.start_ru), parseInt(cleanRow.height_ru), cleanRow.position || 'front',
+                  clientId, cleanRow.name, cleanRow.device_label || null, cleanRow.model || null, cleanRow.serial || null,
+                  parseInt(cleanRow.start_ru), parseInt(cleanRow.height_ru) || 1, cleanRow.position || 'front',
                   cleanRow.power_kw ? parseFloat(cleanRow.power_kw) : null, cleanRow.notes || null,
                   req.user.id, new Date().toISOString(), existingDevice.id
                 ];
               } else {
-                sql = `INSERT INTO cnx_rack_devices (rack_id, client_id, name, model, serial, start_ru, height_ru, 
-                       position, power_kw, notes, created_by, updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                sql = `INSERT INTO cnx_rack_devices (rack_id, client_id, name, device_label, model, serial, start_ru, height_ru, 
+                       position, power_kw, notes, created_by, updated_by, updated_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
                 values = [
-                  rack.rack_id_db, clientId, cleanRow.name, cleanRow.model || null, cleanRow.serial || null,
-                  parseInt(cleanRow.start_ru), parseInt(cleanRow.height_ru), cleanRow.position || 'front',
+                  rack.rack_id_db, clientId, cleanRow.name, cleanRow.device_label || null, cleanRow.model || null, cleanRow.serial || null,
+                  parseInt(cleanRow.start_ru), parseInt(cleanRow.height_ru) || 1, cleanRow.position || 'front',
                   cleanRow.power_kw ? parseFloat(cleanRow.power_kw) : null, cleanRow.notes || null,
                   req.user.id, req.user.id, new Date().toISOString()
                 ];

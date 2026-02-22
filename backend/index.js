@@ -16,6 +16,7 @@ const liveLatencyAutoRefresh = require('./liveLatencyAutoRefreshService');
 const outageHistoryCleanup = require('./outageHistoryCleanupService');
 const liveLatencyApiLogsCleanup = require('./liveLatencyApiLogsCleanupService');
 const walCheckpoint = require('./walCheckpointService');
+const latencyMatrixService = require('./latencyMatrixService');
 const fs = require('fs');
 const path = require('path');
 
@@ -123,6 +124,11 @@ runAllMigrations((err) => {
     setTimeout(() => {
       walCheckpoint.start();
     }, 11000); // Wait 11 seconds to avoid conflicts with other services
+    
+    // Start the latency matrix computation service
+    setTimeout(() => {
+      latencyMatrixService.start();
+    }, 12000); // Wait 12 seconds to avoid conflicts with other services
   });
 });
 
@@ -137,6 +143,7 @@ function gracefulShutdown(signal) {
   outageHistoryCleanup.stop();
   liveLatencyApiLogsCleanup.stop();
   walCheckpoint.stop();
+  latencyMatrixService.stop();
   
   // Perform final WAL checkpoint
   console.log('💾 Performing final database checkpoint...');

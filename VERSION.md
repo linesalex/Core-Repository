@@ -2,7 +2,7 @@
 
 ## Current Version: **3.4.7**
 
-**Release Date:** February 19, 2026
+**Release Date:** February 22, 2026
 
 ---
 
@@ -33,6 +33,152 @@ Pricing Logs are now accessible to all users with `extranet_data` module permiss
 - `/extranet-pricing/users` endpoint opened to provisioner-level extranet_data permission
 - `/extranet-pricing/logs/export` endpoint opened to provisioner-level extranet_data permission
 - Clear logs remains admin-only
+
+---
+
+### 🏠 **New Module: Home Page with Live Latency Matrix**
+
+New Home page module replaces the previous welcome splash screen. Accessible to all authenticated users regardless of permissions. Includes a real-time latency matrix showing minimum latency paths between configurable key city locations.
+
+**Home Page:**
+- "Home" button added at the top of the left sidebar menu (above Network Routes Repository), always visible to all users
+- Retains the existing welcome splash text ("Welcome to the Network Repository" / "Please use the left sidebar to view available modules")
+- Live Latency Matrix displayed below the welcome text
+- Two tabs: **1Gb** and **10Gb**
+- Matrix shows minimum latency (ms, 2 decimal places) between all configured city pairs
+- Hovering over a city name shows a tooltip with the POP code and datacenter name
+- Clicking any latency value navigates to Route Finder displaying the exact pre-computed route with promo pricing across all tiers (10Mb, 100Mb, 1Gb, 10Gb), defaulting to USD with currency switcher available
+- "N/A" shown when no path exists or 10Gb latency exceeds 120% of 1Gb latency for the same pair
+- "Last updated" timestamp shown below the matrix
+- Auto-refreshes data from backend every 5 minutes
+
+**Latency Matrix Computation (Backend Service):**
+- New hourly background service (`latencyMatrixService.js`) computes all-pairs shortest paths using Dijkstra's algorithm
+- Uses **live latency** as edge weight, falling back to estimated latency only when live latency is N/A
+- Circuits with live latency of 0ms (outage) are excluded from path computation
+- **1Gb tab**: Includes all routes with bandwidth >= 1,000 Mbps. Uses fastest mode (includes ULL/Cisco routes)
+- **10Gb tab**: Includes all routes with bandwidth >= 20,000 Mbps. If 10Gb latency > 1.2× the 1Gb latency for the same pair, displays N/A
+- 1Gb computation runs first; 10Gb results validated against 1Gb results (20% rule)
+- Full route details stored in cache (POP codes, circuit IDs, carriers, bandwidth, per-hop latency) for click-through display
+- Registered alongside existing background services with graceful shutdown support
+
+**Admin: Latency Matrix Locations:**
+- New "Latency Matrix" item under Admin sidebar section (administrator only)
+- CRUD management of city/POP code pairs (e.g., London → IPCLON7)
+- Columns: City Name, POP Code, Display Order, Datacenter Name, Region
+- POP code validated against `location_reference` table
+- Display order controls the row/column ordering in the matrix
+- Manual "Refresh Matrix" button to trigger immediate recomputation
+
+**Route Finder Integration:**
+- Route Finder accepts pre-computed route data from the latency matrix
+- Enters "display mode" showing the exact cached route as the primary path
+- Automatically runs promo pricing check against the specific circuit IDs in the pre-computed path
+- Displays pricing across all fixed tiers (10Mb, 100Mb, 1Gb, 10Gb)
+- Info banner indicates the matrix source (e.g., "Viewing pre-computed 1Gb route: London → Singapore")
+- "Run New Search" button to exit display mode and return to normal Route Finder
+
+**Database:**
+- Migration 038: Creates `latency_matrix_locations` table (city/POP pairs with display order) and `latency_matrix_cache` table (computed latency values and full route JSON for all pairs)
+- Unique index on `(source_pop, destination_pop)` for upsert efficiency
+
+**API Endpoints:**
+- `GET /api/latency-matrix` — Returns full matrix data from cache (all authenticated users)
+- `GET /api/admin/latency-matrix/locations` — List configured cities (admin only)
+- `POST /api/admin/latency-matrix/locations` — Add city/POP pair (admin only)
+- `PUT /api/admin/latency-matrix/locations/:id` — Update city/POP pair (admin only)
+- `DELETE /api/admin/latency-matrix/locations/:id` — Remove city and clean cache (admin only)
+- `POST /api/admin/latency-matrix/refresh` — Trigger manual matrix recomputation (admin only)
+
+**Files Added:**
+- `frontend/src/HomePage.js` — Home page with welcome splash and tabbed latency matrix
+- `frontend/src/LatencyMatrixAdmin.js` — Admin CRUD for city/POP locations
+- `backend/latencyMatrixService.js` — Hourly background computation service
+- `backend/migrations/038_add_latency_matrix.js` — Database migration
+
+**Files Modified:**
+- `frontend/src/App.js` — Home sidebar button, routing for home and admin pages, matrix route state management
+- `frontend/src/RouteFinder.js` — Pre-computed route display mode with promo pricing
+- `frontend/src/api.js` — Latency matrix API helper functions
+- `backend/routes.js` — Matrix data and admin CRUD endpoints
+- `backend/index.js` — Registered latency matrix service with graceful shutdown
+
+---
+
+### 🏢 **CNX Colocation — Exchange Facing Infrastructure, RU Fix & Bulk Upload Fixes**
+
+**Exchange Facing Infrastructure Display:**
+- Added "Exchange" column to Colocation Availability Dashboard expanded rack detail table (replaced "Devices" column)
+- Added "Exchange" column to CNX Colocation Inventory Shared Racks table (next to TOR Network)
+- Added "Exchange" column to CNX Colocation Inventory Dedicated Racks table
+- Displays the exchange facing infrastructure value (e.g., "Yes - Cisco 3548", "Yes - Arista 7130", "No")
+
+**Shared Rack RU Allocated Fix:**
+- RU Allocated display now includes IPC reserved rack units in the total
+- Previously showed only client-purchased RU; now shows `(client RU + IPC reserved RU) / total RU`
+- Parses `ipc_reserved_ru_ranges` JSON to calculate IPC reserved count
+
+**Bulk Upload Fixes:**
+- Fixed CNX Colocation Racks bulk upload: `SQLITE_CONSTRAINT: NOT NULL constraint failed: cnx_colocation_racks.network_infrastructure` — added `network_infrastructure = 'N/A'` and `created_by` to INSERT statement
+- Fixed CNX Colocation Clients bulk upload: `SQLITE_CONSTRAINT: NOT NULL constraint failed: cnx_colocation_clients.created_by` — added `created_by` to INSERT statement
+- Added `created_by` to CNX Rack Devices bulk upload INSERT for consistency
+- Changed default values for `tor_network_infrastructure` and `exchange_facing_infrastructure` from null to 'No' in bulk upload
+
+**CNX Rack Devices Bulk Upload — Per-Rack Export:**
+- New two-step dropdown when "CNX Rack Devices" is selected: first select location, then select rack
+- Per-rack export generates CSV with all RU rows pre-populated (location_code, rack_id, start_ru 1-N already filled)
+- Existing device data merged into the export where present
+- Users only need to fill in device name, client name, model, serial, position, power, and notes
+
+**Bulk Export Improvements:**
+- Improved error handling for database export endpoint (null guard, better logging)
+- Fixed frontend `downloadBulkUploadDatabase()` to properly handle error responses when using blob responseType
+
+**Backend:**
+- New endpoint: `GET /bulk-upload/cnx-racks-list` — returns locations with racks for dropdown selection
+- New endpoint: `GET /bulk-upload/rack-device-export/:rackId` — generates per-rack CSV with pre-populated RU rows
+
+**Files Modified:**
+- `frontend/src/components/ColocationAvailabilityDashboard.js` — Exchange column, removed Devices column
+- `frontend/src/CNXColocationManager.js` — Exchange column in Shared & Dedicated tables, RU allocated fix
+- `frontend/src/BulkUpload.js` — Location/rack dropdown for rack device export
+- `frontend/src/api.js` — New API functions for rack list and per-rack export, improved blob error handling
+- `backend/routes.js` — Bulk upload INSERT fixes, new export endpoints, improved export error handling
+
+---
+
+### 🖥️ **CNX Colocation — Rack Elevation Add Device Enhancements**
+
+**Device Type Dropdown:**
+- Replaced free-text Device Type field with a dropdown menu
+- Options: Switch, Router, Server - Client Owned, Server - IPC Owned, Patch Panel
+
+**Device Label:**
+- New optional "Device Label" text field in the Add/Edit Device form
+- Label displayed on the rack elevation visual as "ClientName - DeviceType - Label"
+- Label column added to the Devices list table (Tab 3)
+- Label included in device tooltips on hover
+
+**RU Selection from Allocated RUs:**
+- Client selection is now required (no "unassigned" devices)
+- "IPC Reserved" appears as a client option in the dropdown for IPC-owned devices
+- When a client or IPC Reserved is selected, a multi-select RU picker shows only available (unoccupied) RUs from that allocation
+- Users select multiple contiguous RUs to define device placement and height (replaces separate Start RU and Height fields)
+- Contiguity validation prevents non-adjacent RU selection
+- Save button disabled until all required fields are valid
+
+**Backend:**
+- Create/update device endpoints now accept `device_label` field
+- IPC reserved RU validation: devices with IPC Reserved client are validated against `ipc_reserved_ru_ranges`
+- Client selection required on device creation (backend validation)
+- Database migration 039: Added `device_label` column to `cnx_rack_devices`
+
+**Files Added:**
+- `backend/migrations/039_add_device_label.js` — Database migration for device_label column
+
+**Files Modified:**
+- `frontend/src/components/RackElevationDialog.js` — Device Type dropdown, Device Label field, RU multi-select, IPC Reserved client option
+- `backend/routes.js` — Device create/update endpoints updated for device_label and IPC validation
 
 ---
 
@@ -771,11 +917,12 @@ A new lightweight route search tool designed for sales teams to quickly find net
 
 | Module | Version | Status |
 |--------|---------|--------|
-| **CNX Colocation Manager** | 3.4.5 | ✅ Enhanced |
+| **Home Page** | 3.4.7 | ✅ New |
+| **CNX Colocation Manager** | 3.4.7 | ✅ Enhanced |
 | **Extranet Data** | 3.4.2 | ✅ Active |
-| **Extranet Pricing** | 3.4.6 | ✅ Enhanced |
+| **Extranet Pricing** | 3.4.7 | ✅ Enhanced |
 | **Carrier Quote Repository** | 3.4.5 | ✅ Enhanced |
-| **Route Finder** | 3.4.5 | ✅ Active |
+| **Route Finder** | 3.4.7 | ✅ Enhanced |
 | **KMZ Viewer** | 3.3.3 | ✅ Active |
 | **Network Routes Repository** | 3.3.3 | ✅ Active |
 | **Network Design & Pricing** | 3.3.3 | ✅ Active |
@@ -783,7 +930,7 @@ A new lightweight route search tool designed for sales teams to quickly find net
 | **Analytics Dashboard** | 3.4.6 | ✅ Enhanced |
 | **User Management** | 3.3.3 | ✅ Active |
 | **Module Permissions** | 3.4.2 | ✅ Enhanced |
-| **Bulk Upload** | 3.4.5 | ✅ Enhanced |
+| **Bulk Upload** | 3.4.7 | ✅ Enhanced |
 
 ---
 
@@ -837,6 +984,8 @@ For new installations or updates:
 
 ## Version History
 
+- **v3.4.7** (Feb 22, 2026): Home Page with live latency matrix (hourly Dijkstra using live latency, 1Gb/10Gb tabs, click-through to Route Finder); Extranet Pricing — role-based pricing logs access control
+- **v3.4.7** (Feb 22, 2026): CNX Colocation — Exchange facing infrastructure display in Availability Dashboard and Inventory tables, RU allocated fix to include IPC reserved, bulk upload NOT NULL constraint fixes for racks/clients, per-rack device export with pre-populated RU rows, improved export error handling
 - **v3.4.6** (Feb 15, 2026): Extranet Pricing — Shopping basket/bundle pricing with tiered discounts, provider/product selection with auto-population, datacenter field split, analytics and pricing logs rebuilt for bundles, ISF display, "Add Additional Connection" button; Provider region rate cards (APAC/AMERs/EMEA)
 - **v3.4.5** (Feb 15, 2026): CNX Colocation Manager overhaul - Fixed RU allocation calculation, granular permission restructure (inventory/availability/pricing as separate modules), availability dashboard, colocation pricing tool with per-location pricing config and quote builder, bulk upload for racks/clients/devices, rack elevation dialog enhancements; Extranet Pricing Tool - Full member-to-provider pricing calculator with configurable parameters, IPSec surcharges, resiliency types, traffic types, contract terms, and comprehensive analytics; Carrier Quote Repository redesign and enhanced search; KMZ Export performance optimization
 - **v3.4.4** (Jan 11, 2025): Carriers module - hide action buttons for read_only users; Route Finder - added Bandwidth column to route results; Fixed pricing logs pagination in Design & Pricing and Allocated Cost Calculator tools; Fixed feedback file attachment SQLITE_CONSTRAINT error

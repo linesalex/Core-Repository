@@ -3,7 +3,8 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, Box, Typography,
   Grid, Paper, Chip, IconButton, Tooltip, TextField, Select, MenuItem,
   FormControl, InputLabel, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Alert, Tabs, Tab, Divider, ToggleButton, ToggleButtonGroup
+  TableHead, TableRow, Alert, Tabs, Tab, Divider, ToggleButton, ToggleButtonGroup,
+  Checkbox, ListItemText, OutlinedInput
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import AddIcon from '@mui/icons-material/Add';
@@ -16,6 +17,14 @@ import {
   getRackElevation, createDevice, updateDevice, deleteDevice,
   updateClientRURanges, updateRackIPCReserved
 } from '../api';
+
+const DEVICE_TYPE_OPTIONS = [
+  'Switch',
+  'Router',
+  'Server - Client Owned',
+  'Server - IPC Owned',
+  'Patch Panel'
+];
 
 // Client color palette for visual differentiation
 const CLIENT_COLORS = [
@@ -34,10 +43,10 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
   const [deviceFormData, setDeviceFormData] = useState({
     client_id: '',
     name: '',
+    device_label: '',
     model: '',
     serial: '',
-    start_ru: '',
-    height_ru: 1,
+    selected_rus: [],
     position: 'front',
     power_kw: '',
     notes: ''
@@ -283,12 +292,12 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
         // Add device to this RU, pre-filling client if it's a client-allocated RU
         setDeviceMode('add');
         setDeviceFormData({
-          client_id: occupancyInfo.type === 'client' ? occupancyInfo.data?.id || '' : '',
+          client_id: occupancyInfo.type === 'client' ? occupancyInfo.data?.id || '' : (occupancyInfo.type === 'ipc_reserved' ? 'ipc_reserved' : ''),
           name: '',
+          device_label: '',
           model: '',
           serial: '',
-          start_ru: ruNumber,
-          height_ru: 1,
+          selected_rus: [ruNumber],
           position: 'front',
           power_kw: '',
           notes: ''
@@ -303,10 +312,10 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
     setDeviceFormData({
       client_id: elevationData?.clients?.length === 1 ? elevationData.clients[0].id : '',
       name: '',
+      device_label: '',
       model: '',
       serial: '',
-      start_ru: selectedRU?.ruNumber || '',
-      height_ru: 1,
+      selected_rus: selectedRU ? [selectedRU.ruNumber] : [],
       position: 'front',
       power_kw: '',
       notes: ''
@@ -317,13 +326,18 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
   const handleEditDevice = (device) => {
     setDeviceMode('edit');
     setSelectedDevice(device);
+    const deviceRUs = [];
+    for (let ru = device.start_ru; ru < device.start_ru + device.height_ru; ru++) {
+      deviceRUs.push(ru);
+    }
+    const clientVal = device.client_id || 'ipc_reserved';
     setDeviceFormData({
-      client_id: device.client_id || '',
+      client_id: clientVal,
       name: device.name,
+      device_label: device.device_label || '',
       model: device.model || '',
       serial: device.serial || '',
-      start_ru: device.start_ru,
-      height_ru: device.height_ru,
+      selected_rus: deviceRUs,
       position: device.position,
       power_kw: device.power_kw || '',
       notes: device.notes || ''
@@ -331,15 +345,82 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
     setDeviceDialogOpen(true);
   };
 
+  const getAvailableRUs = useCallback(() => {
+    if (!elevationData || !deviceFormData.client_id) return [];
+    
+    const occupancy = getRUOccupancy();
+    const isIPC = deviceFormData.client_id === 'ipc_reserved';
+    let allocatedRUs = [];
+    
+    if (isIPC) {
+      const ipcRanges = pendingIPCRanges || [];
+      ipcRanges.forEach(range => {
+        for (let ru = range.start; ru <= range.end; ru++) allocatedRUs.push(ru);
+      });
+    } else {
+      const clientRanges = pendingRURanges[deviceFormData.client_id] || [];
+      clientRanges.forEach(range => {
+        for (let ru = range.start; ru <= range.end; ru++) allocatedRUs.push(ru);
+      });
+    }
+    
+    const editingDeviceRUs = new Set();
+    if (deviceMode === 'edit' && selectedDevice) {
+      for (let ru = selectedDevice.start_ru; ru < selectedDevice.start_ru + selectedDevice.height_ru; ru++) {
+        editingDeviceRUs.add(ru);
+      }
+    }
+    
+    return allocatedRUs.filter(ru => {
+      const occ = occupancy[ru];
+      if (editingDeviceRUs.has(ru)) return true;
+      return occ.type !== 'device';
+    }).sort((a, b) => a - b);
+  }, [elevationData, deviceFormData.client_id, pendingRURanges, pendingIPCRanges, getRUOccupancy, deviceMode, selectedDevice]);
+
+  const validateContiguousRUs = (rus) => {
+    if (rus.length <= 1) return true;
+    const sorted = [...rus].sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i] !== sorted[i - 1] + 1) return false;
+    }
+    return true;
+  };
+
   const handleDeviceSave = async () => {
     try {
       setError(null);
       
+      if (!deviceFormData.client_id) {
+        setError('Client selection is required');
+        return;
+      }
+      if (!deviceFormData.name) {
+        setError('Device Type is required');
+        return;
+      }
+      if (deviceFormData.selected_rus.length === 0) {
+        setError('At least one RU must be selected');
+        return;
+      }
+      if (!validateContiguousRUs(deviceFormData.selected_rus)) {
+        setError('Selected RUs must be contiguous (adjacent)');
+        return;
+      }
+      
+      const sortedRUs = [...deviceFormData.selected_rus].sort((a, b) => a - b);
+      const payload = {
+        ...deviceFormData,
+        start_ru: sortedRUs[0],
+        height_ru: sortedRUs.length
+      };
+      delete payload.selected_rus;
+      
       if (deviceMode === 'add') {
-        await createDevice(rackId, deviceFormData);
+        await createDevice(rackId, payload);
         setSuccess('Device created successfully');
       } else {
-        await updateDevice(selectedDevice.id, deviceFormData);
+        await updateDevice(selectedDevice.id, payload);
         setSuccess('Device updated successfully');
       }
       
@@ -399,13 +480,12 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
             (assignmentMode === 'client' && occupancyInfo.type === 'client' && occupancyInfo.data?.id === selectedClientForAssign)
           );
           
-          // For devices that span multiple RUs, show "Customer Name - Device Type" only on the first RU
-          let deviceLabel = '';
+          let deviceDisplayLabel = '';
           if (occupancyInfo.type === 'device') {
             const dev = occupancyInfo.data;
             if (ruNum === dev.start_ru) {
-              const clientName = occupancyInfo.client?.client_name || 'Unassigned';
-              deviceLabel = `${clientName} - ${dev.name}`;
+              const clientName = occupancyInfo.client?.client_name || 'IPC Reserved';
+              deviceDisplayLabel = `${clientName} - ${dev.name}${dev.device_label ? ` - ${dev.device_label}` : ''}`;
             }
           }
           
@@ -416,7 +496,7 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
                 occupancyInfo.type === 'client' 
                   ? `Client: ${occupancyInfo.data.client_name}`
                   : occupancyInfo.type === 'device'
-                  ? `${occupancyInfo.client?.client_name || 'Unassigned'} - ${occupancyInfo.data.name}${occupancyInfo.data.model ? ` (${occupancyInfo.data.model})` : ''}`
+                  ? `${occupancyInfo.client?.client_name || 'IPC Reserved'} - ${occupancyInfo.data.name}${occupancyInfo.data.device_label ? ` - ${occupancyInfo.data.device_label}` : ''}${occupancyInfo.data.model ? ` (${occupancyInfo.data.model})` : ''}`
                   : occupancyInfo.type === 'ipc_reserved'
                   ? 'IPC Reserved'
                   : 'Free'
@@ -456,7 +536,7 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
                   U{ruNum}
                 </Typography>
                 <Typography variant="caption" noWrap sx={{ flex: 1, textAlign: 'center', fontSize: '0.7rem' }}>
-                  {occupancyInfo.type === 'device' && deviceLabel}
+                  {occupancyInfo.type === 'device' && deviceDisplayLabel}
                   {occupancyInfo.type === 'client' && occupancyInfo.data.client_name}
                   {occupancyInfo.type === 'ipc_reserved' && 'IPC'}
                 </Typography>
@@ -720,6 +800,7 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
                         <TableRow>
                           <TableCell><strong>Client</strong></TableCell>
                           <TableCell><strong>Device Type</strong></TableCell>
+                          <TableCell><strong>Label</strong></TableCell>
                           <TableCell><strong>Model</strong></TableCell>
                           <TableCell><strong>Serial</strong></TableCell>
                           <TableCell><strong>RU</strong></TableCell>
@@ -732,7 +813,7 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
                       <TableBody>
                         {elevationData.devices.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={9} align="center">
+                            <TableCell colSpan={10} align="center">
                               <Typography variant="body2" color="text.secondary">
                                 No devices configured
                               </Typography>
@@ -751,10 +832,11 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
                                       sx={{ backgroundColor: clientColorMap[client.id], color: '#000', fontWeight: 'bold' }}
                                     />
                                   ) : (
-                                    <Typography variant="caption" color="text.secondary">Unassigned</Typography>
+                                    <Chip label="IPC Reserved" size="small" sx={{ backgroundColor: '#ffeb3b', color: '#000', fontWeight: 'bold' }} />
                                   )}
                                 </TableCell>
                                 <TableCell>{device.name}</TableCell>
+                                <TableCell>{device.device_label || '-'}</TableCell>
                                 <TableCell>{device.model || 'N/A'}</TableCell>
                                 <TableCell>{device.serial || 'N/A'}</TableCell>
                                 <TableCell>U{device.start_ru}</TableCell>
@@ -798,20 +880,40 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12}>
-              <FormControl fullWidth>
-                <InputLabel>Client *</InputLabel>
+              <FormControl fullWidth required>
+                <InputLabel>Client</InputLabel>
                 <Select
                   value={deviceFormData.client_id}
-                  label="Client *"
-                  onChange={(e) => setDeviceFormData(prev => ({ ...prev, client_id: e.target.value }))}
+                  label="Client"
+                  onChange={(e) => setDeviceFormData(prev => ({ ...prev, client_id: e.target.value, selected_rus: [] }))}
                 >
-                  <MenuItem value="">
-                    <em>-- Select Client --</em>
+                  <MenuItem value="ipc_reserved">
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box sx={{ width: 12, height: 12, backgroundColor: '#ffeb3b', borderRadius: '50%', border: '1px solid #ccc' }} />
+                      IPC Reserved
+                    </Box>
                   </MenuItem>
                   {elevationData?.clients?.map(client => (
                     <MenuItem key={client.id} value={client.id}>
-                      {client.client_name}
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box sx={{ width: 12, height: 12, backgroundColor: clientColorMap[client.id], borderRadius: '50%', border: '1px solid #ccc' }} />
+                        {client.client_name}
+                      </Box>
                     </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12}>
+              <FormControl fullWidth required>
+                <InputLabel>Device Type</InputLabel>
+                <Select
+                  value={deviceFormData.name}
+                  label="Device Type"
+                  onChange={(e) => setDeviceFormData(prev => ({ ...prev, name: e.target.value }))}
+                >
+                  {DEVICE_TYPE_OPTIONS.map(opt => (
+                    <MenuItem key={opt} value={opt}>{opt}</MenuItem>
                   ))}
                 </Select>
               </FormControl>
@@ -819,9 +921,10 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
             <Grid item xs={12}>
               <TextField
                 fullWidth
-                label="Device Type *"
-                value={deviceFormData.name}
-                onChange={(e) => setDeviceFormData(prev => ({ ...prev, name: e.target.value }))}
+                label="Device Label"
+                value={deviceFormData.device_label}
+                onChange={(e) => setDeviceFormData(prev => ({ ...prev, device_label: e.target.value }))}
+                helperText="Optional label displayed on the rack elevation"
               />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -840,25 +943,48 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
                 onChange={(e) => setDeviceFormData(prev => ({ ...prev, serial: e.target.value }))}
               />
             </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                type="number"
-                label="Start RU *"
-                value={deviceFormData.start_ru}
-                onChange={(e) => setDeviceFormData(prev => ({ ...prev, start_ru: e.target.value }))}
-                helperText={`Valid range: 1 - ${elevationData?.rack.total_ru || 42}`}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                type="number"
-                label="Height (RU) *"
-                value={deviceFormData.height_ru}
-                onChange={(e) => setDeviceFormData(prev => ({ ...prev, height_ru: e.target.value }))}
-                inputProps={{ min: 1 }}
-              />
+            <Grid item xs={12}>
+              <FormControl fullWidth required disabled={!deviceFormData.client_id}>
+                <InputLabel>Rack Units (RU)</InputLabel>
+                <Select
+                  multiple
+                  value={deviceFormData.selected_rus}
+                  label="Rack Units (RU)"
+                  onChange={(e) => {
+                    const value = typeof e.target.value === 'string' ? e.target.value.split(',').map(Number) : e.target.value;
+                    setDeviceFormData(prev => ({ ...prev, selected_rus: value }));
+                  }}
+                  input={<OutlinedInput label="Rack Units (RU)" />}
+                  renderValue={(selected) => {
+                    const sorted = [...selected].sort((a, b) => a - b);
+                    if (sorted.length === 0) return '';
+                    if (sorted.length === 1) return `U${sorted[0]}`;
+                    return `U${sorted[0]} - U${sorted[sorted.length - 1]} (${sorted.length}U)`;
+                  }}
+                >
+                  {getAvailableRUs().map(ru => (
+                    <MenuItem key={ru} value={ru}>
+                      <Checkbox checked={deviceFormData.selected_rus.indexOf(ru) > -1} size="small" />
+                      <ListItemText primary={`U${ru}`} />
+                    </MenuItem>
+                  ))}
+                </Select>
+                {!deviceFormData.client_id && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, ml: 1.5 }}>
+                    Select a client first to see available RUs
+                  </Typography>
+                )}
+                {deviceFormData.client_id && getAvailableRUs().length === 0 && (
+                  <Typography variant="caption" color="error" sx={{ mt: 0.5, ml: 1.5 }}>
+                    No available RUs for this selection
+                  </Typography>
+                )}
+                {deviceFormData.selected_rus.length > 1 && !validateContiguousRUs(deviceFormData.selected_rus) && (
+                  <Typography variant="caption" color="error" sx={{ mt: 0.5, ml: 1.5 }}>
+                    Selected RUs must be contiguous (adjacent)
+                  </Typography>
+                )}
+              </FormControl>
             </Grid>
             <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
@@ -896,7 +1022,11 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDeviceDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleDeviceSave} variant="contained">
+          <Button 
+            onClick={handleDeviceSave} 
+            variant="contained"
+            disabled={!deviceFormData.client_id || !deviceFormData.name || deviceFormData.selected_rus.length === 0 || (deviceFormData.selected_rus.length > 1 && !validateContiguousRUs(deviceFormData.selected_rus))}
+          >
             {deviceMode === 'add' ? 'Add Device' : 'Save Changes'}
           </Button>
         </DialogActions>

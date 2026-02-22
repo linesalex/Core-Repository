@@ -24,7 +24,7 @@ import LoadingButton from '@mui/lab/LoadingButton';
 import { API_BASE_URL } from './config';
 import { getPromoRulesForSales, checkPromoMatch, calculateProtectedPromo, getCrossConnectInfo, networkDesignApi, exchangeRatesApi, saveRouteFinderSearchLog } from './api';
 
-const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
+const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, onClearPreComputed }) => {
   // Form state - initialize from savedState if available
   const [formData, setFormData] = useState(savedState?.formData || {
     source: '',
@@ -64,6 +64,9 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
   // Tab state
   const [currentTab, setCurrentTab] = useState(0);
 
+  // Pre-computed route display mode (from latency matrix click-through)
+  const [displayMode, setDisplayMode] = useState(false);
+
   // Load locations, promo rules, and exchange rates on mount
   useEffect(() => {
     if (!savedState?.locations?.length) {
@@ -72,6 +75,41 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     loadPromoRules();
     loadExchangeRates();
   }, []);
+
+  // Handle pre-computed route from latency matrix
+  useEffect(() => {
+    if (!preComputedRoute) return;
+
+    const syntheticResults = {
+      primaryPath: {
+        path: preComputedRoute.route.map(seg => seg.from).concat(preComputedRoute.route.length > 0 ? [preComputedRoute.route[preComputedRoute.route.length - 1].to] : []),
+        totalLatency: preComputedRoute.totalLatency,
+        hops: preComputedRoute.route.length,
+        route: preComputedRoute.route
+      },
+      diversePath: null,
+      matrixTier: preComputedRoute.tier,
+      matrixSourceCity: preComputedRoute.sourceCity,
+      matrixDestCity: preComputedRoute.destinationCity
+    };
+
+    setFormData(prev => ({
+      ...prev,
+      source: preComputedRoute.source,
+      destination: preComputedRoute.destination,
+      outputCurrency: prev.outputCurrency || 'USD'
+    }));
+
+    setSearchResults(syntheticResults);
+    setExpandedAccordion('results');
+    setDisplayMode(true);
+    setCurrentTab(0);
+
+    checkPromoForRoute(syntheticResults);
+    loadCrossConnects(preComputedRoute.source, preComputedRoute.destination);
+
+    if (onClearPreComputed) onClearPreComputed();
+  }, [preComputedRoute]);
 
   // Save state to parent whenever key state changes
   useEffect(() => {
@@ -555,7 +593,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
       bandwidth: '',
       mtuRequired: '',
       routeMode: 'standard',
-      outputCurrency: formData.outputCurrency // Preserve currency selection
+      outputCurrency: formData.outputCurrency
     });
     setSearchResults(null);
     setPrimaryPromo(null);
@@ -565,6 +603,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
     setError(null);
     setSuccess(null);
     setExpandedAccordion('search');
+    setDisplayMode(false);
   };
 
   const formatLatency = (latency) => {
@@ -888,6 +927,21 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange }) => {
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         Route Finder & Promos
       </Typography>
+
+      {/* Latency Matrix Display Mode Banner */}
+      {displayMode && searchResults && (
+        <Alert
+          severity="info"
+          sx={{ mb: 2 }}
+          action={
+            <Button color="inherit" size="small" onClick={handleRefresh}>
+              Run New Search
+            </Button>
+          }
+        >
+          Viewing pre-computed {searchResults.matrixTier} route from latency matrix: {searchResults.matrixSourceCity} → {searchResults.matrixDestCity}
+        </Alert>
+      )}
 
       {/* Tab Navigation */}
       <Paper sx={{ mb: 3 }}>
