@@ -1,8 +1,25 @@
 # Network Inventory Management System
 
-## Current Version: **3.4.7**
+## Current Version: **3.4.8**
 
 **Release Date:** February 22, 2026
+
+---
+
+## What's New in v3.4.8
+
+### 📊 **Carrier Quote Repository — Fixed-Term Pricing & Workflow Improvements**
+
+Quotes now support pricing for multiple contract terms (12, 24, 36 months) within a single quote entry, with per-term price negotiation tracking.
+
+- **Term-Based Pricing Grid**: Replaced single MRC/NRC/Contract Term fields with a pricing grid showing 12/24/36 month columns. Each quote can have pricing for one, two, or all three terms.
+- **Per-Term Price Negotiation**: Price negotiation stages (Initial Offer, Discounted, Best and Final, etc.) are now tracked independently per contract term. Term selector tabs filter the negotiation history.
+- **Dual Submit Buttons**: "Create Quote & View" (saves and navigates to repository) and "Create Quote & Copy" (saves but keeps form populated for creating bandwidth variants under the same base reference).
+- **Duplicate Quote Button**: New action button in the Quote Repository table to duplicate an existing quote into the Add Quote form with all fields pre-filled (carrier, route, pricing, etc.).
+- **Updated CSV Template**: Template now includes `MRC (12 Month)`, `NRC (12 Month)`, `MRC (24 Month)`, `NRC (24 Month)`, `MRC (36 Month)`, `NRC (36 Month)` columns, replacing the old single Contract Term/MRC/NRC fields. Import auto-populates the pricing grid.
+- **Repository Table Display**: MRC, NRC, and Term columns show actual values for single-term quotes, or a "Multiple" chip when multiple terms are quoted.
+- **Detail View**: Pricing-by-term table and per-term negotiation history in the view details dialog.
+- **Migration**: Existing quotes with `contract_term` of 12, 24, or 36 are automatically migrated to the new column structure.
 
 ---
 

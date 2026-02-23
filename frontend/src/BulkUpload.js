@@ -10,6 +10,7 @@ import {
 import {
   CloudUpload, Download, History, CheckCircle, Error
 } from '@mui/icons-material';
+import * as XLSX from 'xlsx';
 import { useAuth } from './AuthContext';
 import { ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 import {
@@ -22,6 +23,43 @@ import {
   getCNXRacksList,
   downloadRackDeviceExport
 } from './api';
+import { carrierQuoteApi } from './api';
+
+const CARRIER_QUOTE_MODULE_ID = 'carrier_quotes';
+
+const CARRIER_QUOTE_FIELDS = [
+  { label: 'Internal Reference (QR)', field: 'quote_reference', instruction: 'Optional - auto-generated if left blank' },
+  { label: 'Carrier Name', field: 'carrier_name', instruction: 'Required - will be matched to existing carriers' },
+  { label: 'Carrier Quote Reference', field: 'carrier_quote_ref', instruction: 'The carrier\'s own reference number' },
+  { label: 'Service Type', field: 'service_type', instruction: 'MPLS | Ethernet | Dark Fiber | Wavelength' },
+  { label: 'Region', field: 'region', instruction: 'AMERs | APAC | EMEA | INTER' },
+  { label: 'Location A POP Code', field: 'location_a_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) OR fill in Name/Address/City/Country below' },
+  { label: 'Location A Name', field: '_loc_a_name', instruction: 'Only required if POP code is not provided' },
+  { label: 'Location A Address', field: '_loc_a_address', instruction: 'Street address for custom location' },
+  { label: 'Location A City', field: '_loc_a_city', instruction: 'City for custom location' },
+  { label: 'Location A Country', field: '_loc_a_country', instruction: 'Country for custom location' },
+  { label: 'Location B POP Code', field: 'location_b_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) OR fill in Name/Address/City/Country below' },
+  { label: 'Location B Name', field: '_loc_b_name', instruction: 'Only required if POP code is not provided' },
+  { label: 'Location B Address', field: '_loc_b_address', instruction: 'Street address for custom location' },
+  { label: 'Location B City', field: '_loc_b_city', instruction: 'City for custom location' },
+  { label: 'Location B Country', field: '_loc_b_country', instruction: 'Country for custom location' },
+  { label: 'Bandwidth Unit', field: 'bandwidth_unit', instruction: 'Mbps | Gbps | Dark Fiber' },
+  { label: 'Bandwidth Value', field: 'bandwidth_value', instruction: 'Not required if Bandwidth Unit is Dark Fiber' },
+  { label: 'Currency', field: 'currency', instruction: 'e.g. USD, EUR, GBP' },
+  { label: 'MRC (12 Month)', field: 'mrc_12', instruction: 'Monthly Recurring Cost for 12-month term. Leave blank if not quoted.' },
+  { label: 'NRC (12 Month)', field: 'nrc_12', instruction: 'Non-Recurring Cost for 12-month term. Leave blank if not quoted.' },
+  { label: 'MRC (24 Month)', field: 'mrc_24', instruction: 'Monthly Recurring Cost for 24-month term. Leave blank if not quoted.' },
+  { label: 'NRC (24 Month)', field: 'nrc_24', instruction: 'Non-Recurring Cost for 24-month term. Leave blank if not quoted.' },
+  { label: 'MRC (36 Month)', field: 'mrc_36', instruction: 'Monthly Recurring Cost for 36-month term. Leave blank if not quoted.' },
+  { label: 'NRC (36 Month)', field: 'nrc_36', instruction: 'Non-Recurring Cost for 36-month term. Leave blank if not quoted.' },
+  { label: 'Expected Latency (ms)', field: 'expected_latency', instruction: 'Round-trip latency in milliseconds' },
+  { label: 'Protection', field: 'protection', instruction: 'Unprotected | Protected' },
+  { label: 'Cable System', field: 'cable_system', instruction: 'Name of submarine cable system if applicable' },
+  { label: 'Quote Date', field: 'quote_date', instruction: 'DD/MM/YYYY e.g. 23/02/2026' },
+  { label: 'Quote Validity (Days)', field: '_quote_validity_days', instruction: 'Number of days from quote date e.g. 60' },
+  { label: 'MTU', field: 'mtu', instruction: 'Maximum Transmission Unit' },
+  { label: 'Notes', field: 'notes', instruction: 'Any additional notes' }
+];
 
 const BulkUpload = ({ onDataRefresh }) => {
   const { hasRole } = useAuth();
@@ -62,6 +100,10 @@ const BulkUpload = ({ onDataRefresh }) => {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Carrier quote bulk upload state
+  const [carrierQuoteResults, setCarrierQuoteResults] = useState(null);
+  const isCarrierQuoteModule = selectedModule === CARRIER_QUOTE_MODULE_ID;
 
   // Enhanced cleanup function to reset ALL upload state
   const cleanupUploadState = () => {
@@ -163,7 +205,13 @@ const BulkUpload = ({ onDataRefresh }) => {
   const loadModules = async () => {
     try {
       const moduleList = await getBulkUploadModules();
-      setModules(moduleList);
+      const carrierQuoteModule = {
+        id: CARRIER_QUOTE_MODULE_ID,
+        name: 'Carrier Quotes',
+        description: 'Bulk import carrier quotes from Excel. Each sheet = one quote. Download the template and duplicate sheets for multiple quotes.'
+      };
+      const hasCarrierQuote = moduleList.some(m => m.id === CARRIER_QUOTE_MODULE_ID);
+      setModules(hasCarrierQuote ? moduleList : [carrierQuoteModule, ...moduleList]);
     } catch (err) {
       setError('Failed to load available modules');
     }
@@ -175,6 +223,249 @@ const BulkUpload = ({ onDataRefresh }) => {
       setCnxLocations(response.data);
     } catch (err) {
       console.error('Failed to load CNX locations:', err);
+    }
+  };
+
+  // Normalise date values from Excel (may come as serial numbers or various formats)
+  const normaliseDateValue = (val) => {
+    if (!val) return '';
+    if (typeof val === 'number') {
+      // Excel serial date number
+      const d = XLSX.SSF.parse_date_code(val);
+      if (d) return `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
+    }
+    const s = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const dmySlash = s.match(/^(\d{1,2})[/](\d{1,2})[/](\d{4})$/);
+    if (dmySlash) {
+      const day = parseInt(dmySlash[1], 10);
+      const month = parseInt(dmySlash[2], 10);
+      const year = parseInt(dmySlash[3], 10);
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
+    }
+    const dmyDash = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+    if (dmyDash) {
+      const day = parseInt(dmyDash[1], 10);
+      const month = parseInt(dmyDash[2], 10);
+      const year = parseInt(dmyDash[3], 10);
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
+    }
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+    return s;
+  };
+
+  // Download carrier quote Excel template
+  const handleCarrierQuoteTemplateDownload = () => {
+    const wb = XLSX.utils.book_new();
+    const wsData = [['Field', 'Value', 'Instructions']];
+    CARRIER_QUOTE_FIELDS.forEach(r => wsData.push([r.label, '', r.instruction]));
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!cols'] = [{ wch: 28 }, { wch: 30 }, { wch: 60 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Quote 1');
+
+    const instrWs = XLSX.utils.aoa_to_sheet([
+      ['Carrier Quote Bulk Upload Instructions'],
+      [''],
+      ['1. Each sheet represents one carrier quote.'],
+      ['2. Duplicate the "Quote 1" sheet for each additional quote you want to add.'],
+      ['3. Fill in Column B (Value) for each field. Column A (Field) must not be changed.'],
+      ['4. Required fields: Carrier Name, Service Type, Region, Bandwidth Unit.'],
+      ['5. Bandwidth Value is required unless Bandwidth Unit is "Dark Fiber".'],
+      ['6. Dates should be entered as DD/MM/YYYY (e.g. 23/02/2026).'],
+      ['7. Save the file and upload via the Bulk Upload facility.'],
+      [''],
+      ['Duplicate sheet for multi quote entry.']
+    ]);
+    instrWs['!cols'] = [{ wch: 70 }];
+    XLSX.utils.book_append_sheet(wb, instrWs, 'Instructions');
+
+    XLSX.writeFile(wb, 'carrier_quote_bulk_template.xlsx');
+    setSuccess('Carrier quote template downloaded');
+  };
+
+  // Parse a single Excel sheet into quote data
+  const parseCarrierQuoteSheet = (ws) => {
+    const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
+    const dataMap = {};
+    const startIdx = data.length > 0 && String(data[0][0] || '').trim().toLowerCase() === 'field' ? 1 : 0;
+    for (let i = startIdx; i < data.length; i++) {
+      const row = data[i] || [];
+      const label = String(row[0] || '').trim();
+      const value = row[1] !== undefined && row[1] !== null ? row[1] : '';
+      if (label) dataMap[label] = value;
+    }
+
+    const quoteData = {};
+    const dateFields = ['quote_date'];
+    let fieldsPopulated = 0;
+    let validityDays = '';
+    const customLocA = {};
+    const customLocB = {};
+
+    CARRIER_QUOTE_FIELDS.forEach(r => {
+      const val = dataMap[r.label];
+      if (val !== undefined && val !== '') {
+        const strVal = String(val).trim();
+        if (r.field === '_quote_validity_days') {
+          validityDays = strVal;
+        } else if (r.field.startsWith('_loc_a_')) {
+          customLocA[r.field.replace('_loc_a_', '')] = strVal;
+        } else if (r.field.startsWith('_loc_b_')) {
+          customLocB[r.field.replace('_loc_b_', '')] = strVal;
+        } else if (!r.field.startsWith('_')) {
+          quoteData[r.field] = dateFields.includes(r.field) ? normaliseDateValue(val) : strVal;
+        }
+        fieldsPopulated++;
+      }
+    });
+
+    // Calculate expiry_date from quote_date + validity days
+    if (quoteData.quote_date && validityDays && parseInt(validityDays, 10) > 0) {
+      const d = new Date(quoteData.quote_date);
+      if (!isNaN(d.getTime())) {
+        d.setDate(d.getDate() + parseInt(validityDays, 10));
+        quoteData.expiry_date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      }
+    }
+
+    return { quoteData, customLocA, customLocB, fieldsPopulated };
+  };
+
+  // Handle carrier quote bulk upload
+  const handleCarrierQuoteBulkUpload = async () => {
+    if (!uploadFile) {
+      setError('Please select an Excel file');
+      return;
+    }
+
+    setUploading(true);
+    setError('');
+    setSuccess('');
+    setCarrierQuoteResults(null);
+    setUploadResult(null);
+
+    try {
+      const arrayBuffer = await uploadFile.arrayBuffer();
+      const wb = XLSX.read(arrayBuffer, { type: 'array' });
+
+      const quoteSheets = wb.SheetNames.filter(n => n.toLowerCase() !== 'instructions');
+      if (quoteSheets.length === 0) {
+        setError('No quote sheets found. Ensure sheets are named (not "Instructions").');
+        setUploading(false);
+        return;
+      }
+
+      const results = { total: quoteSheets.length, created: 0, failed: 0, details: [] };
+
+      for (let i = 0; i < quoteSheets.length; i++) {
+        const sheetName = quoteSheets[i];
+        const ws = wb.Sheets[sheetName];
+        const { quoteData, customLocA, customLocB, fieldsPopulated } = parseCarrierQuoteSheet(ws);
+
+        if (fieldsPopulated === 0) {
+          results.failed++;
+          results.details.push({ sheet: sheetName, status: 'skipped', message: 'No data found' });
+          continue;
+        }
+
+        if (!quoteData.carrier_name) {
+          results.failed++;
+          results.details.push({ sheet: sheetName, status: 'error', message: 'Carrier Name is required' });
+          continue;
+        }
+        if (!quoteData.service_type) {
+          results.failed++;
+          results.details.push({ sheet: sheetName, status: 'error', message: 'Service Type is required' });
+          continue;
+        }
+        if (!quoteData.region) {
+          results.failed++;
+          results.details.push({ sheet: sheetName, status: 'error', message: 'Region is required' });
+          continue;
+        }
+        if (!quoteData.bandwidth_unit) {
+          results.failed++;
+          results.details.push({ sheet: sheetName, status: 'error', message: 'Bandwidth Unit is required' });
+          continue;
+        }
+
+        try {
+          // Carrier name fuzzy lookup
+          if (quoteData.carrier_name) {
+            const matches = await carrierQuoteApi.getCarriers(quoteData.carrier_name);
+            if (matches && matches.length > 0) {
+              const inputLower = quoteData.carrier_name.toLowerCase();
+              const exact = matches.find(m => m.carrier_name.toLowerCase() === inputLower);
+              const startsWith = matches.find(m => m.carrier_name.toLowerCase().startsWith(inputLower));
+              const best = exact || startsWith || matches[0];
+              quoteData.carrier_name = best.carrier_name;
+              quoteData.carrier_id = best.id;
+            }
+          }
+
+          // Handle Location A custom
+          if (!quoteData.location_a_pop_code && customLocA.name) {
+            try {
+              const loc = await carrierQuoteApi.createCustomLocation({
+                location_name: customLocA.name, address: customLocA.address || '',
+                city: customLocA.city || '', country: customLocA.country || ''
+              });
+              quoteData.location_a_type = 'custom';
+              quoteData.location_a_custom_id = loc.id;
+            } catch (e) { /* use POP fallback */ }
+          }
+
+          // Handle Location B custom
+          if (!quoteData.location_b_pop_code && customLocB.name) {
+            try {
+              const loc = await carrierQuoteApi.createCustomLocation({
+                location_name: customLocB.name, address: customLocB.address || '',
+                city: customLocB.city || '', country: customLocB.country || ''
+              });
+              quoteData.location_b_type = 'custom';
+              quoteData.location_b_custom_id = loc.id;
+            } catch (e) { /* use POP fallback */ }
+          }
+
+          // Parse numeric fields
+          ['bandwidth_value', 'mrc_12', 'nrc_12', 'mrc_24', 'nrc_24', 'mrc_36', 'nrc_36', 'expected_latency'].forEach(f => {
+            if (quoteData[f]) quoteData[f] = parseFloat(quoteData[f]);
+          });
+          if (quoteData.mtu) quoteData.mtu = parseInt(quoteData.mtu, 10);
+          if (quoteData.bandwidth_unit === 'Dark Fiber') quoteData.bandwidth_value = null;
+
+          const result = await carrierQuoteApi.createQuote(quoteData);
+          results.created++;
+          results.details.push({ sheet: sheetName, status: 'success', message: `Created as ${result.quote_reference}` });
+        } catch (err) {
+          results.failed++;
+          results.details.push({ sheet: sheetName, status: 'error', message: err.response?.data?.error || err.message });
+        }
+      }
+
+      setCarrierQuoteResults(results);
+      if (results.created > 0) {
+        setSuccess(`Successfully created ${results.created} of ${results.total} quotes`);
+      }
+      if (results.failed > 0 && results.created === 0) {
+        setError(`All ${results.failed} quotes failed. Check details below.`);
+      } else if (results.failed > 0) {
+        setError(`${results.failed} of ${results.total} quotes had errors. Check details below.`);
+      }
+      setUploadFile(null);
+      const fileInput = document.getElementById('bulk-upload-file');
+      if (fileInput) fileInput.value = '';
+    } catch (err) {
+      setError('Failed to parse Excel file: ' + err.message);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -487,6 +778,28 @@ const BulkUpload = ({ onDataRefresh }) => {
     }
   };
 
+  const handleExcelFileChange = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
+        setError('Please select an Excel file (.xlsx or .xls)');
+        event.target.value = '';
+        return;
+      }
+      if (file.size > 50 * 1024 * 1024) {
+        setError('File size must be less than 50MB');
+        event.target.value = '';
+        return;
+      }
+      setUploadFile(file);
+      setError('');
+      setSuccess('');
+      setFormErrors({});
+      setUploadResult(null);
+      setCarrierQuoteResults(null);
+    }
+  };
+
   const loadHistory = async () => {
     setHistoryLoading(true);
     try {
@@ -612,14 +925,17 @@ const BulkUpload = ({ onDataRefresh }) => {
                   onChange={(e) => {
                     const newModule = e.target.value;
                     setSelectedModule(newModule);
-                    // Clear all state when module changes
                     setFormErrors({});
                     setError('');
                     setSuccess('');
                     setUploadResult(null);
                     setUploadProgress(null);
+                    setCarrierQuoteResults(null);
+                    setUploadFile(null);
                     setSelectedCnxLocation('');
                     setSelectedCnxRack('');
+                    const fileInput = document.getElementById('bulk-upload-file');
+                    if (fileInput) fileInput.value = '';
                     
                     // Load CNX locations if rack devices module selected
                     if (newModule === 'cnx_rack_devices') {
@@ -705,11 +1021,11 @@ const BulkUpload = ({ onDataRefresh }) => {
                 <Button
                   variant="outlined"
                   startIcon={<Download />}
-                  onClick={handleTemplateDownload}
+                  onClick={isCarrierQuoteModule ? handleCarrierQuoteTemplateDownload : handleTemplateDownload}
                   disabled={!selectedModule}
                   fullWidth
                 >
-                  Download CSV Template
+                  {isCarrierQuoteModule ? 'Download Excel Template' : 'Download CSV Template'}
                 </Button>
                 
                 {selectedModule === 'cnx_rack_devices' ? (
@@ -736,7 +1052,7 @@ const BulkUpload = ({ onDataRefresh }) => {
                   >
                     Export Rack Devices (Per Rack)
                   </Button>
-                ) : (
+                ) : isCarrierQuoteModule ? null : (
                   <Button
                     variant="outlined"
                     startIcon={<Download />}
@@ -751,6 +1067,8 @@ const BulkUpload = ({ onDataRefresh }) => {
                 <Typography variant="caption" color="text.secondary">
                   {selectedModule === 'cnx_rack_devices' 
                     ? 'Select a rack above to export its devices with pre-populated RU rows, or use the template for a blank starting point.'
+                    : isCarrierQuoteModule
+                    ? 'Download the Excel template, duplicate the "Quote 1" sheet for each quote, then upload.'
                     : 'Use the template for new data or database export as a starting point for bulk edits.'
                   }
                 </Typography>
@@ -776,13 +1094,13 @@ const BulkUpload = ({ onDataRefresh }) => {
                     fullWidth
                     disabled={!selectedModule}
                   >
-                    {uploadFile ? uploadFile.name : 'Choose CSV File'}
+                    {uploadFile ? uploadFile.name : (isCarrierQuoteModule ? 'Choose Excel File (.xlsx)' : 'Choose CSV File')}
                     <input
                       id="bulk-upload-file"
                       type="file"
-                      accept=".csv"
+                      accept={isCarrierQuoteModule ? '.xlsx,.xls' : '.csv'}
                       hidden
-                      onChange={handleFileChange}
+                      onChange={isCarrierQuoteModule ? handleExcelFileChange : handleFileChange}
                     />
                   </Button>
                 </Grid>
@@ -790,7 +1108,7 @@ const BulkUpload = ({ onDataRefresh }) => {
                 <Grid item xs={12} md={6}>
                   <Button
                     variant="contained"
-                    onClick={handleFileUpload}
+                    onClick={isCarrierQuoteModule ? handleCarrierQuoteBulkUpload : handleFileUpload}
                     disabled={!selectedModule || !uploadFile || uploading}
                     fullWidth
                   >
@@ -884,6 +1202,49 @@ const BulkUpload = ({ onDataRefresh }) => {
                     </List>
                   </Box>
                 )}
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
+
+        {/* Carrier Quote Bulk Upload Results */}
+        {carrierQuoteResults && (
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" sx={{ fontSize: '1.1875rem' }} gutterBottom>
+                  Carrier Quote Bulk Upload Results
+                </Typography>
+                <Alert severity={carrierQuoteResults.failed === 0 ? 'success' : carrierQuoteResults.created > 0 ? 'warning' : 'error'} sx={{ mb: 2 }}>
+                  <strong>{carrierQuoteResults.created}</strong> of <strong>{carrierQuoteResults.total}</strong> quotes created successfully
+                  {carrierQuoteResults.failed > 0 && <> &mdash; <strong>{carrierQuoteResults.failed}</strong> failed</>}
+                </Alert>
+                <TableContainer component={Paper} variant="outlined">
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 600 }}>Sheet</TableCell>
+                        <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                        <TableCell sx={{ fontWeight: 600 }}>Details</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {carrierQuoteResults.details.map((d, i) => (
+                        <TableRow key={i}>
+                          <TableCell>{d.sheet}</TableCell>
+                          <TableCell>
+                            <Chip
+                              label={d.status}
+                              size="small"
+                              color={d.status === 'success' ? 'success' : d.status === 'skipped' ? 'default' : 'error'}
+                            />
+                          </TableCell>
+                          <TableCell>{d.message}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
               </CardContent>
             </Card>
           </Grid>

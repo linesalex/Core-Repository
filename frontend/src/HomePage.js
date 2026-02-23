@@ -95,8 +95,8 @@ function HomePage({ onRouteClick }) {
 
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
           <Tabs value={activeTab} onChange={(e, v) => setActiveTab(v)}>
-            <Tab label="1Gb" />
-            <Tab label="10Gb" />
+            <Tab label="1Gb" sx={{ textTransform: 'none' }} />
+            <Tab label="10Gb" sx={{ textTransform: 'none' }} />
           </Tabs>
         </Box>
 
@@ -206,15 +206,27 @@ function HomePage({ onRouteClick }) {
               </Table>
             </TableContainer>
 
-            <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Typography variant="caption" color="text.secondary">
-                Values in ms. Click a value to view the route in Route Finder.
-              </Typography>
+            <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <Box>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  Values in ms and is RTD. Click a value to view the route in Route Finder.
+                </Typography>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  1Gb latency is fastest available route and includes all ULL / Special routes.
+                </Typography>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  10Gb latency is calculated only on routes above 20Gb capacity and will show as N/A if latency delta between 1Gb and 10Gb is above 20%.
+                </Typography>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  Capacity checks required.
+                </Typography>
+              </Box>
               {lastComputed && (
                 <Chip
                   label={`Last updated: ${new Date(lastComputed).toLocaleString()}`}
                   size="small"
                   variant="outlined"
+                  sx={{ ml: 2, flexShrink: 0 }}
                 />
               )}
             </Box>

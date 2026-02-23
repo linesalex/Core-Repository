@@ -578,6 +578,9 @@ export const getAnalyticsRouteFinder = (startDate, endDate) => {
   return api.get(`${API_BASE_URL}/analytics/route-finder`, { params }).then(res => res.data);
 };
 
+export const logLatencyMatrixReferral = (data) =>
+  api.post(`${API_BASE_URL}/analytics/latency-matrix-referral`, data).then(res => res.data);
+
 export const getAnalyticsExtranetPricing = (startDate, endDate) => {
   const params = {};
   if (startDate) params.start_date = startDate;

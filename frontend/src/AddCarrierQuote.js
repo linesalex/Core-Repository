@@ -14,8 +14,6 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import MapIcon from '@mui/icons-material/Map';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import DeleteIcon from '@mui/icons-material/Delete';
-import TimelineIcon from '@mui/icons-material/Timeline';
-import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import DownloadIcon from '@mui/icons-material/Download';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
@@ -43,14 +41,17 @@ const CSV_ROWS = [
   { label: 'Bandwidth Unit', field: 'bandwidth_unit', instruction: 'Mbps | Gbps | Dark Fiber' },
   { label: 'Bandwidth Value', field: 'bandwidth_value', instruction: 'Not required if Bandwidth Unit is Dark Fiber' },
   { label: 'Currency', field: 'currency', instruction: 'e.g. USD, EUR, GBP' },
-  { label: 'NRC', field: 'nrc', instruction: 'Non-Recurring Cost' },
-  { label: 'MRC', field: 'mrc', instruction: 'Monthly Recurring Cost' },
-  { label: 'Contract Term (Months)', field: 'contract_term', instruction: '12 | 24 | 36' },
+  { label: 'MRC (12 Month)', field: 'mrc_12', instruction: 'Monthly Recurring Cost for 12-month term. Leave blank if not quoted.' },
+  { label: 'NRC (12 Month)', field: 'nrc_12', instruction: 'Non-Recurring Cost for 12-month term. Leave blank if not quoted.' },
+  { label: 'MRC (24 Month)', field: 'mrc_24', instruction: 'Monthly Recurring Cost for 24-month term. Leave blank if not quoted.' },
+  { label: 'NRC (24 Month)', field: 'nrc_24', instruction: 'Non-Recurring Cost for 24-month term. Leave blank if not quoted.' },
+  { label: 'MRC (36 Month)', field: 'mrc_36', instruction: 'Monthly Recurring Cost for 36-month term. Leave blank if not quoted.' },
+  { label: 'NRC (36 Month)', field: 'nrc_36', instruction: 'Non-Recurring Cost for 36-month term. Leave blank if not quoted.' },
   { label: 'Expected Latency (ms)', field: 'expected_latency', instruction: 'Round-trip latency in milliseconds' },
   { label: 'Protection', field: 'protection', instruction: 'Unprotected | Protected' },
   { label: 'Cable System', field: 'cable_system', instruction: 'Name of submarine cable system if applicable' },
-  { label: 'Quote Date', field: 'quote_date', instruction: 'YYYY-MM-DD' },
-  { label: 'Expiry Date', field: 'expiry_date', instruction: 'YYYY-MM-DD' },
+  { label: 'Quote Date', field: 'quote_date', instruction: 'DD/MM/YYYY e.g. 23/02/2026' },
+  { label: 'Quote Validity (Days)', field: '_quote_validity_days', instruction: 'Number of days from quote date e.g. 60' },
   { label: 'MTU', field: 'mtu', instruction: 'Maximum Transmission Unit' },
   { label: 'Notes', field: 'notes', instruction: 'Any additional notes' }
 ];
@@ -86,9 +87,7 @@ const parseCsvLine = (line) => {
 const SERVICE_TYPES = ['MPLS', 'Ethernet', 'Dark Fiber', 'Wavelength'];
 const REGIONS = ['AMERs', 'APAC', 'EMEA', 'INTER'];
 const BANDWIDTH_UNITS = ['Mbps', 'Gbps', 'Dark Fiber'];
-const CONTRACT_TERMS = [12, 24, 36];
 const PROTECTION_TYPES = ['Unprotected', 'Protected'];
-const PRICE_STAGE_PRESETS = ['Initial Offer', 'Counter Offer', 'Discounted', 'Best and Final', 'Accepted', 'Rejected'];
 
 const emptyFormData = {
   quote_reference: '',
@@ -107,10 +106,13 @@ const emptyFormData = {
   location_b_custom_name: '',
   bandwidth_value: '',
   bandwidth_unit: 'Gbps',
-  mrc: '',
-  nrc: '',
+  mrc_12: '',
+  nrc_12: '',
+  mrc_24: '',
+  nrc_24: '',
+  mrc_36: '',
+  nrc_36: '',
   currency: 'USD',
-  contract_term: '',
   expected_latency: '',
   protection: '',
   cable_system: '',
@@ -122,7 +124,7 @@ const emptyFormData = {
   notes: ''
 };
 
-const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
+const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
   const { user } = useAuth();
   const isEditMode = !!editQuoteId;
 
@@ -148,6 +150,9 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
   const [kmzParsing, setKmzParsing] = useState(false);
   const kmzInputRef = useRef(null);
 
+  // Quote validity (days) — drives expiry_date calculation
+  const [quoteValidityDays, setQuoteValidityDays] = useState('');
+
   // CSV import state
   const csvInputRef = useRef(null);
   const [csvDragActive, setCsvDragActive] = useState(false);
@@ -156,18 +161,6 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
   const [customLocDialogOpen, setCustomLocDialogOpen] = useState(false);
   const [customLocTarget, setCustomLocTarget] = useState('a');
   const [newCustomLoc, setNewCustomLoc] = useState({ location_name: '', address: '', city: '', country: '' });
-
-  // Price stage tracking
-  const [priceStages, setPriceStages] = useState([]);
-  const [priceStageDialogOpen, setPriceStageDialogOpen] = useState(false);
-  const [newPriceStage, setNewPriceStage] = useState({
-    stage_name: '',
-    mrc: '',
-    nrc: '',
-    currency: '',
-    notes: '',
-    stage_date: new Date().toISOString().split('T')[0]
-  });
 
   // Load reference data
   const loadReferenceData = useCallback(async () => {
@@ -206,10 +199,13 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
         location_b_custom_name: quote.location_b_custom_name || '',
         bandwidth_value: quote.bandwidth_value || '',
         bandwidth_unit: quote.bandwidth_unit || 'Gbps',
-        mrc: quote.mrc || '',
-        nrc: quote.nrc || '',
+        mrc_12: quote.mrc_12 ?? '',
+        nrc_12: quote.nrc_12 ?? '',
+        mrc_24: quote.mrc_24 ?? '',
+        nrc_24: quote.nrc_24 ?? '',
+        mrc_36: quote.mrc_36 ?? '',
+        nrc_36: quote.nrc_36 ?? '',
         currency: quote.currency || 'USD',
-        contract_term: quote.contract_term || '',
         expected_latency: quote.expected_latency || '',
         protection: quote.protection || '',
         cable_system: quote.cable_system || '',
@@ -220,9 +216,14 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
         mtu: quote.mtu || '',
         notes: quote.notes || ''
       });
-      // Load price stages
-      if (quote.price_stages) {
-        setPriceStages(quote.price_stages);
+      // Reverse-calculate validity days from existing dates
+      if (quote.quote_date && quote.expiry_date) {
+        const qd = new Date(quote.quote_date);
+        const ed = new Date(quote.expiry_date);
+        if (!isNaN(qd.getTime()) && !isNaN(ed.getTime())) {
+          const diffDays = Math.round((ed - qd) / (1000 * 60 * 60 * 24));
+          if (diffDays > 0) setQuoteValidityDays(String(diffDays));
+        }
       }
     } catch (err) {
       setError('Failed to load quote: ' + (err.response?.data?.error || err.message));
@@ -238,6 +239,31 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
   useEffect(() => {
     loadQuoteForEdit();
   }, [loadQuoteForEdit]);
+
+  // Pre-fill form from duplicate data
+  useEffect(() => {
+    if (duplicateData && !isEditMode) {
+      setFormData(prev => ({
+        ...prev,
+        ...duplicateData,
+        quote_reference: ''
+      }));
+    }
+  }, [duplicateData, isEditMode]);
+
+  // Auto-calculate expiry_date from quote_date + validity days
+  useEffect(() => {
+    if (formData.quote_date && quoteValidityDays && parseInt(quoteValidityDays, 10) > 0) {
+      const d = new Date(formData.quote_date);
+      if (!isNaN(d.getTime())) {
+        d.setDate(d.getDate() + parseInt(quoteValidityDays, 10));
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        setFormData(prev => ({ ...prev, expiry_date: `${yyyy}-${mm}-${dd}` }));
+      }
+    }
+  }, [formData.quote_date, quoteValidityDays]);
 
   // Search POP locations
   const searchPopLocations = async (query) => {
@@ -276,20 +302,22 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
   };
 
   // Submit form
-  const handleSubmit = async () => {
+  // mode: 'view' = create & navigate to repository, 'copy' = create & keep form for next entry
+  const handleSubmit = async (mode = 'view') => {
     if (!validateForm()) return;
 
     setSaving(true);
     try {
       const submitData = { ...formData };
-      // Clean up numeric fields
       if (submitData.bandwidth_value) submitData.bandwidth_value = parseFloat(submitData.bandwidth_value);
-      if (submitData.mrc) submitData.mrc = parseFloat(submitData.mrc);
-      if (submitData.nrc) submitData.nrc = parseFloat(submitData.nrc);
+      if (submitData.mrc_12) submitData.mrc_12 = parseFloat(submitData.mrc_12);
+      if (submitData.nrc_12) submitData.nrc_12 = parseFloat(submitData.nrc_12);
+      if (submitData.mrc_24) submitData.mrc_24 = parseFloat(submitData.mrc_24);
+      if (submitData.nrc_24) submitData.nrc_24 = parseFloat(submitData.nrc_24);
+      if (submitData.mrc_36) submitData.mrc_36 = parseFloat(submitData.mrc_36);
+      if (submitData.nrc_36) submitData.nrc_36 = parseFloat(submitData.nrc_36);
       if (submitData.expected_latency) submitData.expected_latency = parseFloat(submitData.expected_latency);
-      if (submitData.contract_term) submitData.contract_term = parseInt(submitData.contract_term);
       if (submitData.mtu) submitData.mtu = parseInt(submitData.mtu);
-      // Clear bandwidth value for Dark Fiber
       if (isDarkFiber) submitData.bandwidth_value = null;
 
       let quoteId;
@@ -303,7 +331,6 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
         setSuccess(`Quote ${result.quote_reference} created successfully`);
       }
 
-      // Upload files if any
       if (uploadFiles.length > 0 && quoteId) {
         try {
           await carrierQuoteApi.uploadAttachments(quoteId, uploadFiles);
@@ -312,10 +339,19 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
         }
       }
 
-      // Navigate back after short delay so user sees success message
-      setTimeout(() => {
-        if (onNavigateBack) onNavigateBack();
-      }, 1200);
+      if (isEditMode || mode === 'view') {
+        setTimeout(() => {
+          if (onNavigateBack) onNavigateBack();
+        }, 1200);
+      } else if (mode === 'copy') {
+        // Strip auto-suffix from reference so the next submit gets a new suffix
+        const baseRef = (formData.quote_reference || '').replace(/-\d+$/, '');
+        setFormData(prev => ({
+          ...prev,
+          quote_reference: baseRef
+        }));
+        setUploadFiles([]);
+      }
     } catch (err) {
       setError('Failed to save quote: ' + (err.response?.data?.error || err.message));
     } finally {
@@ -346,9 +382,28 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
   const normaliseDateValue = (val) => {
     if (!val) return val;
     const s = val.trim();
-    // Already YYYY-MM-DD
     if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-    // Try to parse with Date (handles many formats: MM/DD/YYYY, DD-MMM-YYYY, etc.)
+    // DD/MM/YYYY or D/M/YYYY (Excel default for non-US locales)
+    const dmySlash = s.match(/^(\d{1,2})[/](\d{1,2})[/](\d{4})$/);
+    if (dmySlash) {
+      const day = parseInt(dmySlash[1], 10);
+      const month = parseInt(dmySlash[2], 10);
+      const year = parseInt(dmySlash[3], 10);
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
+    }
+    // DD-MM-YYYY
+    const dmyDash = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+    if (dmyDash) {
+      const day = parseInt(dmyDash[1], 10);
+      const month = parseInt(dmyDash[2], 10);
+      const year = parseInt(dmyDash[3], 10);
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
+    }
+    // Fallback to Date constructor (handles MM/DD/YYYY, DD-MMM-YYYY, etc.)
     const d = new Date(s);
     if (!isNaN(d.getTime())) {
       const yyyy = d.getFullYear();
@@ -356,7 +411,6 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
       const dd = String(d.getDate()).padStart(2, '0');
       return `${yyyy}-${mm}-${dd}`;
     }
-    // Return original if unparseable
     return s;
   };
 
@@ -387,16 +441,20 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
         // Map to form fields, skip empty values
         const updates = {};
         let fieldsPopulated = 0;
-        const dateFields = ['quote_date', 'expiry_date'];
+        let importedValidityDays = '';
+        const dateFields = ['quote_date'];
         CSV_ROWS.forEach(row => {
           const val = dataMap[row.label];
           if (val !== undefined && val !== '') {
-            if (!row.field.startsWith('_')) {
+            if (row.field === '_quote_validity_days') {
+              importedValidityDays = String(val).trim();
+            } else if (!row.field.startsWith('_')) {
               updates[row.field] = dateFields.includes(row.field) ? normaliseDateValue(val) : val;
             }
             fieldsPopulated++;
           }
         });
+        if (importedValidityDays) setQuoteValidityDays(importedValidityDays);
 
         // Handle Location A: POP code vs custom location
         const locAName = dataMap['Location A Name'] || '';
@@ -606,56 +664,6 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
     }
     if (validFiles.length < files.length) {
       setError(`${files.length - validFiles.length} file(s) skipped - unsupported format`);
-    }
-  };
-
-  // Add a price stage
-  const handleAddPriceStage = async () => {
-    if (!newPriceStage.stage_name) {
-      setError('Stage name is required');
-      return;
-    }
-    
-    if (!editQuoteId) {
-      // For new quotes, stage will be added after save
-      setError('Please save the quote first, then add price stages');
-      return;
-    }
-    
-    try {
-      const stageData = {
-        ...newPriceStage,
-        mrc: newPriceStage.mrc ? parseFloat(newPriceStage.mrc) : null,
-        nrc: newPriceStage.nrc ? parseFloat(newPriceStage.nrc) : null,
-        currency: newPriceStage.currency || formData.currency || 'USD'
-      };
-      
-      const result = await carrierQuoteApi.addPriceStage(editQuoteId, stageData);
-      setPriceStages(prev => [...prev, result]);
-      setPriceStageDialogOpen(false);
-      setNewPriceStage({
-        stage_name: '',
-        mrc: '',
-        nrc: '',
-        currency: '',
-        notes: '',
-        stage_date: new Date().toISOString().split('T')[0]
-      });
-      setSuccess('Price stage added');
-    } catch (err) {
-      setError('Failed to add price stage: ' + (err.response?.data?.error || err.message));
-    }
-  };
-
-  // Delete a price stage
-  const handleDeletePriceStage = async (stageId) => {
-    if (!editQuoteId) return;
-    try {
-      await carrierQuoteApi.deletePriceStage(editQuoteId, stageId);
-      setPriceStages(prev => prev.filter(s => s.id !== stageId));
-      setSuccess('Price stage deleted');
-    } catch (err) {
-      setError('Failed to delete price stage: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -1004,42 +1012,65 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
           </Grid>
           <Grid item xs={12} md={3}>
             <FormControl fullWidth size="small">
-              <InputLabel>Contract Term</InputLabel>
-              <Select value={formData.contract_term} onChange={(e) => setFormData(prev => ({ ...prev, contract_term: e.target.value }))} label="Contract Term">
-                <MenuItem value="">N/A</MenuItem>
-                {CONTRACT_TERMS.map(t => <MenuItem key={t} value={t}>{t} months</MenuItem>)}
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={4}>
-            <TextField
-              fullWidth
-              size="small"
-              label="MRC"
-              type="number"
-              value={formData.mrc}
-              onChange={(e) => setFormData(prev => ({ ...prev, mrc: e.target.value }))}
-              InputProps={{ startAdornment: <InputAdornment position="start">{formData.currency}</InputAdornment> }}
-            />
-          </Grid>
-          <Grid item xs={12} md={4}>
-            <TextField
-              fullWidth
-              size="small"
-              label="NRC"
-              type="number"
-              value={formData.nrc}
-              onChange={(e) => setFormData(prev => ({ ...prev, nrc: e.target.value }))}
-              InputProps={{ startAdornment: <InputAdornment position="start">{formData.currency}</InputAdornment> }}
-            />
-          </Grid>
-          <Grid item xs={12} md={4}>
-            <FormControl fullWidth size="small">
               <InputLabel>Protection</InputLabel>
               <Select value={formData.protection} onChange={(e) => setFormData(prev => ({ ...prev, protection: e.target.value }))} label="Protection">
                 {PROTECTION_TYPES.map(p => <MenuItem key={p} value={p}>{p}</MenuItem>)}
               </Select>
             </FormControl>
+          </Grid>
+
+          {/* Term-based pricing grid */}
+          <Grid item xs={12}>
+            <Divider sx={{ my: 1 }} />
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, mt: 1 }}>
+              Enter pricing for each contract term quoted by the carrier. Leave blank for terms not offered.
+            </Typography>
+          </Grid>
+          <Grid item xs={12}>
+            <TableContainer component={Paper} variant="outlined">
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 600, width: 80 }}></TableCell>
+                    <TableCell sx={{ fontWeight: 600 }} align="center">12 Months</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }} align="center">24 Months</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }} align="center">36 Months</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 600 }}>MRC</TableCell>
+                    {[12, 24, 36].map(t => (
+                      <TableCell key={`mrc_${t}`} align="center">
+                        <TextField
+                          size="small"
+                          type="number"
+                          value={formData[`mrc_${t}`]}
+                          onChange={(e) => setFormData(prev => ({ ...prev, [`mrc_${t}`]: e.target.value }))}
+                          InputProps={{ startAdornment: <InputAdornment position="start">{formData.currency}</InputAdornment> }}
+                          sx={{ maxWidth: 180 }}
+                        />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 600 }}>NRC</TableCell>
+                    {[12, 24, 36].map(t => (
+                      <TableCell key={`nrc_${t}`} align="center">
+                        <TextField
+                          size="small"
+                          type="number"
+                          value={formData[`nrc_${t}`]}
+                          onChange={(e) => setFormData(prev => ({ ...prev, [`nrc_${t}`]: e.target.value }))}
+                          InputProps={{ startAdornment: <InputAdornment position="start">{formData.currency}</InputAdornment> }}
+                          sx={{ maxWidth: 180 }}
+                        />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </TableContainer>
           </Grid>
         </Grid>
       </Paper>
@@ -1094,11 +1125,12 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
             <TextField
               fullWidth
               size="small"
-              type="date"
-              label="Expiry Date"
-              value={formData.expiry_date}
-              onChange={(e) => setFormData(prev => ({ ...prev, expiry_date: e.target.value }))}
-              InputLabelProps={{ shrink: true }}
+              type="number"
+              label="Quote Validity (Days)"
+              value={quoteValidityDays}
+              onChange={(e) => setQuoteValidityDays(e.target.value)}
+              helperText={formData.quote_date && quoteValidityDays ? `Expires: ${new Date(new Date(formData.quote_date).getTime() + parseInt(quoteValidityDays, 10) * 86400000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}` : 'Set quote date first'}
+              InputProps={{ inputProps: { min: 1 } }}
             />
           </Grid>
         </Grid>
@@ -1224,135 +1256,7 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
         />
       </Paper>
 
-      {/* Section 8: Price Negotiation History */}
-      <Paper sx={{ p: 3, mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <TimelineIcon color="primary" fontSize="small" />
-            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Price Negotiation History</Typography>
-          </Box>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<AddIcon />}
-            onClick={() => {
-              setNewPriceStage(prev => ({
-                ...prev,
-                currency: formData.currency || 'USD',
-                mrc: formData.mrc || '',
-                nrc: formData.nrc || ''
-              }));
-              setPriceStageDialogOpen(true);
-            }}
-            disabled={!isEditMode}
-          >
-            Add Price Stage
-          </Button>
-        </Box>
-        
-        {!isEditMode && (
-          <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
-            Save the quote first to start tracking price negotiations. Once saved, you can record each stage of the negotiation process.
-          </Typography>
-        )}
-        
-        {isEditMode && priceStages.length > 0 && (
-          <>
-            <TableContainer component={Paper} variant="outlined">
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ fontWeight: 600 }}>Stage</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }} align="right">MRC</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }} align="right">NRC</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>Ccy</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>Notes</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>By</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {priceStages.map((stage, idx) => {
-                    const prevStage = idx > 0 ? priceStages[idx - 1] : null;
-                    const mrcChange = prevStage && prevStage.mrc && stage.mrc ? stage.mrc - prevStage.mrc : null;
-                    const nrcChange = prevStage && prevStage.nrc && stage.nrc ? stage.nrc - prevStage.nrc : null;
-                    
-                    return (
-                      <TableRow key={stage.id} sx={idx === priceStages.length - 1 ? { backgroundColor: 'action.hover' } : {}}>
-                        <TableCell>
-                          <Chip label={stage.stage_name} size="small" variant="outlined" color={
-                            stage.stage_name === 'Best and Final' ? 'success' :
-                            stage.stage_name === 'Discounted' ? 'info' :
-                            stage.stage_name === 'Counter Offer' ? 'warning' :
-                            stage.stage_name === 'Accepted' ? 'success' :
-                            stage.stage_name === 'Rejected' ? 'error' : 'default'
-                          } />
-                        </TableCell>
-                        <TableCell>{formatDate(stage.stage_date)}</TableCell>
-                        <TableCell align="right">
-                          {stage.mrc != null ? stage.mrc.toLocaleString() : '-'}
-                          {mrcChange != null && mrcChange !== 0 && (
-                            <Typography variant="caption" component="span" sx={{ ml: 0.5, color: mrcChange < 0 ? 'success.main' : 'error.main' }}>
-                              ({mrcChange > 0 ? '+' : ''}{mrcChange.toLocaleString()})
-                            </Typography>
-                          )}
-                        </TableCell>
-                        <TableCell align="right">
-                          {stage.nrc != null ? stage.nrc.toLocaleString() : '-'}
-                          {nrcChange != null && nrcChange !== 0 && (
-                            <Typography variant="caption" component="span" sx={{ ml: 0.5, color: nrcChange < 0 ? 'success.main' : 'error.main' }}>
-                              ({nrcChange > 0 ? '+' : ''}{nrcChange.toLocaleString()})
-                            </Typography>
-                          )}
-                        </TableCell>
-                        <TableCell>{stage.currency}</TableCell>
-                        <TableCell>
-                          <Typography variant="body2" sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {stage.notes || '-'}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="caption">{stage.created_by_name || stage.created_by_username || '-'}</Typography>
-                        </TableCell>
-                        <TableCell>
-                          <IconButton size="small" color="error" onClick={() => handleDeletePriceStage(stage.id)}>
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </TableContainer>
-            {priceStages.length > 1 && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-                <TrendingDownIcon fontSize="small" color="success" />
-                <Typography variant="caption" color="text.secondary">
-                  {(() => {
-                    const first = priceStages[0];
-                    const last = priceStages[priceStages.length - 1];
-                    if (first.mrc && last.mrc) {
-                      const pctChange = ((last.mrc - first.mrc) / first.mrc * 100).toFixed(1);
-                      return `MRC: ${first.mrc.toLocaleString()} → ${last.mrc.toLocaleString()} (${pctChange > 0 ? '+' : ''}${pctChange}%)`;
-                    }
-                    return 'Price change tracking from initial to latest stage';
-                  })()}
-                </Typography>
-              </Box>
-            )}
-          </>
-        )}
-        
-        {isEditMode && priceStages.length === 0 && (
-          <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
-            No price stages recorded yet. Click "Add Price Stage" to track negotiation steps.
-          </Typography>
-        )}
-      </Paper>
-
-      {/* Section 9: Attachments */}
+      {/* Section 8: Attachments */}
       <Paper sx={{ p: 3, mb: 2 }}>
         <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Attachments</Typography>
         <Box
@@ -1415,101 +1319,40 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId }) => {
           <Button onClick={onNavigateBack} variant="outlined">
             Cancel
           </Button>
-          <Button
-            variant="contained"
-            size="large"
-            startIcon={saving ? <CircularProgress size={18} color="inherit" /> : <SaveIcon />}
-            onClick={handleSubmit}
-            disabled={saving}
-          >
-            {saving ? 'Saving...' : isEditMode ? 'Update Quote' : 'Create Quote'}
-          </Button>
+          {isEditMode ? (
+            <Button
+              variant="contained"
+              size="large"
+              startIcon={saving ? <CircularProgress size={18} color="inherit" /> : <SaveIcon />}
+              onClick={() => handleSubmit('view')}
+              disabled={saving}
+            >
+              {saving ? 'Saving...' : 'Update Quote'}
+            </Button>
+          ) : (
+            <Box sx={{ display: 'flex', gap: 1.5 }}>
+              <Button
+                variant="outlined"
+                size="large"
+                startIcon={saving ? <CircularProgress size={18} color="inherit" /> : <SaveIcon />}
+                onClick={() => handleSubmit('copy')}
+                disabled={saving}
+              >
+                Create Quote & Copy
+              </Button>
+              <Button
+                variant="contained"
+                size="large"
+                startIcon={saving ? <CircularProgress size={18} color="inherit" /> : <SaveIcon />}
+                onClick={() => handleSubmit('view')}
+                disabled={saving}
+              >
+                Create Quote & View
+              </Button>
+            </Box>
+          )}
         </Box>
       </Paper>
-
-      {/* Add Price Stage Dialog */}
-      <Dialog open={priceStageDialogOpen} onClose={() => setPriceStageDialogOpen(false)} maxWidth="sm" fullWidth disableRestoreFocus>
-        <DialogTitle>Add Price Stage</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={2} sx={{ mt: 0.5 }}>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                freeSolo
-                size="small"
-                options={PRICE_STAGE_PRESETS}
-                value={newPriceStage.stage_name}
-                onInputChange={(_, value) => setNewPriceStage(prev => ({ ...prev, stage_name: value }))}
-                onChange={(_, value) => setNewPriceStage(prev => ({ ...prev, stage_name: value || '' }))}
-                renderInput={(params) => (
-                  <TextField {...params} label="Stage Name *" helperText="Select or type a custom stage name" />
-                )}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                size="small"
-                type="date"
-                label="Stage Date"
-                value={newPriceStage.stage_date}
-                onChange={(e) => setNewPriceStage(prev => ({ ...prev, stage_date: e.target.value }))}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <TextField
-                fullWidth
-                size="small"
-                label="MRC"
-                type="number"
-                value={newPriceStage.mrc}
-                onChange={(e) => setNewPriceStage(prev => ({ ...prev, mrc: e.target.value }))}
-                InputProps={{ startAdornment: <InputAdornment position="start">{newPriceStage.currency || formData.currency}</InputAdornment> }}
-              />
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <TextField
-                fullWidth
-                size="small"
-                label="NRC"
-                type="number"
-                value={newPriceStage.nrc}
-                onChange={(e) => setNewPriceStage(prev => ({ ...prev, nrc: e.target.value }))}
-                InputProps={{ startAdornment: <InputAdornment position="start">{newPriceStage.currency || formData.currency}</InputAdornment> }}
-              />
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <FormControl fullWidth size="small">
-                <InputLabel>Currency</InputLabel>
-                <Select
-                  value={newPriceStage.currency || formData.currency || 'USD'}
-                  onChange={(e) => setNewPriceStage(prev => ({ ...prev, currency: e.target.value }))}
-                  label="Currency"
-                >
-                  {currencies.map(c => <MenuItem key={c.currency_code} value={c.currency_code}>{c.currency_code}</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                size="small"
-                label="Notes"
-                multiline
-                minRows={2}
-                maxRows={4}
-                value={newPriceStage.notes}
-                onChange={(e) => setNewPriceStage(prev => ({ ...prev, notes: e.target.value }))}
-                helperText="Optional notes about this price change (e.g., reason for discount)"
-              />
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setPriceStageDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleAddPriceStage} startIcon={<AddIcon />}>Add Stage</Button>
-        </DialogActions>
-      </Dialog>
 
       {/* Custom Location Dialog */}
       <Dialog open={customLocDialogOpen} onClose={() => setCustomLocDialogOpen(false)} maxWidth="sm" fullWidth disableRestoreFocus>

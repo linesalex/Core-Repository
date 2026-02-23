@@ -1387,7 +1387,7 @@ const AnalyticsDashboard = () => {
           <>
             {/* Summary Cards */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
-              <Grid item xs={6} sm={4} md={3}>
+              <Grid item xs={6} sm={4} md={2.4}>
                 <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Total Searches</Typography>
@@ -1395,7 +1395,7 @@ const AnalyticsDashboard = () => {
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={6} sm={4} md={3}>
+              <Grid item xs={6} sm={4} md={2.4}>
                 <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Avg Response Time</Typography>
@@ -1403,7 +1403,7 @@ const AnalyticsDashboard = () => {
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={6} sm={4} md={3}>
+              <Grid item xs={6} sm={4} md={2.4}>
                 <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Unique Routes</Typography>
@@ -1411,11 +1411,22 @@ const AnalyticsDashboard = () => {
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={6} sm={4} md={3}>
+              <Grid item xs={6} sm={4} md={2.4}>
                 <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Active Users</Typography>
                     <Typography variant="h4" fontWeight="bold">{routeFinderData.topUsers?.length || 0}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2.4}>
+                <Card sx={{ bgcolor: '#e0f2f1', height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography color="textSecondary" variant="body2" gutterBottom>Matrix Referrals</Typography>
+                    <Typography variant="h4" fontWeight="bold">{(routeFinderData.latencyMatrixReferrals?.total || 0).toLocaleString()}</Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      From latency matrix
+                    </Typography>
                   </CardContent>
                 </Card>
               </Grid>
@@ -1635,6 +1646,88 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
             </Grid>
+
+            {/* Latency Matrix Referrals Section */}
+            {routeFinderData.latencyMatrixReferrals && routeFinderData.latencyMatrixReferrals.total > 0 && (
+              <>
+                <Divider sx={{ my: 3 }} />
+                <Typography variant="h6" sx={{ mb: 2 }}>Latency Matrix Referrals</Typography>
+                <Grid container spacing={3}>
+                  <Grid item xs={12} lg={6}>
+                    <Card>
+                      <CardContent>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                          <Typography variant="subtitle1" fontWeight="bold">Top Referred Route Pairs</Typography>
+                          <IconButton size="small" onClick={() => exportToCSV(routeFinderData.latencyMatrixReferrals.topRoutePairs, 'matrix_referral_routes')}>
+                            <DownloadIcon />
+                          </IconButton>
+                        </Box>
+                        <TableContainer sx={{ maxHeight: 300 }}>
+                          <Table size="small" stickyHeader>
+                            <TableHead>
+                              <TableRow>
+                                <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                                <TableCell sx={{ fontWeight: 'bold' }}>Route Pair</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>Referrals</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {routeFinderData.latencyMatrixReferrals.topRoutePairs.map((item, index) => (
+                                <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                  <TableCell>{index + 1}</TableCell>
+                                  <TableCell>{item.route}</TableCell>
+                                  <TableCell align="right">{item.count}</TableCell>
+                                  <TableCell align="right">
+                                    {routeFinderData.latencyMatrixReferrals.total > 0 ? `${((item.count / routeFinderData.latencyMatrixReferrals.total) * 100).toFixed(1)}%` : '-'}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} lg={6}>
+                    <Card>
+                      <CardContent>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                          <Typography variant="subtitle1" fontWeight="bold">Top Referring Users</Typography>
+                          <IconButton size="small" onClick={() => exportToCSV(routeFinderData.latencyMatrixReferrals.topUsers, 'matrix_referral_users')}>
+                            <DownloadIcon />
+                          </IconButton>
+                        </Box>
+                        <TableContainer sx={{ maxHeight: 300 }}>
+                          <Table size="small" stickyHeader>
+                            <TableHead>
+                              <TableRow>
+                                <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
+                                <TableCell sx={{ fontWeight: 'bold' }}>User</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>Referrals</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>%</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {routeFinderData.latencyMatrixReferrals.topUsers.map((item, index) => (
+                                <TableRow key={index} sx={{ '&:nth-of-type(odd)': { bgcolor: 'action.hover' } }}>
+                                  <TableCell>{index + 1}</TableCell>
+                                  <TableCell>{item.username}</TableCell>
+                                  <TableCell align="right">{item.count}</TableCell>
+                                  <TableCell align="right">
+                                    {routeFinderData.latencyMatrixReferrals.total > 0 ? `${((item.count / routeFinderData.latencyMatrixReferrals.total) * 100).toFixed(1)}%` : '-'}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
+              </>
+            )}
           </>
         ) : null}
       </TabPanel>

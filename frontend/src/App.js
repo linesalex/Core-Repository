@@ -76,7 +76,7 @@ import RequestQuoteIcon from '@mui/icons-material/RequestQuote';
 import NoteAddIcon from '@mui/icons-material/NoteAdd';
 import PhoneIcon from '@mui/icons-material/Phone';
 
-import { fetchRoutes, fetchRoutesWithKMZ, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking, getFeedbackNotificationCount } from './api';
+import { fetchRoutes, fetchRoutesWithKMZ, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking, getFeedbackNotificationCount, logLatencyMatrixReferral } from './api';
 import { API_BASE_URL } from './config';
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
@@ -136,6 +136,7 @@ function AuthenticatedApp() {
   const [adminOpen, setAdminOpen] = useState(false);
   const [carrierQuoteOpen, setCarrierQuoteOpen] = useState(false);
   const [editQuoteId, setEditQuoteId] = useState(null);
+  const [duplicateQuoteData, setDuplicateQuoteData] = useState(null);
   
   // User menu state
   const [userMenuAnchor, setUserMenuAnchor] = useState(null);
@@ -926,6 +927,12 @@ function AuthenticatedApp() {
           <CarrierQuoteRepository 
             onNavigateToAddQuote={(quoteId) => {
               setEditQuoteId(quoteId || null);
+              setDuplicateQuoteData(null);
+              setCurrentTab('add-carrier-quote');
+            }}
+            onDuplicateQuote={(data) => {
+              setEditQuoteId(null);
+              setDuplicateQuoteData(data);
               setCurrentTab('add-carrier-quote');
             }}
           />
@@ -937,8 +944,10 @@ function AuthenticatedApp() {
         return hasModuleAccess('carrier_quote_repository') ? (
           <AddCarrierQuote 
             editQuoteId={editQuoteId}
+            duplicateData={duplicateQuoteData}
             onNavigateBack={() => {
               setEditQuoteId(null);
+              setDuplicateQuoteData(null);
               setCurrentTab('carrier-quote-repository');
             }}
           />
@@ -964,6 +973,7 @@ function AuthenticatedApp() {
             onRouteClick={(routeData) => {
               setMatrixRouteData(routeData);
               setCurrentTab('route-finder');
+              logLatencyMatrixReferral(routeData).catch(() => {});
             }}
           />
         );

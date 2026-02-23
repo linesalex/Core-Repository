@@ -4,7 +4,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, TablePagination,
   IconButton, Chip, CircularProgress, Alert, Snackbar, Grid, MenuItem, Select, InputLabel,
   FormControl, Tooltip, Divider, InputAdornment, List, ListItem, ListItemText, ListItemIcon,
-  ListItemSecondaryAction, Collapse
+  ListItemSecondaryAction, Collapse, Autocomplete
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -24,8 +24,11 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import TimelineIcon from '@mui/icons-material/Timeline';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { useAuth } from './AuthContext';
 import { carrierQuoteApi } from './api';
+
+const PRICE_STAGE_PRESETS = ['Initial Offer', 'Counter Offer', 'Best and Final', 'Accepted'];
 
 const SERVICE_TYPES = ['MPLS', 'Ethernet', 'Dark Fiber', 'Wavelength'];
 const REGIONS = ['AMERs', 'APAC', 'EMEA', 'INTER'];
@@ -33,7 +36,7 @@ const BANDWIDTH_UNITS = ['Mbps', 'Gbps', 'Dark Fiber'];
 const PROTECTION_TYPES = ['Unprotected', 'Protected'];
 const CONTRACT_TERMS = [12, 24, 36];
 
-const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
+const CarrierQuoteRepository = ({ onNavigateToAddQuote, onDuplicateQuote }) => {
   const { user, modulePermissions } = useAuth();
   const permission = modulePermissions?.carrier_quote_repository;
   const canEdit = permission === 'provisioner' || user?.role === 'administrator';
@@ -90,6 +93,19 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
 
   // File upload state for view dialog
   const [uploading, setUploading] = useState(false);
+
+  // Price stage dialog state (in View dialog)
+  const [priceStageDialogOpen, setPriceStageDialogOpen] = useState(false);
+  const [priceStageActiveTerm, setPriceStageActiveTerm] = useState(12);
+  const [newPriceStage, setNewPriceStage] = useState({
+    stage_name: '',
+    mrc: '',
+    nrc: '',
+    currency: '',
+    notes: '',
+    contract_term: 12,
+    stage_date: new Date().toISOString().split('T')[0]
+  });
 
   // Load currencies for the filter
   useEffect(() => {
@@ -260,6 +276,40 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
     }
   };
 
+  // Add a price stage from the View dialog
+  const handleAddPriceStage = async () => {
+    if (!newPriceStage.stage_name) {
+      setError('Stage name is required');
+      return;
+    }
+    if (!viewQuote) return;
+    try {
+      const stageData = {
+        ...newPriceStage,
+        mrc: newPriceStage.mrc ? parseFloat(newPriceStage.mrc) : null,
+        nrc: newPriceStage.nrc ? parseFloat(newPriceStage.nrc) : null,
+        currency: newPriceStage.currency || viewQuote.currency || 'USD',
+        contract_term: newPriceStage.contract_term
+      };
+      await carrierQuoteApi.addPriceStage(viewQuote.id, stageData);
+      const data = await carrierQuoteApi.getQuote(viewQuote.id);
+      setViewQuote(data);
+      setPriceStageDialogOpen(false);
+      setNewPriceStage({
+        stage_name: '',
+        mrc: '',
+        nrc: '',
+        currency: '',
+        notes: '',
+        contract_term: priceStageActiveTerm,
+        stage_date: new Date().toISOString().split('T')[0]
+      });
+      setSuccess('Price stage added');
+    } catch (err) {
+      setError('Failed to add price stage: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
   // Upload attachments to existing quote
   const handleUploadToExisting = async (files) => {
     if (!viewQuote || files.length === 0) return;
@@ -273,6 +323,47 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
       setError('Upload failed: ' + (err.response?.data?.error || err.message));
     } finally {
       setUploading(false);
+    }
+  };
+
+  // Duplicate quote - fetch full data and navigate to Add Quote with pre-filled fields
+  const handleDuplicate = async (quote) => {
+    try {
+      const data = await carrierQuoteApi.getQuote(quote.id);
+      const dupData = {
+        carrier_id: data.carrier_id,
+        carrier_name: data.carrier_name || '',
+        carrier_quote_ref: '',
+        service_type: data.service_type || '',
+        region: data.region || '',
+        location_a_type: data.location_a_type || 'pop',
+        location_a_pop_code: data.location_a_pop_code || '',
+        location_a_custom_id: data.location_a_custom_id,
+        location_a_custom_name: data.location_a_custom_name || '',
+        location_b_type: data.location_b_type || 'pop',
+        location_b_pop_code: data.location_b_pop_code || '',
+        location_b_custom_id: data.location_b_custom_id,
+        location_b_custom_name: data.location_b_custom_name || '',
+        bandwidth_value: data.bandwidth_value || '',
+        bandwidth_unit: data.bandwidth_unit || 'Gbps',
+        mrc_12: data.mrc_12 ?? '',
+        nrc_12: data.nrc_12 ?? '',
+        mrc_24: data.mrc_24 ?? '',
+        nrc_24: data.nrc_24 ?? '',
+        mrc_36: data.mrc_36 ?? '',
+        nrc_36: data.nrc_36 ?? '',
+        currency: data.currency || 'USD',
+        expected_latency: data.expected_latency || '',
+        protection: data.protection || '',
+        cable_system: data.cable_system || '',
+        transit_cities: data.transit_cities || '',
+        transit_countries: data.transit_countries || '',
+        mtu: data.mtu || '',
+        notes: data.notes || ''
+      };
+      if (onDuplicateQuote) onDuplicateQuote(dupData);
+    } catch (err) {
+      setError('Failed to duplicate quote: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -600,6 +691,9 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
                 { id: 'location_a_pop_code', label: 'Location A' },
                 { id: 'location_b_pop_code', label: 'Location B' },
                 { id: 'bandwidth_value', label: 'Bandwidth' },
+                { id: 'expected_latency', label: 'Est. Latency' },
+                { id: 'cable_system', label: 'Cable System' },
+                { id: 'contract_term', label: 'Term' },
                 { id: 'mrc', label: 'MRC' },
                 { id: 'nrc', label: 'NRC' },
                 { id: 'currency', label: 'Ccy' },
@@ -622,60 +716,80 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={13} align="center" sx={{ py: 4 }}>
+                <TableCell colSpan={16} align="center" sx={{ py: 4 }}>
                   <CircularProgress size={32} />
                 </TableCell>
               </TableRow>
             ) : quotes.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={13} align="center" sx={{ py: 4 }}>
+                <TableCell colSpan={16} align="center" sx={{ py: 4 }}>
                   <Typography color="text.secondary">No quotes found</Typography>
                 </TableCell>
               </TableRow>
             ) : (
-              quotes.map(quote => (
-                <TableRow key={quote.id} hover sx={{ cursor: 'pointer' }} onClick={() => handleView(quote)}>
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontWeight: 500 }}>{quote.quote_reference}</Typography>
-                  </TableCell>
-                  <TableCell>{quote.carrier_name}</TableCell>
-                  <TableCell>
-                    <Chip label={quote.service_type} size="small" variant="outlined" />
-                  </TableCell>
-                  <TableCell>
-                    <Chip label={quote.region} size="small" color={
-                      quote.region === 'AMERs' ? 'primary' :
-                      quote.region === 'APAC' ? 'success' :
-                      quote.region === 'EMEA' ? 'warning' : 'info'
-                    } variant="outlined" />
-                  </TableCell>
-                  <TableCell>{getLocationDisplay(quote, 'a')}</TableCell>
-                  <TableCell>{getLocationDisplay(quote, 'b')}</TableCell>
-                  <TableCell>{quote.bandwidth_unit === 'Dark Fiber' ? 'Dark Fiber' : `${quote.bandwidth_value} ${quote.bandwidth_unit}`}</TableCell>
-                  <TableCell>{quote.mrc != null ? quote.mrc.toLocaleString() : '-'}</TableCell>
-                  <TableCell>{quote.nrc != null ? quote.nrc.toLocaleString() : '-'}</TableCell>
-                  <TableCell>{quote.currency}</TableCell>
-                  <TableCell>{formatDate(quote.quote_date)}</TableCell>
-                  <TableCell>{formatDate(quote.created_at)}</TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <Box sx={{ display: 'flex', gap: 0.5 }}>
-                      <Tooltip title="View Details">
-                        <IconButton size="small" onClick={() => handleView(quote)}><VisibilityIcon fontSize="small" /></IconButton>
-                      </Tooltip>
-                      {canEdit && (
-                        <Tooltip title="Edit">
-                          <IconButton size="small" onClick={() => onNavigateToAddQuote && onNavigateToAddQuote(quote.id)}><EditIcon fontSize="small" /></IconButton>
+              quotes.map(quote => {
+                const oc = quote.option_count || 0;
+                const populatedTerms = [12, 24, 36].filter(t => quote[`mrc_${t}`] != null || quote[`nrc_${t}`] != null);
+                const singleTerm = populatedTerms.length === 1 ? populatedTerms[0] : null;
+
+                return (
+                  <TableRow key={quote.id} hover sx={{ cursor: 'pointer' }} onClick={() => handleView(quote)}>
+                    <TableCell>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>{quote.quote_reference}</Typography>
+                    </TableCell>
+                    <TableCell>{quote.carrier_name}</TableCell>
+                    <TableCell>
+                      <Chip label={quote.service_type} size="small" variant="outlined" />
+                    </TableCell>
+                    <TableCell>
+                      <Chip label={quote.region} size="small" color={
+                        quote.region === 'AMERs' ? 'primary' :
+                        quote.region === 'APAC' ? 'success' :
+                        quote.region === 'EMEA' ? 'warning' : 'info'
+                      } variant="outlined" />
+                    </TableCell>
+                    <TableCell>{getLocationDisplay(quote, 'a')}</TableCell>
+                    <TableCell>{getLocationDisplay(quote, 'b')}</TableCell>
+                    <TableCell>{quote.bandwidth_unit === 'Dark Fiber' ? 'Dark Fiber' : `${quote.bandwidth_value} ${quote.bandwidth_unit}`}</TableCell>
+                    <TableCell>{quote.expected_latency ? `${quote.expected_latency} ms` : '-'}</TableCell>
+                    <TableCell sx={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {quote.cable_system || '-'}
+                    </TableCell>
+                    <TableCell>
+                      {oc > 1 ? <Chip label="Multiple" size="small" variant="outlined" /> : singleTerm ? `${singleTerm}mo` : '-'}
+                    </TableCell>
+                    <TableCell>
+                      {oc > 1 ? <Chip label="Multiple" size="small" variant="outlined" /> : singleTerm && quote[`mrc_${singleTerm}`] != null ? quote[`mrc_${singleTerm}`].toLocaleString() : '-'}
+                    </TableCell>
+                    <TableCell>
+                      {oc > 1 ? <Chip label="Multiple" size="small" variant="outlined" /> : singleTerm && quote[`nrc_${singleTerm}`] != null ? quote[`nrc_${singleTerm}`].toLocaleString() : '-'}
+                    </TableCell>
+                    <TableCell>{quote.currency}</TableCell>
+                    <TableCell>{formatDate(quote.quote_date)}</TableCell>
+                    <TableCell>{formatDate(quote.created_at)}</TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Box sx={{ display: 'flex', gap: 0.5 }}>
+                        <Tooltip title="View Details">
+                          <IconButton size="small" onClick={() => handleView(quote)}><VisibilityIcon fontSize="small" /></IconButton>
                         </Tooltip>
-                      )}
-                      {canDelete && (
-                        <Tooltip title="Delete">
-                          <IconButton size="small" color="error" onClick={() => handleDelete(quote)}><DeleteIcon fontSize="small" /></IconButton>
+                        {canEdit && (
+                          <Tooltip title="Edit">
+                            <IconButton size="small" onClick={() => onNavigateToAddQuote && onNavigateToAddQuote(quote.id)}><EditIcon fontSize="small" /></IconButton>
+                          </Tooltip>
+                        )}
+                        <Tooltip title="Duplicate">
+                          <IconButton size="small" onClick={() => handleDuplicate(quote)}><ContentCopyIcon fontSize="small" /></IconButton>
                         </Tooltip>
-                      )}
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              ))
+                        {canDelete && (
+                          <Tooltip title="Delete">
+                            <IconButton size="small" color="error" onClick={() => handleDelete(quote)}><DeleteIcon fontSize="small" /></IconButton>
+                          </Tooltip>
+                        )}
+                      </Box>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
@@ -750,18 +864,32 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
                 <Typography variant="body2">{viewQuote.protection || '-'}</Typography>
               </Grid>
 
-              <Grid item xs={6} md={3}>
-                <Typography variant="caption" color="text.secondary">MRC</Typography>
-                <Typography variant="body2">{viewQuote.mrc != null ? `${viewQuote.currency} ${viewQuote.mrc.toLocaleString()}` : '-'}</Typography>
-              </Grid>
-              <Grid item xs={6} md={3}>
-                <Typography variant="caption" color="text.secondary">NRC</Typography>
-                <Typography variant="body2">{viewQuote.nrc != null ? `${viewQuote.currency} ${viewQuote.nrc.toLocaleString()}` : '-'}</Typography>
-              </Grid>
-              <Grid item xs={6} md={3}>
-                <Typography variant="caption" color="text.secondary">Contract Term</Typography>
-                <Typography variant="body2">{viewQuote.contract_term ? `${viewQuote.contract_term} months` : '-'}</Typography>
-              </Grid>
+              {/* Pricing by Term */}
+              {[12, 24, 36].some(t => viewQuote[`mrc_${t}`] != null || viewQuote[`nrc_${t}`] != null) && (
+                <Grid item xs={12}>
+                  <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>Pricing by Contract Term ({viewQuote.currency})</Typography>
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 600 }}>Term</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }} align="right">MRC</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }} align="right">NRC</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {[12, 24, 36].filter(t => viewQuote[`mrc_${t}`] != null || viewQuote[`nrc_${t}`] != null).map(t => (
+                          <TableRow key={t}>
+                            <TableCell>{t} Months</TableCell>
+                            <TableCell align="right">{viewQuote[`mrc_${t}`] != null ? `${viewQuote.currency} ${viewQuote[`mrc_${t}`].toLocaleString()}` : '-'}</TableCell>
+                            <TableCell align="right">{viewQuote[`nrc_${t}`] != null ? `${viewQuote.currency} ${viewQuote[`nrc_${t}`].toLocaleString()}` : '-'}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Grid>
+              )}
               <Grid item xs={6} md={3}>
                 <Typography variant="caption" color="text.secondary">Expected Latency</Typography>
                 <Typography variant="body2">{viewQuote.expected_latency ? `${viewQuote.expected_latency} ms` : '-'}</Typography>
@@ -781,7 +909,13 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
               </Grid>
               <Grid item xs={6} md={3}>
                 <Typography variant="caption" color="text.secondary">Expiry Date</Typography>
-                <Typography variant="body2">{formatDate(viewQuote.expiry_date)}</Typography>
+                <Typography variant="body2">
+                  {formatDate(viewQuote.expiry_date)}
+                  {viewQuote.quote_date && viewQuote.expiry_date && (() => {
+                    const days = Math.round((new Date(viewQuote.expiry_date) - new Date(viewQuote.quote_date)) / 86400000);
+                    return days > 0 ? ` (${days} days)` : '';
+                  })()}
+                </Typography>
               </Grid>
               <Grid item xs={6} md={3}>
                 <Typography variant="caption" color="text.secondary">Route Distance</Typography>
@@ -806,7 +940,7 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
                 </Grid>
               )}
 
-              {/* Price Negotiation History */}
+              {/* Price Negotiation History (per term) */}
               <Grid item xs={12}>
                 <Divider sx={{ my: 1 }} />
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
@@ -815,96 +949,152 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
                     Price Negotiation History ({viewQuote.price_stages?.length || 0})
                   </Typography>
                 </Box>
-                {viewQuote.price_stages && viewQuote.price_stages.length > 0 ? (
-                  <TableContainer component={Paper} variant="outlined" sx={{ mb: 1 }}>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell sx={{ fontWeight: 600 }}>Stage</TableCell>
-                          <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
-                          <TableCell sx={{ fontWeight: 600 }} align="right">MRC</TableCell>
-                          <TableCell sx={{ fontWeight: 600 }} align="right">NRC</TableCell>
-                          <TableCell sx={{ fontWeight: 600 }}>Ccy</TableCell>
-                          <TableCell sx={{ fontWeight: 600 }}>Notes</TableCell>
-                          <TableCell sx={{ fontWeight: 600 }}>By</TableCell>
-                          {canEdit && <TableCell sx={{ fontWeight: 600 }}>Actions</TableCell>}
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {viewQuote.price_stages.map((stage, idx) => {
-                          const prevStage = idx > 0 ? viewQuote.price_stages[idx - 1] : null;
-                          const mrcChange = prevStage && prevStage.mrc && stage.mrc ? stage.mrc - prevStage.mrc : null;
-                          const nrcChange = prevStage && prevStage.nrc && stage.nrc ? stage.nrc - prevStage.nrc : null;
-                          
-                          return (
-                            <TableRow key={stage.id} sx={idx === viewQuote.price_stages.length - 1 ? { backgroundColor: 'action.hover' } : {}}>
-                              <TableCell>
-                                <Chip label={stage.stage_name} size="small" variant="outlined" color={
-                                  stage.stage_name === 'Best and Final' ? 'success' :
-                                  stage.stage_name === 'Discounted' ? 'info' :
-                                  stage.stage_name === 'Counter Offer' ? 'warning' : 'default'
-                                } />
-                              </TableCell>
-                              <TableCell>{formatDate(stage.stage_date)}</TableCell>
-                              <TableCell align="right">
-                                {stage.mrc != null ? stage.mrc.toLocaleString() : '-'}
-                                {mrcChange != null && mrcChange !== 0 && (
-                                  <Typography variant="caption" sx={{ ml: 0.5, color: mrcChange < 0 ? 'success.main' : 'error.main' }}>
-                                    ({mrcChange > 0 ? '+' : ''}{mrcChange.toLocaleString()})
-                                  </Typography>
-                                )}
-                              </TableCell>
-                              <TableCell align="right">
-                                {stage.nrc != null ? stage.nrc.toLocaleString() : '-'}
-                                {nrcChange != null && nrcChange !== 0 && (
-                                  <Typography variant="caption" sx={{ ml: 0.5, color: nrcChange < 0 ? 'success.main' : 'error.main' }}>
-                                    ({nrcChange > 0 ? '+' : ''}{nrcChange.toLocaleString()})
-                                  </Typography>
-                                )}
-                              </TableCell>
-                              <TableCell>{stage.currency}</TableCell>
-                              <TableCell>
-                                <Typography variant="body2" sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {stage.notes || '-'}
-                                </Typography>
-                              </TableCell>
-                              <TableCell>
-                                <Typography variant="caption">{stage.created_by_name || stage.created_by_username || '-'}</Typography>
-                              </TableCell>
-                              {canEdit && (
-                                <TableCell>
-                                  <IconButton size="small" color="error" onClick={() => handleDeletePriceStage(stage.id)}>
-                                    <DeleteIcon fontSize="small" />
-                                  </IconButton>
-                                </TableCell>
-                              )}
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                ) : (
-                  <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
-                    No price stages recorded. Use the Add Quote page to track price negotiations.
-                  </Typography>
-                )}
-                {viewQuote.price_stages && viewQuote.price_stages.length > 1 && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                    <TrendingDownIcon fontSize="small" color="success" />
-                    <Typography variant="caption" color="text.secondary">
-                      {(() => {
-                        const first = viewQuote.price_stages[0];
-                        const last = viewQuote.price_stages[viewQuote.price_stages.length - 1];
-                        if (first.mrc && last.mrc) {
-                          const pctChange = ((last.mrc - first.mrc) / first.mrc * 100).toFixed(1);
-                          return `MRC: ${first.mrc.toLocaleString()} → ${last.mrc.toLocaleString()} (${pctChange > 0 ? '+' : ''}${pctChange}%)`;
-                        }
-                        return 'Price change tracking from initial to latest stage';
-                      })()}
+                {/* Term tabs with Add Stage */}
+                {(() => {
+                  const populatedTerms = [12, 24, 36].filter(t => viewQuote[`mrc_${t}`] != null || viewQuote[`nrc_${t}`] != null);
+                  if (populatedTerms.length === 0) return (
+                    <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
+                      No pricing terms configured for this quote.
                     </Typography>
-                  </Box>
-                )}
+                  );
+                  return (
+                    <>
+                      {canEdit && (
+                        <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
+                          {populatedTerms.map(t => {
+                            const termStages = (viewQuote.price_stages || []).filter(s => s.contract_term === t);
+                            return (
+                              <Chip
+                                key={t}
+                                label={`${t} Month${termStages.length > 0 ? ` (${termStages.length})` : ''}`}
+                                onClick={() => setPriceStageActiveTerm(t)}
+                                variant={priceStageActiveTerm === t ? 'filled' : 'outlined'}
+                                color={priceStageActiveTerm === t ? 'primary' : 'default'}
+                                size="small"
+                              />
+                            );
+                          })}
+                          <Box sx={{ flex: 1 }} />
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={<AddIcon />}
+                            onClick={() => {
+                              const activeTerm = populatedTerms.includes(priceStageActiveTerm) ? priceStageActiveTerm : populatedTerms[0];
+                              setPriceStageActiveTerm(activeTerm);
+                              setNewPriceStage(prev => ({
+                                ...prev,
+                                currency: viewQuote.currency || 'USD',
+                                contract_term: activeTerm,
+                                mrc: '',
+                                nrc: '',
+                                stage_name: '',
+                                notes: '',
+                                stage_date: new Date().toISOString().split('T')[0]
+                              }));
+                              setPriceStageDialogOpen(true);
+                            }}
+                          >
+                            Add Stage ({(populatedTerms.includes(priceStageActiveTerm) ? priceStageActiveTerm : populatedTerms[0])}mo)
+                          </Button>
+                        </Box>
+                      )}
+                      {populatedTerms.map(term => {
+                        const termStages = (viewQuote.price_stages || []).filter(s => s.contract_term === term);
+                        if (termStages.length === 0) return null;
+                        return (
+                          <Box key={term} sx={{ mb: 2 }}>
+                            <Typography variant="caption" sx={{ fontWeight: 600, mb: 0.5, display: 'block' }}>{term} Month Term</Typography>
+                            <TableContainer component={Paper} variant="outlined" sx={{ mb: 0.5 }}>
+                              <Table size="small">
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell sx={{ fontWeight: 600 }}>Stage</TableCell>
+                                    <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
+                                    <TableCell sx={{ fontWeight: 600 }} align="right">MRC</TableCell>
+                                    <TableCell sx={{ fontWeight: 600 }} align="right">NRC</TableCell>
+                                    <TableCell sx={{ fontWeight: 600 }}>Ccy</TableCell>
+                                    <TableCell sx={{ fontWeight: 600 }}>Notes</TableCell>
+                                    <TableCell sx={{ fontWeight: 600 }}>By</TableCell>
+                                    {canEdit && <TableCell sx={{ fontWeight: 600 }}>Actions</TableCell>}
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {termStages.map((stage, idx) => {
+                                    const prevStage = idx > 0 ? termStages[idx - 1] : null;
+                                    const mrcChange = prevStage && prevStage.mrc && stage.mrc ? stage.mrc - prevStage.mrc : null;
+                                    const nrcChange = prevStage && prevStage.nrc && stage.nrc ? stage.nrc - prevStage.nrc : null;
+                                    
+                                    return (
+                                      <TableRow key={stage.id} sx={idx === termStages.length - 1 ? { backgroundColor: 'action.hover' } : {}}>
+                                        <TableCell>
+                                          <Chip label={stage.stage_name} size="small" variant="outlined" color={
+                                            stage.stage_name === 'Best and Final' ? 'success' :
+                                            stage.stage_name === 'Discounted' ? 'info' :
+                                            stage.stage_name === 'Counter Offer' ? 'warning' : 'default'
+                                          } />
+                                        </TableCell>
+                                        <TableCell>{formatDate(stage.stage_date)}</TableCell>
+                                        <TableCell align="right">
+                                          {stage.mrc != null ? stage.mrc.toLocaleString() : '-'}
+                                          {mrcChange != null && mrcChange !== 0 && (
+                                            <Typography variant="caption" sx={{ ml: 0.5, color: mrcChange < 0 ? 'success.main' : 'error.main' }}>
+                                              ({mrcChange > 0 ? '+' : ''}{mrcChange.toLocaleString()})
+                                            </Typography>
+                                          )}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          {stage.nrc != null ? stage.nrc.toLocaleString() : '-'}
+                                          {nrcChange != null && nrcChange !== 0 && (
+                                            <Typography variant="caption" sx={{ ml: 0.5, color: nrcChange < 0 ? 'success.main' : 'error.main' }}>
+                                              ({nrcChange > 0 ? '+' : ''}{nrcChange.toLocaleString()})
+                                            </Typography>
+                                          )}
+                                        </TableCell>
+                                        <TableCell>{stage.currency}</TableCell>
+                                        <TableCell>
+                                          <Typography variant="body2" sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {stage.notes || '-'}
+                                          </Typography>
+                                        </TableCell>
+                                        <TableCell>
+                                          <Typography variant="caption">{stage.created_by_name || stage.created_by_username || '-'}</Typography>
+                                        </TableCell>
+                                        {canEdit && (
+                                          <TableCell>
+                                            <IconButton size="small" color="error" onClick={() => handleDeletePriceStage(stage.id)}>
+                                              <DeleteIcon fontSize="small" />
+                                            </IconButton>
+                                          </TableCell>
+                                        )}
+                                      </TableRow>
+                                    );
+                                  })}
+                                </TableBody>
+                              </Table>
+                            </TableContainer>
+                            {termStages.length > 1 && (
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <TrendingDownIcon fontSize="small" color="success" />
+                                <Typography variant="caption" color="text.secondary">
+                                  {(() => {
+                                    const first = termStages[0];
+                                    const last = termStages[termStages.length - 1];
+                                    if (first.mrc && last.mrc) {
+                                      const pctChange = ((last.mrc - first.mrc) / first.mrc * 100).toFixed(1);
+                                      return `MRC: ${first.mrc.toLocaleString()} → ${last.mrc.toLocaleString()} (${pctChange > 0 ? '+' : ''}${pctChange}%)`;
+                                    }
+                                    return '';
+                                  })()}
+                                </Typography>
+                              </Box>
+                            )}
+                          </Box>
+                        );
+                      })}
+                    </>
+                  );
+                })()}
               </Grid>
 
               {/* Attachments */}
@@ -1013,6 +1203,104 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote }) => {
       <Snackbar open={!!error} autoHideDuration={6000} onClose={() => setError('')} anchorOrigin={{ vertical: 'top', horizontal: 'center' }}>
         <Alert severity="error" onClose={() => setError('')}>{error}</Alert>
       </Snackbar>
+
+      {/* Add Price Stage Dialog */}
+      <Dialog open={priceStageDialogOpen} onClose={() => setPriceStageDialogOpen(false)} maxWidth="sm" fullWidth disableRestoreFocus>
+        <DialogTitle>Add Price Stage ({newPriceStage.contract_term} Month Term)</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 0.5 }}>
+            <Grid item xs={12} md={4}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Contract Term</InputLabel>
+                <Select
+                  value={newPriceStage.contract_term}
+                  onChange={(e) => setNewPriceStage(prev => ({ ...prev, contract_term: e.target.value }))}
+                  label="Contract Term"
+                >
+                  {viewQuote && [12, 24, 36].map(t => (
+                    <MenuItem key={t} value={t} disabled={viewQuote[`mrc_${t}`] == null && viewQuote[`nrc_${t}`] == null}>{t} months</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <Autocomplete
+                freeSolo
+                size="small"
+                options={PRICE_STAGE_PRESETS}
+                value={newPriceStage.stage_name}
+                onInputChange={(_, value) => setNewPriceStage(prev => ({ ...prev, stage_name: value }))}
+                onChange={(_, value) => setNewPriceStage(prev => ({ ...prev, stage_name: value || '' }))}
+                renderInput={(params) => (
+                  <TextField {...params} label="Stage Name *" />
+                )}
+              />
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <TextField
+                fullWidth
+                size="small"
+                type="date"
+                label="Stage Date"
+                value={newPriceStage.stage_date}
+                onChange={(e) => setNewPriceStage(prev => ({ ...prev, stage_date: e.target.value }))}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <TextField
+                fullWidth
+                size="small"
+                label="MRC"
+                type="number"
+                value={newPriceStage.mrc}
+                onChange={(e) => setNewPriceStage(prev => ({ ...prev, mrc: e.target.value }))}
+                InputProps={{ startAdornment: <InputAdornment position="start">{newPriceStage.currency || viewQuote?.currency || 'USD'}</InputAdornment> }}
+              />
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <TextField
+                fullWidth
+                size="small"
+                label="NRC"
+                type="number"
+                value={newPriceStage.nrc}
+                onChange={(e) => setNewPriceStage(prev => ({ ...prev, nrc: e.target.value }))}
+                InputProps={{ startAdornment: <InputAdornment position="start">{newPriceStage.currency || viewQuote?.currency || 'USD'}</InputAdornment> }}
+              />
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Currency</InputLabel>
+                <Select
+                  value={newPriceStage.currency || viewQuote?.currency || 'USD'}
+                  onChange={(e) => setNewPriceStage(prev => ({ ...prev, currency: e.target.value }))}
+                  label="Currency"
+                >
+                  {currencies.map(c => <MenuItem key={c.currency_code} value={c.currency_code}>{c.currency_code}</MenuItem>)}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Notes"
+                multiline
+                minRows={2}
+                maxRows={4}
+                value={newPriceStage.notes}
+                onChange={(e) => setNewPriceStage(prev => ({ ...prev, notes: e.target.value }))}
+                helperText="Optional notes about this price change"
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPriceStageDialogOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={handleAddPriceStage} startIcon={<AddIcon />}>Add Stage</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

@@ -17253,6 +17253,36 @@ router.get('/analytics/performance', authenticateToken, authorizeRole('administr
   }
 });
 
+// Log latency matrix referral to route finder
+router.post('/analytics/latency-matrix-referral', authenticateToken, async (req, res) => {
+  try {
+    const { source, destination, sourceCity, destinationCity, tier, totalLatency } = req.body;
+
+    db.run(
+      `INSERT INTO audit_logs (action_type, user_id, user_name, parameters, ip_address, user_agent, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [
+        'LATENCY_MATRIX_REFERRAL',
+        req.user?.id || null,
+        req.user?.username || 'Unknown User',
+        JSON.stringify({ source, destination, sourceCity, destinationCity, tier, totalLatency }),
+        req.ip || req.connection.remoteAddress,
+        req.headers['user-agent']
+      ],
+      function(err) {
+        if (err) {
+          console.error('Failed to log latency matrix referral:', err);
+          return res.status(500).json({ error: 'Failed to log referral' });
+        }
+        res.json({ success: true });
+      }
+    );
+  } catch (error) {
+    console.error('Error logging latency matrix referral:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get Route Finder analytics
 router.get('/analytics/route-finder', authenticateToken, authorizeRole('administrator'), async (req, res) => {
   try {
@@ -17265,6 +17295,17 @@ router.get('/analytics/route-finder', authenticateToken, authorizeRole('administ
       params = [start_date, end_date];
     }
     
+    // Get latency matrix referral count
+    const referrals = await new Promise((resolve, reject) => {
+      db.all(
+        `SELECT parameters, user_name, timestamp FROM audit_logs 
+         WHERE action_type = 'LATENCY_MATRIX_REFERRAL'${dateFilter}
+         ORDER BY timestamp DESC`,
+        params,
+        (err, rows) => err ? reject(err) : resolve(rows || [])
+      );
+    });
+
     // Get all route finder searches
     const searches = await new Promise((resolve, reject) => {
       db.all(
@@ -17341,8 +17382,35 @@ router.get('/analytics/route-finder', authenticateToken, authorizeRole('administ
       }
     });
     
+    // Process referral data
+    const referralRoutePairs = {};
+    const referralUsers = {};
+    referrals.forEach(ref => {
+      try {
+        const p = JSON.parse(ref.parameters || '{}');
+        if (p.source && p.destination) {
+          const pair = [p.source, p.destination].sort().join(' ↔ ');
+          referralRoutePairs[pair] = (referralRoutePairs[pair] || 0) + 1;
+        }
+        if (ref.user_name) {
+          referralUsers[ref.user_name] = (referralUsers[ref.user_name] || 0) + 1;
+        }
+      } catch (e) { /* skip malformed */ }
+    });
+
     res.json({
       totalSearches: searches.length,
+      latencyMatrixReferrals: {
+        total: referrals.length,
+        topRoutePairs: Object.entries(referralRoutePairs)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+          .map(([route, count]) => ({ route, count })),
+        topUsers: Object.entries(referralUsers)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+          .map(([username, count]) => ({ username, count }))
+      },
       routePairs: Object.entries(routePairs)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 20)
@@ -19523,7 +19591,10 @@ router.get('/carrier_quotes', authenticateToken, authorizeModulePermission('carr
            pop_a.city as location_a_city,
            pop_a.datacenter_name as location_a_datacenter,
            pop_b.city as location_b_city,
-           pop_b.datacenter_name as location_b_datacenter
+           pop_b.datacenter_name as location_b_datacenter,
+           (CASE WHEN cq.mrc_12 IS NOT NULL OR cq.nrc_12 IS NOT NULL THEN 1 ELSE 0 END
+            + CASE WHEN cq.mrc_24 IS NOT NULL OR cq.nrc_24 IS NOT NULL THEN 1 ELSE 0 END
+            + CASE WHEN cq.mrc_36 IS NOT NULL OR cq.nrc_36 IS NOT NULL THEN 1 ELSE 0 END) as option_count
     FROM carrier_quotes cq
     LEFT JOIN users u_created ON cq.created_by = u_created.id
     LEFT JOIN users u_updated ON cq.updated_by = u_updated.id
@@ -19593,8 +19664,10 @@ router.get('/carrier_quotes', authenticateToken, authorizeModulePermission('carr
   }
   
   if (contract_term) {
-    conditions.push('cq.contract_term = ?');
-    params.push(parseInt(contract_term));
+    const ct = parseInt(contract_term);
+    if (ct === 12) conditions.push('(cq.mrc_12 IS NOT NULL OR cq.nrc_12 IS NOT NULL)');
+    else if (ct === 24) conditions.push('(cq.mrc_24 IS NOT NULL OR cq.nrc_24 IS NOT NULL)');
+    else if (ct === 36) conditions.push('(cq.mrc_36 IS NOT NULL OR cq.nrc_36 IS NOT NULL)');
   }
   
   if (cable_system) {
@@ -19621,23 +19694,27 @@ router.get('/carrier_quotes', authenticateToken, authorizeModulePermission('carr
   }
   
   if (min_mrc) {
-    conditions.push('cq.mrc >= ?');
-    params.push(parseFloat(min_mrc));
+    const v = parseFloat(min_mrc);
+    conditions.push('(cq.mrc_12 >= ? OR cq.mrc_24 >= ? OR cq.mrc_36 >= ?)');
+    params.push(v, v, v);
   }
   
   if (max_mrc) {
-    conditions.push('cq.mrc <= ?');
-    params.push(parseFloat(max_mrc));
+    const v = parseFloat(max_mrc);
+    conditions.push('(COALESCE(cq.mrc_12, 999999999) <= ? OR COALESCE(cq.mrc_24, 999999999) <= ? OR COALESCE(cq.mrc_36, 999999999) <= ?)');
+    params.push(v, v, v);
   }
   
   if (min_nrc) {
-    conditions.push('cq.nrc >= ?');
-    params.push(parseFloat(min_nrc));
+    const v = parseFloat(min_nrc);
+    conditions.push('(cq.nrc_12 >= ? OR cq.nrc_24 >= ? OR cq.nrc_36 >= ?)');
+    params.push(v, v, v);
   }
   
   if (max_nrc) {
-    conditions.push('cq.nrc <= ?');
-    params.push(parseFloat(max_nrc));
+    const v = parseFloat(max_nrc);
+    conditions.push('(COALESCE(cq.nrc_12, 999999999) <= ? OR COALESCE(cq.nrc_24, 999999999) <= ? OR COALESCE(cq.nrc_36, 999999999) <= ?)');
+    params.push(v, v, v);
   }
   
   if (date_from) {
@@ -19657,8 +19734,15 @@ router.get('/carrier_quotes', authenticateToken, authorizeModulePermission('carr
   }
   
   // Sortable columns whitelist
-  const allowedSortColumns = ['created_at', 'quote_date', 'carrier_name', 'service_type', 'region', 'mrc', 'nrc', 'bandwidth_value', 'contract_term', 'expected_latency', 'quote_reference'];
-  const sortColumn = allowedSortColumns.includes(sort_by) ? `cq.${sort_by}` : 'cq.created_at';
+  const allowedSortColumns = ['created_at', 'quote_date', 'carrier_name', 'service_type', 'region', 'bandwidth_value', 'expected_latency', 'quote_reference'];
+  let sortColumn;
+  if (sort_by === 'mrc') {
+    sortColumn = 'MIN(cq.mrc_12, cq.mrc_24, cq.mrc_36)';
+  } else if (sort_by === 'nrc') {
+    sortColumn = 'MIN(cq.nrc_12, cq.nrc_24, cq.nrc_36)';
+  } else {
+    sortColumn = allowedSortColumns.includes(sort_by) ? `cq.${sort_by}` : 'cq.created_at';
+  }
   const sortDir = sort_order === 'asc' ? 'ASC' : 'DESC';
   
   query += ` ORDER BY ${sortColumn} ${sortDir} LIMIT ? OFFSET ?`;
@@ -19794,8 +19878,9 @@ router.get('/carrier_quotes/export', authenticateToken, authorizeModulePermissio
   let query = `
     SELECT cq.quote_reference, cq.carrier_name, cq.carrier_quote_ref, cq.service_type, cq.region,
            cq.location_a_pop_code, cq.location_b_pop_code,
-           cq.bandwidth_value, cq.bandwidth_unit, cq.mrc, cq.nrc, cq.currency,
-           cq.contract_term, cq.expected_latency, cq.protection, cq.cable_system,
+           cq.bandwidth_value, cq.bandwidth_unit,
+           cq.mrc_12, cq.nrc_12, cq.mrc_24, cq.nrc_24, cq.mrc_36, cq.nrc_36,
+           cq.currency, cq.expected_latency, cq.protection, cq.cable_system,
            cq.quote_date, cq.expiry_date, cq.transit_cities, cq.transit_countries,
            cq.route_distance_km, cq.notes,
            u_created.username as created_by,
@@ -19825,8 +19910,9 @@ router.get('/carrier_quotes/export', authenticateToken, authorizeModulePermissio
       const fields = [
         'quote_reference', 'carrier_name', 'carrier_quote_ref', 'service_type', 'region',
         'location_a_pop_code', 'location_b_pop_code',
-        'bandwidth_value', 'bandwidth_unit', 'mrc', 'nrc', 'currency',
-        'contract_term', 'expected_latency', 'protection', 'cable_system',
+        'bandwidth_value', 'bandwidth_unit',
+        'mrc_12', 'nrc_12', 'mrc_24', 'nrc_24', 'mrc_36', 'nrc_36',
+        'currency', 'expected_latency', 'protection', 'cable_system',
         'quote_date', 'expiry_date', 'transit_cities', 'transit_countries',
         'route_distance_km', 'notes', 'created_by', 'created_at'
       ];
@@ -19880,17 +19966,23 @@ router.get('/carrier_quotes/:id', authenticateToken, authorizeModulePermission('
     db.all('SELECT * FROM quote_attachments WHERE quote_id = ? ORDER BY uploaded_at DESC', [id], (err, attachments) => {
       if (err) return res.status(500).json({ error: err.message });
       
-      // Get price stages
+      // Get price stages (include contract_term)
       db.all(`
         SELECT ps.*, u.username as created_by_username, u.full_name as created_by_name
         FROM quote_price_stages ps
         LEFT JOIN users u ON ps.created_by = u.id
         WHERE ps.quote_id = ?
-        ORDER BY ps.stage_date ASC, ps.created_at ASC
+        ORDER BY ps.contract_term ASC, ps.stage_date ASC, ps.created_at ASC
       `, [id], (err, priceStages) => {
         if (err) return res.status(500).json({ error: err.message });
         
-        res.json({ ...quote, attachments: attachments || [], price_stages: priceStages || [] });
+        const optionCount = [
+          quote.mrc_12 != null || quote.nrc_12 != null,
+          quote.mrc_24 != null || quote.nrc_24 != null,
+          quote.mrc_36 != null || quote.nrc_36 != null
+        ].filter(Boolean).length;
+
+        res.json({ ...quote, option_count: optionCount, attachments: attachments || [], price_stages: priceStages || [] });
       });
     });
   });
@@ -19902,7 +19994,8 @@ router.post('/carrier_quotes', authenticateToken, authorizeModulePermission('car
     quote_reference, carrier_id, carrier_name, carrier_quote_ref,
     service_type, region, location_a_type, location_a_pop_code, location_a_custom_id,
     location_b_type, location_b_pop_code, location_b_custom_id,
-    bandwidth_value, bandwidth_unit, mrc, nrc, currency, contract_term,
+    bandwidth_value, bandwidth_unit, mrc_12, nrc_12, mrc_24, nrc_24, mrc_36, nrc_36,
+    currency,
     expected_latency, protection, cable_system, quote_date, expiry_date,
     transit_cities, transit_countries, route_distance_km, mtu, notes
   } = req.body;
@@ -19912,7 +20005,6 @@ router.post('/carrier_quotes', authenticateToken, authorizeModulePermission('car
   if (!service_type) return res.status(400).json({ error: 'Service type is required' });
   if (!region) return res.status(400).json({ error: 'Region is required' });
   if (!bandwidth_unit) return res.status(400).json({ error: 'Bandwidth unit is required' });
-  // Bandwidth value not required when unit is Dark Fiber
   if (bandwidth_unit !== 'Dark Fiber' && !bandwidth_value) return res.status(400).json({ error: 'Bandwidth value is required' });
   
   const insertQuote = (ref) => {
@@ -19921,16 +20013,19 @@ router.post('/carrier_quotes', authenticateToken, authorizeModulePermission('car
         quote_reference, carrier_id, carrier_name, carrier_quote_ref,
         service_type, region, location_a_type, location_a_pop_code, location_a_custom_id,
         location_b_type, location_b_pop_code, location_b_custom_id,
-        bandwidth_value, bandwidth_unit, mrc, nrc, currency, contract_term,
+        bandwidth_value, bandwidth_unit, mrc_12, nrc_12, mrc_24, nrc_24, mrc_36, nrc_36,
+        currency,
         expected_latency, protection, cable_system, quote_date, expiry_date,
         transit_cities, transit_countries, route_distance_km, mtu, notes,
         created_by, updated_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       ref, carrier_id || null, carrier_name, carrier_quote_ref || null,
       service_type, region, location_a_type || 'pop', location_a_pop_code || null, location_a_custom_id || null,
       location_b_type || 'pop', location_b_pop_code || null, location_b_custom_id || null,
-      bandwidth_value, bandwidth_unit, mrc || null, nrc || null, currency || 'USD', contract_term || null,
+      bandwidth_value, bandwidth_unit,
+      mrc_12 || null, nrc_12 || null, mrc_24 || null, nrc_24 || null, mrc_36 || null, nrc_36 || null,
+      currency || 'USD',
       expected_latency || null, protection || null, cable_system || null, quote_date || null, expiry_date || null,
       transit_cities || null, transit_countries || null, route_distance_km || null, mtu || null, notes || null,
       req.user.id, req.user.id
@@ -19943,22 +20038,29 @@ router.post('/carrier_quotes', authenticateToken, authorizeModulePermission('car
         quote_reference: ref, carrier_name, service_type, region, bandwidth_value, bandwidth_unit
       }, req);
       
-      // Auto-create "Initial Offer" price stage if MRC or NRC is provided
-      if (mrc || nrc) {
-        const stageCurrency = currency || 'USD';
-        const stageDate = quote_date || new Date().toISOString().split('T')[0];
+      // Auto-create "Initial Offer" price stage for each populated term
+      const stageCurrency = currency || 'USD';
+      const stageDate = quote_date || new Date().toISOString().split('T')[0];
+      const termStages = [];
+      if (mrc_12 || nrc_12) termStages.push({ term: 12, mrc: mrc_12, nrc: nrc_12 });
+      if (mrc_24 || nrc_24) termStages.push({ term: 24, mrc: mrc_24, nrc: nrc_24 });
+      if (mrc_36 || nrc_36) termStages.push({ term: 36, mrc: mrc_36, nrc: nrc_36 });
+
+      const insertStages = (idx) => {
+        if (idx >= termStages.length) {
+          return res.status(201).json({ id: quoteId, quote_reference: ref });
+        }
+        const s = termStages[idx];
         db.run(`
-          INSERT INTO quote_price_stages (quote_id, stage_name, mrc, nrc, currency, notes, stage_date, created_by)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `, [quoteId, 'Initial Offer', mrc || null, nrc || null, stageCurrency, null, stageDate, req.user.id], (stageErr) => {
-          if (stageErr) {
-            console.warn('Warning: Failed to create initial price stage:', stageErr.message);
-          }
-          res.status(201).json({ id: quoteId, quote_reference: ref });
+          INSERT INTO quote_price_stages (quote_id, stage_name, mrc, nrc, currency, notes, stage_date, contract_term, created_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [quoteId, 'Initial Offer', s.mrc || null, s.nrc || null, stageCurrency, null, stageDate, s.term, req.user.id], (stageErr) => {
+          if (stageErr) console.warn('Warning: Failed to create initial price stage for term ' + s.term + ':', stageErr.message);
+          insertStages(idx + 1);
         });
-      } else {
-        res.status(201).json({ id: quoteId, quote_reference: ref });
-      }
+      };
+
+      insertStages(0);
     });
   };
   
@@ -20003,12 +20105,12 @@ router.put('/carrier_quotes/:id', authenticateToken, authorizeModulePermission('
     carrier_id, carrier_name, carrier_quote_ref,
     service_type, region, location_a_type, location_a_pop_code, location_a_custom_id,
     location_b_type, location_b_pop_code, location_b_custom_id,
-    bandwidth_value, bandwidth_unit, mrc, nrc, currency, contract_term,
+    bandwidth_value, bandwidth_unit, mrc_12, nrc_12, mrc_24, nrc_24, mrc_36, nrc_36,
+    currency,
     expected_latency, protection, cable_system, quote_date, expiry_date,
     transit_cities, transit_countries, route_distance_km, mtu, notes
   } = req.body;
   
-  // Get old values for logging
   db.get('SELECT * FROM carrier_quotes WHERE id = ?', [id], (err, oldQuote) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!oldQuote) return res.status(404).json({ error: 'Quote not found' });
@@ -20018,7 +20120,9 @@ router.put('/carrier_quotes/:id', authenticateToken, authorizeModulePermission('
         carrier_id = ?, carrier_name = ?, carrier_quote_ref = ?,
         service_type = ?, region = ?, location_a_type = ?, location_a_pop_code = ?, location_a_custom_id = ?,
         location_b_type = ?, location_b_pop_code = ?, location_b_custom_id = ?,
-        bandwidth_value = ?, bandwidth_unit = ?, mrc = ?, nrc = ?, currency = ?, contract_term = ?,
+        bandwidth_value = ?, bandwidth_unit = ?,
+        mrc_12 = ?, nrc_12 = ?, mrc_24 = ?, nrc_24 = ?, mrc_36 = ?, nrc_36 = ?,
+        currency = ?,
         expected_latency = ?, protection = ?, cable_system = ?, quote_date = ?, expiry_date = ?,
         transit_cities = ?, transit_countries = ?, route_distance_km = ?, mtu = ?, notes = ?,
         updated_by = ?, updated_at = CURRENT_TIMESTAMP
@@ -20027,7 +20131,9 @@ router.put('/carrier_quotes/:id', authenticateToken, authorizeModulePermission('
       carrier_id || null, carrier_name, carrier_quote_ref || null,
       service_type, region, location_a_type || 'pop', location_a_pop_code || null, location_a_custom_id || null,
       location_b_type || 'pop', location_b_pop_code || null, location_b_custom_id || null,
-      bandwidth_value, bandwidth_unit, mrc || null, nrc || null, currency || 'USD', contract_term || null,
+      bandwidth_value, bandwidth_unit,
+      mrc_12 || null, nrc_12 || null, mrc_24 || null, nrc_24 || null, mrc_36 || null, nrc_36 || null,
+      currency || 'USD',
       expected_latency || null, protection || null, cable_system || null, quote_date || null, expiry_date || null,
       transit_cities || null, transit_countries || null, route_distance_km || null, mtu || null, notes || null,
       req.user.id, id
@@ -20534,11 +20640,13 @@ router.get('/carrier_quotes/:id/price_stages', authenticateToken, authorizeModul
 // Add a price stage to a quote
 router.post('/carrier_quotes/:id/price_stages', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
   const { id } = req.params;
-  const { stage_name, mrc, nrc, currency, notes, stage_date } = req.body;
+  const { stage_name, mrc, nrc, currency, notes, stage_date, contract_term } = req.body;
   
   if (!stage_name) return res.status(400).json({ error: 'Stage name is required' });
+  if (!contract_term || ![12, 24, 36].includes(parseInt(contract_term))) {
+    return res.status(400).json({ error: 'Valid contract term (12, 24, or 36) is required' });
+  }
   
-  // Verify quote exists
   db.get('SELECT id, currency FROM carrier_quotes WHERE id = ?', [id], (err, quote) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!quote) return res.status(404).json({ error: 'Quote not found' });
@@ -20547,18 +20655,17 @@ router.post('/carrier_quotes/:id/price_stages', authenticateToken, authorizeModu
     const stageDate = stage_date || new Date().toISOString().split('T')[0];
     
     db.run(`
-      INSERT INTO quote_price_stages (quote_id, stage_name, mrc, nrc, currency, notes, stage_date, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, stage_name, mrc || null, nrc || null, stageCurrency, notes || null, stageDate, req.user.id], function(err) {
+      INSERT INTO quote_price_stages (quote_id, stage_name, mrc, nrc, currency, notes, stage_date, contract_term, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, stage_name, mrc || null, nrc || null, stageCurrency, notes || null, stageDate, parseInt(contract_term), req.user.id], function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
       const stageId = this.lastID;
       
       logChange(req.user.id, 'quote_price_stages', stageId, 'CREATE', null, {
-        quote_id: id, stage_name, mrc, nrc, currency: stageCurrency
+        quote_id: id, stage_name, mrc, nrc, currency: stageCurrency, contract_term
       }, req);
       
-      // Return the newly created stage with user info
       db.get(`
         SELECT ps.*, u.username as created_by_username, u.full_name as created_by_name
         FROM quote_price_stages ps
