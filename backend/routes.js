@@ -19,6 +19,7 @@ const {
   getUserModulePermissions,
   hasModulePermission,
   authorizeModulePermission,
+  authorizeAnyModulePermission,
   logUserActivity 
 } = require('./auth');
 const { 
@@ -233,10 +234,12 @@ router.post('/login', async (req, res) => {
         const allModules = [
           'network_routes', 'network_design', 'locations', 'carriers',
           'cnx_colocation_inventory', 'cnx_colocation_availability', 'cnx_colocation_pricing',
-          'exchange_rates', 'exchange_data', 'extranet_data', 'change_logs', 'user_management', 
+          'exchange_rates', 'exchange_feeds', 'exchange_contacts', 'exchange_pricing',
+          'extranet_providers', 'extranet_contacts', 'extranet_pricing',
+          'change_logs', 'user_management',
           'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
           'allocated_cost_calculator', 'kmz_viewer', 'route_finder', 'carrier_quote_repository',
-          'voice_one_directory', 'voice_one_directory_admin'
+          'voice_one_directory'
         ];
         
         allModules.forEach(module => {
@@ -298,10 +301,12 @@ router.get('/me', authenticateToken, (req, res) => {
       const allModules = [
         'network_routes', 'network_design', 'locations', 'carriers',
         'cnx_colocation_inventory', 'cnx_colocation_availability', 'cnx_colocation_pricing',
-        'exchange_rates', 'exchange_data', 'extranet_data', 'change_logs', 'user_management', 
+        'exchange_rates', 'exchange_feeds', 'exchange_contacts', 'exchange_pricing',
+        'extranet_providers', 'extranet_contacts', 'extranet_pricing',
+        'change_logs', 'user_management',
         'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
         'allocated_cost_calculator', 'kmz_viewer', 'route_finder', 'carrier_quote_repository',
-        'voice_one_directory', 'voice_one_directory_admin'
+        'voice_one_directory'
       ];
       
       // For administrators, all modules are visible
@@ -3020,7 +3025,7 @@ async function validateRowForeignKeys(row, module) {
     }
   } else if (module === 'extranet_pricing_cities') {
     const validRegions = ['AMERs', 'APAC', 'EMEA'];
-    const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+    const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3', 'Tier 4'];
     if (row.region && !validRegions.includes(row.region.trim())) {
       errors.push(`Invalid region: "${row.region}". Must be one of: ${validRegions.join(', ')}`);
     }
@@ -3030,7 +3035,7 @@ async function validateRowForeignKeys(row, module) {
   } else if (module === 'extranet_rate_card') {
     const validBandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '30Mb', '40Mb', '50Mb', '75Mb', '100Mb', '150Mb', '200Mb'];
     const validRegions = ['AMERs', 'APAC', 'EMEA'];
-    const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+    const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3', 'Tier 4'];
     if (row.provider_region && !validRegions.includes(row.provider_region.trim())) {
       errors.push(`Invalid provider_region: "${row.provider_region}". Must be one of: ${validRegions.join(', ')}`);
     }
@@ -8697,7 +8702,7 @@ const exchangeUpload = multer({
 });
 
 // Get all exchanges
-router.get('/exchanges', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
+router.get('/exchanges', authenticateToken, authorizeAnyModulePermission(['exchange_feeds', 'exchange_contacts'], 'read_only'), (req, res) => {
   const { search, region, available } = req.query;
   
   let sql = 'SELECT * FROM exchanges WHERE 1=1';
@@ -8727,7 +8732,7 @@ router.get('/exchanges', authenticateToken, authorizeModulePermission('exchange_
 });
 
 // Create exchange (admin only)
-router.post('/exchanges', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
+router.post('/exchanges', authenticateToken, authorizeAnyModulePermission(['exchange_feeds', 'exchange_contacts'], 'provisioner'), (req, res) => {
   const { exchange_name, region, available, salesperson_assigned } = req.body;
   
   if (!exchange_name || !region) {
@@ -8766,7 +8771,7 @@ router.post('/exchanges', authenticateToken, authorizeModulePermission('exchange
 });
 
 // Update exchange (admin only)
-router.put('/exchanges/:id', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
+router.put('/exchanges/:id', authenticateToken, authorizeAnyModulePermission(['exchange_feeds', 'exchange_contacts'], 'provisioner'), (req, res) => {
   const { exchange_name, region, available, salesperson_assigned } = req.body;
   const exchangeId = req.params.id;
   
@@ -8805,7 +8810,7 @@ router.put('/exchanges/:id', authenticateToken, authorizeModulePermission('excha
 });
 
 // Delete exchange (admin only, only if no feeds or contacts)
-router.delete('/exchanges/:id', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
+router.delete('/exchanges/:id', authenticateToken, authorizeAnyModulePermission(['exchange_feeds', 'exchange_contacts'], 'provisioner'), (req, res) => {
   const exchangeId = req.params.id;
   
   // Check if exchange has feeds or contacts
@@ -8841,7 +8846,7 @@ router.delete('/exchanges/:id', authenticateToken, authorizeModulePermission('ex
 });
 
 // Get exchange feeds for a specific exchange
-router.get('/exchanges/:id/feeds', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
+router.get('/exchanges/:id/feeds', authenticateToken, authorizeModulePermission('exchange_feeds', 'read_only'), (req, res) => {
   const exchangeId = req.params.id;
   const { search } = req.query;
   
@@ -8861,7 +8866,7 @@ router.get('/exchanges/:id/feeds', authenticateToken, authorizeModulePermission(
   });
 });
 // Create exchange feed
-router.post('/exchanges/:id/feeds', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), exchangeUpload.single('design_file'), (req, res) => {
+router.post('/exchanges/:id/feeds', authenticateToken, authorizeModulePermission('exchange_feeds', 'provisioner'), exchangeUpload.single('design_file'), (req, res) => {
   const exchangeId = req.params.id;
   const {
     feed_name, feed_delivery, feed_type, isf_enabled, 
@@ -8976,7 +8981,7 @@ router.post('/exchanges/:id/feeds', authenticateToken, authorizeModulePermission
 });
 
 // Update exchange feed
-router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), exchangeUpload.single('design_file'), (req, res) => {
+router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeModulePermission('exchange_feeds', 'provisioner'), exchangeUpload.single('design_file'), (req, res) => {
   const { exchangeId, feedId } = req.params;
   const {
     feed_name, feed_delivery, feed_type, isf_enabled,
@@ -9083,7 +9088,7 @@ router.put('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeM
 });
 
 // Get exchange feed tracking details
-router.get('/exchanges/:exchangeId/feeds/:feedId/tracking', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
+router.get('/exchanges/:exchangeId/feeds/:feedId/tracking', authenticateToken, authorizeModulePermission('exchange_feeds', 'read_only'), (req, res) => {
   const { exchangeId, feedId } = req.params;
   
   db.get(
@@ -9107,7 +9112,7 @@ router.get('/exchanges/:exchangeId/feeds/:feedId/tracking', authenticateToken, a
 });
 
 // Delete exchange feed
-router.delete('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
+router.delete('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authorizeModulePermission('exchange_feeds', 'provisioner'), (req, res) => {
   const { exchangeId, feedId } = req.params;
   
   // Get current feed data for change logging and file cleanup
@@ -9135,7 +9140,7 @@ router.delete('/exchanges/:exchangeId/feeds/:feedId', authenticateToken, authori
 });
 
 // Download exchange design file
-router.get('/exchanges/:exchangeId/feeds/:feedId/download', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
+router.get('/exchanges/:exchangeId/feeds/:feedId/download', authenticateToken, authorizeModulePermission('exchange_feeds', 'read_only'), (req, res) => {
   const { exchangeId, feedId } = req.params;
   
   db.get('SELECT design_file_path FROM exchange_feeds WHERE id = ? AND exchange_id = ?', [feedId, exchangeId], (err, feed) => {
@@ -9154,7 +9159,7 @@ router.get('/exchanges/:exchangeId/feeds/:feedId/download', authenticateToken, a
 });
 
 // Delete exchange feed design file only
-router.delete('/exchanges/:exchangeId/feeds/:feedId/design-file', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
+router.delete('/exchanges/:exchangeId/feeds/:feedId/design-file', authenticateToken, authorizeModulePermission('exchange_feeds', 'provisioner'), (req, res) => {
   const { exchangeId, feedId } = req.params;
   
   db.get('SELECT design_file_path FROM exchange_feeds WHERE id = ? AND exchange_id = ?', [feedId, exchangeId], (err, feed) => {
@@ -9183,7 +9188,7 @@ router.delete('/exchanges/:exchangeId/feeds/:feedId/design-file', authenticateTo
 });
 
 // Get exchange contacts for a specific exchange
-router.get('/exchanges/:id/contacts', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
+router.get('/exchanges/:id/contacts', authenticateToken, authorizeModulePermission('exchange_contacts', 'read_only'), (req, res) => {
   const exchangeId = req.params.id;
   
   db.all(
@@ -9201,7 +9206,7 @@ router.get('/exchanges/:id/contacts', authenticateToken, authorizeModulePermissi
 });
 
 // Create exchange contact
-router.post('/exchanges/:id/contacts', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
+router.post('/exchanges/:id/contacts', authenticateToken, authorizeModulePermission('exchange_contacts', 'provisioner'), (req, res) => {
   const exchangeId = req.params.id;
   const {
     contact_name, job_title, country, phone_number, email,
@@ -9246,7 +9251,7 @@ router.post('/exchanges/:id/contacts', authenticateToken, authorizeModulePermiss
 });
 
 // Update exchange contact
-router.put('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
+router.put('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, authorizeModulePermission('exchange_contacts', 'provisioner'), (req, res) => {
   const { exchangeId, contactId } = req.params;
   const {
     contact_name, job_title, country, phone_number, email,
@@ -9283,7 +9288,7 @@ router.put('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, auth
 });
 
 // Delete exchange contact
-router.delete('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
+router.delete('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, authorizeModulePermission('exchange_contacts', 'provisioner'), (req, res) => {
   const { exchangeId, contactId } = req.params;
   
   // Get current contact data for change logging
@@ -9303,7 +9308,7 @@ router.delete('/exchanges/:exchangeId/contacts/:contactId', authenticateToken, a
 });
 
 // Get overdue exchange contacts (365+ days without update)
-router.get('/exchanges/overdue-contacts', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
+router.get('/exchanges/overdue-contacts', authenticateToken, authorizeModulePermission('exchange_contacts', 'read_only'), (req, res) => {
   const sql = `
     SELECT 
       ec.*,
@@ -9322,7 +9327,7 @@ router.get('/exchanges/overdue-contacts', authenticateToken, authorizeModulePerm
   });
 });
 // Approve exchange contact yearly update
-router.post('/exchanges/:exchangeId/contacts/:contactId/approve', authenticateToken, authorizeModulePermission('exchange_data', 'provisioner'), (req, res) => {
+router.post('/exchanges/:exchangeId/contacts/:contactId/approve', authenticateToken, authorizeModulePermission('exchange_contacts', 'read_only'), (req, res) => {
   const { exchangeId, contactId } = req.params;
   
   // Get current contact data for change logging
@@ -9352,7 +9357,7 @@ router.post('/exchanges/:exchangeId/contacts/:contactId/approve', authenticateTo
 });
 
 // Get available currencies from exchange_rates table
-router.get('/exchange-currencies', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
+router.get('/exchange-currencies', authenticateToken, authorizeAnyModulePermission(['exchange_feeds', 'exchange_contacts', 'exchange_pricing'], 'read_only'), (req, res) => {
   db.all('SELECT currency_code, currency_name FROM exchange_rates ORDER BY currency_code', [], (err, currencies) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(currencies);
@@ -12795,7 +12800,7 @@ router.get('/exchange-pricing/quotes', authenticateToken, (req, res) => {
 });
 
 // Get exchange pricing audit logs
-router.get('/exchange-pricing/audit_logs', authenticateToken, authorizeModulePermission('exchange_data', 'read_only'), (req, res) => {
+router.get('/exchange-pricing/audit_logs', authenticateToken, authorizeModulePermission('exchange_pricing', 'read_only'), (req, res) => {
   const { limit = 100, offset = 0 } = req.query;
   
   // Check user's permission level to determine filtering
@@ -12805,7 +12810,7 @@ router.get('/exchange-pricing/audit_logs', authenticateToken, authorizeModulePer
       return res.status(500).json({ error: 'Permission check failed' });
     }
     
-    const userPermission = permissions['exchange_data'];
+    const userPermission = permissions['exchange_pricing'];
     const isReadOnly = userPermission === 'read_only';
     
     let query = 'SELECT * FROM audit_logs WHERE action_type = ?';
@@ -14238,7 +14243,7 @@ const extranetProductUpload = extranetUpload.fields([
 ]);
 
 // Get all extranet providers
-router.get('/extranets', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranets', authenticateToken, authorizeAnyModulePermission(['extranet_providers', 'extranet_contacts'], 'read_only'), (req, res) => {
   const { search, region, available } = req.query;
   
   let sql = 'SELECT * FROM extranet_providers WHERE 1=1';
@@ -14268,7 +14273,7 @@ router.get('/extranets', authenticateToken, authorizeModulePermission('extranet_
 });
 
 // Create extranet provider
-router.post('/extranets', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.post('/extranets', authenticateToken, authorizeModulePermission('extranet_providers', 'provisioner'), (req, res) => {
   const { provider_name, region, salesperson_assigned, provider_resiliency, website_link, available, more_info, previously_known_as } = req.body;
   
   if (!provider_name || !region) {
@@ -14313,7 +14318,7 @@ router.post('/extranets', authenticateToken, authorizeModulePermission('extranet
 });
 
 // Update extranet provider
-router.put('/extranets/:id', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.put('/extranets/:id', authenticateToken, authorizeModulePermission('extranet_providers', 'provisioner'), (req, res) => {
   const { provider_name, region, salesperson_assigned, provider_resiliency, website_link, available, more_info, previously_known_as } = req.body;
   const providerId = req.params.id;
   
@@ -14357,7 +14362,7 @@ router.put('/extranets/:id', authenticateToken, authorizeModulePermission('extra
 });
 
 // Delete extranet provider (only if no products or contacts)
-router.delete('/extranets/:id', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.delete('/extranets/:id', authenticateToken, authorizeModulePermission('extranet_providers', 'provisioner'), (req, res) => {
   const providerId = req.params.id;
   
   // Check if provider has products or contacts
@@ -14393,7 +14398,7 @@ router.delete('/extranets/:id', authenticateToken, authorizeModulePermission('ex
 });
 
 // Get extranet products for a specific provider
-router.get('/extranets/:id/products', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranets/:id/products', authenticateToken, authorizeModulePermission('extranet_providers', 'read_only'), (req, res) => {
   const providerId = req.params.id;
   const { search } = req.query;
   
@@ -14414,7 +14419,7 @@ router.get('/extranets/:id/products', authenticateToken, authorizeModulePermissi
 });
 
 // Create extranet product
-router.post('/extranets/:id/products', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), extranetProductUpload, async (req, res) => {
+router.post('/extranets/:id/products', authenticateToken, authorizeModulePermission('extranet_providers', 'provisioner'), extranetProductUpload, async (req, res) => {
   const providerId = req.params.id;
   const { product_name, isf, suggested_bandwidth, primary_datacenter, secondary_datacenters, primary_pricing_city, isf_resiliency, more_info } = req.body;
   
@@ -14502,7 +14507,7 @@ router.post('/extranets/:id/products', authenticateToken, authorizeModulePermiss
 });
 
 // Update extranet product
-router.put('/extranets/:providerId/products/:productId', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), extranetProductUpload, async (req, res) => {
+router.put('/extranets/:providerId/products/:productId', authenticateToken, authorizeModulePermission('extranet_providers', 'provisioner'), extranetProductUpload, async (req, res) => {
   const { providerId, productId } = req.params;
   const { product_name, isf, suggested_bandwidth, primary_datacenter, secondary_datacenters, primary_pricing_city, isf_resiliency, more_info } = req.body;
   
@@ -14582,7 +14587,7 @@ router.put('/extranets/:providerId/products/:productId', authenticateToken, auth
 });
 
 // Delete extranet product
-router.delete('/extranets/:providerId/products/:productId', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.delete('/extranets/:providerId/products/:productId', authenticateToken, authorizeModulePermission('extranet_providers', 'provisioner'), (req, res) => {
   const { providerId, productId } = req.params;
   
   // Get current product data for change logging and file cleanup
@@ -14618,7 +14623,7 @@ router.delete('/extranets/:providerId/products/:productId', authenticateToken, a
 });
 
 // Download extranet product design file (PDF)
-router.get('/extranets/:providerId/products/:productId/download', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranets/:providerId/products/:productId/download', authenticateToken, authorizeModulePermission('extranet_providers', 'read_only'), (req, res) => {
   const { providerId, productId } = req.params;
   
   // Get product with provider info for filename
@@ -14642,7 +14647,7 @@ router.get('/extranets/:providerId/products/:productId/download', authenticateTo
 });
 
 // Download extranet product design template
-router.get('/extranets/:providerId/products/:productId/download-template', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranets/:providerId/products/:productId/download-template', authenticateToken, authorizeModulePermission('extranet_providers', 'read_only'), (req, res) => {
   const { providerId, productId } = req.params;
   
   // Get product with provider info for filename
@@ -14667,7 +14672,7 @@ router.get('/extranets/:providerId/products/:productId/download-template', authe
 });
 
 // Delete extranet product design file only
-router.delete('/extranets/:providerId/products/:productId/design-file', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.delete('/extranets/:providerId/products/:productId/design-file', authenticateToken, authorizeModulePermission('extranet_providers', 'provisioner'), (req, res) => {
   const { providerId, productId } = req.params;
   
   db.get('SELECT design_file_path FROM extranet_products WHERE id = ? AND provider_id = ?', [productId, providerId], (err, product) => {
@@ -14688,7 +14693,7 @@ router.delete('/extranets/:providerId/products/:productId/design-file', authenti
 });
 
 // Delete extranet product design template only
-router.delete('/extranets/:providerId/products/:productId/design-template', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.delete('/extranets/:providerId/products/:productId/design-template', authenticateToken, authorizeModulePermission('extranet_providers', 'provisioner'), (req, res) => {
   const { providerId, productId } = req.params;
   
   db.get('SELECT design_template_path FROM extranet_products WHERE id = ? AND provider_id = ?', [productId, providerId], (err, product) => {
@@ -14709,7 +14714,7 @@ router.delete('/extranets/:providerId/products/:productId/design-template', auth
 });
 
 // Get extranet product tracking details
-router.get('/extranets/:providerId/products/:productId/tracking', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranets/:providerId/products/:productId/tracking', authenticateToken, authorizeModulePermission('extranet_providers', 'read_only'), (req, res) => {
   const { providerId, productId } = req.params;
   
   const sql = `
@@ -14729,7 +14734,7 @@ router.get('/extranets/:providerId/products/:productId/tracking', authenticateTo
 });
 
 // Get extranet contacts for a specific provider
-router.get('/extranets/:id/contacts', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranets/:id/contacts', authenticateToken, authorizeModulePermission('extranet_contacts', 'read_only'), (req, res) => {
   const providerId = req.params.id;
   
   const sql = `
@@ -14749,7 +14754,7 @@ router.get('/extranets/:id/contacts', authenticateToken, authorizeModulePermissi
 });
 
 // Create extranet contact
-router.post('/extranets/:id/contacts', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.post('/extranets/:id/contacts', authenticateToken, authorizeModulePermission('extranet_contacts', 'provisioner'), (req, res) => {
   const providerId = req.params.id;
   const { contact_name, job_title, phone_number, email, contact_type, contact_level, notes } = req.body;
   
@@ -14781,7 +14786,7 @@ router.post('/extranets/:id/contacts', authenticateToken, authorizeModulePermiss
 });
 
 // Update extranet contact
-router.put('/extranets/:providerId/contacts/:contactId', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.put('/extranets/:providerId/contacts/:contactId', authenticateToken, authorizeModulePermission('extranet_contacts', 'provisioner'), (req, res) => {
   const { providerId, contactId } = req.params;
   const { contact_name, job_title, phone_number, email, contact_type, contact_level, notes } = req.body;
   
@@ -14811,7 +14816,7 @@ router.put('/extranets/:providerId/contacts/:contactId', authenticateToken, auth
 });
 
 // Delete extranet contact
-router.delete('/extranets/:providerId/contacts/:contactId', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.delete('/extranets/:providerId/contacts/:contactId', authenticateToken, authorizeModulePermission('extranet_contacts', 'provisioner'), (req, res) => {
   const { providerId, contactId } = req.params;
   
   // Get current contact data for change logging
@@ -14831,7 +14836,7 @@ router.delete('/extranets/:providerId/contacts/:contactId', authenticateToken, a
 });
 
 // Get overdue extranet contacts (365+ days without update)
-router.get('/extranets/overdue-contacts', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranets/overdue-contacts', authenticateToken, authorizeModulePermission('extranet_contacts', 'read_only'), (req, res) => {
   const sql = `
     SELECT 
       ec.id, ec.contact_name, ec.email, ec.phone_number as phone, ec.contact_type as role,
@@ -14851,7 +14856,7 @@ router.get('/extranets/overdue-contacts', authenticateToken, authorizeModulePerm
 });
 
 // Approve extranet contact yearly update
-router.post('/extranets/contacts/:contactId/approve', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.post('/extranets/contacts/:contactId/approve', authenticateToken, authorizeModulePermission('extranet_contacts', 'provisioner'), (req, res) => {
   const { contactId } = req.params;
   
   db.run(
@@ -14871,7 +14876,7 @@ router.post('/extranets/contacts/:contactId/approve', authenticateToken, authori
 // ====================================
 
 // Get available cities from location_reference for dropdown
-router.get('/extranet-pricing/available-cities', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-pricing/available-cities', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   const { search } = req.query;
   
   let sql = `SELECT DISTINCT city, country FROM location_reference WHERE city IS NOT NULL AND country IS NOT NULL`;
@@ -14897,7 +14902,7 @@ router.get('/extranet-pricing/available-cities', authenticateToken, authorizeMod
 });
 
 // Get all pricing cities
-router.get('/extranet-pricing/cities', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-pricing/cities', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   const { region } = req.query;
   
   let sql = 'SELECT * FROM extranet_pricing_cities';
@@ -14917,7 +14922,7 @@ router.get('/extranet-pricing/cities', authenticateToken, authorizeModulePermiss
 });
 
 // Create pricing city
-router.post('/extranet-pricing/cities', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.post('/extranet-pricing/cities', authenticateToken, authorizeRole(['administrator']), (req, res) => {
   const { city_name, region, tier, country } = req.body;
   
   if (!city_name || !region || !tier) {
@@ -14925,7 +14930,7 @@ router.post('/extranet-pricing/cities', authenticateToken, authorizeModulePermis
   }
   
   const validRegions = ['AMERs', 'APAC', 'EMEA'];
-  const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+  const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3', 'Tier 4'];
   
   if (!validRegions.includes(region)) {
     return res.status(400).json({ error: 'Invalid region' });
@@ -14960,12 +14965,12 @@ router.post('/extranet-pricing/cities', authenticateToken, authorizeModulePermis
 });
 
 // Update pricing city
-router.put('/extranet-pricing/cities/:id', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.put('/extranet-pricing/cities/:id', authenticateToken, authorizeRole(['administrator']), (req, res) => {
   const cityId = req.params.id;
   const { city_name, region, tier, country } = req.body;
   
   const validRegions = ['AMERs', 'APAC', 'EMEA'];
-  const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+  const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3', 'Tier 4'];
   
   if (region && !validRegions.includes(region)) {
     return res.status(400).json({ error: 'Invalid region' });
@@ -15000,7 +15005,7 @@ router.put('/extranet-pricing/cities/:id', authenticateToken, authorizeModulePer
 });
 
 // Delete pricing city
-router.delete('/extranet-pricing/cities/:id', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.delete('/extranet-pricing/cities/:id', authenticateToken, authorizeRole(['administrator']), (req, res) => {
   const cityId = req.params.id;
   
   db.get('SELECT * FROM extranet_pricing_cities WHERE id = ?', [cityId], (err, oldCity) => {
@@ -15019,7 +15024,7 @@ router.delete('/extranet-pricing/cities/:id', authenticateToken, authorizeModule
 });
 
 // Get rate card (optionally filtered by provider_region)
-router.get('/extranet-pricing/rate-card', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-pricing/rate-card', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   const { provider_region } = req.query;
   
   if (provider_region) {
@@ -15040,7 +15045,7 @@ router.get('/extranet-pricing/rate-card', authenticateToken, authorizeModulePerm
 });
 
 // Update rate card entry
-router.put('/extranet-pricing/rate-card/:id', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.put('/extranet-pricing/rate-card/:id', authenticateToken, authorizeRole(['administrator']), (req, res) => {
   const rateId = req.params.id;
   const { price_usd } = req.body;
   
@@ -15072,7 +15077,7 @@ router.put('/extranet-pricing/rate-card/:id', authenticateToken, authorizeModule
 });
 
 // Bulk update rate card (for CSV import) - requires provider_region
-router.post('/extranet-pricing/rate-card/bulk', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.post('/extranet-pricing/rate-card/bulk', authenticateToken, authorizeRole(['administrator']), (req, res) => {
   const { rates, provider_region } = req.body;
   
   if (!Array.isArray(rates) || rates.length === 0) {
@@ -15081,7 +15086,7 @@ router.post('/extranet-pricing/rate-card/bulk', authenticateToken, authorizeModu
   
   const validBandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '30Mb', '40Mb', '50Mb', '75Mb', '100Mb', '150Mb', '200Mb'];
   const validRegions = ['AMERs', 'APAC', 'EMEA'];
-  const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+  const validTiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3', 'Tier 4'];
   
   // provider_region is required for bulk updates
   if (!provider_region || !validRegions.includes(provider_region)) {
@@ -15150,7 +15155,7 @@ router.post('/extranet-pricing/rate-card/bulk', authenticateToken, authorizeModu
 });
 
 // Price lookup endpoint
-router.get('/extranet-pricing/lookup', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-pricing/lookup', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   const { city_name, bandwidth, provider_id, product_id, provider_region } = req.query;
   
   if (!city_name || !bandwidth) {
@@ -15165,10 +15170,13 @@ router.get('/extranet-pricing/lookup', authenticateToken, authorizeModulePermiss
     if (err) return res.status(500).json({ error: err.message });
     if (!city) return res.status(404).json({ error: 'City not found in pricing database' });
     
+    // Metro pricing is only valid when city region matches provider rate card region
+    const effectiveTier = (city.tier === 'Metro' && city.region !== lookupProviderRegion) ? 'Tier 1' : city.tier;
+    
     // Get the price from rate card (filtered by provider_region)
     db.get(
       'SELECT price_usd FROM extranet_rate_card WHERE bandwidth = ? AND region = ? AND tier = ? AND provider_region = ?',
-      [bandwidth, city.region, city.tier, lookupProviderRegion],
+      [bandwidth, city.region, effectiveTier, lookupProviderRegion],
       (err, rateCard) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!rateCard) return res.status(404).json({ error: 'Price not found for this bandwidth and tier combination' });
@@ -15223,7 +15231,7 @@ router.get('/extranet-pricing/lookup', authenticateToken, authorizeModulePermiss
 });
 
 // Get providers by region (for pricing tool filtering)
-router.get('/extranet-pricing/providers/:region', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-pricing/providers/:region', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   const { region } = req.params;
   
   db.all(
@@ -15237,7 +15245,7 @@ router.get('/extranet-pricing/providers/:region', authenticateToken, authorizeMo
 });
 
 // Get products for provider (for pricing tool)
-router.get('/extranet-pricing/products/:providerId', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-pricing/products/:providerId', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   const { providerId } = req.params;
   
   db.all(
@@ -15251,7 +15259,7 @@ router.get('/extranet-pricing/products/:providerId', authenticateToken, authoriz
 });
 
 // Get available bandwidths
-router.get('/extranet-pricing/bandwidths', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-pricing/bandwidths', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   db.all('SELECT DISTINCT bandwidth FROM extranet_rate_card', [], (err, bandwidths) => {
     if (err) return res.status(500).json({ error: err.message });
     // Sort bandwidths by numeric value (convert Kb/Mb to comparable numbers)
@@ -15271,7 +15279,7 @@ router.get('/extranet-pricing/bandwidths', authenticateToken, authorizeModulePer
 // ====================================
 
 // Get all pricing parameters
-router.get('/extranet-pricing/parameters', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-pricing/parameters', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   db.all('SELECT * FROM extranet_pricing_parameters ORDER BY id', [], (err, params) => {
     if (err) return res.status(500).json({ error: err.message });
     
@@ -15290,7 +15298,7 @@ router.get('/extranet-pricing/parameters', authenticateToken, authorizeModulePer
 });
 
 // Update pricing parameters (bulk)
-router.put('/extranet-pricing/parameters', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), async (req, res) => {
+router.put('/extranet-pricing/parameters', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
   const { parameters } = req.body;
   
   if (!parameters || typeof parameters !== 'object') {
@@ -15337,7 +15345,7 @@ router.put('/extranet-pricing/parameters', authenticateToken, authorizeModulePer
 });
 
 // Get IPSec surcharges
-router.get('/extranet-pricing/ipsec-surcharges', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-pricing/ipsec-surcharges', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   db.all('SELECT * FROM extranet_ipsec_surcharges ORDER BY id', [], (err, surcharges) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(surcharges);
@@ -15345,7 +15353,7 @@ router.get('/extranet-pricing/ipsec-surcharges', authenticateToken, authorizeMod
 });
 
 // Update IPSec surcharges
-router.put('/extranet-pricing/ipsec-surcharges', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), async (req, res) => {
+router.put('/extranet-pricing/ipsec-surcharges', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
   const { surcharges } = req.body;
   
   if (!Array.isArray(surcharges)) {
@@ -15390,7 +15398,7 @@ router.put('/extranet-pricing/ipsec-surcharges', authenticateToken, authorizeMod
 });
 
 // Get available currencies from exchange_rates table
-router.get('/extranet-pricing/currencies', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-pricing/currencies', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   db.all(`SELECT currency_code, exchange_rate,
     CASE currency_code 
       WHEN 'USD' THEN 'US Dollar' 
@@ -15423,7 +15431,7 @@ router.get('/extranet-pricing/currencies', authenticateToken, authorizeModulePer
 });
 
 // Main pricing calculation endpoint
-router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), async (req, res) => {
+router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), async (req, res) => {
   const {
     provider_primary_city,
     provider_secondary_city,
@@ -15504,7 +15512,7 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
       });
     }
     
-    // 3. Get city tiers for provider and member primary locations
+    // 3. Get city tiers for provider and member locations
     const providerCity = await new Promise((resolve, reject) => {
       db.get('SELECT * FROM extranet_pricing_cities WHERE city_name = ?', [provider_primary_city], (err, row) => {
         if (err) reject(err);
@@ -15519,6 +15527,17 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
       });
     });
     
+    // Look up member secondary city if provided
+    let memberSecondaryCity = null;
+    if (member_secondary_city) {
+      memberSecondaryCity = await new Promise((resolve, reject) => {
+        db.get('SELECT * FROM extranet_pricing_cities WHERE city_name = ?', [member_secondary_city], (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+    }
+    
     if (!providerCity) {
       return res.status(400).json({ error: `Provider city "${provider_primary_city}" not found in city tiers` });
     }
@@ -15526,16 +15545,31 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
       return res.status(400).json({ error: `Member city "${member_primary_city}" not found in city tiers` });
     }
     
-    // 4. Determine higher tier (more expensive) - tier ranking: Metro < Tier 1 < Tier 2 < Tier 3
-    const tierRank = { 'Metro': 0, 'Tier 1': 1, 'Tier 2': 2, 'Tier 3': 3 };
-    const providerTierRank = tierRank[providerCity.tier] || 0;
-    const memberTierRank = tierRank[memberCity.tier] || 0;
-    const highestTier = providerTierRank >= memberTierRank ? providerCity.tier : memberCity.tier;
-    const pricingRegion = providerTierRank >= memberTierRank ? providerCity.region : memberCity.region;
-    
-    // 4b. Provider region determines which rate card to use
-    // Use explicitly sent provider_region if provided, otherwise fall back to provider city's region
+    // 4. Determine higher tier (more expensive) - tier ranking: Metro < Tier 1 < Tier 2 < Tier 3 < Tier 4
+    // 4a. Provider region determines which rate card to use
     const providerRateCardRegion = provider_region || providerCity.region;
+    
+    // 4b. Metro pricing is only valid when the city's region matches the provider rate card region.
+    // If Metro is not valid, treat those cities as Tier 1.
+    const providerEffectiveTier = (providerCity.tier === 'Metro' && providerCity.region !== providerRateCardRegion) ? 'Tier 1' : providerCity.tier;
+    const memberPrimaryEffectiveTier = (memberCity.tier === 'Metro' && memberCity.region !== providerRateCardRegion) ? 'Tier 1' : memberCity.tier;
+    
+    // 4c. Use the highest tier between member primary and secondary locations
+    const tierRank = { 'Metro': 0, 'Tier 1': 1, 'Tier 2': 2, 'Tier 3': 3, 'Tier 4': 4 };
+    let memberEffectiveTier = memberPrimaryEffectiveTier;
+    let memberEffectiveCity = memberCity;
+    if (memberSecondaryCity) {
+      const memberSecEffTier = (memberSecondaryCity.tier === 'Metro' && memberSecondaryCity.region !== providerRateCardRegion) ? 'Tier 1' : memberSecondaryCity.tier;
+      if ((tierRank[memberSecEffTier] || 0) > (tierRank[memberPrimaryEffectiveTier] || 0)) {
+        memberEffectiveTier = memberSecEffTier;
+        memberEffectiveCity = memberSecondaryCity;
+      }
+    }
+    
+    const providerTierRank = tierRank[providerEffectiveTier] || 0;
+    const memberTierRank = tierRank[memberEffectiveTier] || 0;
+    const highestTier = providerTierRank >= memberTierRank ? providerEffectiveTier : memberEffectiveTier;
+    const pricingRegion = providerTierRank >= memberTierRank ? providerCity.region : memberEffectiveCity.region;
     
     // 5. Get base price from rate card (use adjustedBandwidth for Off Net, filtered by provider region)
     const rateCard = await new Promise((resolve, reject) => {
@@ -15790,7 +15824,7 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
 });
 
 // Get locations for datacenter autocomplete
-router.get('/extranet-data/locations', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-data/locations', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   db.all('SELECT location_code FROM location_reference ORDER BY location_code', [], (err, locations) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(locations.map(l => l.location_code));
@@ -15799,7 +15833,7 @@ router.get('/extranet-data/locations', authenticateToken, authorizeModulePermiss
 
 // Resolve POP/datacenter code to pricing city
 // Returns the matching extranet_pricing_cities entry if the location_reference city matches
-router.get('/extranet-pricing/resolve-datacenter/:code', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), (req, res) => {
+router.get('/extranet-pricing/resolve-datacenter/:code', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), (req, res) => {
   const { code } = req.params;
   
   // First look up the location_reference to get the city
@@ -15836,7 +15870,7 @@ router.get('/extranet-pricing/resolve-datacenter/:code', authenticateToken, auth
 
 // Bundle pricing calculation endpoint
 // Calculates pricing for multiple items and applies bundle discounts
-router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), async (req, res) => {
+router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), async (req, res) => {
   try {
     const { items, contract_term, currency_requested, discount_percent, customer_name } = req.body;
     
@@ -15947,12 +15981,40 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
         }
         
         // Determine tier and region
-        const tierRank = { 'Metro': 0, 'Tier 1': 1, 'Tier 2': 2, 'Tier 3': 3 };
-        const providerTierRank = tierRank[providerCity.tier] || 0;
-        const memberTierRank = tierRank[memberCity.tier] || 0;
-        const highestTier = providerTierRank >= memberTierRank ? providerCity.tier : memberCity.tier;
-        const pricingRegion = providerTierRank >= memberTierRank ? providerCity.region : memberCity.region;
         const providerRateCardRegion = item.provider_region || providerCity.region;
+        
+        // Look up member secondary city if provided
+        let memberSecondaryCity = null;
+        if (item.member_secondary_city) {
+          memberSecondaryCity = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM extranet_pricing_cities WHERE LOWER(city_name) = LOWER(?)',
+              [item.member_secondary_city], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+              });
+          });
+        }
+        
+        // Metro pricing is only valid when the city's region matches the provider rate card region
+        const providerEffectiveTier = (providerCity.tier === 'Metro' && providerCity.region !== providerRateCardRegion) ? 'Tier 1' : providerCity.tier;
+        const memberPrimaryEffectiveTier = (memberCity.tier === 'Metro' && memberCity.region !== providerRateCardRegion) ? 'Tier 1' : memberCity.tier;
+        
+        // Use the highest tier between member primary and secondary locations
+        const tierRank = { 'Metro': 0, 'Tier 1': 1, 'Tier 2': 2, 'Tier 3': 3, 'Tier 4': 4 };
+        let memberEffectiveTier = memberPrimaryEffectiveTier;
+        let memberEffectiveCity = memberCity;
+        if (memberSecondaryCity) {
+          const memberSecEffTier = (memberSecondaryCity.tier === 'Metro' && memberSecondaryCity.region !== providerRateCardRegion) ? 'Tier 1' : memberSecondaryCity.tier;
+          if ((tierRank[memberSecEffTier] || 0) > (tierRank[memberPrimaryEffectiveTier] || 0)) {
+            memberEffectiveTier = memberSecEffTier;
+            memberEffectiveCity = memberSecondaryCity;
+          }
+        }
+        
+        const providerTierRank = tierRank[providerEffectiveTier] || 0;
+        const memberTierRank = tierRank[memberEffectiveTier] || 0;
+        const highestTier = providerTierRank >= memberTierRank ? providerEffectiveTier : memberEffectiveTier;
+        const pricingRegion = providerTierRank >= memberTierRank ? providerCity.region : memberEffectiveCity.region;
         
         // Bandwidth adjustment for Off Net - enforce 10Mb minimum
         let adjustedBandwidth = item.bandwidth;
@@ -16274,7 +16336,7 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
 });
 
 // Get bundle discount tiers for display
-router.get('/extranet-pricing/bundle-discounts', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), async (req, res) => {
+router.get('/extranet-pricing/bundle-discounts', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), async (req, res) => {
   try {
     const params = await new Promise((resolve, reject) => {
       db.all("SELECT param_key, param_value FROM extranet_pricing_parameters WHERE param_key LIKE 'bundle_discount_%' OR param_key LIKE 'bundle_tier_%'", [], (err, rows) => {
@@ -16319,7 +16381,7 @@ router.get('/extranet-pricing/bundle-discounts', authenticateToken, authorizeMod
 // ====================================
 
 // Get extranet pricing logs with pagination and filtering
-router.get('/extranet-pricing/logs', authenticateToken, authorizeModulePermission('extranet_data', 'read_only'), async (req, res) => {
+router.get('/extranet-pricing/logs', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), async (req, res) => {
   try {
     const { limit = 100, offset = 0, user_id, provider_city, member_city, start_date, end_date, type, customer_name } = req.query;
     
@@ -16333,7 +16395,7 @@ router.get('/extranet-pricing/logs', authenticateToken, authorizeModulePermissio
       callerPermLevel = await new Promise((resolve, reject) => {
         db.get(
           'SELECT permission_level FROM user_module_permissions WHERE user_id = ? AND module_name = ?',
-          [req.user.id, 'extranet_data'],
+          [req.user.id, 'extranet_pricing'],
           (err, row) => {
             if (err) reject(err);
             else resolve(row ? row.permission_level : 'read_only');
@@ -16516,7 +16578,7 @@ router.get('/extranet-pricing/logs', authenticateToken, authorizeModulePermissio
 });
 
 // Get users list for filter dropdown (Provisioner and Admin)
-router.get('/extranet-pricing/users', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), (req, res) => {
+router.get('/extranet-pricing/users', authenticateToken, authorizeRole(['administrator']), (req, res) => {
   db.all('SELECT id, username, full_name FROM users WHERE status = "active" ORDER BY username', [], (err, users) => {
     if (err) {
       console.error('Error fetching users list:', err);
@@ -16527,7 +16589,7 @@ router.get('/extranet-pricing/users', authenticateToken, authorizeModulePermissi
 });
 
 // Export extranet pricing logs to CSV (Provisioner and Admin)
-router.get('/extranet-pricing/logs/export', authenticateToken, authorizeModulePermission('extranet_data', 'provisioner'), async (req, res) => {
+router.get('/extranet-pricing/logs/export', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
     
@@ -20742,7 +20804,7 @@ router.get('/voice/one-directory/parameters', authenticateToken, authorizeModule
 });
 
 // Update One Directory parameters (admin)
-router.put('/voice/one-directory/parameters', authenticateToken, authorizeModulePermission('voice_one_directory_admin', 'provisioner'), async (req, res) => {
+router.put('/voice/one-directory/parameters', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
   const { parameters } = req.body;
 
   if (!parameters || typeof parameters !== 'object') {
@@ -20760,21 +20822,31 @@ router.put('/voice/one-directory/parameters', authenticateToken, authorizeModule
         });
       });
 
-      await new Promise((resolve, reject) => {
-        db.run(
-          'UPDATE one_directory_parameters SET param_value = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE param_key = ?',
-          [value.toString(), req.user.id, key],
-          function(err) {
-            if (err) reject(err);
-            else resolve(this.changes);
-          }
-        );
-      });
-
       if (oldValue) {
+        await new Promise((resolve, reject) => {
+          db.run(
+            'UPDATE one_directory_parameters SET param_value = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE param_key = ?',
+            [value.toString(), req.user.id, key],
+            function(err) {
+              if (err) reject(err);
+              else resolve(this.changes);
+            }
+          );
+        });
         logChange(req.user.id, 'one_directory_parameters', oldValue.id, 'UPDATE',
           { param_key: key, param_value: oldValue.param_value },
           { param_key: key, param_value: value.toString() }, req);
+      } else {
+        await new Promise((resolve, reject) => {
+          db.run(
+            'INSERT INTO one_directory_parameters (param_key, param_value, param_type, description, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?)',
+            [key, value.toString(), 'number', '', req.user.id, req.user.id],
+            function(err) {
+              if (err) reject(err);
+              else resolve(this.lastID);
+            }
+          );
+        });
       }
     }
 
@@ -20883,6 +20955,12 @@ router.post('/voice/one-directory/calculate', authenticateToken, authorizeModule
 
     // 4. Round up to next rate card bandwidth
     let directoryBw = findBandwidth(rawBandwidthMb);
+
+    // 4a. Enforce minimum directory bandwidth if configured
+    const minBwMb = parseFloat(params.minimum_bandwidth_mb) || 0;
+    if (minBwMb > 0 && directoryBw.mb < minBwMb) {
+      directoryBw = findBandwidth(minBwMb);
+    }
 
     // B2B Agility bandwidth
     const b2bBwLabel = params.b2b_agility_bandwidth || '10Mb';
@@ -21286,6 +21364,12 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
         const rawBwMb = rawBwKbps / 1000;
 
         let directoryBw = findBandwidth(rawBwMb);
+
+        // Enforce minimum directory bandwidth if configured
+        const minBwMb = parseFloat(params.minimum_bandwidth_mb) || 0;
+        if (minBwMb > 0 && directoryBw.mb < minBwMb) {
+          directoryBw = findBandwidth(minBwMb);
+        }
 
         // B2B and Safe Connect bandwidths
         const b2bBwLabel = params.b2b_agility_bandwidth || '10Mb';
@@ -21744,7 +21828,7 @@ router.get('/voice/one-directory/logs', authenticateToken, authorizeModulePermis
 });
 
 // Export One Directory pricing logs to CSV (admin)
-router.get('/voice/one-directory/logs/export', authenticateToken, authorizeModulePermission('voice_one_directory_admin', 'read_only'), async (req, res) => {
+router.get('/voice/one-directory/logs/export', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
 
@@ -21797,7 +21881,7 @@ router.get('/voice/one-directory/logs/export', authenticateToken, authorizeModul
 });
 
 // Clear One Directory pricing logs (admin)
-router.delete('/voice/one-directory/logs', authenticateToken, authorizeModulePermission('voice_one_directory_admin', 'provisioner'), (req, res) => {
+router.delete('/voice/one-directory/logs', authenticateToken, authorizeRole(['administrator']), (req, res) => {
   db.run('DELETE FROM one_directory_pricing_logs', [], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     const lookupsDeleted = this.changes;

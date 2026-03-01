@@ -88,9 +88,12 @@ const getUserModulePermissions = (userId, callback) => {
       const allModules = [
         'network_routes', 'network_design', 'locations', 'carriers',
         'cnx_colocation_inventory', 'cnx_colocation_availability', 'cnx_colocation_pricing',
-        'exchange_rates', 'exchange_data', 'change_logs', 'user_management', 
+        'exchange_rates', 'exchange_feeds', 'exchange_contacts', 'exchange_pricing',
+        'extranet_providers', 'extranet_contacts', 'extranet_pricing',
+        'change_logs', 'user_management',
         'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
-        'allocated_cost_calculator', 'kmz_viewer', 'route_finder'
+        'allocated_cost_calculator', 'kmz_viewer', 'route_finder',
+        'voice_one_directory', 'carrier_quote_repository'
       ];
       
       const permissionMap = {};
@@ -154,6 +157,46 @@ const hasModulePermission = (userId, moduleName, requiredLevel, callback) => {
   });
 };
 
+// Multi-module authorization middleware (passes if user has required level for ANY of the specified modules)
+const authorizeAnyModulePermission = (moduleNames, requiredLevel = 'read_only') => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    let checked = 0;
+    let granted = false;
+
+    const checkNext = () => {
+      if (granted) return;
+      if (checked >= moduleNames.length) {
+        return res.status(403).json({
+          error: 'Insufficient permissions',
+          modules: moduleNames,
+          required: requiredLevel
+        });
+      }
+
+      hasModulePermission(req.user.id, moduleNames[checked], requiredLevel, (err, hasPermission) => {
+        if (err) {
+          console.error('Permission check error:', err);
+          return res.status(500).json({ error: 'Permission check failed' });
+        }
+
+        if (hasPermission) {
+          granted = true;
+          return next();
+        }
+
+        checked++;
+        checkNext();
+      });
+    };
+
+    checkNext();
+  };
+};
+
 // Module-based authorization middleware
 const authorizeModulePermission = (moduleName, requiredLevel = 'read_only') => {
   return (req, res, next) => {
@@ -207,5 +250,6 @@ module.exports = {
   getUserModulePermissions,
   hasModulePermission,
   authorizeModulePermission,
+  authorizeAnyModulePermission,
   logUserActivity
 }; 

@@ -27,7 +27,7 @@ import LoadingIndicator from './components/LoadingIndicator';
 import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 
 
-const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
+const ExtranetDataManager = ({ hasPermission, initialTab = 0, permissionModule = 'extranet_providers' }) => {
   
   // Data states
   const [providers, setProviders] = useState([]);
@@ -927,7 +927,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
           Extranet Data
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
-          {hasPermission && hasPermission('extranet_data', 'create') && (
+          {hasPermission && hasPermission(permissionModule, 'create') && (
             <Button
               variant="contained"
               startIcon={<AddIcon />}
@@ -1086,7 +1086,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
                       </TableCell>
                       <TableCell align="center">
                         <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
-                          {hasPermission && hasPermission('extranet_data', 'edit') && (
+                          {hasPermission && hasPermission(permissionModule, 'edit') && (
                             <>
                               <Tooltip title="Add Product">
                                 <IconButton
@@ -1099,7 +1099,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
                                   <AddIcon />
                                 </IconButton>
                               </Tooltip>
-                              {hasPermission('extranet_data', 'create') && (
+                              {hasPermission(permissionModule, 'create') && (
                                 <Tooltip title="Edit Provider">
                                   <IconButton
                                     size="small"
@@ -1114,7 +1114,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
                               )}
                             </>
                           )}
-                          {hasPermission && hasPermission('extranet_data', 'delete') && (
+                          {hasPermission && hasPermission(permissionModule, 'delete') && (
                             <Tooltip title="Delete Provider">
                               <IconButton
                                 size="small"
@@ -1197,7 +1197,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
                                       </TableCell>
                                       <TableCell align="center">
                                         <Box sx={{ display: 'flex', gap: 1 }}>
-                                          {hasPermission && hasPermission('extranet_data', 'edit') && (
+                                          {hasPermission && hasPermission(permissionModule, 'edit') && (
                                             <IconButton
                                               size="small"
                                               onClick={() => handleEditProduct(provider, product)}
@@ -1205,7 +1205,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
                                               <EditIcon />
                                             </IconButton>
                                           )}
-                                          {hasPermission && hasPermission('extranet_data', 'edit') && (
+                                          {hasPermission && hasPermission(permissionModule, 'edit') && (
                                             <IconButton
                                               size="small"
                                               onClick={() => handleDeleteProduct(provider, product)}
@@ -1271,7 +1271,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
                           <TableCell>{getStatusChip(provider.available)}</TableCell>
                           <TableCell align="center">
                             <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
-                              {hasPermission && hasPermission('extranet_data', 'edit') && (
+                              {hasPermission && hasPermission(permissionModule, 'edit') && (
                                 <Button
                                   size="small"
                                   variant="outlined"
@@ -1343,7 +1343,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
                                           </TableCell>
                                           <TableCell align="center">
                                             <Box sx={{ display: 'flex', gap: 1 }}>
-                                              {hasPermission && hasPermission('extranet_data', 'edit') && (
+                                              {hasPermission && hasPermission(permissionModule, 'edit') && (
                                                 <IconButton
                                                   size="small"
                                                   onClick={() => handleEditContact(provider, contact)}
@@ -1351,7 +1351,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0 }) => {
                                                   <EditIcon />
                                                 </IconButton>
                                               )}
-                                              {hasPermission && hasPermission('extranet_data', 'edit') && (
+                                              {hasPermission && hasPermission(permissionModule, 'edit') && (
                                                 <IconButton
                                                   size="small"
                                                   onClick={() => handleDeleteContact(provider, contact)}

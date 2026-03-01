@@ -166,7 +166,7 @@ const ColocationAvailabilityDashboard = () => {
               <TableCell width="40px"></TableCell>
               <TableCell><strong>Location</strong></TableCell>
               <TableCell><strong>City</strong></TableCell>
-              <TableCell><strong>Provider</strong></TableCell>
+              <TableCell><strong>Datacenter Name</strong></TableCell>
               <TableCell align="center"><strong>Racks</strong></TableCell>
               <TableCell align="center"><strong>RU Available</strong></TableCell>
               <TableCell align="center"><strong>RU Utilization</strong></TableCell>
@@ -210,7 +210,7 @@ const ColocationAvailabilityDashboard = () => {
                         <Typography variant="body2" fontWeight="bold">{location.location_code}</Typography>
                       </TableCell>
                       <TableCell>{location.city}</TableCell>
-                      <TableCell>{location.provider || 'N/A'}</TableCell>
+                      <TableCell>{location.datacenter_name || 'N/A'}</TableCell>
                       <TableCell align="center">
                         <Chip label={location.total_racks} size="small" variant="outlined" />
                       </TableCell>

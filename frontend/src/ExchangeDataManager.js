@@ -27,7 +27,7 @@ import LoadingIndicator from './components/LoadingIndicator';
 import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
 
 
-const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
+const ExchangeDataManager = ({ hasPermission, initialTab = 0, permissionModule = 'exchange_feeds' }) => {
   
   // Data states
   const [exchanges, setExchanges] = useState([]);
@@ -862,7 +862,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
           Exchange Data
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
-          {hasPermission && hasPermission('exchange_data', 'create') && (
+          {hasPermission && hasPermission(permissionModule, 'create') && (
             <Button
               variant="contained"
               startIcon={<AddIcon />}
@@ -990,7 +990,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                       <TableCell>{getStatusChip(exchange.available)}</TableCell>
                       <TableCell align="center">
                         <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
-                          {hasPermission && hasPermission('exchange_data', 'edit') && (
+                          {hasPermission && hasPermission(permissionModule, 'edit') && (
                             <>
                               <Tooltip title="Add Feed">
                                 <IconButton
@@ -1003,7 +1003,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                   <AddIcon />
                                 </IconButton>
                               </Tooltip>
-                              {hasPermission('exchange_data', 'create') && (
+                              {hasPermission(permissionModule, 'create') && (
                                 <Tooltip title="Edit Exchange">
                                   <IconButton
                                     size="small"
@@ -1018,7 +1018,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                               )}
                             </>
                           )}
-                          {hasPermission && hasPermission('exchange_data', 'delete') && (
+                          {hasPermission && hasPermission(permissionModule, 'delete') && (
                             <Tooltip title="Delete Exchange">
                               <IconButton
                                 size="small"
@@ -1118,7 +1118,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                       </TableCell>
                                       <TableCell align="center">
                                         <Box sx={{ display: 'flex', gap: 1 }}>
-                                          {hasPermission && hasPermission('exchange_data', 'edit') && (
+                                          {hasPermission && hasPermission(permissionModule, 'edit') && (
                                             <IconButton
                                               size="small"
                                               onClick={() => handleEditFeed(exchange, feed)}
@@ -1126,7 +1126,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                               <EditIcon />
                                             </IconButton>
                                           )}
-                                          {hasPermission && hasPermission('exchange_data', 'edit') && (
+                                          {hasPermission && hasPermission(permissionModule, 'edit') && (
                                             <IconButton
                                               size="small"
                                               onClick={() => handleDeleteFeed(exchange, feed)}
@@ -1192,7 +1192,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                           <TableCell>{getStatusChip(exchange.available)}</TableCell>
                           <TableCell align="center">
                             <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
-                              {hasPermission && hasPermission('exchange_data', 'edit') && (
+                              {hasPermission && hasPermission(permissionModule, 'edit') && (
                                 <Button
                                   size="small"
                                   variant="outlined"
@@ -1266,7 +1266,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                           </TableCell>
                                           <TableCell align="center">
                                             <Box sx={{ display: 'flex', gap: 1 }}>
-                                              {hasPermission && hasPermission('exchange_data', 'edit') && (
+                                              {hasPermission && hasPermission(permissionModule, 'edit') && (
                                                 <IconButton
                                                   size="small"
                                                   onClick={() => handleEditContact(exchange, contact)}
@@ -1274,7 +1274,7 @@ const ExchangeDataManager = ({ hasPermission, initialTab = 0 }) => {
                                                   <EditIcon />
                                                 </IconButton>
                                               )}
-                                              {hasPermission && hasPermission('exchange_data', 'edit') && (
+                                              {hasPermission && hasPermission(permissionModule, 'edit') && (
                                                 <IconButton
                                                   size="small"
                                                   onClick={() => handleDeleteContact(exchange, contact)}

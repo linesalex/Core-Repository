@@ -781,10 +781,10 @@ function AuthenticatedApp() {
         );
       
       case 'voice-one-directory-admin':
-        return hasModuleAccess('voice_one_directory_admin') ? (
+        return hasRole('administrator') ? (
           <OneDirectoryAdmin hasPermission={hasPermission} />
         ) : (
-          <Alert severity="error">You don't have permission to view this module</Alert>
+          <Alert severity="error">You don't have permission to view this module. Administrator access required.</Alert>
         );
       
       case 'carriers':
@@ -795,52 +795,52 @@ function AuthenticatedApp() {
         );
       
       case 'exchange-feeds':
-        return hasModuleAccess('exchange_data') ? (
-          <ExchangeDataManager hasPermission={hasPermission} initialTab={0} />
+        return hasModuleAccess('exchange_feeds') ? (
+          <ExchangeDataManager hasPermission={hasPermission} initialTab={0} permissionModule="exchange_feeds" />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
       case 'exchange-contacts':
-        return hasModuleAccess('exchange_data') ? (
-          <ExchangeDataManager hasPermission={hasPermission} initialTab={1} />
+        return hasModuleAccess('exchange_contacts') ? (
+          <ExchangeDataManager hasPermission={hasPermission} initialTab={1} permissionModule="exchange_contacts" />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
       case 'exchange-pricing':
-        return hasModuleAccess('exchange_data') ? (
+        return hasModuleAccess('exchange_pricing') ? (
           <ExchangePricingTool />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
       case 'extranet-providers':
-        return (hasModuleAccess('extranet_data') && hasRole('administrator')) ? (
-          <ExtranetDataManager hasPermission={hasPermission} initialTab={0} />
+        return hasModuleAccess('extranet_providers') ? (
+          <ExtranetDataManager hasPermission={hasPermission} initialTab={0} permissionModule="extranet_providers" />
         ) : (
-          <Alert severity="error">You don't have permission to view this module. Administrator access required.</Alert>
+          <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
       case 'extranet-contacts':
-        return (hasModuleAccess('extranet_data') && hasRole('administrator')) ? (
-          <ExtranetDataManager hasPermission={hasPermission} initialTab={1} />
+        return hasModuleAccess('extranet_contacts') ? (
+          <ExtranetDataManager hasPermission={hasPermission} initialTab={1} permissionModule="extranet_contacts" />
         ) : (
-          <Alert severity="error">You don't have permission to view this module. Administrator access required.</Alert>
+          <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
       case 'extranet-pricing':
-        return hasModuleAccess('extranet_data') ? (
+        return hasModuleAccess('extranet_pricing') ? (
           <ExtranetPricingTool />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
       case 'extranet-pricing-admin':
-        return (hasModuleAccess('extranet_data') && (hasRole('administrator') || hasPermission('extranet_data', 'edit'))) ? (
+        return hasRole('administrator') ? (
           <ExtranetPricingAdmin hasPermission={hasPermission} />
         ) : (
-          <Alert severity="error">You don't have permission to view this module</Alert>
+          <Alert severity="error">You don't have permission to view this module. Administrator access required.</Alert>
         );
       
       case 'change-logs':
@@ -1300,7 +1300,7 @@ function AuthenticatedApp() {
             )}
 
             {/* Exchange Data */}
-            {hasModuleAccess('exchange_data') && (
+            {(hasModuleAccess('exchange_feeds') || hasModuleAccess('exchange_contacts') || hasModuleAccess('exchange_pricing')) && (
               <>
                 <ListItem button onClick={() => setExchangeDataOpen(!exchangeDataOpen)}>
                   <ListItemIcon><DataObjectIcon /></ListItemIcon>
@@ -1309,37 +1309,43 @@ function AuthenticatedApp() {
                 </ListItem>
                 <Collapse in={exchangeDataOpen} timeout="auto" unmountOnExit>
                   <List component="div" disablePadding>
-                    <ListItem 
-                      button 
-                      onClick={() => setCurrentTab('exchange-feeds')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'exchange-feeds' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                    >
-                      <ListItemIcon><TableRowsIcon /></ListItemIcon>
-                      <ListItemText primary="Exchange Feeds" />
-                    </ListItem>
-                    <ListItem 
-                      button 
-                      onClick={() => setCurrentTab('exchange-contacts')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'exchange-contacts' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                    >
-                      <ListItemIcon><ContactsIcon /></ListItemIcon>
-                      <ListItemText primary="Exchange Contacts" />
-                    </ListItem>
-                    <ListItem 
-                      button 
-                      onClick={() => setCurrentTab('exchange-pricing')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'exchange-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                    >
-                      <ListItemIcon><CalculateIcon /></ListItemIcon>
-                      <ListItemText primary="Pricing Tool" />
-                    </ListItem>
+                    {hasModuleAccess('exchange_feeds') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('exchange-feeds')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'exchange-feeds' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><TableRowsIcon /></ListItemIcon>
+                        <ListItemText primary="Exchange Feeds" />
+                      </ListItem>
+                    )}
+                    {hasModuleAccess('exchange_contacts') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('exchange-contacts')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'exchange-contacts' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><ContactsIcon /></ListItemIcon>
+                        <ListItemText primary="Exchange Contacts" />
+                      </ListItem>
+                    )}
+                    {hasModuleAccess('exchange_pricing') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('exchange-pricing')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'exchange-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><CalculateIcon /></ListItemIcon>
+                        <ListItemText primary="Pricing Tool" />
+                      </ListItem>
+                    )}
                   </List>
                 </Collapse>
               </>
             )}
 
             {/* Extranet Data */}
-            {hasModuleAccess('extranet_data') && (
+            {(hasModuleAccess('extranet_providers') || hasModuleAccess('extranet_contacts') || hasModuleAccess('extranet_pricing') || hasRole('administrator')) && (
               <>
                 <ListItem button onClick={() => setExtranetDataOpen(!extranetDataOpen)}>
                   <ListItemIcon><LanIcon /></ListItemIcon>
@@ -1348,8 +1354,8 @@ function AuthenticatedApp() {
                 </ListItem>
                 <Collapse in={extranetDataOpen} timeout="auto" unmountOnExit>
                   <List component="div" disablePadding>
-                    {/* Extranet Providers - Admin only */}
-                    {hasRole('administrator') && (
+                    {/* Extranet Providers */}
+                    {hasModuleAccess('extranet_providers') && (
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('extranet-providers')} 
@@ -1359,8 +1365,8 @@ function AuthenticatedApp() {
                         <ListItemText primary="Extranet Providers" />
                       </ListItem>
                     )}
-                    {/* Extranet Contacts - Admin only */}
-                    {hasRole('administrator') && (
+                    {/* Extranet Contacts */}
+                    {hasModuleAccess('extranet_contacts') && (
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('extranet-contacts')} 
@@ -1370,17 +1376,19 @@ function AuthenticatedApp() {
                         <ListItemText primary="Extranet Contacts" />
                       </ListItem>
                     )}
-                    {/* Extranet Pricing Tool - All users with extranet_data access */}
-                    <ListItem 
-                      button 
-                      onClick={() => setCurrentTab('extranet-pricing')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'extranet-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                    >
-                      <ListItemIcon><CalculateIcon /></ListItemIcon>
-                      <ListItemText primary="Extranet Pricing Tool" />
-                    </ListItem>
-                    {/* Pricing Admin - Admin or Edit permission */}
-                    {(hasRole('administrator') || hasPermission('extranet_data', 'edit')) && (
+                    {/* Extranet Pricing Tool */}
+                    {hasModuleAccess('extranet_pricing') && (
+                      <ListItem 
+                        button 
+                        onClick={() => setCurrentTab('extranet-pricing')} 
+                        sx={{ pl: 4, backgroundColor: currentTab === 'extranet-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      >
+                        <ListItemIcon><CalculateIcon /></ListItemIcon>
+                        <ListItemText primary="Extranet Pricing Tool" />
+                      </ListItem>
+                    )}
+                    {/* Pricing Admin - Admin only */}
+                    {hasRole('administrator') && (
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('extranet-pricing-admin')} 
@@ -1476,7 +1484,7 @@ function AuthenticatedApp() {
             )}
 
             {/* Voice - show parent if user has access to ANY sub-module */}
-            {(hasModuleAccess('voice_one_directory') || hasModuleAccess('voice_one_directory_admin')) && (
+            {(hasModuleAccess('voice_one_directory') || hasRole('administrator')) && (
               <>
                 <ListItem button onClick={() => setVoiceOpen(!voiceOpen)}>
                   <ListItemIcon><PhoneIcon /></ListItemIcon>
@@ -1495,7 +1503,7 @@ function AuthenticatedApp() {
                         <ListItemText primary="One Directory" />
                       </ListItem>
                     )}
-                    {hasModuleAccess('voice_one_directory_admin') && (
+                    {hasRole('administrator') && (
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('voice-one-directory-admin')} 

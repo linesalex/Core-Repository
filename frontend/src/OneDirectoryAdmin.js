@@ -167,6 +167,21 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     sx={{ backgroundColor: editedParameters['growth_percentage'] !== undefined ? '#fff3e0' : 'transparent' }}
                   />
                 </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Minimum Directory Bandwidth"
+                    type="number"
+                    value={getParameterValue('minimum_bandwidth_mb')}
+                    onChange={(e) => handleParameterChange('minimum_bandwidth_mb', e.target.value)}
+                    InputProps={{
+                      endAdornment: <InputAdornment position="end">Mb</InputAdornment>
+                    }}
+                    helperText="Minimum bandwidth for the One Directory ISF regardless of calculated amount. Set to 0 to disable."
+                    sx={{ backgroundColor: editedParameters['minimum_bandwidth_mb'] !== undefined ? '#fff3e0' : 'transparent' }}
+                  />
+                </Grid>
               </Grid>
             </CardContent>
           </Card>

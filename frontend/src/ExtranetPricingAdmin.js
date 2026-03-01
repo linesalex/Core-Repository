@@ -63,8 +63,14 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
   const [selectedCityOption, setSelectedCityOption] = useState(null);
 
   const regions = ['AMERs', 'APAC', 'EMEA'];
-  const tiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3'];
+  const tiers = ['Metro', 'Tier 1', 'Tier 2', 'Tier 3', 'Tier 4'];
   const bandwidths = ['64Kb', '128Kb', '256Kb', '512Kb', '1Mb', '1.5Mb', '2Mb', '3Mb', '4Mb', '5Mb', '6Mb', '8Mb', '10Mb', '20Mb', '30Mb', '40Mb', '50Mb', '75Mb', '100Mb', '150Mb', '200Mb'];
+
+  // Metro pricing is only valid when the region matches the provider rate card region
+  const getTiersForRegion = (region) => {
+    if (region === selectedProviderRegion) return tiers;
+    return tiers.filter(t => t !== 'Metro');
+  };
 
   // Load data on mount
   useEffect(() => {
@@ -544,7 +550,8 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
       'Metro': 'primary',
       'Tier 1': 'success',
       'Tier 2': 'warning',
-      'Tier 3': 'error'
+      'Tier 3': 'error',
+      'Tier 4': 'default'
     };
     return <Chip label={tier} color={colors[tier] || 'default'} size="small" />;
   };
@@ -561,7 +568,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
   // Group cities by region
   const citiesByRegion = cities.reduce((acc, city) => {
     if (!acc[city.region]) {
-      acc[city.region] = { Metro: [], 'Tier 1': [], 'Tier 2': [], 'Tier 3': [] };
+      acc[city.region] = { Metro: [], 'Tier 1': [], 'Tier 2': [], 'Tier 3': [], 'Tier 4': [] };
     }
     acc[city.region][city.tier].push(city);
     return acc;
@@ -667,7 +674,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                   <TableRow>
                     <TableCell sx={{ fontWeight: 'bold', width: 70, position: 'sticky', left: 0, zIndex: 3, backgroundColor: '#fff' }}>Bandwidth</TableCell>
                     {regions.map(region => (
-                      tiers.map(tier => (
+                      getTiersForRegion(region).map(tier => (
                         <TableCell 
                           key={`${region}-${tier}`} 
                           align="center"
@@ -690,7 +697,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                     <TableRow key={bandwidth} hover>
                       <TableCell sx={{ fontWeight: 'bold', position: 'sticky', left: 0, backgroundColor: '#fff', zIndex: 1, fontSize: '0.75rem' }}>{bandwidth}</TableCell>
                       {regions.map(region => (
-                        tiers.map(tier => {
+                        getTiersForRegion(region).map(tier => {
                           const key = `${bandwidth}-${region}-${tier}`;
                           const isEdited = editedPrices[key] !== undefined;
                           const priceValue = getPrice(bandwidth, region, tier);
@@ -730,6 +737,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
 
           <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
             * All prices are in USD. Edited cells are highlighted in orange. Currently viewing the <strong>{selectedProviderRegion}</strong> provider rate card.
+            Metro pricing is only valid for the matching provider region — non-{selectedProviderRegion} Metro columns are hidden. Cross-region Metro cities are treated as Tier 1.
           </Typography>
         </Box>
       )}

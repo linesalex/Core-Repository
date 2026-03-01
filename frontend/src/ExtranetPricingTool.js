@@ -48,8 +48,8 @@ function TabPanel(props) {
 const ExtranetPricingTool = () => {
   const { user, modulePermissions } = useAuth();
   const isAdmin = user && user.role === 'administrator';
-  const extranetPermission = isAdmin ? 'admin' : (modulePermissions?.['extranet_data'] || null);
-  const canViewLogs = extranetPermission !== null; // Any extranet_data permission can view logs
+  const extranetPermission = isAdmin ? 'admin' : (modulePermissions?.['extranet_pricing'] || null);
+  const canViewLogs = extranetPermission !== null;
   const canViewAllLogs = isAdmin || extranetPermission === 'provisioner'; // Provisioner + Admin see all
   const canManageLogs = isAdmin; // Only admins can clear logs and see calculation data
   
@@ -396,6 +396,11 @@ const ExtranetPricingTool = () => {
     try { return typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return { raw }; }
   };
 
+  // Filter provider cities to only show those matching the selected provider region
+  const providerFilteredCities = formData.provider_region
+    ? cities.filter(c => c.region === formData.provider_region)
+    : cities;
+
   const handleInputChange = (field, value) => {
     if (parametersLocked && field !== 'provider_region' && field !== 'selected_provider' && field !== 'selected_product') return;
     // Lock contract_term, currency, and customer_name after first basket item
@@ -411,12 +416,19 @@ const ExtranetPricingTool = () => {
       }
       
       // When provider_region changes, clear provider/product selection and load new providers
+      // Also clear provider cities if they no longer match the new region
       if (field === 'provider_region') {
         updated.selected_provider = null;
         updated.selected_product = null;
         updated.isf = '';
         updated.provider_name = '';
         updated.product_name = '';
+        if (updated.provider_primary_city && updated.provider_primary_city.region !== value) {
+          updated.provider_primary_city = null;
+        }
+        if (updated.provider_secondary_city && updated.provider_secondary_city.region !== value) {
+          updated.provider_secondary_city = null;
+        }
         loadProviders(value);
         setAvailableProducts([]);
       }
@@ -929,7 +941,8 @@ const ExtranetPricingTool = () => {
       'Metro': 'primary',
       'Tier 1': 'success',
       'Tier 2': 'warning',
-      'Tier 3': 'error'
+      'Tier 3': 'error',
+      'Tier 4': 'default'
     };
     return colors[tier] || 'default';
   };
@@ -1050,7 +1063,7 @@ const ExtranetPricingTool = () => {
         )}
       </Box>
 
-      {/* Tabs - show Pricing Logs tab for all users with extranet_data access */}
+      {/* Tabs - show Pricing Logs tab for all users with extranet_pricing access */}
       {canViewLogs && (
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
           <Tabs value={currentTab} onChange={(e, v) => setCurrentTab(v)}>
@@ -1184,13 +1197,14 @@ const ExtranetPricingTool = () => {
 
                     <Grid item xs={12}>
                       <Autocomplete
-                        options={cities}
+                        options={providerFilteredCities}
                         getOptionLabel={(option) => `${option.city_name}, ${option.country || ''}`}
                         value={formData.provider_primary_city}
                         onChange={(e, value) => handleInputChange('provider_primary_city', value)}
                         disabled={parametersLocked}
+                        groupBy={(option) => option.region}
                         renderInput={(params) => (
-                          <TextField {...params} label="Primary Location *" size="small" />
+                          <TextField {...params} label="Primary Location *" size="small" helperText={formData.provider_region ? `Showing ${formData.provider_region} locations only` : ''} />
                         )}
                         renderOption={(props, option) => (
                           <li {...props} key={option.id}>
@@ -1200,6 +1214,7 @@ const ExtranetPricingTool = () => {
                             </Box>
                           </li>
                         )}
+                        isOptionEqualToValue={(option, value) => option.id === value?.id}
                       />
                       {formData.selected_product && (
                         <Typography variant="caption" color="text.secondary">
@@ -1209,13 +1224,14 @@ const ExtranetPricingTool = () => {
                     </Grid>
                     <Grid item xs={12}>
                       <Autocomplete
-                        options={cities}
+                        options={providerFilteredCities}
                         getOptionLabel={(option) => `${option.city_name}, ${option.country || ''}`}
                         value={formData.provider_secondary_city}
                         onChange={(e, value) => handleInputChange('provider_secondary_city', value)}
                         disabled={parametersLocked}
+                        groupBy={(option) => option.region}
                         renderInput={(params) => (
-                          <TextField {...params} label="Secondary Location (Optional)" size="small" />
+                          <TextField {...params} label="Secondary Location (Optional)" size="small" helperText={formData.provider_region ? `Showing ${formData.provider_region} locations only` : ''} />
                         )}
                         renderOption={(props, option) => (
                           <li {...props} key={option.id}>
@@ -1225,6 +1241,7 @@ const ExtranetPricingTool = () => {
                             </Box>
                           </li>
                         )}
+                        isOptionEqualToValue={(option, value) => option.id === value?.id}
                       />
                     </Grid>
                   </Grid>

@@ -512,53 +512,104 @@ const OneDirectoryPricingTool = () => {
   const handleExportToFile = () => {
     if (!bundleResult && basketItems.length === 0) return;
 
-    const timestamp = new Date().toLocaleString();
     const currency = formData.currency_requested || 'USD';
-
     const customerName = formData.customer_name || basketItems[0]?.formSnapshot?.customer_name || '';
-    let content = `ONE DIRECTORY PRICING BUNDLE QUOTE\nGenerated: ${timestamp}\n${customerName ? `Customer: ${customerName}\n` : ''}Currency: ${currency}\n================================================\n\n`;
 
+    const escapeCsv = (val) => {
+      const str = String(val ?? '');
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const rows = [];
+
+    rows.push(['One Directory Pricing Bundle Quote']);
+    rows.push(['Generated', new Date().toLocaleString()]);
+    if (customerName) rows.push(['Customer', customerName]);
+    rows.push(['Currency', currency]);
     if (bundleResult) {
-      content += `BUNDLE SUMMARY\n--------------\nItems in Bundle: ${bundleResult.bundle.item_count}\nTotal MRC: ${formatCurrency(bundleResult.bundle.total_mrc, currency)}\nTotal NRC: ${formatCurrency(bundleResult.bundle.total_nrc, currency)}\n`;
-      if (bundleResult.bundle.has_poa_items) content += '⚠ Some items are POA (Price On Application)\n';
-      content += '\n================================================\n\n';
+      rows.push(['Total Items', bundleResult.bundle.item_count]);
+      rows.push(['Bundle Total MRC', formatCurrency(bundleResult.bundle.total_mrc, currency)]);
+      rows.push(['Bundle Total NRC', formatCurrency(bundleResult.bundle.total_nrc, currency)]);
+      if (bundleResult.bundle.has_poa_items) rows.push(['Note', 'Some items are POA (Price On Application)']);
     }
+    rows.push([]);
+
+    rows.push([
+      'Item #', 'Customer Location', 'Directory Users', 'Resiliency',
+      'On/Off Net', 'Contract Term', 'Service (ISF)', 'Bandwidth',
+      'Service MRC', 'Item Total MRC', 'Item Total NRC', 'Status'
+    ]);
 
     basketItems.forEach((item, idx) => {
       const snap = item.formSnapshot;
       const bItem = bundleResult?.items?.[idx];
       const services = bItem?.services || item.result?.services || [];
-      content += `ITEM ${idx + 1}\n--------\n`;
-      content += `Customer Location: ${snap.customer_location?.city_name || 'N/A'}\n`;
-      content += `Directory Users: ${snap.directory_users}\n`;
-      content += `Resiliency: ${snap.member_resiliency}\nOn/Off Net: ${snap.member_on_off_net}\n`;
-      content += `Contract Term: ${snap.contract_term} months\n`;
+      const pricing = bItem?.pricing || item.result?.pricing;
+      const itemMrc = pricing ? formatCurrency(pricing.mrc, pricing.currency || currency) : '';
+      const itemNrc = pricing ? formatCurrency(pricing.nrc, pricing.currency || currency) : '';
+
+      const baseFields = [
+        idx + 1,
+        snap.customer_location?.city_name || 'N/A',
+        snap.directory_users,
+        snap.member_resiliency,
+        snap.member_on_off_net,
+        `${snap.contract_term} months`
+      ];
 
       if (item.poa) {
-        content += `Status: POA - ${item.poaMessage || 'Price On Application'}\n`;
-      } else {
-        content += `ISFs: ${services.length}\n`;
-        services.forEach(svc => {
-          const mrc = svc.mrc_converted || svc.mrc_usd;
-          content += `  - ${svc.name}: ${svc.bandwidth} | MRC: ${svc.poa ? 'POA' : formatCurrency(mrc, currency)}\n`;
+        rows.push([...baseFields, '', '', '', itemMrc, itemNrc, `POA - ${item.poaMessage || 'Price On Application'}`]);
+      } else if (services.length > 0) {
+        services.forEach((svc, sIdx) => {
+          const svcMrc = svc.poa ? 'POA' : formatCurrency(svc.mrc_converted || svc.mrc_usd, currency);
+          const rowPrefix = sIdx === 0 ? baseFields : ['', '', '', '', '', ''];
+          rows.push([
+            ...rowPrefix,
+            svc.name,
+            svc.bandwidth,
+            svcMrc,
+            sIdx === 0 ? itemMrc : '',
+            sIdx === 0 ? itemNrc : '',
+            svc.poa ? 'POA' : 'Priced'
+          ]);
         });
-        if (bItem?.pricing) {
-          content += `Total MRC: ${formatCurrency(bItem.pricing.mrc, bItem.pricing.currency)}\nTotal NRC: ${formatCurrency(bItem.pricing.nrc, bItem.pricing.currency)}\n`;
-        } else if (item.result?.pricing) {
-          content += `Total MRC: ${formatCurrency(item.result.pricing.mrc, item.result.pricing.currency)}\nTotal NRC: ${formatCurrency(item.result.pricing.nrc, item.result.pricing.currency)}\n`;
-        }
+      } else {
+        const dirBw = typeof item.result?.calculated_bandwidth === 'object'
+          ? (item.result.calculated_bandwidth.directory || '-')
+          : (item.result?.calculated_bandwidth || '-');
+        const fallbackServices = [
+          { name: 'One Directory ISF', bandwidth: dirBw },
+          { name: 'One Control ISF', bandwidth: '5Mb' },
+          ...(snap.b2b_agility ? [{ name: 'B2B Agility ISF', bandwidth: '10Mb' }] : []),
+          ...(snap.safe_connect_required ? [{ name: 'Safe Connect ISF', bandwidth: snap.safe_connect_bandwidth }] : [])
+        ];
+        fallbackServices.forEach((svc, sIdx) => {
+          rows.push([
+            ...(sIdx === 0 ? baseFields : ['', '', '', '', '', '']),
+            svc.name,
+            svc.bandwidth,
+            '',
+            sIdx === 0 ? itemMrc : '',
+            sIdx === 0 ? itemNrc : '',
+            ''
+          ]);
+        });
       }
-      content += '\n';
     });
 
-    content += `================================================\nTERMS AND CONDITIONS\n================================================\n`;
-    pricingTerms.forEach((term, index) => { content += `${index + 1}. ${term}\n`; });
+    rows.push([]);
+    rows.push(['Terms and Conditions']);
+    pricingTerms.forEach((term, index) => { rows.push([`${index + 1}. ${term}`]); });
 
-    const blob = new Blob([content], { type: 'text/plain' });
+    const csvContent = rows.map(row => row.map(escapeCsv).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `one_directory_quote_${new Date().toISOString().split('T')[0]}.txt`;
+    link.download = `one_directory_quote_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
     window.URL.revokeObjectURL(url);
   };
@@ -1346,7 +1397,7 @@ const OneDirectoryPricingTool = () => {
                         startIcon={<DownloadIcon />}
                         onClick={handleExportToFile}
                       >
-                        Export Bundle to File
+                        Export Bundle to CSV
                       </Button>
                       <Button
                         variant="outlined"

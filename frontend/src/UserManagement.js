@@ -73,16 +73,20 @@ const UserManagement = () => {
     { key: 'locations', label: 'Network Data — Manage Locations', group: 'Network Data' },
     { key: 'carriers', label: 'Network Data — Manage Carriers', group: 'Network Data' },
     { key: 'exchange_rates', label: 'Network Data — Exchange Rates', group: 'Network Data' },
-    // Market Data group
-    { key: 'exchange_data', label: 'Market Data — Exchange Data', group: 'Market Data' },
-    { key: 'extranet_data', label: 'Market Data — Extranet Data', group: 'Market Data' },
+    // Market Data group — Exchange Data
+    { key: 'exchange_feeds', label: 'Market Data — Exchange Feeds', group: 'Market Data' },
+    { key: 'exchange_contacts', label: 'Market Data — Exchange Contacts', group: 'Market Data' },
+    { key: 'exchange_pricing', label: 'Market Data — Exchange Pricing Tool', group: 'Market Data' },
+    // Market Data group — Extranet Data
+    { key: 'extranet_providers', label: 'Market Data — Extranet Providers', group: 'Market Data' },
+    { key: 'extranet_contacts', label: 'Market Data — Extranet Contacts', group: 'Market Data' },
+    { key: 'extranet_pricing', label: 'Market Data — Extranet Pricing Tool', group: 'Market Data' },
     // CNX Colocation group
     { key: 'cnx_colocation_inventory', label: 'CNX Colocation — Inventory', group: 'CNX Colocation' },
     { key: 'cnx_colocation_availability', label: 'CNX Colocation — Availability', group: 'CNX Colocation' },
     { key: 'cnx_colocation_pricing', label: 'CNX Colocation — Pricing Tool', group: 'CNX Colocation' },
     // Voice group
     { key: 'voice_one_directory', label: 'Voice — One Directory', group: 'Voice' },
-    { key: 'voice_one_directory_admin', label: 'Voice — One Directory Admin', group: 'Voice' },
     // Carrier Quotes group
     { key: 'carrier_quote_repository', label: 'Carrier Quotes — Quote Repository', group: 'Carrier Quotes' },
     // System group
