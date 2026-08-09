@@ -6,6 +6,9 @@
     "start": "node index.js",
     "dev": "nodemon index.js"
   },
+  "engines": {
+    "node": ">=16.13.2"
+  },
   "dependencies": {
     "adm-zip": "^0.5.16",
     "all-the-cities": "^3.1.0",
@@ -23,7 +26,7 @@
     "jszip": "^3.10.1",
     "multer": "^1.4.5-lts.1",
     "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7",
+    "sqlite3": "5.0.2",
     "which-country": "^1.0.0"
   },
   "optionalDependencies": {

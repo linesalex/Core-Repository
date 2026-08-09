@@ -35,8 +35,8 @@ v3.5.0 added the **PDF Network Map Export** feature (`backend/networkMapRenderer
 
 1. **Node version.** `puppeteer@23.x` (originally pinned) requires Node ≥18; even the corrected `puppeteer@21.11.0` requires Node ≥16.13.2. This box runs **Node 14.21.3**, so `require('puppeteer')` threw `SyntaxError: Unexpected token '??='` and took the **whole backend** down over one export feature.
    **Fixed in code:** `puppeteer` is now pinned to `21.11.0`, moved to `optionalDependencies`, and **loaded lazily** — the backend now boots even if puppeteer is missing or unloadable.
-2. **Chromium can't run at all here.** Puppeteer's Chromium ("Chrome for Testing") needs **glibc ≥2.27**; RHEL 7 has **2.17**. No npm version fixes this. The EPEL `chromium-headless` RPM route dead-ends too (missing `libFLAC.so.8`, `libopus.so.0`, `libatomic.so.1` — codec libs EPEL doesn't ship and base libs that need the unregistered `optional` channel).
-   **Fixed in code:** rendering can be delegated over HTTP to `backend/pdf-render-sidecar/` via `PDF_RENDER_SIDECAR_URL`.
+2. **Puppeteer's *bundled* Chromium can't run here.** "Chrome for Testing" needs **glibc ≥2.27**; RHEL 7 has **2.17**, and no npm version changes that. But a Chromium *compiled for el7* runs fine — EPEL ships one, and its install failed only on three missing leaf libraries, not on anything structural.
+   **Two supported answers (Step 5):** point Puppeteer at EPEL's el7 Chromium via `PUPPETEER_EXECUTABLE_PATH` (recommended — stays on this box), or delegate rendering over HTTP to `backend/pdf-render-sidecar/` via `PDF_RENDER_SIDECAR_URL`.
 3. **`bcrypt@6.0.0`** requires Node ≥18 *and* compiles natively (needs `g++`, absent). The old guide worked around this with a `sed` on `auth.js` only — but `backend/migrations/045_add_voice_guest_account.js` also required `bcrypt`, so that migration would fail at runtime.
    **Fixed in code:** the repo now uses **`bcryptjs`** (pure JS) in `package.json`, `auth.js`, **and** migration 045. **No `sed` step is needed anymore.**
 
@@ -75,8 +75,15 @@ cd /root/Core-Repository
 pm2 kill
 pgrep -a node || echo "OK - no node processes running"
 
-# Overlay onto /usr/local (replaces bin/node, bin/npm, lib/node_modules/npm;
-# leaves lib/node_modules/pm2 and lib/node_modules/serve untouched)
+# Delete the OLD npm tree and CLI links first. `cp -a` merges directories - it
+# overwrites what the source contains but never removes stale files, so copying
+# npm 8 on top of npm 6 leaves a mix of two incompatible dependency trees and
+# npm starts failing inside its own bundled modules. pm2/serve are separate
+# directories under lib/node_modules and are NOT affected by this.
+sudo rm -rf /usr/local/lib/node_modules/npm
+sudo rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx
+
+# Now overlay onto /usr/local
 cd /tmp
 sudo cp -a node-v16.20.2-linux-x64/. /usr/local/
 echo "cp exit code: $?"        # must be 0
@@ -86,28 +93,35 @@ node -v    # v16.20.2
 npm -v     # 8.x.x
 ```
 
-Then bring the stack back up. Starting from the config file (rather than `pm2 resurrect`) also re-reads the v3.5.0 env changes:
+**Leave the apps stopped for now** — they're restarted in Step 7, after the v3.5.0 code and dependencies are in place. Just confirm the toolchain survived the upgrade:
 
 ```bash
-cd /root/Core-Repository
-pm2 start ecosystem.config.js --env production
-pm2 save
-pm2 list && pm2 -v && serve --version
+pm2 -v            # PM2 responds (it will start a fresh daemon under Node 16)
+serve --version
 ```
 
-**Rollback if anything goes wrong:** `pm2 kill && sudo cp -a /root/node-14.21.3.bak /usr/local/bin/node && hash -r && pm2 start ecosystem.config.js --env production`
+**Rollback if anything goes wrong:** `pm2 kill && sudo cp -a /root/node-14.21.3.bak /usr/local/bin/node && hash -r && node -v`
 
 > **If you can't take the outage right now,** rename the binary instead of overwriting it — Linux allows renaming a running executable, just not writing into it. Running processes keep using the old inode until they restart:
 >
 > ```bash
+> sudo rm -rf /usr/local/lib/node_modules/npm
 > sudo mv /usr/local/bin/node /usr/local/bin/node-14.21.3
 > sudo cp -a /tmp/node-v16.20.2-linux-x64/. /usr/local/
 > hash -r && node -v
 > pm2 update    # respawns the PM2 daemon under Node 16
-> pm2 restart ecosystem.config.js --env production
 > ```
 >
-> Any process spawned during the second or two between those first two commands will fail with "node: command not found", so prefer the `pm2 kill` path when you can.
+> Any process spawned during the second or two between those first two commands will fail with "node: command not found", so prefer the `pm2 kill` path when you can. Note this variant still needs the `rm -rf /usr/local/lib/node_modules/npm` step above, for the same reason.
+
+Verify the result is coherent before moving on — a merged npm tree can report a plausible version and still be broken:
+
+```bash
+node -v                        # v16.20.2
+npm -v                         # 8.19.4
+npm ls -g --depth=0            # must list pm2 and serve, with no errors
+npm config get prefix           # /usr/local
+```
 
 ---
 
@@ -145,15 +159,30 @@ cd /root/Core-Repository
 # cp ../Core-Repository.backup.*/backend/templates/*.kmz backend/templates/
 ```
 
-**⚠️ Sync discipline — this caused two failed attempts.** `package.json`, `package-lock.json`, `networkMapRenderer.js`, `ecosystem.config.js`, and `auth.js` are all **per-server files**. If you deploy by zip/scp rather than a live pull, they do **not** update themselves, and `npm install` will silently report "nothing changed" while still using the old versions. Always verify after transferring:
+**⚠️ Sync discipline — this caused two failed attempts.** If you deploy by zip/scp rather than a live pull, stale files do **not** update themselves, and `npm install` will report "nothing changed" while still using the old versions. These are the v3.5.0 files that carry the fixes:
+
+| File | Must contain |
+|---|---|
+| `backend/package.json` | `bcryptjs`, no `bcrypt`, `sqlite3` = `5.0.2`, `puppeteer` under `optionalDependencies` |
+| `backend/package-lock.json` | `lockfileVersion: 2` |
+| `backend/auth.js` | `require('bcryptjs')` |
+| `backend/migrations/045_add_voice_guest_account.js` | `require('bcryptjs')` — **missed by the old `sed` workaround** |
+| `backend/networkMapRenderer.js` | `require('puppeteer')` only inside `loadPuppeteer()` |
+| `backend/pdfRenderClient.js` | sidecar client (token support) |
+| `backend/checkPdfRender.js` | render diagnostic (new file — used in Step 5) |
+| `backend/pdf-render-sidecar/` | `Dockerfile`, `server.js`, `package.json` |
+| `ecosystem.config.js` | the PDF render env var for your chosen option |
+
+Verify all of it in one pass:
 
 ```bash
 cd /root/Core-Repository
-grep '"puppeteer"'  backend/package.json      # 21.11.0, under optionalDependencies
-grep '"bcryptjs"'   backend/package.json      # present; "bcrypt" must be GONE
-grep bcryptjs       backend/auth.js backend/migrations/045_add_voice_guest_account.js
-grep PDF_RENDER_SIDECAR_URL ecosystem.config.js
-grep lockfileVersion backend/package-lock.json # 2  (npm 6 AND npm 8 can read this)
+grep -E '"puppeteer"|"bcryptjs"|"bcrypt"|"sqlite3"' backend/package.json
+grep lockfileVersion backend/package-lock.json      # 2 (npm 6 AND npm 8 can read this)
+grep -c bcryptjs backend/auth.js backend/migrations/045_add_voice_guest_account.js   # 1 and 1
+grep -n "require('puppeteer')" backend/networkMapRenderer.js   # must be INSIDE loadPuppeteer()
+test -f backend/checkPdfRender.js && echo "checkPdfRender.js present"
+grep -E 'PUPPETEER_EXECUTABLE_PATH|PDF_RENDER_SIDECAR_URL' ecosystem.config.js
 ```
 
 ---
@@ -164,47 +193,130 @@ grep lockfileVersion backend/package-lock.json # 2  (npm 6 AND npm 8 can read th
 
 > **Existing logins are unaffected.** `bcryptjs` reads the `$2b$` hashes `bcrypt` wrote, so stored passwords stay valid and no password resets are required. This was verified against the production database's `admin` hash.
 
+**Decide your PDF render option (Step 5) before installing**, because it determines whether `puppeteer` is needed. Run **one** of these, not both:
+
 ```bash
 cd /root/Core-Repository/backend
 rm -rf node_modules
 
-# Clean install straight from the lockfile.
-# --no-optional skips puppeteer: its Chromium cannot run on RHEL 7 anyway, and
-# rendering happens in the sidecar (Step 5). Saves ~300MB and avoids a pointless
-# postinstall. The lazy loader in networkMapRenderer.js handles its absence.
-npm ci --no-optional
+# Option 1 (native el7 Chromium - recommended): puppeteer IS needed. The env var
+# is essential - it prevents downloading the bundled Chromium that glibc 2.17
+# can't run, while still installing the library that drives your local browser.
+PUPPETEER_SKIP_DOWNLOAD=true npm ci
 
-# SQLite3 pinned build for RHEL 7 (installs a prebuilt napi-v3 binary, no compiler)
-npm ls sqlite3 || npm install sqlite3@5.0.2
+# --- OR ---
+
+# Options 2/3/4 (sidecar or disabled): puppeteer is not needed at all. Skips a
+# ~300MB package; the lazy loader in networkMapRenderer.js handles its absence.
+npm ci --no-optional
+```
+
+Then verify and smoke-test, regardless of which you ran:
+
+```bash
+# sqlite3 is pinned to 5.0.2 in package.json, so no manual install step is
+# needed - it fetches a prebuilt napi-v3 binary and never invokes a compiler.
 npm ls bcryptjs sqlite3
 
 # Initialize database (first-time installs only — skip when upgrading!)
 # node init_db.js
 
-# Smoke test
+# Smoke test - this is the check that the v3.5.0 boot crash is gone
 node index.js
-# Expected: starts on port 4000 with NO SyntaxError. Ctrl+C to stop.
+# Expected: starts on port 4000 with NO SyntaxError, and no "Cannot find module
+# 'bcrypt'" from migration 045. Ctrl+C to stop.
 ```
 
-If `npm ci` still complains about the lockfile, fall back to `npm install` (it will rewrite the lockfile locally, which is fine on a deployment host):
+If `npm ci` still complains about the lockfile, fall back to `npm install` with the same option-appropriate flags (it will rewrite the lockfile locally, which is fine on a deployment host):
 
 ```bash
-rm -f package-lock.json && npm install --no-optional
+rm -f package-lock.json
+PUPPETEER_SKIP_DOWNLOAD=true npm install     # Option 1
+# or
+npm install --no-optional                    # Options 2/3/4
 ```
 
 ---
 
 ## 🖨️ **Step 5: PDF Network Map Export — pick one option**
 
-Chromium **cannot** run natively on this host (glibc 2.17 vs ≥2.27 required), so the renderer must live somewhere else, or be left off. `backend/networkMapRenderer.js` supports all three, selected purely by environment variables.
+Puppeteer's **own bundled** Chromium can't run here (it needs glibc ≥2.27; this host has 2.17), but that does **not** mean no Chromium can run here — EPEL ships a Chromium *compiled for el7*, which is the basis of the recommended option below. `backend/networkMapRenderer.js` supports all four paths, selected purely by environment variables, with **no code changes**.
 
-| Option | How | PDF export works? | Effort / risk |
+| Option | How | Needs | Effort / risk |
 |---|---|---|---|
-| **A. Sidecar on another host** *(recommended)* | Run `backend/pdf-render-sidecar/` on any machine with Docker or Node ≥18, point `PDF_RENDER_SIDECAR_URL` at it | ✅ Yes | Low — no changes to this RHEL 7 box |
-| **B. Docker on this box** | Register the subscription, enable `rhel-7-server-extras-rpms`, then install Docker CE | ✅ Yes | Medium — needs entitlements (see below) |
-| **C. Leave it disabled** | Set nothing | ❌ Export returns a clear error; everything else works | None |
+| **1. Native el7 Chromium** *(recommended)* | Install EPEL's `chromium-headless` + 3 leaf libs, point `PUPPETEER_EXECUTABLE_PATH` at it | Nothing extra | Low — stays on this box, no subscription, no Docker |
+| **2. Remote sidecar** | Run `backend/pdf-render-sidecar/` elsewhere, point `PDF_RENDER_SIDECAR_URL` at it | A second host with Docker or Node ≥18 | Low — but needs another machine |
+| **3. Local Docker sidecar** | Register the subscription, enable `rhel-7-server-extras-rpms`, install Docker CE | RHEL entitlements | Medium — Docker won't install without them |
+| **4. Disabled** | Set neither variable | Nothing | None — export returns a clear error, everything else works |
 
-### **Option A — sidecar on another host (recommended)**
+Whichever you pick, prove it with the bundled diagnostic **before** wiring it into PM2. It runs the exact same code path as the real export:
+
+```bash
+cd /root/Core-Repository/backend
+PUPPETEER_EXECUTABLE_PATH=/usr/lib64/chromium-browser/headless_shell node checkPdfRender.js
+# or:  PDF_RENDER_SIDECAR_URL=http://<host>:5051 node checkPdfRender.js
+# PASS -> wrote NNNNN bytes to /tmp/pdf-render-check.pdf
+```
+
+### **Option 1 — native el7 Chromium (recommended)**
+
+Your own failed `yum install chromium-headless` output is the evidence this works: it offered **`chromium-headless-126.0.6478.114-1.el7.x86_64`** — a Chromium *built for el7 against glibc 2.17*. It failed only on three missing libraries, none of which are Chromium itself:
+
+| Missing | Provided by | What it is |
+|---|---|---|
+| `libFLAC.so.8` | `flac-libs` | audio codec |
+| `libopus.so.0` | `opus` | audio codec |
+| `libatomic.so.1(LIBATOMIC_1.0)` | `libatomic` | GCC runtime library |
+
+These are ordinary public CentOS 7 packages, and unlike Docker's `container-selinux` they're harmless leaf libraries — no SELinux policy, no kernel or container interaction. Pull just those three from the CentOS vault using a repo that stays **disabled by default**, so it can never affect any other transaction:
+
+```bash
+sudo tee /etc/yum.repos.d/centos7-vault.repo > /dev/null << 'EOF'
+[centos7-vault]
+name=CentOS 7.9 base (vault) - disabled, for explicit --enablerepo use only
+baseurl=http://vault.centos.org/7.9.2009/os/x86_64/
+enabled=0
+gpgcheck=1
+gpgkey=http://vault.centos.org/7.9.2009/os/x86_64/RPM-GPG-KEY-CentOS-7
+EOF
+
+# Only these three, only from that repo
+sudo yum --enablerepo=centos7-vault install -y libatomic flac-libs opus
+
+# Now Chromium's dependencies resolve
+sudo yum install -y chromium-headless
+```
+
+Find the binary and confirm it actually executes on this glibc:
+
+```bash
+rpm -ql chromium-headless | grep -E 'headless_shell|chrome$'
+# typically /usr/lib64/chromium-browser/headless_shell
+
+ldd /usr/lib64/chromium-browser/headless_shell | grep -i "not found" \
+  && echo "STILL MISSING LIBS (above)" || echo "OK - all libraries resolved"
+```
+
+Make sure Puppeteer itself is installed — **without** its unusable bundled browser — then run the diagnostic:
+
+```bash
+cd /root/Core-Repository/backend
+npm ls puppeteer || PUPPETEER_SKIP_DOWNLOAD=true npm ci
+
+PUPPETEER_EXECUTABLE_PATH=/usr/lib64/chromium-browser/headless_shell node checkPdfRender.js
+```
+
+> Use `npm ci`, **not** `npm install puppeteer@21.11.0`. The latter would move `puppeteer` from `optionalDependencies` into `dependencies`, rewriting `package.json` and desyncing it from the lockfile — the same class of drift that broke the earlier attempts.
+
+A `PASS` means you're done — add it to `ecosystem.config.js` (both `env` and `env_production`) and **remove `PDF_RENDER_SIDECAR_URL`**, since a configured sidecar takes precedence over the local browser:
+
+```javascript
+        PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell'
+```
+
+> **On version drift:** `puppeteer@21.11.0` normally pairs with Chrome 121, so driving Chromium 126 is a mismatch in principle. In practice this renderer only uses `setContent()` and `page.pdf()`, which are stable across releases — verified by driving Chrome 148 with this exact Puppeteer version successfully. `checkPdfRender.js` tells you definitively in a few seconds; if it fails on protocol errors, use Option 2.
+
+### **Option 2 — remote sidecar**
 
 `backend/pdf-render-sidecar/` is a small Express + Puppeteer service that turns HTML into a PDF. It only needs to be reachable from this box over HTTP.
 
@@ -244,7 +356,7 @@ docker run -d --name pdf-sidecar --restart unless-stopped -p 5051:5051 \
 #   PDF_RENDER_SIDECAR_TOKEN: '<the same long-random-string>'
 ```
 
-### **Option B — Docker on this box (requires fixing entitlements first)**
+### **Option 3 — local Docker sidecar (requires fixing entitlements first)**
 
 Docker CE **will not install** while this system is unregistered. It needs `container-selinux`, `fuse-overlayfs`, and `slirp4netns`, which live in the RHEL 7 **extras** channel:
 
@@ -268,11 +380,11 @@ docker run -d --name pdf-sidecar --restart unless-stopped \
 curl http://127.0.0.1:5051/health
 ```
 
-> Grafting CentOS 7 `extras` onto RHEL to get these three packages is technically possible but **not recommended** — `container-selinux` is an SELinux policy package, and mismatched policy on RHEL is a genuine risk. Register the system instead.
+> Grafting CentOS 7 `extras` onto RHEL to get Docker's three missing packages is technically possible but **not recommended** — `container-selinux` is an SELinux policy package, and mismatched policy on RHEL is a genuine risk. That's a very different proposition from the three leaf libraries in Option 1 (two audio codecs and a GCC runtime library). Register the system instead.
 
-### **Option C — leave it disabled**
+### **Option 4 — leave it disabled**
 
-Leave `PDF_RENDER_SIDECAR_URL` unset and don't install puppeteer (`npm ci --no-optional`). The backend boots normally; every other v3.5.0 feature works. Clicking "Export Network Map" returns HTTP 500 with `Failed to generate network map PDF.`, and the backend log shows the actionable reason:
+Leave both `PUPPETEER_EXECUTABLE_PATH` and `PDF_RENDER_SIDECAR_URL` unset and don't install puppeteer (`npm ci --no-optional`). The backend boots normally; every other v3.5.0 feature works. Clicking "Export Network Map" returns HTTP 500 with `Failed to generate network map PDF.`, and the backend log shows the actionable reason:
 
 ```
 Local PDF rendering is unavailable on this host (Cannot find module 'puppeteer').
@@ -339,7 +451,7 @@ npm install -g serve && serve --version
 
 ## 🚀 **Step 7: PM2 configuration**
 
-Only one v3.5.0 change is needed versus v3.3.3: `PDF_RENDER_SIDECAR_URL` on `network-backend` (in **both** `env` and `env_production`). Omit it entirely for Option C.
+Only one v3.5.0 change is needed versus v3.3.3: the PDF render setting on `network-backend`, in **both** `env` and `env_production`. Use `PUPPETEER_EXECUTABLE_PATH` for Option 1, `PDF_RENDER_SIDECAR_URL` for Options 2/3, or neither for Option 4. **Never set both** — a configured sidecar takes precedence over the local browser.
 
 ```javascript
     {
@@ -353,17 +465,27 @@ Only one v3.5.0 change is needed versus v3.3.3: `PDF_RENDER_SIDECAR_URL` on `net
         PORT: 4000,
         JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production',
         ENCRYPTION_KEY: 'hidden',
-        PDF_RENDER_SIDECAR_URL: 'http://127.0.0.1:5051'   // or http://<RENDER_HOST_IP>:5051
+
+        // Option 1 (recommended on RHEL 7) - render with the local el7 Chromium:
+        PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell'
+
+        // Options 2/3 instead - render via the sidecar (delete the line above):
+        // PDF_RENDER_SIDECAR_URL: 'http://<RENDER_HOST_IP>:5051',
+        // PDF_RENDER_SIDECAR_TOKEN: '<matches the sidecar SIDECAR_AUTH_TOKEN>'
+
+        // Option 4 - set neither; export reports itself unavailable.
       },
       env_production: {
         NODE_ENV: 'production',
         PORT: 4000,
         ENCRYPTION_KEY: 'hidden',
-        PDF_RENDER_SIDECAR_URL: 'http://127.0.0.1:5051'
+        PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell'
       },
       /* ...logging / restart settings unchanged... */
     },
 ```
+
+`env_production` must carry the same setting, because `--env production` makes PM2 use that block — a variable present only in `env` will be silently dropped.
 
 The frontend app must keep using `npx serve` against the production build — **never** `npm start`:
 
@@ -384,8 +506,10 @@ cd /root/Core-Repository
 mkdir -p logs
 pm2 restart ecosystem.config.js --env production   # re-reads the file
 pm2 save
-pm2 env network-backend | grep PDF_RENDER_SIDECAR_URL
+pm2 env network-backend | grep -E 'PUPPETEER_EXECUTABLE_PATH|PDF_RENDER_SIDECAR'
 ```
+
+That last command is the one that proves PM2 actually picked up your render setting — if it prints nothing, the app is running with the old environment and PDF export will fail no matter how the diagnostic behaved.
 
 First-time setup instead:
 
@@ -411,7 +535,7 @@ curl -I http://localhost:3000/                              # HTTP/1.1 200 OK
 curl http://localhost:3000/ | head -5                       # <!DOCTYPE html>
 ```
 
-Then in a browser at `http://172.30.252.118:3000`: log in (`admin` / `admin123`), confirm the KMZ Viewer renders the 3D globe, and — if you configured Option A or B — that **Network Routes Repository → Export Network Map** downloads a valid PDF.
+Then in a browser at `http://172.30.252.118:3000`: log in (`admin` / `admin123`), confirm the KMZ Viewer renders the 3D globe, and — unless you chose Option 4 — that **Network Routes Repository → Export Network Map** downloads a valid PDF.
 
 ---
 
@@ -442,6 +566,25 @@ fuser -v /usr/local/bin/node      # or: lsof /usr/local/bin/node
 
 **Important:** `cp` copies what it can and only fails on the busy file, so a failed run leaves a **mixed install** — typically npm 8 from the new tarball alongside the old Node 14 binary. Always re-run the full `cp -a` to completion and confirm both `node -v` and `npm -v` afterwards; don't assume a partial copy did nothing.
 
+### `npm -v` fails with a `SyntaxError` / error inside `socks-proxy-agent` (or another bundled npm module)
+
+**Cause:** `/usr/local/lib/node_modules/npm` contains a **merged** npm tree. `cp -a` overwrites files it has in the source but never deletes stale ones, so overlaying npm 8 onto npm 6 leaves both dependency trees interleaved and npm crashes inside its own bundled modules. A `node` binary left at v14 by a `Text file busy` failure makes it worse, since the newer npm code then runs on an older engine.
+
+**Fix:** replace the npm tree wholesale instead of merging it.
+
+```bash
+pm2 kill && pgrep -a node
+
+sudo rm -rf /usr/local/lib/node_modules/npm
+sudo rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx
+sudo cp -a /tmp/node-v16.20.2-linux-x64/. /usr/local/
+
+hash -r
+node -v && npm -v && npm ls -g --depth=0
+```
+
+`pm2` and `serve` live in their own directories under `/usr/local/lib/node_modules/` and survive this untouched. If `npm ls -g` no longer lists them: `npm install -g pm2 serve`.
+
 ### `npm ERR! Cannot read property 'adm-zip' of undefined` on `npm ci`
 
 **Cause:** npm 6 cannot read `lockfileVersion: 3` (it warns `read-shrinkwrap ... generated for lockfileVersion@3`). v3 is npm 7+ only.
@@ -455,7 +598,7 @@ fuser -v /usr/local/bin/node      # or: lsof /usr/local/bin/node
 ### Docker: `Requires: container-selinux >= 2:2.74` / `fuse-overlayfs >= 0.7` / `slirp4netns >= 0.4`
 
 **Cause:** those packages live in the RHEL 7 **extras** channel, and this system is **not registered** with an entitlement server.
-**Fix:** register and enable `rhel-7-server-extras-rpms` (**Step 5, Option B**), or skip Docker on this box entirely and run the sidecar elsewhere (**Option A**). `systemctl enable --now docker` failing with `No such file or directory` simply means the package never installed.
+**Fix:** you probably don't need Docker at all — **Step 5, Option 1** renders on this box using EPEL's el7-built Chromium, no entitlements required. Otherwise register and enable `rhel-7-server-extras-rpms` (Option 3), or run the sidecar on another host (Option 2). `systemctl enable --now docker` failing with `No such file or directory` simply means the package never installed.
 
 ### `https://repo.ius.io/7/x86_64/repodata/repomd.xml: [Errno 14] HTTPS Error 404`
 
@@ -464,19 +607,21 @@ fuser -v /usr/local/bin/node      # or: lsof /usr/local/bin/node
 
 ### PDF export fails: `` version `GLIBC_2.27' not found ``
 
-**Cause:** something tried to launch Chromium locally. RHEL 7 has glibc 2.17; Chromium needs ≥2.27.
-**Fix:** make sure `PDF_RENDER_SIDECAR_URL` is set and the sidecar is reachable, so the local path is never taken:
+**Cause:** Puppeteer launched **its own bundled** Chrome-for-Testing build, which needs glibc ≥2.27. This host has 2.17. It means `PUPPETEER_EXECUTABLE_PATH` is unset (or wrong), so Puppeteer fell back to its own download.
+**Fix:** point it at the el7-built Chromium instead (Option 1) — that binary is compiled against glibc 2.17 and is unaffected:
 
 ```bash
-grep PDF_RENDER_SIDECAR_URL /root/Core-Repository/ecosystem.config.js
-curl http://<sidecar-host>:5051/health
+rpm -ql chromium-headless | grep headless_shell
+grep -E 'PUPPETEER_EXECUTABLE_PATH|PDF_RENDER_SIDECAR_URL' /root/Core-Repository/ecosystem.config.js
+cd /root/Core-Repository/backend && \
+  PUPPETEER_EXECUTABLE_PATH=/usr/lib64/chromium-browser/headless_shell node checkPdfRender.js
 cd /root/Core-Repository && pm2 restart ecosystem.config.js --env production
 ```
 
 ### PDF export returns 500 with `Local PDF rendering is unavailable on this host`
 
-**Cause:** working as designed for Option C — no sidecar configured and puppeteer not installed/loadable.
-**Fix:** configure Option A or B, or accept that this one feature is off.
+**Cause:** working as designed for Option 4 — no render path configured and puppeteer not installed/loadable.
+**Fix:** configure Option 1, 2, or 3, or accept that this one feature is off.
 
 ### PDF export fails with `PDF render sidecar at ... failed: HTTP 401 - {"error":"Unauthorized"}`
 
@@ -531,7 +676,7 @@ sqlite3 network_routes.db "PRAGMA integrity_check;"
 pm2 list && pm2 monit && pm2 logs --lines 50
 ```
 
-**Upgrading later:** stop PM2, back up `/root/Core-Repository` and `network_routes.db`, transfer the new version, restore the DB, re-run the Step 3 sync checks, `npm ci --no-optional` in `backend/`, rebuild the frontend, then `pm2 start ecosystem.config.js --env production && pm2 save`. Re-verify `node -v` is still ≥16.13.2 and that `puppeteer` didn't get bumped past `21.11.0`.
+**Upgrading later:** stop PM2, back up `/root/Core-Repository` and `network_routes.db`, transfer the new version, restore the DB, re-run the Step 3 sync checks, reinstall in `backend/` with the Step 4 command matching your render option, rebuild the frontend, then `pm2 start ecosystem.config.js --env production && pm2 save`. Re-verify `node -v` is still ≥16.13.2, that `puppeteer` didn't get bumped past `21.11.0`, and re-run `node checkPdfRender.js` if the export path matters.
 
 ---
 
@@ -549,16 +694,18 @@ pm2 list && pm2 monit && pm2 logs --lines 50
 - [ ] `backend/package-lock.json`: `lockfileVersion` = **2**
 - [ ] `auth.js` **and** `migrations/045_add_voice_guest_account.js` both require `bcryptjs`
 - [ ] `require('puppeteer')` appears only inside `loadPuppeteer()`
-- [ ] `npm ci --no-optional` completed with no `g++` / `node-gyp` errors
-- [ ] `sqlite3` = 5.0.2 with its prebuilt binary
+- [ ] `npm ci` completed with no `g++` / `node-gyp` errors, using the Step 4 command that matches your render option (`PUPPETEER_SKIP_DOWNLOAD=true npm ci` for Option 1, `npm ci --no-optional` for Options 2/3/4)
+- [ ] `sqlite3` = 5.0.2 (pinned in `package.json`) and loads via its prebuilt binary
 - [ ] `node index.js` starts with **no `SyntaxError`**
 
 **PDF export (whichever option)**
-- [ ] Option chosen and recorded: A (remote sidecar) / B (Docker here) / C (disabled)
-- [ ] A or B: `curl http://<host>:5051/health` returns `{"status":"ok"}` **from this box**
-- [ ] A or B: `PDF_RENDER_SIDECAR_URL` set in **both** `env` and `env_production`
-- [ ] A or B: port 5051 not exposed publicly (firewall or `SIDECAR_AUTH_TOKEN`)
-- [ ] "Export Network Map" downloads a valid PDF (or, for C, logs the clear "unavailable" message)
+- [ ] Option chosen and recorded: 1 (native el7 Chromium) / 2 (remote sidecar) / 3 (Docker here) / 4 (disabled)
+- [ ] `node checkPdfRender.js` printed **PASS** with the same env vars PM2 will use
+- [ ] Only **one** of `PUPPETEER_EXECUTABLE_PATH` / `PDF_RENDER_SIDECAR_URL` is set, in **both** `env` and `env_production`
+- [ ] Option 1: `ldd <headless_shell>` reports no missing libraries; `centos7-vault` repo left `enabled=0`
+- [ ] Option 1: puppeteer installed **with** `PUPPETEER_SKIP_DOWNLOAD=true` (no bundled Chromium)
+- [ ] Options 2/3: `curl http://<host>:5051/health` returns `{"status":"ok"}` **from this box**, and port 5051 isn't publicly exposed (firewall or matching `SIDECAR_AUTH_TOKEN` / `PDF_RENDER_SIDECAR_TOKEN`)
+- [ ] "Export Network Map" downloads a valid PDF (or, for Option 4, logs the clear "unavailable" message)
 
 **Frontend & runtime**
 - [ ] Cesium assets in `frontend/public/cesium/` (~387 files) and in `build/cesium/`
