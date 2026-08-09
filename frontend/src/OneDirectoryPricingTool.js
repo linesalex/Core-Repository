@@ -145,7 +145,7 @@ const OneDirectoryPricingTool = () => {
 
   // Pricing terms for display and export
   const pricingTerms = [
-    'Off-net pricing is strictly budgetary, subject to site survey and official pricing confirmation.',
+    'Pricing is strictly budgetary, subject to site survey and official pricing confirmation.',
     'All terms are subject to MSA terms and conditions.',
     'All Pricing is exclusive of any applicable Taxes and Surcharges.',
     'Customer must provide all necessary rack space and power supply.',
@@ -179,32 +179,43 @@ const OneDirectoryPricingTool = () => {
     try {
       setInitialLoading(true);
 
-      const [citiesRes, currenciesRes, parametersRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/extranet-pricing/cities`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
-        }),
-        axios.get(`${API_BASE_URL}/extranet-pricing/currencies`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
-        }),
-        axios.get(`${API_BASE_URL}/voice/one-directory/parameters`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
-        })
+      const authHeader = { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` };
+
+      const [citiesRes, currenciesRes, parametersRes] = await Promise.allSettled([
+        axios.get(`${API_BASE_URL}/voice/one-directory/cities`, { headers: authHeader }),
+        axios.get(`${API_BASE_URL}/voice/one-directory/currencies`, { headers: authHeader }),
+        axios.get(`${API_BASE_URL}/voice/one-directory/parameters`, { headers: authHeader })
       ]);
 
-      setCities(citiesRes.data);
-
-      const currencyData = currenciesRes.data || [];
-      if (!currencyData.some(c => c.currency_code === 'USD')) {
-        currencyData.unshift({ currency_code: 'USD', currency_name: 'US Dollar' });
+      if (citiesRes.status === 'fulfilled') {
+        setCities(citiesRes.value.data);
+      } else {
+        console.warn('Could not load cities:', citiesRes.reason?.message);
       }
-      setCurrencies(currencyData);
+
+      if (currenciesRes.status === 'fulfilled') {
+        const currencyData = currenciesRes.value.data || [];
+        if (!currencyData.some(c => c.currency_code === 'USD')) {
+          currencyData.unshift({ currency_code: 'USD', currency_name: 'US Dollar' });
+        }
+        setCurrencies(currencyData);
+      } else {
+        console.warn('Could not load currencies:', currenciesRes.reason?.message);
+      }
 
       // Parse safe connect options from parameters
-      if (parametersRes.data?.safe_connect_bandwidths?.value) {
+      if (parametersRes.status === 'fulfilled' && parametersRes.value.data?.safe_connect_bandwidths?.value) {
         try {
-          const parsed = JSON.parse(parametersRes.data.safe_connect_bandwidths.value);
+          const parsed = JSON.parse(parametersRes.value.data.safe_connect_bandwidths.value);
           if (Array.isArray(parsed)) setSafeConnectOptions(parsed);
         } catch (e) { /* use defaults */ }
+      } else if (parametersRes.status === 'rejected') {
+        console.warn('Could not load parameters:', parametersRes.reason?.message);
+      }
+
+      const allFailed = [citiesRes, currenciesRes, parametersRes].every(r => r.status === 'rejected');
+      if (allFailed) {
+        setError('Failed to load pricing data. Please refresh and try again.');
       }
     } catch (err) {
       console.error('Failed to load initial data:', err);

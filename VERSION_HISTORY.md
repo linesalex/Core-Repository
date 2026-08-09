@@ -1,6 +1,28 @@
 # Version History
 
-## Version 3.3 - Current Release
+## Version 3.5.0 - Current Release
+
+**Release Date:** May 2026
+**Status:** In Development
+
+---
+
+### Bug Fixes
+
+#### One Directory Pricing Tool — Permission Error Fix
+Users with `voice_one_directory` module access but without `extranet_pricing` module permissions could not load the One Directory Pricing Tool due to 403 errors on cities and currencies endpoints.
+
+**Changes:**
+- Added `GET /voice/one-directory/cities` backend endpoint scoped to `voice_one_directory` permission
+- Added `GET /voice/one-directory/currencies` backend endpoint scoped to `voice_one_directory` permission
+- Updated `OneDirectoryPricingTool.js` to use the new scoped endpoints instead of the `extranet-pricing` namespace endpoints
+- Switched from `Promise.all` to `Promise.allSettled` so partial data load failures are handled gracefully rather than blocking the entire tool
+
+**Files changed:** `backend/routes.js`, `frontend/src/OneDirectoryPricingTool.js`
+
+---
+
+## Version 3.3 - Previous Release
 
 **Release Date:** January 2025  
 **Status:** In Development

@@ -20803,6 +20803,58 @@ router.get('/voice/one-directory/parameters', authenticateToken, authorizeModule
   });
 });
 
+// Get cities for One Directory pricing (scoped to voice_one_directory permission)
+router.get('/voice/one-directory/cities', authenticateToken, authorizeModulePermission('voice_one_directory', 'read_only'), (req, res) => {
+  const { region } = req.query;
+
+  let sql = 'SELECT * FROM extranet_pricing_cities';
+  let params = [];
+
+  if (region) {
+    sql += ' WHERE region = ?';
+    params.push(region);
+  }
+
+  sql += ' ORDER BY region, tier, city_name';
+
+  db.all(sql, params, (err, cities) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(cities);
+  });
+});
+
+// Get currencies for One Directory pricing (scoped to voice_one_directory permission)
+router.get('/voice/one-directory/currencies', authenticateToken, authorizeModulePermission('voice_one_directory', 'read_only'), (req, res) => {
+  db.all(`SELECT currency_code, exchange_rate,
+    CASE currency_code
+      WHEN 'USD' THEN 'US Dollar'
+      WHEN 'EUR' THEN 'Euro'
+      WHEN 'GBP' THEN 'British Pound'
+      WHEN 'JPY' THEN 'Japanese Yen'
+      WHEN 'AUD' THEN 'Australian Dollar'
+      WHEN 'CAD' THEN 'Canadian Dollar'
+      WHEN 'CHF' THEN 'Swiss Franc'
+      WHEN 'CNY' THEN 'Chinese Yuan'
+      WHEN 'HKD' THEN 'Hong Kong Dollar'
+      WHEN 'SGD' THEN 'Singapore Dollar'
+      WHEN 'INR' THEN 'Indian Rupee'
+      WHEN 'BRL' THEN 'Brazilian Real'
+      WHEN 'MXN' THEN 'Mexican Peso'
+      WHEN 'ZAR' THEN 'South African Rand'
+      WHEN 'KRW' THEN 'South Korean Won'
+      ELSE currency_code
+    END as currency_name
+    FROM exchange_rates
+    ORDER BY CASE currency_code WHEN 'USD' THEN 0 ELSE 1 END, currency_code`, [], (err, currencies) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const hasUSD = currencies.some(c => c.currency_code === 'USD');
+    if (!hasUSD) {
+      currencies.unshift({ currency_code: 'USD', currency_name: 'US Dollar', exchange_rate: 1 });
+    }
+    res.json(currencies);
+  });
+});
+
 // Update One Directory parameters (admin)
 router.put('/voice/one-directory/parameters', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
   const { parameters } = req.body;

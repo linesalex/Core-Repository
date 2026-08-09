@@ -7,7 +7,7 @@
  * - Prefers live_latency over expected_latency
  * - Excludes circuits with live_latency = 0 (outage)
  * - Builds graph once per tier, runs Dijkstra for all city pairs
- * - Applies 20% rule for 10Gb: if 10Gb latency > 1.2 * 1Gb latency, mark N/A
+ * - Applies 20%/10ms rule for 10Gb: marks N/A only if 10Gb latency exceeds 1Gb by both more than 20% AND more than 10ms
  */
 
 const db = require('./db');
@@ -325,9 +325,13 @@ class LatencyMatrixService {
           let latency1g = result1g ? result1g.totalLatency : null;
           let latency10g = result10g ? result10g.totalLatency : null;
 
-          // Apply 20% rule
-          if (latency1g !== null && latency10g !== null && latency10g > latency1g * 1.2) {
-            latency10g = null;
+          // Apply 20% or 10ms rule: show 10Gb if delta is within 20% OR within 10ms
+          if (latency1g !== null && latency10g !== null) {
+            const withinPercent = latency10g <= latency1g * 1.2;
+            const withinMs = (latency10g - latency1g) <= 10;
+            if (!withinPercent && !withinMs) {
+              latency10g = null;
+            }
           }
 
           cacheRows.push({

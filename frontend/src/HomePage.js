@@ -215,7 +215,7 @@ function HomePage({ onRouteClick }) {
                   1Gb latency is fastest available route and includes all ULL / Special routes.
                 </Typography>
                 <Typography variant="caption" color="text.secondary" display="block">
-                  10Gb latency is calculated only on routes above 20Gb capacity and will show as N/A if latency delta between 1Gb and 10Gb is above 20%.
+                  10Gb latency is calculated only on routes above 20Gb capacity and will show as N/A if latency delta between 1Gb and 10Gb is above 20% and above 10ms.
                 </Typography>
                 <Typography variant="caption" color="text.secondary" display="block">
                   Capacity checks required.
