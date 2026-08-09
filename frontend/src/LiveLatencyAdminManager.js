@@ -18,6 +18,7 @@ import {
   DialogContent,
   DialogActions,
   TextField,
+  InputAdornment,
   FormControlLabel,
   Switch,
   Alert,
@@ -49,7 +50,9 @@ import {
   Warning as WarningIcon,
   Info as InfoIcon,
   History as HistoryIcon,
-  DeleteSweep as CleanupIcon
+  DeleteSweep as CleanupIcon,
+  Search as SearchIcon,
+  Clear as ClearIcon
 } from '@mui/icons-material';
 import { liveLatencyAdminApi } from './api';
 import LoadingIndicator from './components/LoadingIndicator';
@@ -91,6 +94,9 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
   // Pagination
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+  
+  // Search/filter for configurations table
+  const [configSearchTerm, setConfigSearchTerm] = useState('');
   
   // Snackbar
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
@@ -153,6 +159,23 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
     setRowsPerPage(parseInt(event.target.value, 10));
     setPage(0);
   };
+
+  const handleConfigSearchChange = (event) => {
+    setConfigSearchTerm(event.target.value);
+    setPage(0);
+  };
+
+  const handleConfigSearchClear = () => {
+    setConfigSearchTerm('');
+    setPage(0);
+  };
+
+  // Filter configurations by circuit ID
+  const filteredConfigurations = configurations.filter((config) => {
+    if (!configSearchTerm.trim()) return true;
+    const term = configSearchTerm.trim().toLowerCase();
+    return (config.circuit_id || '').toLowerCase().includes(term);
+  });
 
   // Configuration management
   const handleAddConfig = () => {
@@ -472,6 +495,35 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
           </Button>
         </Box>
 
+        <TextField
+          fullWidth
+          size="small"
+          placeholder="Search by Circuit ID..."
+          value={configSearchTerm}
+          onChange={handleConfigSearchChange}
+          sx={{ mb: 2 }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon fontSize="small" />
+              </InputAdornment>
+            ),
+            endAdornment: configSearchTerm ? (
+              <InputAdornment position="end">
+                <IconButton size="small" onClick={handleConfigSearchClear} aria-label="Clear search">
+                  <ClearIcon fontSize="small" />
+                </IconButton>
+              </InputAdornment>
+            ) : null
+          }}
+        />
+
+        {configSearchTerm && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            Showing {filteredConfigurations.length} of {configurations.length} configuration{configurations.length !== 1 ? 's' : ''}
+          </Typography>
+        )}
+
         <TableContainer component={Paper}>
           <Table>
             <TableHead>
@@ -486,7 +538,7 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {configurations
+              {filteredConfigurations
                 .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
                 .map((config) => (
                   <TableRow key={config.id}>
@@ -571,12 +623,21 @@ const LiveLatencyAdminManager = ({ hasPermission }) => {
                     </TableCell>
                   </TableRow>
                 ))}
+              {filteredConfigurations.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} align="center">
+                    <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
+                      {configSearchTerm ? 'No configurations match your search.' : 'No configurations found.'}
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
           <TablePagination
             rowsPerPageOptions={[10, 25, 50]}
             component="div"
-            count={configurations.length}
+            count={filteredConfigurations.length}
             rowsPerPage={rowsPerPage}
             page={page}
             onPageChange={handlePageChange}

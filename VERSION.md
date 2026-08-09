@@ -1,8 +1,266 @@
 # Network Inventory Management System
 
-## Current Version: **3.4.8**
+## Current Version: **3.5.0**
 
-**Release Date:** February 22, 2026
+**Release Date:** August 9, 2026
+
+---
+
+## What's New in v3.5.0
+
+### 📊 **Market Data & Extranet Module Merge**
+
+**Exchange Data** and **Extranet Data** sidebars are consolidated into a single **Market Data & Extranet** parent module.
+
+- **Contacts:** Exchange Contacts and Extranet Contacts merged into one submodule (**Market Data & Extranet Contacts**) with a unified `market_data_contacts` table (Exchange field set: country, daily contact, more info). Parent rows live in `market_data_organizations` (type exchange / extranet).
+- **Kept under Market Data & Extranet:** Extranet Providers, Extranet Pricing Tool, Pricing Admin (admin-only).
+- **Removed:** Exchange Feeds, Exchange Pricing Tool (and related exchange feed/pricing storage).
+- **Permissions:** New `market_data_contacts` key; `extranet_providers` and `extranet_pricing` retained under the **Market Data & Extranet** permission group. Retired keys (`exchange_feeds`, `exchange_contacts`, `exchange_pricing`, `extranet_contacts`, legacy `exchange_data` / `extranet_data`) are migrated away.
+- **Migrations:** `047_merge_market_data_contacts.js` merges contacts and drops only retired tables; Extrant Providers/products and Extrant pricing tables/permissions are **preserved** for production. `048_restore_extranet_pricing_providers.js` is a safety/no-op ensure step (creates missing tables only if absent; does not wipe production data).
+- **Analytics:** Extranet Pricing analytics tab retained.
+- **Dark mode:** Provider rate card grid in Pricing Admin uses theme tokens (`background.paper`, region tint `.50`s) so cells remain readable in dark mode.
+
+**Files Added:**
+- `frontend/src/MarketDataContactsManager.js`
+- `backend/marketDataRoutes.js`
+- `backend/migrations/047_merge_market_data_contacts.js`
+- `backend/migrations/048_restore_extranet_pricing_providers.js`
+- `backend/test_v350_market_data_extranet_merge.js`
+
+**Files Removed:** `frontend/src/ExchangeDataManager.js`, `frontend/src/ExchangePricingTool.js`  
+**Files Modified:** `frontend/src/App.js`, `frontend/src/UserManagement.js`, `frontend/src/api.js`, `frontend/src/ChangeLogsViewer.js`, `frontend/src/AnalyticsDashboard.js`, `frontend/src/ExtranetPricingAdmin.js`, `backend/routes.js`, `backend/auth.js`  
+**Test:** `backend/test_v350_market_data_extranet_merge.js`
+
+### 🌙 **Application Dark Mode**
+
+App-wide **light/dark theme** toggle, defaulting to dark for new sessions.
+
+- Toggle lives in the user menu **directly under Text Size** (light/dark only — no system-follow mode)
+- Preference persists in browser `localStorage` (`themeMode`)
+- MUI `ThemeProvider` with mode-aware soft tint tokens (`primary.50`, `success.50`, etc.) so tables, pricing cards, and analytics stay readable
+- Hardcoded light surfaces and `.dark` text colors across pricing tools, outages, routes, analytics, and feedback updated to theme tokens
+- Email / quote HTML exports remain light-themed by design
+
+**Files Added:** `frontend/src/ThemeContext.js`, `backend/test_v350_dark_mode.js`  
+**Files Modified:** `frontend/src/App.js`, pricing tools (One Directory, Extranet, Design, Allocated Cost, Route Finder), Analytics, Core Outages, Network Routes, Feedback, and related managers  
+**Test:** `backend/test_v350_dark_mode.js`
+
+### 🔌 **Network Routes Repository: Cross Connects Pricing Submodule**
+
+New **Cross Connects Pricing** page under **Network Routes Repository**, giving sales users a read-only, sales-facing view of cross connect pricing sourced from **Manage Locations → Cross Connect Info**.
+
+- Displays **POP Code, Datacenter Name, City, Country, NRC, MRC, Currency, Mandatory, Customer-Owned,** and **Datacenter Notes** (reuses the existing Cross Connect Notes field) for every active location, in a single table
+- Prices apply the standard **Cross Connect margin** (from Pricing Logic Manager) — raw internal NRC/MRC cost is never shown, only the marked-up sell price
+- **Currency selector** converts all rows to a single output currency, same conversion logic as CNX Ethernet Route Finder
+- **Search** matches **POP Code**, **Datacenter Name**, or **Datacenter Notes** in one search box
+- Access reuses the existing **Network Routes** module permission (no new permission to configure) — visible to any role with Network Routes Repository access, including Sales
+
+**Files Modified:** `backend/routes.js`, `frontend/src/api.js`, `frontend/src/App.js`  
+**Files Added:** `frontend/src/CrossConnectsPricing.js`  
+**Test:** `backend/test_v350_cross_connects_pricing.js`
+
+### 🚫 **Promo Pricing Manager: Excluded Circuit IDs**
+
+Admins can now exclude specific circuits from promo pricing eligibility, in addition to the existing "required circuits" list.
+
+- New **"Excluded Circuit IDs"** multi-select on the Add/Edit Promo Rule dialog — if a route uses ANY of these circuits, the promo will not apply
+- Exclusion always takes precedence over a required-circuit match (if a circuit is listed in both, the promo can never apply via that circuit)
+- Warning banner shown in the dialog if a circuit is listed in both the required and excluded lists
+- New "Excluded Circuits" column in the promo rules table
+- `POST /promo-pricing` and `PUT /promo-pricing/:id` now accept and persist `excluded_circuit_ids`
+- `POST /route_finder/check-promo-match` now disqualifies a route if any of its circuits are in a rule's excluded list
+
+**Files Added:** `backend/migrations/044_add_promo_excluded_circuits.js`  
+**Files Modified:** `backend/routes.js`, `frontend/src/PromoPricingManager.js`
+
+### 🔎 **CNX Ethernet Route Finder: "Find Promo Pricing" Button**
+
+New button that actively searches for the best route between the selected source/destination for which promo pricing is valid at the chosen bandwidth, rather than only checking whether the default shortest-latency route happens to qualify.
+
+- New **"Find Promo Pricing"** button next to "Find Route" (requires source, destination, and bandwidth)
+- Backend evaluates all promo rules matching the location pair (cheapest tier price first), builds the routing graph with each rule's excluded circuits removed, and finds the lowest-latency path — routed through a required circuit if the rule specifies one
+- Minimum margin requirement is enforced per candidate route/rule before it's accepted; if not met, the next-cheapest rule is tried
+- Results panel shows the winning route's segments, latency, and promo price, or an explanatory message (no promo rule, no price configured for that tier, no route satisfies the constraints, or margin not met)
+- New backend endpoint: `POST /route_finder/find_promo_route`
+- New API helper: `findPromoRoute()` in `frontend/src/api.js`
+
+**Files Modified:** `backend/routes.js`, `frontend/src/RouteFinder.js`, `frontend/src/api.js`  
+**Test:** `backend/test_v350_promo_exclusions.js` — static verification of migration, backend endpoints, and frontend wiring (24 checks)
+
+### 📋 **Extranet Pricing Logs: Manual Calculation Breakdown Expand**
+
+In Extranet Pricing → Pricing Logs, expanding a **bundle** no longer auto-opens every item’s **Calculation Breakdown (JSON)**. Admins click an individual bundle item (chevron) to open/close its JSON, matching individual log behavior.
+
+**Files Modified:** `frontend/src/ExtranetPricingTool.js`  
+**Test:** `backend/test_v350_extranet_logs_breakdown_manual.js`
+
+### 🧮 **Allocated Cost Calculator: Circuit ID Label & Location Display**
+
+In Allocated Cost Calculator only:
+
+- **Quote Request ID** renamed to **Circuit ID** across the form, results summary, email/CSV export, and history search/table (internal field key unchanged for stored logs)
+- Source / destination display format is now **`POP Code - Datacenter Name`** (autocomplete options, email, and CSV)
+
+**Files Modified:** `frontend/src/AllocatedCostCalculator.js`  
+**Test:** `backend/test_v350_allocated_cost_labels.js`
+
+### 📇 **Carrier Contacts: Region Column on Database Export**
+
+Bulk **Download Database Export** for `carrier_contacts` now includes the parent carrier’s **`region`** (mapped to AMERs / APAC / EMEA) immediately after **`carrier_name`**.
+
+**Files Modified:** `backend/routes.js`  
+**Test:** `backend/test_v350_carrier_contacts_region_export.js`
+
+### ⚡ **Colocation Availability: Full Racks Don't Count Toward Location Available Power**
+
+On the Colocation availability dashboard API, **location-level available power** no longer includes remaining kVA from racks that have **no further RUs available**.
+
+- Per-rack **Available Power** display is unchanged (`total_power_kva - allocated_power`)
+- Location (and rolled-up) available power only sums racks with `available_ru > 0`
+
+**Files Modified:** `backend/routes.js`  
+**Test:** `backend/test_v350_colo_available_power.js`
+
+### 🧹 **Network Routes: Delete Cascades Live Latency API Config**
+
+Deleting a network route now also removes the matching **`live_latency_config`** row (by `circuit_id`) so Live Latency API admin no longer shows orphaned configurations for deleted circuits.
+
+- Looks up and deletes `live_latency_config` after a successful route delete
+- Change is logged; route delete still succeeds if no config exists or cleanup fails
+
+**Files Modified:** `backend/routes.js`  
+**Test:** `backend/test_v350_route_delete_live_latency.js`
+
+### 📤 **Manage Carriers: Export carrier_id on Database Export**
+
+Bulk **Download Database Export** for the `carriers` module now includes **`carrier_id`** (the carriers table `id`) as the first column so exports can be matched back to contacts and re-uploaded safely.
+
+- Export CSV columns: `carrier_id`, `carrier_name`, `previously_known_as`, `status`, `region`
+- Upload template unchanged (no `carrier_id` column required)
+- Re-uploading an export that includes `carrier_id` updates the matching carrier by id; name-based match still works when `carrier_id` is omitted
+
+**Files Modified:** `backend/routes.js`  
+**Test:** `backend/test_v350_carrier_id_export.js`
+
+### 📍 **Carrier Quote Repository — Site Validation, Building Types, Analytics & Horizontal Bulk**
+
+Major Carrier Quote Repository enhancements for address data quality, pricing insight, and faster multi-quote import.
+
+- **Site Validation (OSM)**: Interactive map + structured address dialog (Leaflet / Carto tiles + Nominatim). Search again, drag pin to reverse-geocode, confirm canonical street/city/postcode/country/lat-lng. Internal fuzzy match suggests reuse of existing custom locations and POPs before creating duplicates — only custom locations actually attached to a quote in the Carrier Quote Repository (or POPs from Manage Locations) are ever suggested, never orphaned/unused rows. For a brand-new or edited (non-matched) address, **Confirm is disabled until "Search address" is clicked (or the pin is dragged)** so the address is checked against the official Nominatim database before it can be saved; picking an Existing match skips this since it's already verified. Public Nominatim is used only for interactive checks (cached + rate-limited); bulk never auto-geocodes every row.
+- **Building type**: Custom locations require **Datacenter** or **Retail**. POP-linked endpoints always count as Datacenter. Flag available in Add Quote, CSV template, and bulk upload.
+- **Quote Analytics**: New sidebar page under Carrier Quote Repository with averages by city pair, location, country pair, transit countries, DC–DC / DC–Retail / Retail–Retail, bandwidth, service, carrier, protection, region; term discount curve; latency vs price; carrier spread; quote freshness. Currency-normalized via exchange rates. Full filter panel supports multi-carrier selection plus advanced filters (locations, cities/countries, building pair/types, protection, bandwidth, cable/transit, MRC/NRC/latency ranges, exclude expired).
+- **Horizontal bulk upload**: Carrier quote Excel template uses structured location columns. A **Processing bulk upload** dialog stays open while parsing and while **Site Validation runs for every non-POP custom address**. Quotes are created only after all addresses are confirmed. Sheet detection accepts a sheet named Quotes or any sheet with Carrier Name headers. Field / Instructions guide columns are ignored on upload.
+- **Add Quote CSV**: Horizontal-only template (header + 5 blank quote rows). Vertical Field/Instructions section removed. Import supports one row (populate form) or multiple rows (create quotes). Every non-POP custom address — single or multi-row — must pass through **Site Validation** (with a **Processing CSV import** dialog for multi-row) before its location or quote is written to the database; nothing is created directly from the parsed CSV data. Building-type chip shows only after a location is selected (**Datacenter** / **Retail**). Selecting an existing POP caches address/pin for Site Validation. In Site Validation, POP codes are looked up only on **Enter** / **Lookup POP** (avoids IPCSNG1 vs IPCSNG11 mid-type matches); locked POP chip has an **X** to clear and re-enter.
+- **Custom Locations — bulk Building Type fix-up, purge, merge & address correction**: **Custom Locations** page under Carrier Quote Repository lists every custom location with search + a Building Type filter (**All / Missing only / Datacenter / Retail**) and paging (100 per page). Changing Building Type on a row saves immediately via a lightweight endpoint that updates **only** `building_type` — address, city, country, and lat/lng are left untouched and Site Validation is not re-run — so a large backlog of existing locations can be fixed quickly without re-editing full location detail. A **Usage** filter (All / Unused only / Used by a quote) plus a per-row "used by N quotes" / "Unused" chip surface locations that were never actually attached to a quote (e.g. left over from a cancelled import); **Purge unused now** deletes every such orphaned location table-wide after a confirmation showing the exact count, and any single unused row can be deleted individually (blocked with a 409 if it's still referenced by a quote). Selecting 2+ rows and clicking **Merge selected** opens a dialog to pick the canonical record to keep — every quote referencing the other selected location(s) is repointed to it and the duplicates are deleted, standardizing addresses without losing quote history. A map-pin **Fix address** action per row reopens the same Site Validation (map + Nominatim) dialog in place to correct a location's address or geographic pin; picking one of the "Existing matches" while fixing an address triggers a merge into that match instead of a plain save. Any address field edited during Fix Address must be re-verified via **Search address** before saving, even for existing locations — closing the gap where in-place edits could previously skip verification.
+
+**Backend:**
+- Migration `046_quote_location_building_type.js` — `building_type`, `street_name`, `street_number`, `postal_code` on `quote_custom_locations`; `quote_geocode_cache` table
+- `backend/quoteAddressUtils.js` — normalize / fuzzy score / Nominatim forward+reverse helpers
+- `POST /carrier_quotes/locations/match|verify|reverse`, `GET /carrier_quotes/analytics`, extended custom location create + `PUT /carrier_quotes/custom_locations/:id`
+- `GET /carrier_quotes/custom_locations` — opt-in `building_type` filter + `limit`/`offset` paging with a total count (stays a plain array for existing Autocomplete callers); `PATCH /carrier_quotes/custom_locations/:id/building_type` — building-type-only update
+
+**Files Added:**
+- `backend/migrations/046_quote_location_building_type.js`
+- `backend/quoteAddressUtils.js`
+- `backend/test_v350_carrier_quote_enhancements.js`
+- `backend/test_v350_manage_custom_locations.js`
+- `frontend/src/SiteValidationDialog.js`
+- `frontend/src/CarrierQuoteAnalytics.js`
+- `frontend/src/ManageCustomLocations.js`
+
+**Files Modified:**
+- `backend/routes.js`, `frontend/src/api.js`, `frontend/src/AddCarrierQuote.js`, `frontend/src/BulkUpload.js`, `frontend/src/App.js`, `frontend/package.json` (leaflet)
+
+### 🔍 **Admin: Live Latency API — Search by Circuit ID**
+
+The **Configurations** tab in Admin → Live Latency API Management now has a search box above the configurations table.
+
+- Search filters the table by **Circuit ID** (case-insensitive, partial match, instant filtering)
+- Clear icon to reset the search
+- "Showing X of Y configurations" indicator while a search is active
+- Empty-state message when no configurations match
+
+### 🌐 **Network Routes: Self-Service Live Latency Probe Registration**
+
+Users adding or editing a Network Route can now register a Live Latency probe themselves — without needing Administrator access to the Live Latency API admin module.
+
+- New **"Live Latency Monitoring"** section in Add/Edit Network Route with a single **"Live Latency Probe Name (API Instance Name)"** field
+- Leaving it blank makes no changes to any existing probe configuration
+- Entering a probe name automatically creates (or updates) the circuit's Live Latency API configuration using the standard default connection details — the user only needs to know the probe name
+- When editing a route that already has a probe configured, the field pre-fills with the existing probe name
+- If the route save succeeds but the probe push fails, the user sees a warning without losing their route changes; Administrators can still review/override the full configuration from Admin → Live Latency API
+
+**Backend:**
+- New endpoint `GET /network_routes/:circuit_id/live_latency_probe` (requires `network_routes` read access) — returns the existing probe name/status for prefill
+- New endpoint `POST /network_routes/:circuit_id/live_latency_probe` (requires `network_routes` create/edit permission, not admin-only) — creates or updates the `live_latency_config` row for the circuit using fixed defaults (API base URL, indicator, username `infovista_api_ro`, default password) plus the submitted probe name
+
+**Files Modified:**
+- `backend/routes.js` — New self-service probe endpoints
+- `frontend/src/api.js` — `getLiveLatencyProbe`, `pushLiveLatencyProbe` helpers
+- `frontend/src/RouteFormDialog.js` — Live Latency Monitoring section with probe name field
+- `frontend/src/App.js` — Pushes probe configuration after route add/edit succeeds
+- `frontend/src/LiveLatencyAdminManager.js` — Circuit ID search box in Configurations tab
+- `user_guide_admin_live_latency.md`, `user_guide_network_routes.md` — Documentation updates
+
+### 🗺️ **Network Routes: PDF Network Map Export**
+
+An "Export Network Map" button is now available above the Network Routes table (next to Export CSV), letting users generate a large, auto-laid-out, automatically-paginated PDF network map diagram directly from network routes and location data.
+
+- New popup lets users select which region(s) to include — **AMERs**, **EMEA**, **APAC**, or any combination — plus which detail fields to show on each route: **UCN**, **Expected Latency**, **Bandwidth**, and **Carrier**
+- INTER routes are automatically included wherever either end touches a selected region
+- Each POP code (from Manage Locations) is rendered as its own node, colored by region and sized by connection count, and automatically laid out per page (force-directed) — no manual arranging required
+- **Automatic multi-page pagination for large exports (up to ~200 locations / ~350 routes)**: the export is split into one section per region (**AMERs**, **EMEA**, **APAC**), and a region is automatically further split into multiple sections (e.g. "AMERs — Page 1 of 2") whenever it exceeds a legible node budget per page. Connected clusters of locations are kept together on the same page wherever possible (region grouping → connected components → greedy bin-packing)
+- **Each section spans two dedicated pages** — a full-page **network diagram** (kept free of any reference tables so it stays large and legible, with a compact title bar to maximize diagram space), immediately followed by a full-width **POP Code Reference + Route Schedule** page for that same section. Separating them lets both the diagram and the reference material use the full page rather than squeezing a table into a narrow sidebar
+- **Diagram pages auto-expand well beyond A4/poster size** as node count grows, so a region only splits into multiple pages when it's genuinely too large to lay out legibly on one sheet (raised from a 45-location budget to 90+) — a 50-90 location region now stays on a single, larger page instead of being split
+- **Guaranteed no text overlap**: full per-route detail (UCN, latency, bandwidth, carrier) no longer floats on the diagram as labels — every connecting line instead gets a small numbered tag, and the full detail for every route is listed in a **Route Schedule** table on that section's reference page. Numbered tags are collision-resolved (iterative pairwise separation against each other and against every node) so they never overlap, however dense the page. POP codes are shown directly inside each node circle (city name removed from the diagram to save space), sized to fit the code and rendered with a subtle dark outline behind the white text so thin characters like "I" and "1" stay legible against the colored fill
+- **Cross-page and out-of-scope connections** are drawn as short labeled stub arrows at the local node (e.g. pointing to "IPCHKG1 (Pg 4)" for a connection continuing on another page's diagram, or "IPCHKG1 (not incl.)" for an INTER route's far end that falls outside the selected regions) instead of drawing the remote node in full; the underlying route is still fully listed on that section's Route Schedule
+- The POP Code Reference and Route Schedule both flow across multiple columns (2-4, based on how many entries there are), so they scale to large exports without growing excessively tall
+- The POP Code Reference lists the full datacenter name/address (including city) for every POP code in that section, including any off-page/external POP codes referenced by its stub arrows, so every stub is fully resolvable without flipping pages
+- A new cover/index page lists every section's page range, region, sub-page number, and location/route counts
+- Every page includes a compact title block with the IPC logo, generated date/time, and a fixed **"CONFIDENTIAL - NOT FOR DISTRIBUTION WITHOUT PERMISSION"** label that cannot be disabled
+- Only Active routes and Active locations are included
+- All pages in a single export share one physical page size (the largest page's natural size, individually capped if extreme) so Puppeteer can print the whole document in a single `page.pdf()` call; smaller pages simply get extra whitespace rather than being stretched or cropped
+
+**Backend:**
+- New endpoint `GET /network_routes_export_map?regions=...&details=...` (requires `network_routes` read access) — queries routes/locations for the selected scope, groups multi-route pairs into single edges, and streams back a generated PDF
+- Reworked `backend/networkMapRenderer.js` — `partitionIntoPages` (region grouping, connected-component clustering, bin-packing), per-page `d3-force` layout, numbered-tag SVG rendering with collision resolution, multi-column `Route Schedule` and POP Code Reference tables rendered on their own dedicated page per section, cover/index page, and `renderMultiPageHtml`/`generateNetworkMapPdf` orchestration, all rendered to PDF via Puppeteer
+- New `backend/utils/formatBandwidth.js` — converts stored Mbps values to Mb/Gb for display (values ≥1000 Mbps shown in Gb)
+- New dependencies: `puppeteer`, `d3-force`
+- New asset: `backend/assets/ipc-logo.png`
+
+**Bug Fixes:**
+- Fixed downloaded PDF failing to open ("We can't open this file"). Puppeteer's `page.pdf()` returns a plain `Uint8Array`, which fails Express's `Buffer.isBuffer()` check inside `res.send()`; Express silently fell back to `res.json()` and serialized the PDF bytes as JSON text instead of sending real binary data. Now explicitly wrapped in `Buffer.from(...)` before returning.
+- Fixed the export request itself returning `404 Not Found`. The endpoint was originally registered at `/network_routes/export_map`, which was shadowed by the earlier, more generic `/network_routes/:circuit_id` route (Express matches in registration order). Renamed to the flat path `/network_routes_export_map` to match the existing `/network_routes_export` (CSV) / `/network_routes_search` sibling convention and avoid any route-ordering collision.
+- Fixed large exports (~200 locations / ~350 routes) producing a single overcrowded page with overlapping route-detail labels. Reworked the renderer to automatically paginate by region/cluster and moved all route detail off the diagram into a per-page Route Schedule table, per the design above.
+- Fixed POP codes being hard to read on the diagram (thin characters like "I" and "1" were getting lost) and the POP Code Reference/Route Schedule not scaling well next to the diagram. Moved the reference tables onto their own full-width page per section, shrank the page title bar to free up diagram space, removed the city name from node labels, and sized each node circle to fit its code with an outlined, high-contrast text style.
+- Fixed cross-page/off-page stub tags occasionally getting clipped at the outer edge of the diagram. The diagram's canvas size was calculated only from node circle positions (with fixed padding smaller than a stub's reach), so a stub arrow on a node near the edge could extend past the canvas boundary. The canvas now expands to fit every node **and** every tag/stub position before rendering, so nothing at the edges is ever cut off.
+
+**Files Added:**
+- `backend/networkMapRenderer.js`
+- `backend/utils/formatBandwidth.js`
+- `backend/assets/ipc-logo.png`
+- `frontend/src/NetworkMapExportDialog.js`
+
+**Files Modified:**
+- `backend/routes.js` — New `/network_routes_export_map` endpoint
+- `backend/package.json` — Added `puppeteer`, `d3-force`
+- `frontend/src/SearchExportBar.js` — "Export Network Map" button
+- `frontend/src/App.js` — Dialog wiring, export/download handler
+- `frontend/src/api.js` — `exportNetworkMapPDF()` helper
+
+### 🗣️ **Voice - One Directory: Guest Login, Custom Growth %, Bandwidth Calculator & Pricing Log Fixes**
+
+A no-credential "Voice Guest" login, a per-quote Growth % override, a standalone Bandwidth Calculator tab, and fixes to bundle discount reconciliation and historical CSV export in Pricing Logs.
+
+- **Voice Guest login**: "Continue as Voice Guest (Read-Only)" button on the login screen drops straight into a restricted shell showing only the One Directory tool — no username/password required. Backed by a hidden `voice_guest` system account with `read_only` access to `voice_one_directory` only.
+- **Customizable Growth %**: New field below "Directory Users" on the quote form, pre-filled from the live admin default and overridable per quote (`/calculate` and `/calculate-bundle` both accept the override).
+- **Bandwidth Calculator tab**: New 3rd tab — enter Number of Users, Growth %, and On/Off Net to get the required bandwidth, using the same rate-card tiers and admin parameters as the main pricing calculation (no pricing/customer data involved).
+- **Bundle discount reconciliation**: Individual service lines within a bundle item now sum exactly to the item total (previously showed pre-discount prices); fixed retroactively for historical logs too. Pricing Logs show exact figures at the item/service level, with only the bundle total kept as a rounded "headline" figure.
+- **Per-bundle CSV export**: New download icon on each bundle row in Pricing Logs re-exports that historical bundle to CSV at any time, using the same format as the live basket export.
+- **Bug fix**: The admin-configured minimum bandwidth floor was incorrectly being applied to On Net quotes (should be Off Net only) — fixed across `/calculate`, `/calculate-bundle`, and the new `/calculate-bandwidth` endpoint.
+
+**Files Added:** `backend/migrations/045_add_voice_guest_account.js`  
+**Files Modified:** `backend/routes.js`, `frontend/src/App.js`, `frontend/src/AuthContext.js`, `frontend/src/LoginForm.js`, `frontend/src/OneDirectoryPricingTool.js`
 
 ---
 
@@ -938,10 +1196,10 @@ A new lightweight route search tool designed for sales teams to quickly find net
 | **CNX Colocation Manager** | 3.4.7 | ✅ Enhanced |
 | **Extranet Data** | 3.4.2 | ✅ Active |
 | **Extranet Pricing** | 3.4.7 | ✅ Enhanced |
-| **Carrier Quote Repository** | 3.4.5 | ✅ Enhanced |
-| **Route Finder** | 3.4.7 | ✅ Enhanced |
+| **Carrier Quote Repository** | 3.5.0 | ✅ Enhanced |
+| **Route Finder** | 3.5.0 | ✅ Enhanced |
 | **KMZ Viewer** | 3.3.3 | ✅ Active |
-| **Network Routes Repository** | 3.3.3 | ✅ Active |
+| **Network Routes Repository** | 3.5.0 | ✅ Enhanced |
 | **Network Design & Pricing** | 3.3.3 | ✅ Active |
 | **Allocated Cost Calculator** | 3.3.3 | ✅ Active |
 | **Analytics Dashboard** | 3.4.6 | ✅ Enhanced |
@@ -1001,6 +1259,7 @@ For new installations or updates:
 
 ## Version History
 
+- **v3.5.0** (Aug 9, 2026): Application Dark Mode (user-menu toggle, localStorage persistence, default dark, app-wide contrast fixes; email exports stay light); Network Routes Repository — Cross Connects Pricing submodule; Carrier Quote Repository — Site Validation (OSM/Nominatim map dialog), Datacenter/Retail building types, Quote Analytics page, horizontal bulk upload, Custom Locations management (bulk Building Type fix-up, purge unused, merge duplicates, fix address/geo location); Admin Live Latency API — search Configurations by Circuit ID; Network Routes — self-service Live Latency probe registration in Add/Edit Route (defaults-based, no admin access required); Network Routes — PDF Network Map Export (region-selectable, auto-laid-out diagram with POP-level nodes, address annex, and confidentiality-marked title block); Voice - One Directory — no-credential Guest login, customizable per-quote Growth %, standalone Bandwidth Calculator tab, bundle discount reconciliation + exact Pricing Log figures, per-bundle CSV re-export, and On Net minimum-bandwidth bug fix; Promo Pricing Manager — Excluded Circuit IDs (takes precedence over required circuits); CNX Ethernet Route Finder — "Find Promo Pricing" constrained-pathfind button that finds the cheapest margin-valid promo-eligible route for a chosen bandwidth; Manage Carriers database export includes `carrier_id` (upload accepts id for match); network route delete cascades `live_latency_config`; Colocation location available power excludes racks with no remaining RUs; Carrier Contacts export adds parent `region`; Allocated Cost Calculator — Circuit ID label + `POP Code - Datacenter Name` display; Extranet Pricing Logs — Calculation Breakdown JSON opens manually per item
 - **v3.4.7** (Feb 22, 2026): Home Page with live latency matrix (hourly Dijkstra using live latency, 1Gb/10Gb tabs, click-through to Route Finder); Extranet Pricing — role-based pricing logs access control
 - **v3.4.7** (Feb 22, 2026): CNX Colocation — Exchange facing infrastructure display in Availability Dashboard and Inventory tables, RU allocated fix to include IPC reserved, bulk upload NOT NULL constraint fixes for racks/clients, per-rack device export with pre-populated RU rows, improved export error handling
 - **v3.4.6** (Feb 15, 2026): Extranet Pricing — Shopping basket/bundle pricing with tiered discounts, provider/product selection with auto-population, datacenter field split, analytics and pricing logs rebuilt for bundles, ISF display, "Add Additional Connection" button; Provider region rate cards (APAC/AMERs/EMEA)

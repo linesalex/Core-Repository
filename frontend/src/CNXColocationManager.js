@@ -1411,7 +1411,7 @@ const CNXColocationManager = ({ hasPermission }) => {
           <Box sx={{ 
             mt: 2, 
             p: 2, 
-            backgroundColor: 'grey.50', 
+            backgroundColor: 'action.hover', 
             borderRadius: 1,
             maxHeight: 400,
             overflowY: 'auto'
@@ -1430,7 +1430,7 @@ const CNXColocationManager = ({ hasPermission }) => {
           </Box>
           
           {/* Tracking Information */}
-          <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e0e0e0' }}>
+          <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
             <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
               {trackingInfo && trackingInfo.updated_date ? (
                 <>Last Updated: {trackingInfo.username || 'Unknown User'} {formatTrackingDate(trackingInfo.updated_date)}</>

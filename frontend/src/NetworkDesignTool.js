@@ -26,6 +26,7 @@ import SecurityIcon from '@mui/icons-material/Security';
 import LoadingButton from '@mui/lab/LoadingButton';
 import { networkDesignApi, getCrossConnectInfo, checkKMZAvailability, exportNetworkDesignKMZ } from './api';
 import { getCarriers } from './api';
+import CustomerAutocomplete from './CustomerAutocomplete';
 import { useAuth } from './AuthContext';
 import { API_BASE_URL } from './config';
 
@@ -84,7 +85,8 @@ const NetworkDesignTool = () => {
     outputCurrency: 'USD',
     contractTerm: 12,
     quoteRequestId: '',
-    customerName: ''
+    customerName: '',
+    customerId: null
   });
 
   // Manual route entry state
@@ -1088,6 +1090,7 @@ const NetworkDesignTool = () => {
           include_provisioning_routes: formData.includeProvisioningRoutes,
           quoteRequestId: formData.quoteRequestId,
           customerName: formData.customerName,
+          customerId: formData.customerId,
           constraints: {
             protection_required: formData.protectionRequired,
             mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500, // Default to 1500 if not specified
@@ -1121,6 +1124,7 @@ const NetworkDesignTool = () => {
         protection_required: formData.protectionRequired,
         quoteRequestId: formData.quoteRequestId,
         customerName: formData.customerName,
+        customerId: formData.customerId,
         // Add design mode and manual route information
         design_mode: designMode,
         manual_primary_routes: designMode === 'manual' ? manualPrimaryRoutes : null,
@@ -1231,7 +1235,8 @@ const NetworkDesignTool = () => {
       outputCurrency: 'USD',
       contractTerm: 12,
       quoteRequestId: '',
-      customerName: ''
+      customerName: '',
+      customerId: null
     });
 
     // Reset manual route entry data
@@ -1382,7 +1387,7 @@ const NetworkDesignTool = () => {
               <TableContainer>
                 <Table size="small">
                   <TableHead>
-                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                    <TableRow sx={{ bgcolor: 'action.hover' }}>
                       <TableCell><strong>Circuit ID</strong></TableCell>
                       <TableCell><strong>Segment</strong></TableCell>
                       <TableCell><strong>Latency</strong></TableCell>
@@ -1411,7 +1416,7 @@ const NetworkDesignTool = () => {
               {/* Primary Promo Pricing */}
               {promoPricing.primaryPromo ? (
                 <Box sx={{ mt: 2, p: 1.5, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
-                  <Typography variant="subtitle2" color="success.dark" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                  <Typography variant="subtitle2" color="success.main" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
                     <LocalOfferIcon fontSize="small" /> Promo Pricing Available
                   </Typography>
                   <Grid container spacing={1}>
@@ -1447,7 +1452,7 @@ const NetworkDesignTool = () => {
               <TableContainer>
                 <Table size="small">
                   <TableHead>
-                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                    <TableRow sx={{ bgcolor: 'action.hover' }}>
                       <TableCell><strong>Circuit ID</strong></TableCell>
                       <TableCell><strong>Segment</strong></TableCell>
                       <TableCell><strong>Latency</strong></TableCell>
@@ -1476,7 +1481,7 @@ const NetworkDesignTool = () => {
               {/* Secondary Promo Pricing */}
               {promoPricing.secondaryPromo ? (
                 <Box sx={{ mt: 2, p: 1.5, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
-                  <Typography variant="subtitle2" color="success.dark" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                  <Typography variant="subtitle2" color="success.main" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
                     <LocalOfferIcon fontSize="small" /> Promo Pricing Available
                   </Typography>
                   <Grid container spacing={1}>
@@ -1514,10 +1519,10 @@ const NetworkDesignTool = () => {
                 $1,000 NRC applicable for each option - X/Cs Excluded - Full Terms available from Pricing Team
               </Typography>
               <Grid container spacing={1}>
-                <Grid item xs={3}><Typography variant="caption" color="text.secondary">10 Mbps</Typography><Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_10mb)}</Typography></Grid>
-                <Grid item xs={3}><Typography variant="caption" color="text.secondary">100 Mbps</Typography><Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_100mb)}</Typography></Grid>
-                <Grid item xs={3}><Typography variant="caption" color="text.secondary">1000 Mbps</Typography><Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_1000mb)}</Typography></Grid>
-                <Grid item xs={3}><Typography variant="caption" color="text.secondary">10 Gbps</Typography><Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_10gb)}</Typography></Grid>
+                <Grid item xs={3}><Typography variant="caption" color="text.secondary">10 Mbps</Typography><Typography variant="body2" color="primary.main" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_10mb)}</Typography></Grid>
+                <Grid item xs={3}><Typography variant="caption" color="text.secondary">100 Mbps</Typography><Typography variant="body2" color="primary.main" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_100mb)}</Typography></Grid>
+                <Grid item xs={3}><Typography variant="caption" color="text.secondary">1000 Mbps</Typography><Typography variant="body2" color="primary.main" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_1000mb)}</Typography></Grid>
+                <Grid item xs={3}><Typography variant="caption" color="text.secondary">10 Gbps</Typography><Typography variant="body2" color="primary.main" fontWeight="bold">{formatPromoPriceDisplay(promoPricing.protectedPromo.price_10gb)}</Typography></Grid>
               </Grid>
             </CardContent>
           </Card>
@@ -1539,7 +1544,7 @@ const NetworkDesignTool = () => {
               <Grid container spacing={2}>
                 {crossConnectPricing.source && (
                   <Grid item xs={12} md={6}>
-                    <Box sx={{ p: 1.5, bgcolor: 'grey.50', borderRadius: 1 }}>
+                    <Box sx={{ p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
                       <Typography variant="subtitle2" gutterBottom>
                         Source: {crossConnectPricing.source.datacenterName || crossConnectPricing.source.locationCode}
                         {crossConnectPricing.source.mandatory && <Chip label="Required" color="warning" size="small" sx={{ ml: 1 }} />}
@@ -1566,7 +1571,7 @@ const NetworkDesignTool = () => {
                 )}
                 {crossConnectPricing.destination && (
                   <Grid item xs={12} md={6}>
-                    <Box sx={{ p: 1.5, bgcolor: 'grey.50', borderRadius: 1 }}>
+                    <Box sx={{ p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
                       <Typography variant="subtitle2" gutterBottom>
                         Destination: {crossConnectPricing.destination.datacenterName || crossConnectPricing.destination.locationCode}
                         {crossConnectPricing.destination.mandatory && <Chip label="Required" color="warning" size="small" sx={{ ml: 1 }} />}
@@ -1625,7 +1630,7 @@ const NetworkDesignTool = () => {
                     <TableContainer sx={{ mb: 1 }}>
                       <Table size="small">
                         <TableHead>
-                          <TableRow sx={{ bgcolor: 'grey.50' }}>
+                          <TableRow sx={{ bgcolor: 'action.hover' }}>
                             <TableCell><strong>Tier</strong></TableCell>
                             <TableCell align="right"><strong>Promo Price</strong></TableCell>
                             <TableCell align="right"><strong>Allocated Cost</strong></TableCell>
@@ -1681,7 +1686,7 @@ const NetworkDesignTool = () => {
                     <TableContainer sx={{ mb: 1 }}>
                       <Table size="small">
                         <TableHead>
-                          <TableRow sx={{ bgcolor: 'grey.50' }}>
+                          <TableRow sx={{ bgcolor: 'action.hover' }}>
                             <TableCell><strong>Tier</strong></TableCell>
                             <TableCell align="right"><strong>Promo Price</strong></TableCell>
                             <TableCell align="right"><strong>Allocated Cost</strong></TableCell>
@@ -1740,7 +1745,7 @@ const NetworkDesignTool = () => {
                     <TableContainer>
                       <Table size="small">
                         <TableHead>
-                          <TableRow sx={{ bgcolor: 'grey.50' }}>
+                          <TableRow sx={{ bgcolor: 'action.hover' }}>
                             <TableCell><strong>Tier</strong></TableCell>
                             <TableCell align="right"><strong>Combined Allocated Cost</strong></TableCell>
                             <TableCell align="right"><strong>1.7x Price</strong></TableCell>
@@ -1755,7 +1760,7 @@ const NetworkDesignTool = () => {
                           {Object.entries(marginAnalysis.protected.marginDetails).map(([tierKey, detail]) => {
                             if (!detail.eligible) {
                               return (
-                                <TableRow key={tierKey} sx={{ bgcolor: 'grey.100' }}>
+                                <TableRow key={tierKey} sx={{ bgcolor: 'action.hover' }}>
                                   <TableCell>{tierLabels[tierKey] || tierKey}</TableCell>
                                   <TableCell colSpan={7} align="center">
                                     <Typography variant="caption" color="text.secondary" fontStyle="italic">
@@ -1886,7 +1891,7 @@ const NetworkDesignTool = () => {
               <TableContainer>
                 <Table size="small">
                   <TableHead>
-                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                    <TableRow sx={{ bgcolor: 'action.hover' }}>
                       <TableCell><strong>Circuit ID</strong></TableCell>
                       <TableCell><strong>Segment</strong></TableCell>
                       <TableCell><strong>Latency</strong></TableCell>
@@ -1929,7 +1934,7 @@ const NetworkDesignTool = () => {
               <TableContainer>
                 <Table size="small">
                   <TableHead>
-                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                    <TableRow sx={{ bgcolor: 'action.hover' }}>
                       <TableCell><strong>Circuit ID</strong></TableCell>
                       <TableCell><strong>Segment</strong></TableCell>
                       <TableCell><strong>Latency</strong></TableCell>
@@ -1971,7 +1976,7 @@ const NetworkDesignTool = () => {
                 
                 return (
                   <Grid item xs={12} md={4} key={index}>
-                    <Card sx={{ height: '100%', bgcolor: result.pathType === 'primary' ? 'grey.50' : 'info.50' }}>
+                    <Card sx={{ height: '100%', bgcolor: result.pathType === 'primary' ? 'action.hover' : 'info.50' }}>
                       <CardHeader 
                         title={result.pathType === 'primary' ? 'Primary Path' : 'Secondary Path'}
                         subheader={`${pricing.contractTerm || 12}-Month Contract`}
@@ -3480,11 +3485,10 @@ const NetworkDesignTool = () => {
               
               {/* Customer Name */}
               <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
+                <CustomerAutocomplete
                   label="Customer Name"
                   value={formData.customerName}
-                  onChange={(e) => handleInputChange('customerName', e.target.value)}
+                  onChange={(name, customerId) => setFormData(prev => ({ ...prev, customerName: name, customerId }))}
                   disabled={parametersLocked}
                 />
               </Grid>
@@ -4215,7 +4219,7 @@ const NetworkDesignTool = () => {
               {/* Contract Term Summary */}
               {pricingResults.contractTermDetails && pricingResults.contractTermDetails.rules && (
                 <Grid item xs={12} sx={{ mb: 3 }}>
-                  <Card sx={{ bgcolor: 'grey.50' }}>
+                  <Card sx={{ bgcolor: 'action.hover' }}>
                     <CardContent>
                       <Typography variant="h6" gutterBottom>
                         Contract Term Pricing Model
@@ -4227,12 +4231,12 @@ const NetworkDesignTool = () => {
                               sx={{ 
                                 p: 2, 
                                 border: term == pricingResults.contractTermDetails.term ? '2px solid' : '1px solid',
-                                borderColor: term == pricingResults.contractTermDetails.term ? 'primary.main' : 'grey.300',
+                                borderColor: term == pricingResults.contractTermDetails.term ? 'primary.main' : 'divider',
                                 borderRadius: 1,
-                                bgcolor: term == pricingResults.contractTermDetails.term ? 'primary.50' : 'white',
+                                bgcolor: term == pricingResults.contractTermDetails.term ? 'primary.50' : 'background.paper',
                                 cursor: 'pointer',
                                 '&:hover': {
-                                  bgcolor: term == pricingResults.contractTermDetails.term ? 'primary.50' : 'grey.50'
+                                  bgcolor: term == pricingResults.contractTermDetails.term ? 'primary.50' : 'action.hover'
                                 }
                               }}
                               onClick={() => handleContractTermChange(parseInt(term))}
@@ -4264,7 +4268,7 @@ const NetworkDesignTool = () => {
                       <CardContent>
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                           {/* Price Range */}
-                          <Box sx={{ bgcolor: 'grey.50', p: 2, borderRadius: 1 }}>
+                          <Box sx={{ bgcolor: 'action.hover', p: 2, borderRadius: 1 }}>
                             <Typography variant="subtitle2" gutterBottom>
                               Monthly Price Range ({result.pricing.contractTerm}-month term)
                             </Typography>
@@ -4291,7 +4295,7 @@ const NetworkDesignTool = () => {
                             <Box sx={{ p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
                               <Box display="flex" alignItems="center" gap={1}>
                                 <LocalOfferIcon color="success" fontSize="small" />
-                                <Typography variant="subtitle2" color="success.dark" fontWeight="bold">
+                                <Typography variant="subtitle2" color="success.main" fontWeight="bold">
                                   PROMO PRICING APPLIED
                                 </Typography>
                               </Box>
@@ -4341,7 +4345,7 @@ const NetworkDesignTool = () => {
                       <CardContent>
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                           {/* Price Range */}
-                          <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 1 }}>
+                          <Box sx={{ bgcolor: 'background.paper', p: 2, borderRadius: 1 }}>
                             <Typography variant="subtitle2" gutterBottom>
                               Monthly Price Range
                             </Typography>
@@ -4439,7 +4443,7 @@ const NetworkDesignTool = () => {
                       />
                       <CardContent>
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                          <Box sx={{ bgcolor: 'white', p: 1.5, borderRadius: 1 }}>
+                          <Box sx={{ bgcolor: 'background.paper', p: 1.5, borderRadius: 1 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                               <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
                                 NRC (One-time):
@@ -4458,7 +4462,7 @@ const NetworkDesignTool = () => {
                             </Box>
                           </Box>
                           {crossConnectResults.source.notes && (
-                            <Box sx={{ bgcolor: 'grey.50', p: 1.5, borderRadius: 1 }}>
+                            <Box sx={{ bgcolor: 'action.hover', p: 1.5, borderRadius: 1 }}>
                               <Typography variant="caption" color="text.secondary">
                                 Notes: {crossConnectResults.source.notes}
                               </Typography>
@@ -4481,7 +4485,7 @@ const NetworkDesignTool = () => {
                       />
                       <CardContent>
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                          <Box sx={{ bgcolor: 'white', p: 1.5, borderRadius: 1 }}>
+                          <Box sx={{ bgcolor: 'background.paper', p: 1.5, borderRadius: 1 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                               <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary">
                                 NRC (One-time):
@@ -4500,7 +4504,7 @@ const NetworkDesignTool = () => {
                             </Box>
                           </Box>
                           {crossConnectResults.destination.notes && (
-                            <Box sx={{ bgcolor: 'grey.50', p: 1.5, borderRadius: 1 }}>
+                            <Box sx={{ bgcolor: 'action.hover', p: 1.5, borderRadius: 1 }}>
                               <Typography variant="caption" color="text.secondary">
                                 Notes: {crossConnectResults.destination.notes}
                               </Typography>
@@ -4781,7 +4785,7 @@ const NetworkDesignTool = () => {
                     </TableRow>
                     {expandedLogs.has(log.id) && !isReadOnly && (
                       <TableRow>
-                        <TableCell colSpan={9} sx={{ backgroundColor: '#f8f9fa', border: 'none' }}>
+                        <TableCell colSpan={9} sx={{ backgroundColor: 'action.hover', border: 'none' }}>
                           <Box sx={{ p: 2 }}>
                             {/* View Mode Toggle */}
                             <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
@@ -4819,10 +4823,11 @@ const NetworkDesignTool = () => {
                                       wordBreak: 'break-word',
                                       maxHeight: '400px',
                                       overflow: 'auto',
-                                      backgroundColor: '#f5f5f5',
+                                      backgroundColor: 'action.hover',
                                       padding: 2,
                                       borderRadius: 1,
-                                      border: '1px solid #ddd'
+                                      border: '1px solid',
+                                      borderColor: 'divider'
                                     }}
                                   >
                                     {log.parameters ? JSON.stringify(log.parameters, null, 2) : 
@@ -4843,10 +4848,11 @@ const NetworkDesignTool = () => {
                                       wordBreak: 'break-word',
                                       maxHeight: '400px',
                                       overflow: 'auto',
-                                      backgroundColor: '#f5f5f5',
+                                      backgroundColor: 'action.hover',
                                       padding: 2,
                                       borderRadius: 1,
-                                      border: '1px solid #ddd'
+                                      border: '1px solid',
+                                      borderColor: 'divider'
                                     }}
                                   >
                                     {log.results ? JSON.stringify(log.results, null, 2) : 
@@ -5135,9 +5141,9 @@ const NetworkDesignTool = () => {
             The following circuits are missing KMZ files and will be excluded from the export:
           </Alert>
 
-          <Box sx={{ maxHeight: 300, overflowY: 'auto', border: '1px solid #e0e0e0', borderRadius: 1, p: 2 }}>
+          <Box sx={{ maxHeight: 300, overflowY: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
             {kmzMissingCircuits.map((circuit, index) => (
-              <Box key={index} sx={{ mb: 1.5, pb: 1.5, borderBottom: index < kmzMissingCircuits.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
+              <Box key={index} sx={{ mb: 1.5, pb: 1.5, borderBottom: index < kmzMissingCircuits.length - 1 ? '1px solid' : 'none', borderColor: 'divider' }}>
                 <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
                   {circuit.circuitId}
                 </Typography>

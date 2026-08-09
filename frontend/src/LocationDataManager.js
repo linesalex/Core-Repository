@@ -1195,7 +1195,7 @@ const LocationDataManager = ({ hasPermission, userRole, modulePermission }) => {
           />
           
           {/* Tracking Information */}
-          <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e0e0e0' }}>
+          <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
             <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
               {currentLocationTracking && currentLocationTracking.updated_date ? (
                 <>Last Updated: {currentLocationTracking.username || 'Unknown User'} {formatTrackingDate(currentLocationTracking.updated_date)}</>

@@ -22,7 +22,7 @@ import SecurityIcon from '@mui/icons-material/Security';
 import CableIcon from '@mui/icons-material/Cable';
 import LoadingButton from '@mui/lab/LoadingButton';
 import { API_BASE_URL } from './config';
-import { getPromoRulesForSales, checkPromoMatch, calculateProtectedPromo, getCrossConnectInfo, networkDesignApi, exchangeRatesApi, saveRouteFinderSearchLog } from './api';
+import { getPromoRulesForSales, checkPromoMatch, calculateProtectedPromo, getCrossConnectInfo, networkDesignApi, exchangeRatesApi, saveRouteFinderSearchLog, findPromoRoute } from './api';
 
 const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, onClearPreComputed }) => {
   // Form state - initialize from savedState if available
@@ -53,6 +53,11 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
   const [secondaryPromo, setSecondaryPromo] = useState(savedState?.secondaryPromo || null);
   const [protectedPromo, setProtectedPromo] = useState(savedState?.protectedPromo || null);
   const [expandedPromoRows, setExpandedPromoRows] = useState({});
+
+  // "Find Promo Pricing" - actively searches for the best route for which promo
+  // pricing is valid at the selected bandwidth (independent of the standard route search)
+  const [promoRouteLoading, setPromoRouteLoading] = useState(false);
+  const [promoRouteResult, setPromoRouteResult] = useState(savedState?.promoRouteResult || null);
   
   // Cross connect state
   const [crossConnectResults, setCrossConnectResults] = useState(savedState?.crossConnectResults || { source: null, destination: null });
@@ -121,10 +126,11 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
         primaryPromo,
         secondaryPromo,
         protectedPromo,
-        crossConnectResults
+        crossConnectResults,
+        promoRouteResult
       });
     }
-  }, [formData, searchResults, locations, primaryPromo, secondaryPromo, protectedPromo, crossConnectResults, onStateChange]);
+  }, [formData, searchResults, locations, primaryPromo, secondaryPromo, protectedPromo, crossConnectResults, promoRouteResult, onStateChange]);
 
   const loadLocations = async () => {
     try {
@@ -505,6 +511,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
     setSearchResults(null);
     setCrossConnectResults({ source: null, destination: null });
     setProtectedPromo(null);
+    setPromoRouteResult(null);
 
     const searchStartTime = Date.now();
 
@@ -600,10 +607,63 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
     setSecondaryPromo(null);
     setProtectedPromo(null);
     setCrossConnectResults({ source: null, destination: null });
+    setPromoRouteResult(null);
     setError(null);
     setSuccess(null);
     setExpandedAccordion('search');
     setDisplayMode(false);
+  };
+
+  // Actively searches for the best route between the selected source/destination
+  // for which promo pricing is valid at the selected bandwidth - rather than just
+  // checking whether the default shortest-latency route happens to qualify.
+  const handleFindPromoRoute = async () => {
+    if (!formData.source || !formData.destination) {
+      setError('Please select both source and destination locations');
+      return;
+    }
+
+    if (!formData.bandwidth) {
+      setError('Bandwidth is required to find promo pricing');
+      return;
+    }
+
+    const bandwidthValue = parseFloat(formData.bandwidth);
+    if (bandwidthValue < 10 || bandwidthValue > 10000) {
+      setError('Bandwidth must be between 10 and 10000 Mbps');
+      return;
+    }
+
+    setPromoRouteLoading(true);
+    setError(null);
+    setPromoRouteResult(null);
+
+    try {
+      const result = await findPromoRoute({
+        source: formData.source,
+        destination: formData.destination,
+        bandwidth: bandwidthValue,
+        mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500,
+        route_mode: formData.routeMode,
+        include_ull: formData.routeMode === 'fastest',
+        use_cisco_only_routes: formData.routeMode === 'fastest'
+      });
+
+      setPromoRouteResult(result);
+      setExpandedAccordion('promoRoute');
+    } catch (err) {
+      console.error('Find promo route error:', err);
+      setError('Failed to find promo pricing route: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setPromoRouteLoading(false);
+    }
+  };
+
+  const promoRouteReasonMessages = {
+    no_promo_rule: 'No promo pricing rule exists for this source/destination pair.',
+    no_price_configured: 'A promo rule exists for this pair, but no price is configured for the selected bandwidth tier.',
+    no_valid_route: 'A promo rule exists, but no physical route satisfies its required/excluded circuit constraints.',
+    margin_not_met: 'A route satisfying the promo constraints was found, but it does not meet the minimum margin requirement.'
   };
 
   const formatLatency = (latency) => {
@@ -664,13 +724,13 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
             <Grid container spacing={2}>
               <Grid item xs={6}>
                 <Typography variant="caption" color="text.secondary" display="block">NRC (One-time)</Typography>
-                <Typography variant="body2" fontWeight="bold" color="info.dark">
+                <Typography variant="body2" fontWeight="bold" color="info.main">
                   {typeof xcData.nrc === 'number' ? formatCurrency(xcData.nrc) : xcData.nrc}
                 </Typography>
               </Grid>
               <Grid item xs={6}>
                 <Typography variant="caption" color="text.secondary" display="block">MRC (Monthly)</Typography>
-                <Typography variant="body2" fontWeight="bold" color="info.dark">
+                <Typography variant="body2" fontWeight="bold" color="info.main">
                   {typeof xcData.mrc === 'number' ? formatCurrency(xcData.mrc) : xcData.mrc}
                 </Typography>
               </Grid>
@@ -1098,17 +1158,32 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
               </FormControl>
             </Grid>
 
-            {/* Search Button */}
+            {/* Search Buttons */}
             <Grid item xs={12}>
-              <LoadingButton
-                variant="contained"
-                startIcon={<SearchIcon />}
-                onClick={handleSearch}
-                loading={loading}
-                disabled={!formData.source || !formData.destination}
-              >
-                Find Route
-              </LoadingButton>
+              <Box display="flex" gap={2} flexWrap="wrap">
+                <LoadingButton
+                  variant="contained"
+                  startIcon={<SearchIcon />}
+                  onClick={handleSearch}
+                  loading={loading}
+                  disabled={!formData.source || !formData.destination}
+                >
+                  Find Route
+                </LoadingButton>
+                <LoadingButton
+                  variant="outlined"
+                  color="success"
+                  startIcon={<LocalOfferIcon />}
+                  onClick={handleFindPromoRoute}
+                  loading={promoRouteLoading}
+                  disabled={!formData.source || !formData.destination || !formData.bandwidth}
+                >
+                  Find Promo Pricing
+                </LoadingButton>
+              </Box>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                Finds the best route between the selected locations for which promo pricing is valid at the specified bandwidth. Requires bandwidth to be set.
+              </Typography>
             </Grid>
           </Grid>
         </AccordionDetails>
@@ -1235,7 +1310,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
                       <Box sx={{ mt: 3, p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
                         <Box display="flex" alignItems="center" gap={1} mb={1}>
                           <LocalOfferIcon color="success" fontSize="small" />
-                          <Typography variant="subtitle2" color="success.dark" fontWeight="bold">
+                          <Typography variant="subtitle2" color="success.main" fontWeight="bold">
                             Promo Pricing Available
                           </Typography>
                         </Box>
@@ -1245,24 +1320,24 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
                         <Grid container spacing={1}>
                           <Grid item xs={3}>
                             <Typography variant="caption" color="text.secondary" display="block">10 Mbps</Typography>
-                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(primaryPromo.price_10mb)}</Typography>
+                            <Typography variant="body2" color="success.main" fontWeight="bold">{formatPromoPrice(primaryPromo.price_10mb)}</Typography>
                           </Grid>
                           <Grid item xs={3}>
                             <Typography variant="caption" color="text.secondary" display="block">100 Mbps</Typography>
-                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(primaryPromo.price_100mb)}</Typography>
+                            <Typography variant="body2" color="success.main" fontWeight="bold">{formatPromoPrice(primaryPromo.price_100mb)}</Typography>
                           </Grid>
                           <Grid item xs={3}>
                             <Typography variant="caption" color="text.secondary" display="block">1000 Mbps</Typography>
-                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(primaryPromo.price_1000mb)}</Typography>
+                            <Typography variant="body2" color="success.main" fontWeight="bold">{formatPromoPrice(primaryPromo.price_1000mb)}</Typography>
                           </Grid>
                           <Grid item xs={3}>
                             <Typography variant="caption" color="text.secondary" display="block">10 Gbps</Typography>
-                            <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(primaryPromo.price_10gb)}</Typography>
+                            <Typography variant="body2" color="success.main" fontWeight="bold">{formatPromoPrice(primaryPromo.price_10gb)}</Typography>
                           </Grid>
                         </Grid>
                       </Box>
                     ) : (
-                      <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+                      <Box sx={{ mt: 3, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
                         <Typography variant="body2" color="text.secondary">
                           <em>Route not available for automatic promo pricing</em>
                         </Typography>
@@ -1331,7 +1406,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
                         <Box sx={{ mt: 3, p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
                           <Box display="flex" alignItems="center" gap={1} mb={1}>
                             <LocalOfferIcon color="success" fontSize="small" />
-                            <Typography variant="subtitle2" color="success.dark" fontWeight="bold">
+                            <Typography variant="subtitle2" color="success.main" fontWeight="bold">
                               Promo Pricing Available
                             </Typography>
                           </Box>
@@ -1341,24 +1416,24 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
                           <Grid container spacing={1}>
                             <Grid item xs={3}>
                               <Typography variant="caption" color="text.secondary" display="block">10 Mbps</Typography>
-                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_10mb)}</Typography>
+                              <Typography variant="body2" color="success.main" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_10mb)}</Typography>
                             </Grid>
                             <Grid item xs={3}>
                               <Typography variant="caption" color="text.secondary" display="block">100 Mbps</Typography>
-                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_100mb)}</Typography>
+                              <Typography variant="body2" color="success.main" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_100mb)}</Typography>
                             </Grid>
                             <Grid item xs={3}>
                               <Typography variant="caption" color="text.secondary" display="block">1000 Mbps</Typography>
-                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_1000mb)}</Typography>
+                              <Typography variant="body2" color="success.main" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_1000mb)}</Typography>
                             </Grid>
                             <Grid item xs={3}>
                               <Typography variant="caption" color="text.secondary" display="block">10 Gbps</Typography>
-                              <Typography variant="body2" color="success.dark" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_10gb)}</Typography>
+                              <Typography variant="body2" color="success.main" fontWeight="bold">{formatPromoPrice(secondaryPromo.price_10gb)}</Typography>
                             </Grid>
                           </Grid>
                         </Box>
                       ) : (
-                        <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+                        <Box sx={{ mt: 3, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
                           <Typography variant="body2" color="text.secondary">
                             <em>Route not available for automatic promo pricing</em>
                           </Typography>
@@ -1401,19 +1476,19 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
                       <Grid container spacing={1}>
                         <Grid item xs={3}>
                           <Typography variant="caption" color="text.secondary" display="block">10 Mbps</Typography>
-                          <Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPrice(protectedPromo.price_10mb)}</Typography>
+                          <Typography variant="body2" color="primary.main" fontWeight="bold">{formatPromoPrice(protectedPromo.price_10mb)}</Typography>
                         </Grid>
                         <Grid item xs={3}>
                           <Typography variant="caption" color="text.secondary" display="block">100 Mbps</Typography>
-                          <Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPrice(protectedPromo.price_100mb)}</Typography>
+                          <Typography variant="body2" color="primary.main" fontWeight="bold">{formatPromoPrice(protectedPromo.price_100mb)}</Typography>
                         </Grid>
                         <Grid item xs={3}>
                           <Typography variant="caption" color="text.secondary" display="block">1000 Mbps</Typography>
-                          <Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPrice(protectedPromo.price_1000mb)}</Typography>
+                          <Typography variant="body2" color="primary.main" fontWeight="bold">{formatPromoPrice(protectedPromo.price_1000mb)}</Typography>
                         </Grid>
                         <Grid item xs={3}>
                           <Typography variant="caption" color="text.secondary" display="block">10 Gbps</Typography>
-                          <Typography variant="body2" color="primary.dark" fontWeight="bold">{formatPromoPrice(protectedPromo.price_10gb)}</Typography>
+                          <Typography variant="body2" color="primary.main" fontWeight="bold">{formatPromoPrice(protectedPromo.price_10gb)}</Typography>
                         </Grid>
                       </Grid>
                     </CardContent>
@@ -1445,6 +1520,103 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
                 </Grid>
               )}
             </Grid>
+          </AccordionDetails>
+        </Accordion>
+      )}
+
+      {/* Find Promo Pricing Results */}
+      {promoRouteResult && (
+        <Accordion
+          expanded={expandedAccordion === 'promoRoute'}
+          onChange={() => setExpandedAccordion(expandedAccordion === 'promoRoute' ? '' : 'promoRoute')}
+          sx={{ mt: 2 }}
+        >
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <LocalOfferIcon sx={{ mr: 1 }} color="success" />
+              <Typography variant="h6">Promo Pricing Route</Typography>
+              {promoRouteResult.found && (
+                <Chip
+                  label="Promo Route Found"
+                  color="success"
+                  size="small"
+                  sx={{ ml: 1.5 }}
+                />
+              )}
+            </Box>
+          </AccordionSummary>
+          <AccordionDetails>
+            {!promoRouteResult.found ? (
+              <Alert severity="info">
+                {promoRouteReasonMessages[promoRouteResult.reason] || 'No promo-eligible route was found for this bandwidth.'}
+              </Alert>
+            ) : (
+              <Card sx={{ border: 2, borderColor: 'success.main' }}>
+                <CardHeader
+                  title={
+                    <Box display="flex" alignItems="center" gap={1}>
+                      <span>Best Promo-Eligible Route</span>
+                      <Chip icon={<LocalOfferIcon />} label="Promo Available" color="success" size="small" />
+                    </Box>
+                  }
+                  subheader={promoRouteResult.route.path.join(' → ')}
+                />
+                <CardContent>
+                  <TableContainer>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Circuit ID</TableCell>
+                          <TableCell>Segment</TableCell>
+                          <TableCell>Bandwidth</TableCell>
+                          <TableCell>Latency</TableCell>
+                          <TableCell>Cable System</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {promoRouteResult.route.route?.map((segment, index) => (
+                          <TableRow key={index}>
+                            <TableCell>{segment.circuit_id || 'N/A'}</TableCell>
+                            <TableCell>{segment.from} → {segment.to}</TableCell>
+                            <TableCell>{formatBandwidth(segment.bandwidth)}</TableCell>
+                            <TableCell>{formatLatency(segment.latency)}ms</TableCell>
+                            <TableCell>{segment.cable_system || 'N/A'}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="body2">
+                      <strong>Total Latency:</strong> {formatLatency(promoRouteResult.route.totalLatency)}ms RTD
+                    </Typography>
+                    <Typography variant="body2">
+                      <strong>Total Hops:</strong> {promoRouteResult.route.hops}
+                    </Typography>
+                  </Box>
+
+                  <Box sx={{ mt: 3, p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
+                    <Box display="flex" alignItems="center" gap={1} mb={1}>
+                      <LocalOfferIcon color="success" fontSize="small" />
+                      <Typography variant="subtitle2" color="success.main" fontWeight="bold">
+                        Promo Price for {formatBandwidth(formData.bandwidth)}
+                      </Typography>
+                    </Box>
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                      $1,000 NRC applicable - X/Cs Excluded - Full Terms available from Pricing Team
+                    </Typography>
+                    <Typography variant="h6" color="success.main" fontWeight="bold">
+                      {formatPromoPrice(promoRouteResult.price)} / month
+                    </Typography>
+                    {promoRouteResult.usedRequiredCircuit && (
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                        Route includes required circuit {promoRouteResult.usedRequiredCircuit} to qualify for this promo.
+                      </Typography>
+                    )}
+                  </Box>
+                </CardContent>
+              </Card>
+            )}
           </AccordionDetails>
         </Accordion>
       )}
@@ -1498,7 +1670,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
             <TableContainer component={Paper} elevation={0} sx={{ border: 1, borderColor: 'divider' }}>
               <Table size="small">
                 <TableHead>
-                  <TableRow sx={{ bgcolor: 'grey.100' }}>
+                  <TableRow sx={{ bgcolor: 'action.hover' }}>
                     <TableCell width={40}></TableCell>
                     <TableCell><strong>Source City</strong></TableCell>
                     <TableCell><strong>Destination City</strong></TableCell>
@@ -1537,22 +1709,22 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
-                          <Typography variant="body2" color="success.dark" fontWeight="medium">
+                          <Typography variant="body2" color="success.main" fontWeight="medium">
                             {formatPromoPrice(rule.price_10mb)}
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
-                          <Typography variant="body2" color="success.dark" fontWeight="medium">
+                          <Typography variant="body2" color="success.main" fontWeight="medium">
                             {formatPromoPrice(rule.price_100mb)}
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
-                          <Typography variant="body2" color="success.dark" fontWeight="medium">
+                          <Typography variant="body2" color="success.main" fontWeight="medium">
                             {formatPromoPrice(rule.price_1000mb)}
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
-                          <Typography variant="body2" color="success.dark" fontWeight="medium">
+                          <Typography variant="body2" color="success.main" fontWeight="medium">
                             {formatPromoPrice(rule.price_10gb)}
                           </Typography>
                         </TableCell>
@@ -1620,7 +1792,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
           </Alert>
 
           {/* Pricing Caveats */}
-          <Paper variant="outlined" sx={{ mt: 3, p: 2, bgcolor: 'grey.50' }}>
+          <Paper variant="outlined" sx={{ mt: 3, p: 2, bgcolor: 'action.hover' }}>
             <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
               Ethernet backhaul between IPC fibre / high capacity connected DC's:
             </Typography>

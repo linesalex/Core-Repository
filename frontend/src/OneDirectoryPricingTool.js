@@ -18,6 +18,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import FilterListOffIcon from '@mui/icons-material/FilterListOff';
+import CustomerAutocomplete from './CustomerAutocomplete';
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
@@ -25,6 +26,8 @@ import KeyboardArrowRightIcon from '@mui/icons-material/KeyboardArrowRight';
 import ShoppingBasketIcon from '@mui/icons-material/ShoppingBasket';
 import PhoneIcon from '@mui/icons-material/Phone';
 import GroupIcon from '@mui/icons-material/Group';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import SpeedIcon from '@mui/icons-material/Speed';
 import { API_BASE_URL } from './config';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
@@ -51,6 +54,7 @@ const OneDirectoryPricingTool = () => {
     const savedCurrency = sessionStorage.getItem('oneDirectoryCurrency');
     return {
       customer_name: '',
+      customer_id: null,
       directory_users: '',
       customer_location: null,
       member_resiliency: '',
@@ -59,9 +63,22 @@ const OneDirectoryPricingTool = () => {
       safe_connect_required: false,
       safe_connect_bandwidth: '',
       contract_term: 12,
-      currency_requested: savedCurrency || 'USD'
+      currency_requested: savedCurrency || 'USD',
+      growth_percentage: ''
     };
   });
+
+  // The admin-configured Growth % default, used to pre-fill the quote form and as the
+  // value form resets fall back to. Updated once /voice/one-directory/parameters loads.
+  const [defaultGrowthPercentage, setDefaultGrowthPercentage] = useState(20);
+
+  // Standalone Bandwidth Calculator tab state
+  const [bwCalcUsers, setBwCalcUsers] = useState('');
+  const [bwCalcOnOffNet, setBwCalcOnOffNet] = useState('On Net');
+  const [bwCalcGrowth, setBwCalcGrowth] = useState('');
+  const [bwCalcResult, setBwCalcResult] = useState(null);
+  const [bwCalcLoading, setBwCalcLoading] = useState(false);
+  const [bwCalcError, setBwCalcError] = useState('');
 
   // Data states
   const [cities, setCities] = useState([]);
@@ -213,6 +230,16 @@ const OneDirectoryPricingTool = () => {
         console.warn('Could not load parameters:', parametersRes.reason?.message);
       }
 
+      // Pick up the admin-configured Growth % default and pre-fill the quote form with it
+      if (parametersRes.status === 'fulfilled' && parametersRes.value.data?.growth_percentage?.value !== undefined) {
+        const adminGrowthDefault = parseFloat(parametersRes.value.data.growth_percentage.value);
+        if (!isNaN(adminGrowthDefault)) {
+          setDefaultGrowthPercentage(adminGrowthDefault);
+          setFormData(prev => ({ ...prev, growth_percentage: prev.growth_percentage === '' ? adminGrowthDefault : prev.growth_percentage }));
+          setBwCalcGrowth(prev => prev === '' ? adminGrowthDefault : prev);
+        }
+      }
+
       const allFailed = [citiesRes, currenciesRes, parametersRes].every(r => r.status === 'rejected');
       if (allFailed) {
         setError('Failed to load pricing data. Please refresh and try again.');
@@ -282,6 +309,19 @@ const OneDirectoryPricingTool = () => {
     return `${symbol}${roundedAmount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
+  // Exact (non-rounded) currency formatter - used in the Pricing Logs tab for item/service
+  // rows so they reconcile precisely; only the top-level bundle total is intentionally
+  // rounded up to the nearest $5 as a "nice number" headline figure.
+  const formatExactCurrency = (amount, currency) => {
+    if (amount == null || isNaN(amount)) return '-';
+    const symbols = {
+      'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥', 'CHF': 'CHF ',
+      'AUD': 'A$', 'CAD': 'C$', 'SGD': 'S$', 'HKD': 'HK$'
+    };
+    const symbol = symbols[currency] || currency + ' ';
+    return `${symbol}${Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
   const SectionHeader = ({ icon: Icon, title, color = 'primary' }) => (
     <Box 
       sx={{ 
@@ -342,7 +382,8 @@ const OneDirectoryPricingTool = () => {
         b2b_agility: formData.b2b_agility,
         safe_connect_bandwidth: formData.safe_connect_required ? formData.safe_connect_bandwidth : null,
         contract_term: formData.contract_term,
-        currency_requested: formData.currency_requested
+        currency_requested: formData.currency_requested,
+        growth_percentage: formData.growth_percentage !== '' ? parseFloat(formData.growth_percentage) : undefined
       }, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
@@ -376,7 +417,8 @@ const OneDirectoryPricingTool = () => {
         member_on_off_net: 'On Net',
         b2b_agility: false,
         safe_connect_required: false,
-        safe_connect_bandwidth: ''
+        safe_connect_bandwidth: '',
+        growth_percentage: defaultGrowthPercentage
       }));
       setExpandedAccordion('basket');
     } catch (err) {
@@ -406,7 +448,8 @@ const OneDirectoryPricingTool = () => {
           member_on_off_net: 'On Net',
           b2b_agility: false,
           safe_connect_required: false,
-          safe_connect_bandwidth: ''
+          safe_connect_bandwidth: '',
+          growth_percentage: defaultGrowthPercentage
         }));
         setExpandedAccordion('basket');
       } else {
@@ -414,6 +457,35 @@ const OneDirectoryPricingTool = () => {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCalculateBandwidth = async () => {
+    if (!bwCalcUsers || parseInt(bwCalcUsers) <= 0) {
+      setBwCalcError('Please enter number of users');
+      return;
+    }
+
+    setBwCalcLoading(true);
+    setBwCalcError('');
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/voice/one-directory/calculate-bandwidth`, {
+        directory_users: parseInt(bwCalcUsers),
+        growth_percentage: bwCalcGrowth !== '' ? parseFloat(bwCalcGrowth) : undefined,
+        member_on_off_net: bwCalcOnOffNet
+      }, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      setBwCalcResult(response.data);
+    } catch (err) {
+      setBwCalcError(err.response?.data?.error || 'Failed to calculate bandwidth');
+      setBwCalcResult(null);
+    } finally {
+      setBwCalcLoading(false);
     }
   };
 
@@ -447,7 +519,8 @@ const OneDirectoryPricingTool = () => {
       member_on_off_net: 'On Net',
       b2b_agility: false,
       safe_connect_required: false,
-      safe_connect_bandwidth: ''
+      safe_connect_bandwidth: '',
+      growth_percentage: defaultGrowthPercentage
     }));
   };
 
@@ -474,13 +547,17 @@ const OneDirectoryPricingTool = () => {
         member_on_off_net: item.formSnapshot.member_on_off_net,
         b2b_agility: item.formSnapshot.b2b_agility,
         safe_connect_bandwidth: item.formSnapshot.safe_connect_required ? item.formSnapshot.safe_connect_bandwidth : null,
-        contract_term: item.formSnapshot.contract_term
+        contract_term: item.formSnapshot.contract_term,
+        growth_percentage: item.formSnapshot.growth_percentage !== '' && item.formSnapshot.growth_percentage !== undefined
+          ? parseFloat(item.formSnapshot.growth_percentage)
+          : undefined
       }));
 
       const response = await axios.post(`${API_BASE_URL}/voice/one-directory/calculate-bundle`, {
         items,
         currency_requested: formData.currency_requested,
-        customer_name: formData.customer_name || basketItems[0]?.formSnapshot?.customer_name || null
+        customer_name: formData.customer_name || basketItems[0]?.formSnapshot?.customer_name || null,
+        customer_id: formData.customer_id || basketItems[0]?.formSnapshot?.customer_id || null
       }, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
@@ -500,6 +577,7 @@ const OneDirectoryPricingTool = () => {
   const handleRefresh = () => {
     setFormData({
       customer_name: '',
+      customer_id: null,
       directory_users: '',
       customer_location: null,
       member_resiliency: '',
@@ -508,7 +586,8 @@ const OneDirectoryPricingTool = () => {
       safe_connect_required: false,
       safe_connect_bandwidth: '',
       contract_term: 12,
-      currency_requested: 'USD'
+      currency_requested: 'USD',
+      growth_percentage: defaultGrowthPercentage
     });
     setBasketItems([]);
     setBundleResult(null);
@@ -642,6 +721,87 @@ const OneDirectoryPricingTool = () => {
     }
   };
 
+  // Re-export a single historical bundle from the Pricing Logs tab, using the same
+  // row layout as handleExportToFile (the live basket export) but sourced from the
+  // already-fetched log/log.items instead of the (possibly since-cleared) live basket.
+  const handleExportBundleLog = (log) => {
+    const currency = log.currency || 'USD';
+    const items = log.items || [];
+
+    const escapeCsv = (val) => {
+      const str = String(val ?? '');
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const rows = [];
+
+    rows.push(['One Directory Pricing Bundle Quote']);
+    rows.push(['Generated', new Date().toLocaleString()]);
+    if (log.customer_name) rows.push(['Customer', log.customer_name]);
+    rows.push(['Currency', currency]);
+    rows.push(['Original Quote Date', new Date(log.timestamp || log.created_at).toLocaleString()]);
+    rows.push(['Total Items', log.item_count ?? items.length]);
+    rows.push(['Bundle Total MRC', formatCurrency(log.total_mrc || 0, currency)]);
+    rows.push(['Bundle Total NRC', formatCurrency(log.total_nrc || 0, currency)]);
+    rows.push([]);
+
+    rows.push([
+      'Item #', 'Customer Location', 'Directory Users', 'Resiliency',
+      'On/Off Net', 'Contract Term', 'Service (ISF)', 'Bandwidth',
+      'Service MRC', 'Item Total MRC', 'Item Total NRC', 'Status'
+    ]);
+
+    items.forEach((bItem, idx) => {
+      const itemCurrency = bItem.currency_requested || currency;
+      const services = bItem.services || [];
+      const itemMrc = bItem.final_mrc != null ? formatExactCurrency(bItem.final_mrc, itemCurrency) : '';
+      const itemNrc = bItem.final_nrc != null ? formatExactCurrency(bItem.final_nrc, itemCurrency) : '';
+
+      const baseFields = [
+        idx + 1,
+        bItem.customer_location || 'N/A',
+        bItem.directory_users,
+        bItem.member_resiliency,
+        bItem.member_on_off_net,
+        `${bItem.contract_term} months`
+      ];
+
+      if (services.length > 0) {
+        services.forEach((svc, sIdx) => {
+          const svcMrc = svc.poa ? 'POA' : (svc.mrc != null ? formatExactCurrency(svc.mrc, itemCurrency) : '');
+          const rowPrefix = sIdx === 0 ? baseFields : ['', '', '', '', '', ''];
+          rows.push([
+            ...rowPrefix,
+            svc.name,
+            svc.bandwidth,
+            svcMrc,
+            sIdx === 0 ? itemMrc : '',
+            sIdx === 0 ? itemNrc : '',
+            svc.poa ? 'POA' : 'Priced'
+          ]);
+        });
+      } else {
+        rows.push([...baseFields, '', '', '', itemMrc, itemNrc, 'Priced']);
+      }
+    });
+
+    rows.push([]);
+    rows.push(['Terms and Conditions']);
+    pricingTerms.forEach((term, index) => { rows.push([`${index + 1}. ${term}`]); });
+
+    const csvContent = rows.map(row => row.map(escapeCsv).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `one_directory_bundle_${log.id}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    window.URL.revokeObjectURL(url);
+  };
+
   const handleClearLogs = async () => {
     if (!window.confirm('Are you sure you want to clear all One Directory pricing logs? This cannot be undone.')) return;
     try {
@@ -710,6 +870,7 @@ const OneDirectoryPricingTool = () => {
         <Tabs value={currentTab} onChange={(e, v) => setCurrentTab(v)}>
           <Tab icon={<CalculateIcon />} label="Pricing Calculator" />
           <Tab icon={<HistoryIcon />} label="Pricing Logs" />
+          <Tab icon={<SpeedIcon />} label="Bandwidth Calculator" />
         </Tabs>
       </Box>
 
@@ -745,13 +906,11 @@ const OneDirectoryPricingTool = () => {
               <Grid item xs={12} md={6}>
                 {/* Customer Name Section */}
                 <Box sx={{ mb: 3 }}>
-                  <TextField
-                    fullWidth
+                  <CustomerAutocomplete
                     size="small"
                     label="Customer Name"
                     value={formData.customer_name}
-                    onChange={(e) => setFormData(prev => ({ ...prev, customer_name: e.target.value }))}
-                    placeholder="Enter customer name"
+                    onChange={(name, customerId) => setFormData(prev => ({ ...prev, customer_name: name, customer_id: customerId }))}
                   />
                 </Box>
 
@@ -769,6 +928,28 @@ const OneDirectoryPricingTool = () => {
                         onChange={(e) => setFormData(prev => ({ ...prev, directory_users: e.target.value }))}
                         inputProps={{ min: 1 }}
                         helperText="Enter the number of directory users to calculate required bandwidth"
+                      />
+                    </Grid>
+                  </Grid>
+                </Box>
+
+                {/* Growth % Override Section */}
+                <Box sx={{ mb: 3 }}>
+                  <SectionHeader icon={TrendingUpIcon} title="Growth %" color="primary" />
+                  <Grid container spacing={2}>
+                    <Grid item xs={12}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Growth % Override"
+                        type="number"
+                        value={formData.growth_percentage}
+                        onChange={(e) => setFormData(prev => ({ ...prev, growth_percentage: e.target.value }))}
+                        inputProps={{ min: 0, step: 0.1 }}
+                        InputProps={{
+                          endAdornment: <InputAdornment position="end">%</InputAdornment>
+                        }}
+                        helperText={`Default = ${defaultGrowthPercentage}%`}
                       />
                     </Grid>
                   </Grid>
@@ -1024,7 +1205,7 @@ const OneDirectoryPricingTool = () => {
               <TableContainer component={Paper} variant="outlined" sx={{ mb: 3 }}>
                 <Table size="small">
                   <TableHead>
-                    <TableRow sx={{ backgroundColor: 'grey.100' }}>
+                    <TableRow sx={{ backgroundColor: 'action.hover' }}>
                       <TableCell sx={{ width: 30 }}></TableCell>
                       <TableCell><strong>Customer Location</strong></TableCell>
                       <TableCell><strong>Dir. Users</strong></TableCell>
@@ -1368,7 +1549,7 @@ const OneDirectoryPricingTool = () => {
                           sx={{ 
                             fontSize: '0.8125rem', 
                             color: 'text.secondary',
-                            backgroundColor: 'grey.50',
+                            backgroundColor: 'action.hover',
                             borderRadius: 1,
                             p: 1.5
                           }}
@@ -1423,7 +1604,7 @@ const OneDirectoryPricingTool = () => {
 
                   {/* Terms and Conditions */}
                   <Grid item xs={12}>
-                    <Card variant="outlined" sx={{ backgroundColor: 'grey.50' }}>
+                    <Card variant="outlined" sx={{ backgroundColor: 'action.hover' }}>
                       <CardContent>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                           <InfoIcon color="info" />
@@ -1458,7 +1639,7 @@ const OneDirectoryPricingTool = () => {
               textAlign: 'center', 
               py: 8,
               px: 3,
-              backgroundColor: 'grey.50'
+              backgroundColor: 'action.hover'
             }}
           >
             <Box
@@ -1469,7 +1650,7 @@ const OneDirectoryPricingTool = () => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: 'grey.200',
+                backgroundColor: 'action.selected',
                 mx: 'auto',
                 mb: 2
               }}
@@ -1611,7 +1792,7 @@ const OneDirectoryPricingTool = () => {
             <TableContainer component={Paper}>
               <Table size="small">
                 <TableHead>
-                  <TableRow sx={{ backgroundColor: 'grey.100' }}>
+                  <TableRow sx={{ backgroundColor: 'action.hover' }}>
                     <TableCell sx={{ width: 30 }}></TableCell>
                     <TableCell><strong>Bundle</strong></TableCell>
                     <TableCell><strong>Customer</strong></TableCell>
@@ -1621,12 +1802,13 @@ const OneDirectoryPricingTool = () => {
                     <TableCell><strong>Currency</strong></TableCell>
                     <TableCell align="right"><strong>Total MRC</strong></TableCell>
                     <TableCell align="right"><strong>Total NRC</strong></TableCell>
+                    <TableCell align="center"><strong>Actions</strong></TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {pricingLogs.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} align="center" sx={{ py: 4 }}>
+                      <TableCell colSpan={10} align="center" sx={{ py: 4 }}>
                         <Typography color="text.secondary">No pricing logs found</Typography>
                       </TableCell>
                     </TableRow>
@@ -1695,6 +1877,16 @@ const OneDirectoryPricingTool = () => {
                                 {log.currency || 'USD'} {roundUpToNearest5(log.total_nrc || 0).toLocaleString()}
                               </Typography>
                             </TableCell>
+                            <TableCell align="center">
+                              <Tooltip title="Export this bundle to CSV">
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => { e.stopPropagation(); handleExportBundleLog(log); }}
+                                >
+                                  <DownloadIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </TableCell>
                           </TableRow>
 
                           {/* Level 2: Expanded location items within bundle */}
@@ -1708,9 +1900,9 @@ const OneDirectoryPricingTool = () => {
                                   hover
                                   onClick={(e) => { e.stopPropagation(); setExpandedLogItems(prev => ({ ...prev, [itemKey]: !prev[itemKey] })); }}
                                   sx={{ 
-                                    backgroundColor: 'grey.50', 
+                                    backgroundColor: 'action.hover', 
                                     cursor: servicesList.length > 0 ? 'pointer' : 'default',
-                                    '&:hover': { backgroundColor: 'grey.100' }
+                                    '&:hover': { backgroundColor: 'action.hover' }
                                   }}
                                 >
                                   <TableCell sx={{ width: 30, px: 1, pl: 3 }}>
@@ -1755,14 +1947,15 @@ const OneDirectoryPricingTool = () => {
                                   </TableCell>
                                   <TableCell align="right">
                                     <Typography variant="body2" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
-                                      {formatCurrency(bItem.final_mrc, bItem.currency_requested)}
+                                      {formatExactCurrency(bItem.final_mrc, bItem.currency_requested)}
                                     </Typography>
                                   </TableCell>
                                   <TableCell align="right">
                                     <Typography variant="body2" sx={{ fontSize: '0.7rem' }}>
-                                      {formatCurrency(bItem.final_nrc, bItem.currency_requested)}
+                                      {formatExactCurrency(bItem.final_nrc, bItem.currency_requested)}
                                     </Typography>
                                   </TableCell>
+                                  <TableCell></TableCell>
                                 </TableRow>
 
                                 {/* Level 3: Individual service elements within location */}
@@ -1790,15 +1983,15 @@ const OneDirectoryPricingTool = () => {
                                         {svc.bandwidth || '-'}
                                       </Typography>
                                     </TableCell>
-                                    <TableCell colSpan={4}></TableCell>
+                                    <TableCell colSpan={5}></TableCell>
                                     <TableCell align="right">
                                       <Typography variant="body2" sx={{ fontSize: '0.65rem', color: 'text.secondary' }}>
-                                        {svc.mrc != null ? formatCurrency(svc.mrc, bItem.currency_requested) : '-'}
+                                        {svc.mrc != null ? formatExactCurrency(svc.mrc, bItem.currency_requested) : '-'}
                                       </Typography>
                                     </TableCell>
                                     <TableCell align="right">
                                       <Typography variant="body2" sx={{ fontSize: '0.65rem', color: 'text.secondary' }}>
-                                        {svc.nrc != null && svc.nrc > 0 ? formatCurrency(svc.nrc, bItem.currency_requested) : '-'}
+                                        {svc.nrc != null && svc.nrc > 0 ? formatExactCurrency(svc.nrc, bItem.currency_requested) : '-'}
                                       </Typography>
                                     </TableCell>
                                   </TableRow>
@@ -1808,7 +2001,7 @@ const OneDirectoryPricingTool = () => {
                                 {isItemExpanded && logsPermissionLevel === 'admin' && bItem.calculation_breakdown_json && (
                                   <TableRow key={`bundle-${log.id}-item-${bIdx}-breakdown`} sx={{ backgroundColor: (theme) => alpha(theme.palette.grey[500], 0.06) }}>
                                     <TableCell></TableCell>
-                                    <TableCell colSpan={8}>
+                                    <TableCell colSpan={9}>
                                       <Box sx={{ pl: 4 }}>
                                         <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 0.5 }}>
                                           Calculation Breakdown (JSON)
@@ -1817,9 +2010,9 @@ const OneDirectoryPricingTool = () => {
                                           component="pre"
                                           sx={{
                                             fontSize: '0.65rem',
-                                            backgroundColor: 'grey.100',
+                                            backgroundColor: 'action.hover',
                                             border: '1px solid',
-                                            borderColor: 'grey.300',
+                                            borderColor: 'divider',
                                             borderRadius: 1,
                                             p: 1.5,
                                             m: 0,
@@ -1857,6 +2050,98 @@ const OneDirectoryPricingTool = () => {
               />
             </Box>
           )}
+      </TabPanel>
+
+      {/* Bandwidth Calculator Tab */}
+      <TabPanel value={currentTab} index={2}>
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={5}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
+                  <SpeedIcon color="primary" />
+                  Bandwidth Calculator
+                </Typography>
+
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Number of Users *"
+                  type="number"
+                  value={bwCalcUsers}
+                  onChange={(e) => setBwCalcUsers(e.target.value)}
+                  inputProps={{ min: 1 }}
+                  sx={{ mb: 2 }}
+                />
+
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Growth %"
+                  type="number"
+                  value={bwCalcGrowth}
+                  onChange={(e) => setBwCalcGrowth(e.target.value)}
+                  inputProps={{ min: 0, step: 0.1 }}
+                  InputProps={{
+                    endAdornment: <InputAdornment position="end">%</InputAdornment>
+                  }}
+                  helperText={`Default = ${defaultGrowthPercentage}%`}
+                  sx={{ mb: 2 }}
+                />
+
+                <FormControl fullWidth size="small" sx={{ mb: 3 }}>
+                  <InputLabel>On/Off Net</InputLabel>
+                  <Select
+                    value={bwCalcOnOffNet}
+                    onChange={(e) => setBwCalcOnOffNet(e.target.value)}
+                    label="On/Off Net"
+                  >
+                    <MenuItem value="On Net">On Net</MenuItem>
+                    <MenuItem value="Off Net">Off Net</MenuItem>
+                  </Select>
+                </FormControl>
+
+                {bwCalcError && (
+                  <Alert severity="error" sx={{ mb: 2 }}>{bwCalcError}</Alert>
+                )}
+
+                <Button
+                  fullWidth
+                  variant="contained"
+                  startIcon={bwCalcLoading ? <CircularProgress size={18} color="inherit" /> : <CalculateIcon />}
+                  onClick={handleCalculateBandwidth}
+                  disabled={bwCalcLoading}
+                >
+                  {bwCalcLoading ? 'Calculating...' : 'Calculate Bandwidth'}
+                </Button>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          <Grid item xs={12} md={7}>
+            {bwCalcResult ? (
+              <Card sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 4 }}>
+                <Box sx={{ textAlign: 'center' }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    Required Bandwidth
+                  </Typography>
+                  <Typography variant="h2" color="primary.main" sx={{ fontWeight: 700 }}>
+                    {bwCalcResult.recommended_bandwidth}
+                  </Typography>
+                </Box>
+              </Card>
+            ) : (
+              <Card sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 4 }}>
+                <Box sx={{ textAlign: 'center' }}>
+                  <SpeedIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
+                  <Typography variant="body2" color="text.disabled">
+                    Enter the number of users and click "Calculate Bandwidth" to see the result
+                  </Typography>
+                </Box>
+              </Card>
+            )}
+          </Grid>
+        </Grid>
       </TabPanel>
 
       {/* Error / Success Snackbars */}

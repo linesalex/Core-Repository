@@ -10,11 +10,22 @@ export const fetchRoutes = () => api.get(`${API_BASE_URL}/network_routes`).then(
 export const fetchRoutesWithKMZ = () => api.get(`${API_BASE_URL}/network_routes_with_kmz`).then(res => res.data);
 export const searchRoutes = (filters) => api.get(`${API_BASE_URL}/network_routes_search`, { params: filters }).then(res => res.data);
 export const exportRoutesCSV = () => api.get(`${API_BASE_URL}/network_routes_export`, { responseType: 'blob' });
+export const exportNetworkMapPDF = (regions, details) => api.get(`${API_BASE_URL}/network_routes_export_map`, {
+  responseType: 'blob',
+  params: {
+    regions: regions.join(','),
+    details: Object.keys(details).filter((key) => details[key]).join(','),
+  },
+});
 export const addRoute = (data) => api.post(`${API_BASE_URL}/network_routes`, data);
 export const editRoute = (id, data) => api.put(`${API_BASE_URL}/network_routes/${id}`, data);
 export const deleteRoute = (id) => api.delete(`${API_BASE_URL}/network_routes/${id}`);
 export const fetchRoute = (id) => api.get(`${API_BASE_URL}/network_routes/${id}`).then(res => res.data);
 export const getRouteTracking = (circuitId) => api.get(`${API_BASE_URL}/network_routes/${circuitId}/tracking`).then(res => res.data);
+
+// Self-service Live Latency probe configuration (Add/Edit Network Route)
+export const getLiveLatencyProbe = (circuitId) => api.get(`${API_BASE_URL}/network_routes/${circuitId}/live_latency_probe`).then(res => res.data);
+export const pushLiveLatencyProbe = (circuitId, apiInstanceName) => api.post(`${API_BASE_URL}/network_routes/${circuitId}/live_latency_probe`, { api_instance_name: apiInstanceName }).then(res => res.data);
 
 // KMZ Viewer
 export const fetchRoutesByBandwidth = (filters, regions) => api.get(`${API_BASE_URL}/kmz_viewer/routes_by_bandwidth`, { params: { filters, regions } }).then(res => res.data);
@@ -86,6 +97,44 @@ export const reserveDarkFiber = (id, reservedBy) => {
 
 export const releaseDarkFiber = (id, releasedBy) => {
   return api.post(`${API_BASE_URL}/dark_fiber_details/${id}/release`, { released_by: releasedBy }).then(res => res.data);
+};
+
+// Customers (shared master list, used by pricing tools + Customer Routes)
+export const customerApi = {
+  getCustomers: (query) => api.get(`${API_BASE_URL}/customers`, { params: { q: query } }).then(res => res.data),
+  createCustomer: (name) => api.post(`${API_BASE_URL}/customers`, { name }).then(res => res.data),
+  updateCustomer: (id, data) => api.put(`${API_BASE_URL}/customers/${id}`, data).then(res => res.data)
+};
+
+// Customer Routes (Customer Service / Aggregate KMZ database) — shares network_routes permission
+export const customerRouteApi = {
+  getRoutes: (params = {}) => api.get(`${API_BASE_URL}/customer_routes`, { params }).then(res => res.data),
+  getRoute: (circuitId) => api.get(`${API_BASE_URL}/customer_routes/${circuitId}`).then(res => res.data),
+  createRoute: (data) => api.post(`${API_BASE_URL}/customer_routes`, data).then(res => res.data),
+  updateRoute: (circuitId, data) => api.put(`${API_BASE_URL}/customer_routes/${circuitId}`, data).then(res => res.data),
+  deleteRoute: (circuitId) => api.delete(`${API_BASE_URL}/customer_routes/${circuitId}`).then(res => res.data),
+
+  uploadKmz: (circuitId, files) => {
+    const formData = new FormData();
+    (Array.isArray(files) ? files : [files]).forEach(file => formData.append('kmz_files', file));
+    return api.post(`${API_BASE_URL}/customer_routes/${circuitId}/kmz`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    }).then(res => res.data);
+  },
+  getKmzHistory: (circuitId) => api.get(`${API_BASE_URL}/customer_routes/${circuitId}/kmz`).then(res => res.data),
+  downloadKmz: (fileId, fileName) => {
+    return api.get(`${API_BASE_URL}/customer_routes/kmz/${fileId}/download`, { responseType: 'blob' }).then(response => {
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', fileName || `kmz-${fileId}.kmz`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    });
+  },
+  deleteKmz: (fileId) => api.delete(`${API_BASE_URL}/customer_routes/kmz/${fileId}`).then(res => res.data)
 };
 
 // Repository Types
@@ -238,20 +287,17 @@ export const networkDesignApi = {
 export const getBulkUploadModules = () => {
   return Promise.resolve([
     { id: 'network_routes', name: 'Network Routes', description: 'Bulk upload network route data with locations and carriers' },
-    { id: 'exchange_feeds', name: 'Exchange Feeds', description: 'Bulk upload exchange feed data with ISF and pricing information' },
-    { id: 'exchange_contacts', name: 'Exchange Contacts', description: 'Bulk upload exchange contact information' },
+    { id: 'market_data_contacts', name: 'Market Data & Extranet Contacts', description: 'Bulk upload Market Data & Extranet contact information' },
+    { id: 'extranet_providers', name: 'Extranet Providers', description: 'Bulk upload extranet provider information with resiliency and availability' },
+    { id: 'extranet_products', name: 'Extranet Products', description: 'Bulk upload extranet products with ISF and datacenter information' },
     { id: 'exchange_rates', name: 'Exchange Rates', description: 'Bulk upload currency exchange rates for pricing calculations' },
     { id: 'locations', name: 'Manage Locations', description: 'Bulk upload POP locations with pricing and capability data' },
     { id: 'carriers', name: 'Manage Carriers', description: 'Bulk upload carrier information with regional coverage' },
     { id: 'carrier_contacts', name: 'Carrier Contacts', description: 'Bulk upload carrier contact information and details' },
     { id: 'pop_capabilities', name: 'POP Capabilities', description: 'Bulk upload location capability matrix and service availability' },
-    { id: 'exchanges', name: 'Exchange Providers', description: 'Bulk upload exchange provider information and details' },
     { id: 'users', name: 'User Management', description: 'Bulk upload user accounts with roles and permissions' },
     { id: 'live_latency_config', name: 'Live Latency Config', description: 'Bulk upload live latency API configurations for circuit monitoring' },
     { id: 'promo_pricing', name: 'Promo Pricing', description: 'Bulk upload promotional pricing rules with location-based routing' },
-    { id: 'extranet_providers', name: 'Extranet Providers', description: 'Bulk upload extranet provider information with resiliency and availability' },
-    { id: 'extranet_products', name: 'Extranet Products', description: 'Bulk upload extranet products with ISF and datacenter information' },
-    { id: 'extranet_contacts', name: 'Extranet Contacts', description: 'Bulk upload extranet provider contact information' },
     { id: 'extranet_pricing_cities', name: 'Extranet Pricing Cities', description: 'Bulk upload pricing tier city assignments for extranet pricing' },
     { id: 'extranet_rate_card', name: 'Extranet Rate Card', description: 'Bulk upload extranet pricing rate card with bandwidth and tier pricing' },
     { id: 'cnx_colocation_racks', name: 'CNX Colocation Racks', description: 'Bulk upload colocation rack data with location POP codes, rack types, power, and RU capacity' },
@@ -341,28 +387,8 @@ export const downloadRackDeviceExport = (rackId, locationCode, rackIdLabel) => {
 };
 
 // ====================================
-// EXCHANGE PRICING TOOL
+// USER REGISTRATION / APPROVAL
 // ====================================
-
-export const exchangePricingApi = {
-  // Quote Management
-  createQuote: (data) => api.post(`${API_BASE_URL}/exchange-pricing/quotes`, data).then(res => res.data),
-  getQuoteHistory: (params = {}) => api.get(`${API_BASE_URL}/exchange-pricing/quotes`, { params }).then(res => res.data),
-  
-  // Data for form dropdowns
-  getRegions: () => api.get(`${API_BASE_URL}/exchange-pricing/regions`).then(res => res.data),
-  getExchanges: (region) => api.get(`${API_BASE_URL}/exchange-pricing/exchanges/${region}`).then(res => res.data),
-  getFeeds: (exchangeId) => api.get(`${API_BASE_URL}/exchange-pricing/feeds/${exchangeId}`).then(res => res.data),
-  getCurrencies: () => api.get(`${API_BASE_URL}/exchange-pricing/currencies`).then(res => res.data),
-  getDatacenters: (region) => api.get(`${API_BASE_URL}/exchange-pricing/datacenters/${region}`).then(res => res.data),
-  
-  // Audit Logs
-  getAuditLogs: (params = {}) => api.get(`${API_BASE_URL}/exchange-pricing/audit_logs`, { params }).then(res => res.data),
-  clearAuditLogs: () => api.delete(`${API_BASE_URL}/exchange-pricing/audit_logs`).then(res => res.data),
-  exportAuditLogs: () => {
-    window.open(`${API_BASE_URL}/exchange-pricing/audit_logs/export`, '_blank');
-  }
-};
 
 // User Registration
 export const registerUser = (userData) => api.post(`${API_BASE_URL}/register`, userData);
@@ -389,6 +415,9 @@ export const getLocations = () => api.get(`${API_BASE_URL}/locations`).then(res 
 // Cross Connect
 export const getCrossConnectInfo = (locationId) => api.get(`${API_BASE_URL}/locations/${locationId}/cross-connect`).then(res => res.data);
 export const updateCrossConnectInfo = (locationId, data) => api.put(`${API_BASE_URL}/locations/${locationId}/cross-connect`, data);
+
+// Cross Connects Pricing (sales-facing, Network Routes Repository submodule)
+export const getCrossConnectsPricing = () => api.get(`${API_BASE_URL}/cross-connects-pricing`).then(res => res.data);
 
 // ====================================
 // CNX COLOCATION ELEVATION & DEVICES
@@ -600,32 +629,19 @@ export const getAnalyticsOneDirectory = (startDate, endDate) => {
 // ====================================
 
 export const extranetPricingApi = {
-  // Pricing Parameters
   getParameters: () => api.get(`${API_BASE_URL}/extranet-pricing/parameters`).then(res => res.data),
   updateParameters: (parameters) => api.put(`${API_BASE_URL}/extranet-pricing/parameters`, { parameters }).then(res => res.data),
-  
-  // IPSec Surcharges
   getIpsecSurcharges: () => api.get(`${API_BASE_URL}/extranet-pricing/ipsec-surcharges`).then(res => res.data),
   updateIpsecSurcharges: (surcharges) => api.put(`${API_BASE_URL}/extranet-pricing/ipsec-surcharges`, { surcharges }).then(res => res.data),
-  
-  // Cities
   getCities: () => api.get(`${API_BASE_URL}/extranet-pricing/cities`).then(res => res.data),
   addCity: (data) => api.post(`${API_BASE_URL}/extranet-pricing/cities`, data).then(res => res.data),
   updateCity: (id, data) => api.put(`${API_BASE_URL}/extranet-pricing/cities/${id}`, data).then(res => res.data),
   deleteCity: (id) => api.delete(`${API_BASE_URL}/extranet-pricing/cities/${id}`).then(res => res.data),
-  
-  // Rate Card
   getRateCard: () => api.get(`${API_BASE_URL}/extranet-pricing/rate-card`).then(res => res.data),
   updateRateCardBulk: (rates) => api.post(`${API_BASE_URL}/extranet-pricing/rate-card/bulk`, { rates }).then(res => res.data),
-  
-  // Bandwidths and Currencies
   getBandwidths: () => api.get(`${API_BASE_URL}/extranet-pricing/bandwidths`).then(res => res.data),
   getCurrencies: () => api.get(`${API_BASE_URL}/extranet-pricing/currencies`).then(res => res.data),
-  
-  // Calculate pricing
   calculatePricing: (data) => api.post(`${API_BASE_URL}/extranet-pricing/calculate`, data).then(res => res.data),
-  
-  // Providers and Products
   getProvidersByRegion: (region) => api.get(`${API_BASE_URL}/extranet-pricing/providers/${region}`).then(res => res.data),
   getProductsByProvider: (providerId) => api.get(`${API_BASE_URL}/extranet-pricing/products/${providerId}`).then(res => res.data)
 };
@@ -716,6 +732,13 @@ export const saveRouteFinderSearchLog = (data) => {
   return api.post(`${API_BASE_URL}/route_finder/save-search-log`, data).then(res => res.data);
 };
 
+// Find the best route between source/destination for which promo pricing is valid
+// at the requested bandwidth (actively searches for a promo-eligible route rather
+// than just checking whether the default shortest-latency route qualifies).
+export const findPromoRoute = (searchParams) => {
+  return api.post(`${API_BASE_URL}/route_finder/find_promo_route`, searchParams).then(res => res.data);
+};
+
 // ====================================
 // CARRIER QUOTE REPOSITORY APIs
 // ====================================
@@ -797,11 +820,69 @@ export const carrierQuoteApi = {
   // Get POP locations for autocomplete
   getPopLocations: (query) => api.get(`${API_BASE_URL}/carrier_quotes/pop_locations`, { params: { q: query } }).then(res => res.data),
 
-  // Get custom locations for autocomplete
-  getCustomLocations: (query) => api.get(`${API_BASE_URL}/carrier_quotes/custom_locations`, { params: { q: query } }).then(res => res.data),
+  // Get a single POP by location code or datacenter name (exact, case-insensitive)
+  getPopLocation: (code) => api.get(`${API_BASE_URL}/carrier_quotes/pop_locations`, { params: { code } }).then(res => res.data),
+
+  // Get custom locations for autocomplete (plain array) — pass a string for the
+  // legacy search-only behavior, or an options object ({ q, building_type, limit,
+  // offset }) to page through the full list, which instead resolves to { locations, total }
+  getCustomLocations: (queryOrOptions) => {
+    const params = typeof queryOrOptions === 'string' || queryOrOptions === undefined
+      ? { q: queryOrOptions }
+      : queryOrOptions;
+    return api.get(`${API_BASE_URL}/carrier_quotes/custom_locations`, { params }).then(res => res.data);
+  },
+
+  // Get a single custom location
+  getCustomLocation: (id) => api.get(`${API_BASE_URL}/carrier_quotes/custom_locations/${id}`).then(res => res.data),
 
   // Create a custom location
   createCustomLocation: (data) => api.post(`${API_BASE_URL}/carrier_quotes/custom_locations`, data).then(res => res.data),
+
+  // Update a custom location (full detail — used by Site Validation)
+  updateCustomLocation: (id, data) => api.put(`${API_BASE_URL}/carrier_quotes/custom_locations/${id}`, data).then(res => res.data),
+
+  // Update ONLY building_type — leaves address/city/country/lat-lng untouched,
+  // for bulk-fixing Building Type on many existing locations at once
+  updateCustomLocationBuildingType: (id, building_type) => api.patch(`${API_BASE_URL}/carrier_quotes/custom_locations/${id}/building_type`, { building_type }).then(res => res.data),
+
+  // Delete a single custom location — server rejects if it's still used by any quote
+  deleteCustomLocation: (id) => api.delete(`${API_BASE_URL}/carrier_quotes/custom_locations/${id}`).then(res => res.data),
+
+  // Delete every custom location not referenced by any quote in the repository
+  purgeUnusedCustomLocations: () => api.delete(`${API_BASE_URL}/carrier_quotes/custom_locations/purge_unused`).then(res => res.data),
+
+  // Merge duplicate custom locations into one canonical (target) location —
+  // repoints every quote referencing a source id, then deletes the source rows
+  mergeCustomLocations: (target_id, source_ids) => api.post(`${API_BASE_URL}/carrier_quotes/custom_locations/merge`, { target_id, source_ids }).then(res => res.data),
+
+  // Fuzzy-match address against existing custom + POP locations
+  matchLocation: (data) => api.post(`${API_BASE_URL}/carrier_quotes/locations/match`, data).then(res => res.data),
+
+  // Nominatim forward verify (interactive)
+  verifyLocation: (data) => api.post(`${API_BASE_URL}/carrier_quotes/locations/verify`, data).then(res => res.data),
+
+  // Nominatim reverse (pin drag)
+  reverseLocation: (data) => api.post(`${API_BASE_URL}/carrier_quotes/locations/reverse`, data).then(res => res.data),
+
+  // Quote analytics aggregates
+  getAnalytics: (params = {}) => {
+    const queryParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      if (Array.isArray(value)) {
+        if (value.length === 0) return;
+        queryParams.append(key, value.join('|'));
+        return;
+      }
+      if (typeof value === 'boolean') {
+        queryParams.append(key, value ? 'true' : 'false');
+        return;
+      }
+      queryParams.append(key, value);
+    });
+    return api.get(`${API_BASE_URL}/carrier_quotes/analytics?${queryParams.toString()}`).then(res => res.data);
+  },
 
   // Get carriers for autocomplete
   getCarriers: (query) => api.get(`${API_BASE_URL}/carrier_quotes/carriers`, { params: { q: query } }).then(res => res.data),

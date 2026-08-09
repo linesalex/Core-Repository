@@ -134,7 +134,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     value={getParameterValue('avg_calls_per_user')}
                     onChange={(e) => handleParameterChange('avg_calls_per_user', e.target.value)}
                     helperText="Average concurrent calls per directory user"
-                    sx={{ backgroundColor: editedParameters['avg_calls_per_user'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['avg_calls_per_user'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={12}>
@@ -149,7 +149,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                       endAdornment: <InputAdornment position="end">kbps</InputAdornment>
                     }}
                     helperText="Bandwidth required per call"
-                    sx={{ backgroundColor: editedParameters['call_bandwidth_kbps'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['call_bandwidth_kbps'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={12}>
@@ -164,7 +164,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                       endAdornment: <InputAdornment position="end">%</InputAdornment>
                     }}
                     helperText="Growth factor applied to calculated bandwidth (e.g. 20 = ×1.2)"
-                    sx={{ backgroundColor: editedParameters['growth_percentage'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['growth_percentage'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={12}>
@@ -179,7 +179,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                       endAdornment: <InputAdornment position="end">Mb</InputAdornment>
                     }}
                     helperText="Minimum bandwidth for the One Directory ISF regardless of calculated amount. Set to 0 to disable."
-                    sx={{ backgroundColor: editedParameters['minimum_bandwidth_mb'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['minimum_bandwidth_mb'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
               </Grid>
@@ -210,7 +210,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       endAdornment: <InputAdornment position="end">%</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['resiliency_non_resilient'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['resiliency_non_resilient'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -224,7 +224,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       endAdornment: <InputAdornment position="end">%</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['resiliency_single_site'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['resiliency_single_site'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
               </Grid>
@@ -261,7 +261,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                       startAdornment: <InputAdornment position="start">$</InputAdornment>
                     }}
                     helperText="Fixed MRC deducted from One Directory rate card"
-                    sx={{ backgroundColor: editedParameters['one_control_mrc'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['one_control_mrc'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -272,7 +272,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     value={getParameterValue('one_control_bandwidth')}
                     onChange={(e) => handleParameterChange('one_control_bandwidth', e.target.value)}
                     helperText="Fixed bandwidth (e.g. 5Mb)"
-                    sx={{ backgroundColor: editedParameters['one_control_bandwidth'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['one_control_bandwidth'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={12}>
@@ -287,7 +287,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                       endAdornment: <InputAdornment position="end">Mb</InputAdornment>
                     }}
                     helperText="Minimum total bandwidth for Off Net (excludes One Control). Directory BW is bumped up if total is below this."
-                    sx={{ backgroundColor: editedParameters['off_net_min_bandwidth_mb'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['off_net_min_bandwidth_mb'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
               </Grid>
@@ -321,7 +321,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       startAdornment: <InputAdornment position="start">$</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['nrc_12_month'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['nrc_12_month'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -345,7 +345,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       startAdornment: <InputAdornment position="start">$</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['nrc_24_month'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['nrc_24_month'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -359,7 +359,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       endAdornment: <InputAdornment position="end">%</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['contract_24_discount'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['contract_24_discount'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
               </Grid>
@@ -378,7 +378,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       startAdornment: <InputAdornment position="start">$</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['nrc_36_month'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['nrc_36_month'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -392,7 +392,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       endAdornment: <InputAdornment position="end">%</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['contract_36_discount'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['contract_36_discount'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
               </Grid>
@@ -432,7 +432,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                       endAdornment: <InputAdornment position="end">items</InputAdornment>
                     }}
                     inputProps={{ min: 1 }}
-                    sx={{ backgroundColor: editedParameters['bundle_tier_1_max'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['bundle_tier_1_max'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -448,7 +448,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                       endAdornment: <InputAdornment position="end">items</InputAdornment>
                     }}
                     inputProps={{ min: 2 }}
-                    sx={{ backgroundColor: editedParameters['bundle_tier_2_max'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['bundle_tier_2_max'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
               </Grid>
@@ -469,7 +469,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       endAdornment: <InputAdornment position="end">%</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['bundle_discount_mrc_1_3'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['bundle_discount_mrc_1_3'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -483,7 +483,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       endAdornment: <InputAdornment position="end">%</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['bundle_discount_nrc_1_3'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['bundle_discount_nrc_1_3'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
               </Grid>
@@ -504,7 +504,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       endAdornment: <InputAdornment position="end">%</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['bundle_discount_mrc_4_5'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['bundle_discount_mrc_4_5'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -518,7 +518,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       endAdornment: <InputAdornment position="end">%</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['bundle_discount_nrc_4_5'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['bundle_discount_nrc_4_5'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
               </Grid>
@@ -539,7 +539,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       endAdornment: <InputAdornment position="end">%</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['bundle_discount_mrc_6_plus'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['bundle_discount_mrc_6_plus'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -553,7 +553,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     InputProps={{
                       endAdornment: <InputAdornment position="end">%</InputAdornment>
                     }}
-                    sx={{ backgroundColor: editedParameters['bundle_discount_nrc_6_plus'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['bundle_discount_nrc_6_plus'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
               </Grid>
@@ -585,7 +585,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     value={getParameterValue('b2b_agility_bandwidth')}
                     onChange={(e) => handleParameterChange('b2b_agility_bandwidth', e.target.value)}
                     helperText="Fixed bandwidth used when B2B Agility is enabled (e.g. 10Mb)"
-                    sx={{ backgroundColor: editedParameters['b2b_agility_bandwidth'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['b2b_agility_bandwidth'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={12}>
@@ -596,7 +596,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     value={getParameterValue('safe_connect_bandwidths')}
                     onChange={(e) => handleParameterChange('safe_connect_bandwidths', e.target.value)}
                     helperText='JSON array of bandwidth options, e.g. ["3Mb","5Mb","10Mb"]'
-                    sx={{ backgroundColor: editedParameters['safe_connect_bandwidths'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['safe_connect_bandwidths'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
               </Grid>
@@ -623,7 +623,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     label="Directory Service Name"
                     value={getParameterValue('isf_name_directory')}
                     onChange={(e) => handleParameterChange('isf_name_directory', e.target.value)}
-                    sx={{ backgroundColor: editedParameters['isf_name_directory'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['isf_name_directory'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -633,7 +633,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     label="One Control Service Name"
                     value={getParameterValue('isf_name_one_control')}
                     onChange={(e) => handleParameterChange('isf_name_one_control', e.target.value)}
-                    sx={{ backgroundColor: editedParameters['isf_name_one_control'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['isf_name_one_control'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -643,7 +643,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     label="B2B Agility Service Name"
                     value={getParameterValue('isf_name_b2b_agility')}
                     onChange={(e) => handleParameterChange('isf_name_b2b_agility', e.target.value)}
-                    sx={{ backgroundColor: editedParameters['isf_name_b2b_agility'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['isf_name_b2b_agility'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -653,7 +653,7 @@ const OneDirectoryAdmin = ({ hasPermission }) => {
                     label="Safe Connect Service Name"
                     value={getParameterValue('isf_name_safe_connect')}
                     onChange={(e) => handleParameterChange('isf_name_safe_connect', e.target.value)}
-                    sx={{ backgroundColor: editedParameters['isf_name_safe_connect'] !== undefined ? '#fff3e0' : 'transparent' }}
+                    sx={{ backgroundColor: editedParameters['isf_name_safe_connect'] !== undefined ? 'warning.50' : 'transparent' }}
                   />
                 </Grid>
               </Grid>

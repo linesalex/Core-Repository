@@ -37,7 +37,8 @@ import {
   LocalOffer as LocalOfferIcon,
   AttachMoney as AttachMoneyIcon,
   Route as RouteIcon,
-  Warning as WarningIcon
+  Warning as WarningIcon,
+  Block as BlockIcon
 } from '@mui/icons-material';
 import { api, locationDataApi, networkDesignApi } from './api';
 import { API_BASE_URL } from './config';
@@ -64,7 +65,8 @@ const PromoPricingManager = ({ hasPermission }) => {
     price_100_to_999mb: '',
     price_1000_to_2999mb: '',
     price_3000mb_plus: '',
-    required_circuit_ids: []
+    required_circuit_ids: [],
+    excluded_circuit_ids: []
   });
 
   // Load data on component mount
@@ -149,6 +151,16 @@ const PromoPricingManager = ({ hasPermission }) => {
     return '';
   };
 
+  // Helper function to check for circuits listed in both required and excluded lists
+  // (excluded always wins, so overlapping entries are almost certainly a config mistake)
+  const getCircuitOverlapWarning = () => {
+    const required = formData.required_circuit_ids || [];
+    const excluded = formData.excluded_circuit_ids || [];
+    const overlap = required.filter(c => excluded.includes(c));
+    if (overlap.length === 0) return '';
+    return `Warning: ${overlap.join(', ')} ${overlap.length > 1 ? 'are' : 'is'} listed as both required and excluded. Excluded circuits always take precedence, so this promo can never apply via ${overlap.length > 1 ? 'those circuits' : 'that circuit'}.`;
+  };
+
   // Update same-city warnings when locations change
   // Note: Only source locations must be in the same city. Destinations can span multiple cities.
   useEffect(() => {
@@ -210,7 +222,8 @@ const PromoPricingManager = ({ hasPermission }) => {
         price_100_to_999mb: rule.price_100_to_999mb || '',
         price_1000_to_2999mb: rule.price_1000_to_2999mb || '',
         price_3000mb_plus: rule.price_3000mb_plus || '',
-        required_circuit_ids: rule.required_circuit_ids || []
+        required_circuit_ids: rule.required_circuit_ids || [],
+        excluded_circuit_ids: rule.excluded_circuit_ids || []
       });
     } else {
       setEditingRule(null);
@@ -222,7 +235,8 @@ const PromoPricingManager = ({ hasPermission }) => {
         price_100_to_999mb: '',
         price_1000_to_2999mb: '',
         price_3000mb_plus: '',
-        required_circuit_ids: []
+        required_circuit_ids: [],
+        excluded_circuit_ids: []
       });
     }
     setSameCityWarning({ source: '', destination: '' });
@@ -266,7 +280,8 @@ const PromoPricingManager = ({ hasPermission }) => {
         price_100_to_999mb: parseFloat(formData.price_100_to_999mb) || 0,
         price_1000_to_2999mb: parseFloat(formData.price_1000_to_2999mb) || 0,
         price_3000mb_plus: parseFloat(formData.price_3000mb_plus) || 0,
-        required_circuit_ids: formData.required_circuit_ids || []
+        required_circuit_ids: formData.required_circuit_ids || [],
+        excluded_circuit_ids: formData.excluded_circuit_ids || []
       };
 
       if (editingRule) {
@@ -419,6 +434,7 @@ const PromoPricingManager = ({ hasPermission }) => {
                 <TableCell><strong>1000-2999Mb (USD)</strong></TableCell>
                 <TableCell><strong>3000Mb+ (USD)</strong></TableCell>
                 <TableCell><strong>Required Circuits</strong></TableCell>
+                <TableCell><strong>Excluded Circuits</strong></TableCell>
                 <TableCell><strong>Created</strong></TableCell>
                 <TableCell><strong>Actions</strong></TableCell>
               </TableRow>
@@ -426,11 +442,11 @@ const PromoPricingManager = ({ hasPermission }) => {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={10} align="center">Loading...</TableCell>
+                  <TableCell colSpan={11} align="center">Loading...</TableCell>
                 </TableRow>
               ) : filteredRules.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} align="center">
+                  <TableCell colSpan={11} align="center">
                     {searchQuery ? 'No promo rules found matching your search' : 'No promo pricing rules configured'}
                   </TableCell>
                 </TableRow>
@@ -495,6 +511,31 @@ const PromoPricingManager = ({ hasPermission }) => {
                         </Box>
                       ) : (
                         <Typography variant="body2" color="text.secondary">Any route</Typography>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {rule.excluded_circuit_ids && rule.excluded_circuit_ids.length > 0 ? (
+                        <Box display="flex" flexWrap="wrap" gap={0.5}>
+                          {rule.excluded_circuit_ids.slice(0, 3).map((circuitId, index) => (
+                            <Chip 
+                              key={index} 
+                              label={circuitId} 
+                              size="small" 
+                              variant="outlined"
+                              color="error"
+                              icon={<BlockIcon />}
+                            />
+                          ))}
+                          {rule.excluded_circuit_ids.length > 3 && (
+                            <Chip 
+                              label={`+${rule.excluded_circuit_ids.length - 3} more`} 
+                              size="small" 
+                              variant="outlined"
+                            />
+                          )}
+                        </Box>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">None</Typography>
                       )}
                     </TableCell>
                     <TableCell>
@@ -805,6 +846,82 @@ const PromoPricingManager = ({ hasPermission }) => {
                 }
               />
             </Grid>
+
+            {/* Excluded Circuit IDs */}
+            <Grid item xs={12}>
+              <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
+                <BlockIcon sx={{ verticalAlign: 'middle', mr: 1 }} color="error" />
+                Excluded Circuit IDs (Optional)
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                If specified, this promo will NOT apply when the route includes ANY of these circuit IDs.
+                Exclusions always take precedence over required circuits. Leave empty to apply no exclusions.
+              </Typography>
+            </Grid>
+
+            <Grid item xs={12}>
+              <Autocomplete
+                multiple
+                options={circuitIds}
+                getOptionLabel={getCircuitOptionLabel}
+                value={formData.excluded_circuit_ids}
+                onChange={(event, newValue) => {
+                  // Store circuit IDs as strings
+                  const circuitIdStrings = newValue.map(item => getCircuitId(item));
+                  handleFormChange('excluded_circuit_ids', circuitIdStrings);
+                }}
+                onInputChange={(event, inputValue) => {
+                  // Only fetch circuit IDs when user starts typing
+                  if (inputValue && inputValue.length >= 2) {
+                    loadCircuitIds(inputValue);
+                  } else if (!inputValue) {
+                    // Clear options when input is cleared
+                    setCircuitIds([]);
+                  }
+                }}
+                isOptionEqualToValue={(option, value) => {
+                  // Compare circuit IDs
+                  const optionId = getCircuitId(option);
+                  const valueId = typeof value === 'string' ? value : getCircuitId(value);
+                  return optionId === valueId;
+                }}
+                noOptionsText="Type to search circuits or cable systems..."
+                loadingText="Loading circuits..."
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Excluded Circuit IDs"
+                    placeholder="Search by UCN or cable system..."
+                    helperText="Type at least 2 characters to search circuits by UCN or Cable System name"
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => {
+                    const { key, ...tagProps } = getTagProps({ index });
+                    const label = typeof option === 'string' ? option : getCircuitId(option);
+                    return (
+                      <Chip
+                        key={key}
+                        variant="outlined"
+                        label={label}
+                        {...tagProps}
+                        color="error"
+                        icon={<BlockIcon />}
+                      />
+                    );
+                  })
+                }
+              />
+            </Grid>
+
+            {/* Required/Excluded circuit overlap warning */}
+            {getCircuitOverlapWarning() && (
+              <Grid item xs={12}>
+                <Alert severity="warning" icon={<WarningIcon />}>
+                  {getCircuitOverlapWarning()}
+                </Alert>
+              </Grid>
+            )}
 
             {/* Pricing Tiers */}
             <Grid item xs={12}>

@@ -424,7 +424,7 @@ const AnalyticsDashboard = () => {
             {/* Summary Cards */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Total Calculations</Typography>
                     <Typography variant="h4" fontWeight="bold">{overviewData.totalCalculations.toLocaleString()}</Typography>
@@ -437,7 +437,7 @@ const AnalyticsDashboard = () => {
               </Grid>
               
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                <Card sx={{ bgcolor: 'success.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <PeopleIcon color="primary" fontSize="small" />
@@ -449,7 +449,7 @@ const AnalyticsDashboard = () => {
               </Grid>
 
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                <Card sx={{ bgcolor: 'warning.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Design & Pricing</Typography>
                     <Typography variant="h4" fontWeight="bold">{overviewData.designCalculations?.toLocaleString() || 0}</Typography>
@@ -461,7 +461,7 @@ const AnalyticsDashboard = () => {
               </Grid>
 
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                <Card sx={{ bgcolor: 'secondary.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Allocated Cost</Typography>
                     <Typography variant="h4" fontWeight="bold">{overviewData.allocatedCalculations?.toLocaleString() || 0}</Typography>
@@ -550,7 +550,7 @@ const AnalyticsDashboard = () => {
             {/* Summary Cards */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Total Calculations</Typography>
                     <Typography variant="h4" fontWeight="bold">{designData.totalCalculations.toLocaleString()}</Typography>
@@ -558,7 +558,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                <Card sx={{ bgcolor: 'success.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Avg Suggested Price</Typography>
                     <Typography variant="h4" fontWeight="bold">${parseFloat(designData.averageSuggestedPrice || 0).toLocaleString()}</Typography>
@@ -567,7 +567,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                <Card sx={{ bgcolor: 'warning.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Avg Response Time</Typography>
                     <Typography variant="h4" fontWeight="bold">{designData.averageResponseTime}ms</Typography>
@@ -575,7 +575,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                <Card sx={{ bgcolor: 'secondary.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Unique Routes</Typography>
                     <Typography variant="h4" fontWeight="bold">{designData.routePairs?.length || 0}</Typography>
@@ -779,7 +779,7 @@ const AnalyticsDashboard = () => {
             {/* Summary Cards */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Total Calculations</Typography>
                     <Typography variant="h4" fontWeight="bold">{allocatedData.totalCalculations.toLocaleString()}</Typography>
@@ -787,7 +787,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                <Card sx={{ bgcolor: 'success.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Unique Quote IDs</Typography>
                     <Typography variant="h4" fontWeight="bold">{allocatedData.uniqueQuoteIds}</Typography>
@@ -795,7 +795,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                <Card sx={{ bgcolor: 'warning.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Avg Suggested Price</Typography>
                     <Typography variant="h4" fontWeight="bold">${parseFloat(allocatedData.averageSuggestedPrice || 0).toLocaleString()}</Typography>
@@ -804,7 +804,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                <Card sx={{ bgcolor: 'secondary.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Unique Routes</Typography>
                     <Typography variant="h4" fontWeight="bold">{allocatedData.routePairs?.length || 0}</Typography>
@@ -1040,7 +1040,7 @@ const AnalyticsDashboard = () => {
             {/* Summary Cards */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <PeopleIcon color="primary" fontSize="small" />
@@ -1051,7 +1051,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                <Card sx={{ bgcolor: 'success.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Active This Month</Typography>
                     <Typography variant="h4" fontWeight="bold">{userData.mostActiveUsers?.length || 0}</Typography>
@@ -1059,7 +1059,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                <Card sx={{ bgcolor: 'warning.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>New Users (Last 12 Mo)</Typography>
                     <Typography variant="h4" fontWeight="bold">
@@ -1069,7 +1069,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                <Card sx={{ bgcolor: 'secondary.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Avg Logins (30 days)</Typography>
                     <Typography variant="h4" fontWeight="bold">
@@ -1207,7 +1207,7 @@ const AnalyticsDashboard = () => {
             {/* Summary Cards */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Avg Response Time</Typography>
                     <Typography variant="h4" fontWeight="bold">{performanceData.averageResponseTime}ms</Typography>
@@ -1216,7 +1216,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                <Card sx={{ bgcolor: 'success.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Total Calculations</Typography>
                     <Typography variant="h4" fontWeight="bold">
@@ -1227,7 +1227,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                <Card sx={{ bgcolor: 'warning.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Daily Average</Typography>
                     <Typography variant="h4" fontWeight="bold">
@@ -1240,7 +1240,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={3}>
-                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                <Card sx={{ bgcolor: 'secondary.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Peak Day</Typography>
                     <Typography variant="h4" fontWeight="bold">
@@ -1388,7 +1388,7 @@ const AnalyticsDashboard = () => {
             {/* Summary Cards */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={6} sm={4} md={2.4}>
-                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Total Searches</Typography>
                     <Typography variant="h4" fontWeight="bold">{routeFinderData.totalSearches.toLocaleString()}</Typography>
@@ -1396,7 +1396,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2.4}>
-                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                <Card sx={{ bgcolor: 'success.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Avg Response Time</Typography>
                     <Typography variant="h4" fontWeight="bold">{routeFinderData.averageResponseTime}ms</Typography>
@@ -1404,7 +1404,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2.4}>
-                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                <Card sx={{ bgcolor: 'warning.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Unique Routes</Typography>
                     <Typography variant="h4" fontWeight="bold">{routeFinderData.routePairs?.length || 0}</Typography>
@@ -1412,7 +1412,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2.4}>
-                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                <Card sx={{ bgcolor: 'secondary.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Active Users</Typography>
                     <Typography variant="h4" fontWeight="bold">{routeFinderData.topUsers?.length || 0}</Typography>
@@ -1420,7 +1420,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2.4}>
-                <Card sx={{ bgcolor: '#e0f2f1', height: '100%' }}>
+                <Card sx={{ bgcolor: 'success.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Matrix Referrals</Typography>
                     <Typography variant="h4" fontWeight="bold">{(routeFinderData.latencyMatrixReferrals?.total || 0).toLocaleString()}</Typography>
@@ -1745,7 +1745,7 @@ const AnalyticsDashboard = () => {
             {/* Key Metrics Summary Cards - Row 1 */}
             <Grid container spacing={2} sx={{ mb: 2 }}>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Total Pricing Events</Typography>
                     <Typography variant="h5" fontWeight="bold">{oneDirectoryData.totalLookups?.toLocaleString() || 0}</Typography>
@@ -1756,7 +1756,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                <Card sx={{ bgcolor: 'success.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Connections Priced</Typography>
                     <Typography variant="h5" fontWeight="bold">{oneDirectoryData.totalConnectionsPriced?.toLocaleString() || 0}</Typography>
@@ -1767,7 +1767,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#e1f5fe', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
                       <ShoppingBasketIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
@@ -1781,7 +1781,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                <Card sx={{ bgcolor: 'warning.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Bundle Items Total</Typography>
                     <Typography variant="h5" fontWeight="bold">{oneDirectoryData.bundleStats?.totalBundleItems?.toLocaleString() || 0}</Typography>
@@ -1792,7 +1792,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#fce4ec', height: '100%' }}>
+                <Card sx={{ bgcolor: 'error.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Off-Net Requests</Typography>
                     <Typography variant="h5" fontWeight="bold">{oneDirectoryData.offNetCount?.toLocaleString() || 0}</Typography>
@@ -1803,7 +1803,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                <Card sx={{ bgcolor: 'secondary.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Active Users</Typography>
                     <Typography variant="h5" fontWeight="bold">{oneDirectoryData.topUsers?.length || 0}</Typography>
@@ -1815,7 +1815,7 @@ const AnalyticsDashboard = () => {
             {/* Key Metrics Summary Cards - Row 2 */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#e0f7fa', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>B2B Agility</Typography>
                     <Typography variant="h5" fontWeight="bold">{oneDirectoryData.b2bAgilityCount?.toLocaleString() || 0}</Typography>
@@ -1826,7 +1826,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#fff8e1', height: '100%' }}>
+                <Card sx={{ bgcolor: 'warning.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Safe Connect</Typography>
                     <Typography variant="h5" fontWeight="bold">{oneDirectoryData.safeConnectCount?.toLocaleString() || 0}</Typography>
@@ -1837,7 +1837,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#efebe9', height: '100%' }}>
+                <Card sx={{ bgcolor: 'action.hover', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Individual Lookups</Typography>
                     <Typography variant="h5" fontWeight="bold">{oneDirectoryData.individualLookups?.toLocaleString() || 0}</Typography>
@@ -1848,7 +1848,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#e8eaf6', height: '100%' }}>
+                <Card sx={{ bgcolor: 'primary.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Total MRC Generated</Typography>
                     <Typography variant="h5" fontWeight="bold">${oneDirectoryData.totalMrcSum?.toLocaleString() || 0}</Typography>
@@ -1946,7 +1946,7 @@ const AnalyticsDashboard = () => {
                     {/* Bundle Summary */}
                     <Grid item xs={12} md={4}>
                       <Typography variant="subtitle2" color="textSecondary" gutterBottom>Bundle Summary</Typography>
-                      <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                      <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
                           <Typography variant="body2" color="text.secondary">Total Bundles:</Typography>
                           <Typography variant="body2" fontWeight="bold">{oneDirectoryData.bundleStats.totalBundles}</Typography>
@@ -2326,7 +2326,7 @@ const AnalyticsDashboard = () => {
             {/* Key Metrics Summary Cards - Row 1 */}
             <Grid container spacing={2} sx={{ mb: 2 }}>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#e3f2fd', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Total Pricing Events</Typography>
                     <Typography variant="h5" fontWeight="bold">{extranetPricingData.totalLookups?.toLocaleString() || 0}</Typography>
@@ -2337,7 +2337,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#e8f5e9', height: '100%' }}>
+                <Card sx={{ bgcolor: 'success.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Connections Priced</Typography>
                     <Typography variant="h5" fontWeight="bold">{extranetPricingData.totalConnectionsPriced?.toLocaleString() || 0}</Typography>
@@ -2348,7 +2348,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#e1f5fe', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
                       <ShoppingBasketIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
@@ -2362,7 +2362,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#fff3e0', height: '100%' }}>
+                <Card sx={{ bgcolor: 'warning.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Bundle Items Total</Typography>
                     <Typography variant="h5" fontWeight="bold">{extranetPricingData.bundleStats?.totalBundleItems?.toLocaleString() || 0}</Typography>
@@ -2373,7 +2373,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#fce4ec', height: '100%' }}>
+                <Card sx={{ bgcolor: 'error.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Discounts Requested</Typography>
                     <Typography variant="h5" fontWeight="bold">{extranetPricingData.discountStats?.requestedCount?.toLocaleString() || 0}</Typography>
@@ -2384,7 +2384,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#f3e5f5', height: '100%' }}>
+                <Card sx={{ bgcolor: 'secondary.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Active Users</Typography>
                     <Typography variant="h5" fontWeight="bold">{extranetPricingData.topUsers?.length || 0}</Typography>
@@ -2396,7 +2396,7 @@ const AnalyticsDashboard = () => {
             {/* Key Metrics Summary Cards - Row 2 */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#e0f7fa', height: '100%' }}>
+                <Card sx={{ bgcolor: 'info.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>IPSec Requests</Typography>
                     <Typography variant="h5" fontWeight="bold">{extranetPricingData.ipsecStats?.required?.toLocaleString() || 0}</Typography>
@@ -2407,7 +2407,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#fff8e1', height: '100%' }}>
+                <Card sx={{ bgcolor: 'warning.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Cloud Members</Typography>
                     <Typography variant="h5" fontWeight="bold">{extranetPricingData.cloudMemberCount?.toLocaleString() || 0}</Typography>
@@ -2418,7 +2418,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#efebe9', height: '100%' }}>
+                <Card sx={{ bgcolor: 'action.hover', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Off-Net Requests</Typography>
                     <Typography variant="h5" fontWeight="bold">{extranetPricingData.offNetCount?.toLocaleString() || 0}</Typography>
@@ -2429,7 +2429,7 @@ const AnalyticsDashboard = () => {
                 </Card>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
-                <Card sx={{ bgcolor: '#e8eaf6', height: '100%' }}>
+                <Card sx={{ bgcolor: 'primary.50', height: '100%' }}>
                   <CardContent sx={{ py: 2 }}>
                     <Typography color="textSecondary" variant="body2" gutterBottom>Individual Lookups</Typography>
                     <Typography variant="h5" fontWeight="bold">{extranetPricingData.individualLookups?.toLocaleString() || 0}</Typography>
@@ -2527,7 +2527,7 @@ const AnalyticsDashboard = () => {
                     {/* Bundle Summary */}
                     <Grid item xs={12} md={4}>
                       <Typography variant="subtitle2" color="textSecondary" gutterBottom>Bundle Summary</Typography>
-                      <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                      <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
                           <Typography variant="body2" color="text.secondary">Total Bundles:</Typography>
                           <Typography variant="body2" fontWeight="bold">{extranetPricingData.bundleStats.totalBundles}</Typography>

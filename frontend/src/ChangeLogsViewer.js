@@ -144,9 +144,9 @@ const ChangeLogsViewer = () => {
       name: 'Network Design & Pricing',
       tables: ['network_design_searches', 'pricing_logic_config', 'promo_pricing_rules']
     },
-    'exchange_data': {
-      name: 'Exchange Data',
-      tables: ['exchanges', 'exchange_feeds', 'exchange_contacts']
+    'market_data': {
+      name: 'Market Data & Extranet',
+      tables: ['market_data_organizations', 'market_data_contacts']
     },
     'exchange_rates': {
       name: 'Exchange Rates',
@@ -173,9 +173,8 @@ const ChangeLogsViewer = () => {
       'network_design_searches': 'Network Design Searches',
       'pricing_logic_config': 'Pricing Logic Configuration',
       'promo_pricing_rules': 'Promo Pricing Rules',
-      'exchanges': 'Exchanges',
-      'exchange_feeds': 'Exchange Feeds',
-      'exchange_contacts': 'Exchange Contacts',
+      'market_data_organizations': 'Market Data Organizations',
+      'market_data_contacts': 'Market Data Contacts',
       'exchange_rates': 'Exchange Rates',
       'location_reference': 'Locations',
       'pop_capabilities': 'POP Capabilities',

@@ -13,13 +13,15 @@ import {
   CardHeader,
   InputAdornment,
   IconButton,
-  Link as MuiLink
+  Link as MuiLink,
+  Divider
 } from '@mui/material';
 import {
   Visibility,
   VisibilityOff,
   AccountCircle,
-  Lock
+  Lock,
+  PhoneInTalk
 } from '@mui/icons-material';
 import { useAuth } from './AuthContext';
 import ForcedPasswordChange from './ForcedPasswordChange';
@@ -33,8 +35,9 @@ const LoginForm = ({ onShowRegister }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showForcedPasswordChange, setShowForcedPasswordChange] = useState(false);
+  const [guestLoading, setGuestLoading] = useState(false);
   
-  const { login, connectionError, clearConnectionError, passwordResetRequired, isAuthenticated } = useAuth();
+  const { login, loginAsGuest, connectionError, clearConnectionError, passwordResetRequired, isAuthenticated } = useAuth();
 
   // Watch for passwordResetRequired changes (e.g., admin resets password while user is logged in)
   useEffect(() => {
@@ -98,6 +101,22 @@ const LoginForm = ({ onShowRegister }) => {
     if (onShowRegister) {
       onShowRegister();
     }
+  };
+
+  const handleGuestLogin = async () => {
+    setGuestLoading(true);
+    setError('');
+
+    try {
+      const result = await loginAsGuest();
+      if (!result.success) {
+        setError(result.error || 'Voice guest access is currently unavailable');
+      }
+    } catch (error) {
+      setError('Voice guest access is currently unavailable');
+    }
+
+    setGuestLoading(false);
   };
 
   return (
@@ -216,6 +235,23 @@ const LoginForm = ({ onShowRegister }) => {
                   </MuiLink>
                 </Typography>
               </Box>
+
+              <Divider sx={{ my: 3 }}>
+                <Typography variant="caption" color="text.secondary">OR</Typography>
+              </Divider>
+
+              <Button
+                fullWidth
+                variant="outlined"
+                startIcon={guestLoading ? <CircularProgress size={18} /> : <PhoneInTalk />}
+                onClick={handleGuestLogin}
+                disabled={loading || guestLoading}
+              >
+                {guestLoading ? 'Connecting...' : 'Continue as Voice Guest (Read-Only)'}
+              </Button>
+              <Typography variant="caption" color="text.secondary" align="center" display="block" sx={{ mt: 1 }}>
+                No account required - view and run the Voice One Directory calculator only
+              </Typography>
             </Box>
           </CardContent>
         </Card>

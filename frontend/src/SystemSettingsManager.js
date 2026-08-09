@@ -273,7 +273,7 @@ const SystemSettingsManager = ({ hasRole }) => {
 
                 {locationsTemplate ? (
                   <Box sx={{ mb: 2, p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
-                    <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'success.dark' }}>
+                    <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'success.main' }}>
                       ✓ Template Uploaded
                     </Typography>
                     <Typography variant="body2" sx={{ fontSize: '0.75rem', mt: 1 }}>
@@ -340,7 +340,7 @@ const SystemSettingsManager = ({ hasRole }) => {
 
                 {disclaimerTemplate ? (
                   <Box sx={{ mb: 2, p: 2, bgcolor: 'success.50', borderRadius: 1, border: 1, borderColor: 'success.200' }}>
-                    <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'success.dark' }}>
+                    <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'success.main' }}>
                       ✓ Template Uploaded
                     </Typography>
                     <Typography variant="body2" sx={{ fontSize: '0.75rem', mt: 1 }}>

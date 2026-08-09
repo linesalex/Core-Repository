@@ -20,7 +20,7 @@ const SmallTableHeaderCell = styled(TableCell)(({ theme }) => ({
   fontSize: '0.8125rem',
   fontWeight: 600,
   padding: '8px 12px',
-  backgroundColor: theme.palette.grey[100],
+  backgroundColor: theme.palette.action.hover,
 }));
 
 function RouteChanges({ onNavigateToRoute }) {
@@ -136,7 +136,7 @@ function RouteChanges({ onNavigateToRoute }) {
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                 <SwapHorizIcon sx={{ color: 'warning.main' }} />
-                <Typography variant="h6" sx={{ color: 'warning.dark' }}>
+                <Typography variant="h6" sx={{ color: 'warning.main' }}>
                   Routes Under Direct Replacement
                 </Typography>
                 <Chip 
@@ -187,7 +187,7 @@ function RouteChanges({ onNavigateToRoute }) {
                               onClick={() => onNavigateToRoute && onNavigateToRoute(route.circuit_id)}
                               sx={{ 
                                 fontWeight: 500,
-                                color: 'warning.dark',
+                                color: 'warning.main',
                                 cursor: 'pointer',
                                 textDecoration: 'none',
                                 '&:hover': { textDecoration: 'underline' }
@@ -430,7 +430,7 @@ function RouteChanges({ onNavigateToRoute }) {
       )}
 
       {/* Info Section */}
-      <Box sx={{ mt: 4, p: 2, backgroundColor: 'grey.50', borderRadius: 1 }}>
+      <Box sx={{ mt: 4, p: 2, backgroundColor: 'action.hover', borderRadius: 1 }}>
         <Typography variant="subtitle2" gutterBottom>
           About Route Changes
         </Typography>

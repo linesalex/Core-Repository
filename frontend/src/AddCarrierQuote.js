@@ -4,7 +4,7 @@ import {
   FormControl, Autocomplete, Tooltip, Divider, InputAdornment, List, ListItem,
   ListItemText, ListItemIcon, ListItemSecondaryAction, IconButton, CircularProgress,
   Alert, Snackbar, Dialog, DialogTitle, DialogContent, DialogActions, Chip,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, LinearProgress
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SaveIcon from '@mui/icons-material/Save';
@@ -19,42 +19,94 @@ import DownloadIcon from '@mui/icons-material/Download';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import { useAuth } from './AuthContext';
 import { carrierQuoteApi } from './api';
+import SiteValidationDialog from './SiteValidationDialog';
 
 // CSV template rows: { label, field, instruction }
-// Vertical format: Column A = Field, Column B = Value, Column C = Instructions
+// Horizontal format: header row = field labels, next row = values (Building Type included)
 const CSV_ROWS = [
   { label: 'Internal Reference (QR)', field: 'quote_reference', instruction: 'Optional - auto-generated if left blank' },
-  { label: 'Carrier Name', field: 'carrier_name', instruction: 'Required - will be matched to existing carriers on import' },
+  { label: 'Carrier Name', field: 'carrier_name', instruction: 'Required - will be matched to existing carriers' },
   { label: 'Carrier Quote Reference', field: 'carrier_quote_ref', instruction: 'The carrier\'s own reference number' },
   { label: 'Service Type', field: 'service_type', instruction: 'MPLS | Ethernet | Dark Fiber | Wavelength' },
   { label: 'Region', field: 'region', instruction: 'AMERs | APAC | EMEA | INTER' },
-  { label: 'Location A POP Code', field: 'location_a_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) OR fill in Name/Address/City/Country below' },
-  { label: 'Location A Name', field: '_loc_a_name', instruction: 'Only required if POP code is not provided - a custom location will be created' },
-  { label: 'Location A Address', field: '_loc_a_address', instruction: 'Street address for custom location' },
+  { label: 'Location A POP Code', field: 'location_a_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) or leave blank for custom' },
+  { label: 'Location A Name', field: '_loc_a_name', instruction: 'Site name — only required if POP code is not provided' },
+  { label: 'Location A Street Name', field: '_loc_a_street_name', instruction: 'Street name for custom location' },
+  { label: 'Location A Street Number', field: '_loc_a_street_number', instruction: 'Street number for custom location' },
   { label: 'Location A City', field: '_loc_a_city', instruction: 'City for custom location' },
-  { label: 'Location A Country', field: '_loc_a_country', instruction: 'Country for custom location' },
-  { label: 'Location B POP Code', field: 'location_b_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) OR fill in Name/Address/City/Country below' },
-  { label: 'Location B Name', field: '_loc_b_name', instruction: 'Only required if POP code is not provided - a custom location will be created' },
-  { label: 'Location B Address', field: '_loc_b_address', instruction: 'Street address for custom location' },
+  { label: 'Location A Postal Code', field: '_loc_a_postal_code', instruction: 'Postal / ZIP code for custom location' },
+  { label: 'Location A Country', field: '_loc_a_country', instruction: 'Country for custom location (ISO preferred e.g. GB)' },
+  { label: 'Location A Building Type', field: '_loc_a_building_type', instruction: 'Datacenter | Retail — required for custom location' },
+  { label: 'Location B POP Code', field: 'location_b_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) or leave blank for custom' },
+  { label: 'Location B Name', field: '_loc_b_name', instruction: 'Site name — only required if POP code is not provided' },
+  { label: 'Location B Street Name', field: '_loc_b_street_name', instruction: 'Street name for custom location' },
+  { label: 'Location B Street Number', field: '_loc_b_street_number', instruction: 'Street number for custom location' },
   { label: 'Location B City', field: '_loc_b_city', instruction: 'City for custom location' },
-  { label: 'Location B Country', field: '_loc_b_country', instruction: 'Country for custom location' },
+  { label: 'Location B Postal Code', field: '_loc_b_postal_code', instruction: 'Postal / ZIP code for custom location' },
+  { label: 'Location B Country', field: '_loc_b_country', instruction: 'Country for custom location (ISO preferred e.g. GB)' },
+  { label: 'Location B Building Type', field: '_loc_b_building_type', instruction: 'Datacenter | Retail — required for custom location' },
   { label: 'Bandwidth Unit', field: 'bandwidth_unit', instruction: 'Mbps | Gbps | Dark Fiber' },
   { label: 'Bandwidth Value', field: 'bandwidth_value', instruction: 'Not required if Bandwidth Unit is Dark Fiber' },
   { label: 'Currency', field: 'currency', instruction: 'e.g. USD, EUR, GBP' },
-  { label: 'MRC (12 Month)', field: 'mrc_12', instruction: 'Monthly Recurring Cost for 12-month term. Leave blank if not quoted.' },
-  { label: 'NRC (12 Month)', field: 'nrc_12', instruction: 'Non-Recurring Cost for 12-month term. Leave blank if not quoted.' },
-  { label: 'MRC (24 Month)', field: 'mrc_24', instruction: 'Monthly Recurring Cost for 24-month term. Leave blank if not quoted.' },
-  { label: 'NRC (24 Month)', field: 'nrc_24', instruction: 'Non-Recurring Cost for 24-month term. Leave blank if not quoted.' },
-  { label: 'MRC (36 Month)', field: 'mrc_36', instruction: 'Monthly Recurring Cost for 36-month term. Leave blank if not quoted.' },
-  { label: 'NRC (36 Month)', field: 'nrc_36', instruction: 'Non-Recurring Cost for 36-month term. Leave blank if not quoted.' },
+  { label: 'MRC (12 Month)', field: 'mrc_12', instruction: 'Monthly Recurring Cost for 12-month term' },
+  { label: 'NRC (12 Month)', field: 'nrc_12', instruction: 'Non-Recurring Cost for 12-month term' },
+  { label: 'MRC (24 Month)', field: 'mrc_24', instruction: 'Monthly Recurring Cost for 24-month term' },
+  { label: 'NRC (24 Month)', field: 'nrc_24', instruction: 'Non-Recurring Cost for 24-month term' },
+  { label: 'MRC (36 Month)', field: 'mrc_36', instruction: 'Monthly Recurring Cost for 36-month term' },
+  { label: 'NRC (36 Month)', field: 'nrc_36', instruction: 'Non-Recurring Cost for 36-month term' },
   { label: 'Expected Latency (ms)', field: 'expected_latency', instruction: 'Round-trip latency in milliseconds' },
   { label: 'Protection', field: 'protection', instruction: 'Unprotected | Protected' },
   { label: 'Cable System', field: 'cable_system', instruction: 'Name of submarine cable system if applicable' },
   { label: 'Quote Date', field: 'quote_date', instruction: 'DD/MM/YYYY e.g. 23/02/2026' },
-  { label: 'Quote Validity (Days)', field: '_quote_validity_days', instruction: 'Number of days from quote date e.g. 60' },
+  { label: 'Quote Validity (Days)', field: '_quote_validity_days', instruction: 'Number of days from quote date' },
   { label: 'MTU', field: 'mtu', instruction: 'Maximum Transmission Unit' },
   { label: 'Notes', field: 'notes', instruction: 'Any additional notes' }
 ];
+
+// Columns AH–AI — Field guide (one row per field); never imported
+const CSV_FIELD_GUIDE_HEADER = 'Field';
+const CSV_INSTRUCTIONS_HEADER = 'Instructions';
+const csvEmptyDataCells = () => CSV_ROWS.map(() => '');
+const buildCsvInstructionRows = () => {
+  const width = CSV_ROWS.length + 2; // A–AG + AH Field + AI Instructions
+  const fieldIdx = CSV_ROWS.length; // AH
+  const instrIdx = CSV_ROWS.length + 1; // AI
+  const row = (fieldLabel, instruction) => {
+    const cells = Array(width).fill('');
+    cells[fieldIdx] = fieldLabel;
+    cells[instrIdx] = instruction;
+    return cells;
+  };
+  return [
+    Array(width).fill(''),
+    row(CSV_FIELD_GUIDE_HEADER, CSV_INSTRUCTIONS_HEADER),
+    ...CSV_ROWS.map(r => row(r.label, r.instruction))
+  ];
+};
+
+const isPopCode = (code) => !!(code && String(code).trim());
+
+const hasCustomLocationData = (loc = {}) => !!(
+  loc.name || loc.street_name || loc.street_number || loc.city
+  || loc.postal_code || loc.country || loc.address
+);
+
+const composeAddress = (loc = {}) => {
+  if (loc.address && String(loc.address).trim()) return String(loc.address).trim();
+  const line = [loc.street_number, loc.street_name].filter(Boolean).join(' ').trim();
+  return [line, loc.city, loc.postal_code, loc.country].filter(Boolean).join(', ');
+};
+
+const toSiteValidationInitial = (loc = {}) => ({
+  location_name: loc.name || '',
+  street_name: loc.street_name || '',
+  street_number: loc.street_number || '',
+  city: loc.city || '',
+  postal_code: loc.postal_code || '',
+  country: loc.country || '',
+  address: composeAddress(loc),
+  building_type: loc.building_type === 'datacenter' ? 'datacenter' : 'retail'
+});
 
 // Simple CSV value escaper
 const escapeCsv = (val) => {
@@ -157,10 +209,26 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
   const csvInputRef = useRef(null);
   const [csvDragActive, setCsvDragActive] = useState(false);
 
-  // New custom location dialog
+  // New custom location dialog (Site Validation)
   const [customLocDialogOpen, setCustomLocDialogOpen] = useState(false);
   const [customLocTarget, setCustomLocTarget] = useState('a');
-  const [newCustomLoc, setNewCustomLoc] = useState({ location_name: '', address: '', city: '', country: '' });
+  const [siteValidationInitial, setSiteValidationInitial] = useState({});
+  const [siteValidationKey, setSiteValidationKey] = useState(0);
+  const [locationBuildingTypes, setLocationBuildingTypes] = useState({ a: null, b: null });
+  const [locationDetailsCache, setLocationDetailsCache] = useState({ a: null, b: null });
+  // Chains Location B's Site Validation immediately after Location A confirms (single-row CSV import)
+  const [csvChainNext, setCsvChainNext] = useState(null);
+
+  // Multi-row CSV bulk-create: dedicated Site Validation queue + processing dialog
+  const [csvBulkQueue, setCsvBulkQueue] = useState([]);
+  const csvBulkQueueRef = useRef([]);
+  const [csvBulkIndex, setCsvBulkIndex] = useState(0);
+  const [csvBulkOpen, setCsvBulkOpen] = useState(false);
+  const [csvProcessOpen, setCsvProcessOpen] = useState(false);
+  const [csvProcessStage, setCsvProcessStage] = useState('');
+  const [csvProcessDetail, setCsvProcessDetail] = useState('');
+  const pendingCsvRowsRef = useRef([]);
+  const csvPreFailedRef = useRef([]);
 
   // Load reference data
   const loadReferenceData = useCallback(async () => {
@@ -190,11 +258,15 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
         service_type: quote.service_type || '',
         region: quote.region || '',
         location_a_type: quote.location_a_type || 'pop',
-        location_a_pop_code: quote.location_a_pop_code || '',
+        location_a_pop_code: quote.location_a_type === 'custom'
+          ? (quote.location_a_custom_name || quote.location_a_pop_code || '')
+          : (quote.location_a_pop_code || ''),
         location_a_custom_id: quote.location_a_custom_id,
         location_a_custom_name: quote.location_a_custom_name || '',
         location_b_type: quote.location_b_type || 'pop',
-        location_b_pop_code: quote.location_b_pop_code || '',
+        location_b_pop_code: quote.location_b_type === 'custom'
+          ? (quote.location_b_custom_name || quote.location_b_pop_code || '')
+          : (quote.location_b_pop_code || ''),
         location_b_custom_id: quote.location_b_custom_id,
         location_b_custom_name: quote.location_b_custom_name || '',
         bandwidth_value: quote.bandwidth_value || '',
@@ -216,6 +288,74 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
         mtu: quote.mtu || '',
         notes: quote.notes || ''
       });
+
+      setLocationBuildingTypes({
+        a: quote.location_a_type === 'pop'
+          ? (quote.location_a_pop_code ? 'datacenter' : null)
+          : (quote.location_a_building_type || null),
+        b: quote.location_b_type === 'pop'
+          ? (quote.location_b_pop_code ? 'datacenter' : null)
+          : (quote.location_b_building_type || null)
+      });
+
+      const buildCustomCache = (side) => {
+        if (quote[`location_${side}_type`] !== 'custom') return null;
+        return {
+          id: quote[`location_${side}_custom_id`],
+          location_name: quote[`location_${side}_custom_name`] || '',
+          address: quote[`location_${side}_custom_address`] || '',
+          city: quote[`location_${side}_custom_city`] || '',
+          country: quote[`location_${side}_custom_country`] || '',
+          building_type: quote[`location_${side}_building_type`] || 'retail',
+          street_name: quote[`location_${side}_street_name`] || '',
+          street_number: quote[`location_${side}_street_number`] || '',
+          postal_code: quote[`location_${side}_postal_code`] || '',
+          latitude: quote[`location_${side}_latitude`],
+          longitude: quote[`location_${side}_longitude`]
+        };
+      };
+
+      // Prefetch POP details for edit so + opens with pin/address
+      const loadPopCache = async (side) => {
+        const code = quote[`location_${side}_pop_code`];
+        if (quote[`location_${side}_type`] !== 'pop' || !code) return null;
+        try {
+          const loc = await carrierQuoteApi.getPopLocation(code);
+          return {
+            fixed_pop: true,
+            location_code: loc.location_code,
+            location_name: loc.datacenter_name || loc.location_code || '',
+            address: loc.datacenter_address || '',
+            city: loc.city || '',
+            country: loc.country || '',
+            building_type: 'datacenter',
+            street_name: '',
+            street_number: '',
+            postal_code: '',
+            latitude: loc.latitude != null ? Number(loc.latitude) : null,
+            longitude: loc.longitude != null ? Number(loc.longitude) : null
+          };
+        } catch (_) {
+          return {
+            fixed_pop: true,
+            location_code: code,
+            location_name: quote[`location_${side}_datacenter`] || code,
+            address: '',
+            city: quote[`location_${side}_city`] || '',
+            country: '',
+            building_type: 'datacenter',
+            latitude: null,
+            longitude: null
+          };
+        }
+      };
+
+      const [popA, popB] = await Promise.all([loadPopCache('a'), loadPopCache('b')]);
+      setLocationDetailsCache({
+        a: buildCustomCache('a') || popA,
+        b: buildCustomCache('b') || popB
+      });
+
       // Reverse-calculate validity days from existing dates
       if (quote.quote_date && quote.expiry_date) {
         const qd = new Date(quote.quote_date);
@@ -359,14 +499,12 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
     }
   };
 
-  // Download CSV template (vertical: A = Field, B = Value, C = Instructions)
+  // Download CSV template (horizontal quotes + Field/Instructions in AH–AI)
   const handleDownloadTemplate = () => {
-    const rows = [['Field', 'Value', 'Instructions']];
-    CSV_ROWS.forEach(r => {
-      rows.push([r.label, '', r.instruction]);
-    });
+    const headers = [...CSV_ROWS.map(r => r.label), CSV_FIELD_GUIDE_HEADER, CSV_INSTRUCTIONS_HEADER];
+    const blankRows = Array.from({ length: 5 }, () => [...csvEmptyDataCells(), '', '']);
+    const rows = [headers, ...blankRows, ...buildCsvInstructionRows()];
     const csv = rows.map(row => row.map(v => escapeCsv(v)).join(',')).join('\n');
-    // BOM + UTF-8 ensures Excel opens with correct encoding and characters
     const bom = '\uFEFF';
     const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -377,13 +515,11 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
     URL.revokeObjectURL(url);
   };
 
-  // Import CSV / TXT file and populate form (vertical format)
   // Normalise a date value from various formats to YYYY-MM-DD for HTML date inputs
   const normaliseDateValue = (val) => {
     if (!val) return val;
-    const s = val.trim();
+    const s = String(val).trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-    // DD/MM/YYYY or D/M/YYYY (Excel default for non-US locales)
     const dmySlash = s.match(/^(\d{1,2})[/](\d{1,2})[/](\d{4})$/);
     if (dmySlash) {
       const day = parseInt(dmySlash[1], 10);
@@ -393,7 +529,6 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
         return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       }
     }
-    // DD-MM-YYYY
     const dmyDash = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
     if (dmyDash) {
       const day = parseInt(dmyDash[1], 10);
@@ -403,7 +538,6 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
         return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       }
     }
-    // Fallback to Date constructor (handles MM/DD/YYYY, DD-MMM-YYYY, etc.)
     const d = new Date(s);
     if (!isNaN(d.getTime())) {
       const yyyy = d.getFullYear();
@@ -414,12 +548,190 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
     return s;
   };
 
+  // Pure parse — no API calls, no side effects. Custom (non-POP) locations always
+  // go through Site Validation before anything is written to the database.
+  const parseCsvRowData = (dataMap) => {
+    const updates = {};
+    let fieldsPopulated = 0;
+    let importedValidityDays = '';
+    const dateFields = ['quote_date'];
+
+    CSV_ROWS.forEach(row => {
+      const val = dataMap[row.label];
+      if (val !== undefined && val !== null && String(val).trim() !== '') {
+        if (row.field === '_quote_validity_days') {
+          importedValidityDays = String(val).trim();
+        } else if (!row.field.startsWith('_')) {
+          updates[row.field] = dateFields.includes(row.field) ? normaliseDateValue(val) : String(val).trim();
+        }
+        fieldsPopulated++;
+      }
+    });
+
+    if (updates.quote_date && importedValidityDays && parseInt(importedValidityDays, 10) > 0) {
+      const d = new Date(updates.quote_date);
+      if (!isNaN(d.getTime())) {
+        d.setDate(d.getDate() + parseInt(importedValidityDays, 10));
+        updates.expiry_date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      }
+    }
+
+    const buildCustomLoc = (prefix) => {
+      const name = dataMap[`Location ${prefix} Name`] || '';
+      const street_name = dataMap[`Location ${prefix} Street Name`] || '';
+      const street_number = dataMap[`Location ${prefix} Street Number`] || '';
+      const city = dataMap[`Location ${prefix} City`] || '';
+      const postal_code = dataMap[`Location ${prefix} Postal Code`] || '';
+      const country = dataMap[`Location ${prefix} Country`] || '';
+      const address = dataMap[`Location ${prefix} Address`] || ''; // legacy free-text column
+      const buildingRaw = String(dataMap[`Location ${prefix} Building Type`] || '').trim().toLowerCase();
+      const building_type = buildingRaw === 'datacenter' ? 'datacenter' : 'retail';
+      if (address) fieldsPopulated++;
+      return { name, street_name, street_number, city, postal_code, country, address, building_type };
+    };
+
+    const customLocA = buildCustomLoc('A');
+    const customLocB = buildCustomLoc('B');
+
+    if (updates.location_a_pop_code) updates.location_a_type = 'pop';
+    if (updates.location_b_pop_code) updates.location_b_type = 'pop';
+
+    return { updates, customLocA, customLocB, fieldsPopulated, importedValidityDays };
+  };
+
+  const advanceCsvBulkReview = (queue, index, preFailed) => {
+    csvBulkQueueRef.current = queue;
+    csvPreFailedRef.current = preFailed || csvPreFailedRef.current;
+    if (index >= queue.length) {
+      setCsvBulkOpen(false);
+      setCsvBulkQueue([]);
+      csvBulkQueueRef.current = [];
+      setCsvBulkIndex(0);
+      setCsvProcessStage('Creating quotes');
+      setCsvProcessDetail(`Saving ${pendingCsvRowsRef.current.length} quote(s)…`);
+      commitCsvBulkRows(pendingCsvRowsRef.current, csvPreFailedRef.current);
+      return;
+    }
+    const item = queue[index];
+    setCsvBulkQueue(queue);
+    setCsvBulkIndex(index);
+    setCsvProcessStage('Address verification');
+    setCsvProcessDetail(
+      `Address ${index + 1} of ${queue.length}: Row ${item.rowNum} Location ${String(item.side).toUpperCase()} — complete the map dialog to continue.`
+    );
+    setCsvBulkOpen(true);
+  };
+
+  const handleCsvBulkReviewConfirm = (result) => {
+    const queue = csvBulkQueueRef.current.length ? csvBulkQueueRef.current : csvBulkQueue;
+    const index = csvBulkIndex;
+    const item = queue[index];
+    if (!item) return;
+
+    if (!result.reuse_pop && !result.id) {
+      setError('Address confirm did not return a saved location. Try Confirm again.');
+      return;
+    }
+
+    pendingCsvRowsRef.current = pendingCsvRowsRef.current.map(row => {
+      if (row.rowKey !== item.rowKey) return row;
+      const next = { ...row };
+      if (item.side === 'a') {
+        if (result.reuse_pop) {
+          next.resolvedLocA = { type: 'pop', location_code: result.location_code };
+          next.updates = { ...next.updates, location_a_pop_code: result.location_code, location_a_type: 'pop' };
+        } else {
+          next.resolvedLocA = { type: 'custom', id: result.id };
+        }
+      } else if (result.reuse_pop) {
+        next.resolvedLocB = { type: 'pop', location_code: result.location_code };
+        next.updates = { ...next.updates, location_b_pop_code: result.location_code, location_b_type: 'pop' };
+      } else {
+        next.resolvedLocB = { type: 'custom', id: result.id };
+      }
+      return next;
+    });
+
+    advanceCsvBulkReview(queue, index + 1, csvPreFailedRef.current);
+  };
+
+  const commitCsvBulkRows = async (rows, preFailed = []) => {
+    let created = 0;
+    const failures = preFailed.map(f => `Row ${f.rowNum}: ${f.error}`);
+    const totalAttempted = rows.length + preFailed.length;
+
+    for (const row of rows) {
+      try {
+        const payload = { ...emptyFormData, ...row.updates };
+
+        if (row.resolvedLocA) {
+          if (row.resolvedLocA.type === 'pop') {
+            payload.location_a_type = 'pop';
+            payload.location_a_pop_code = row.resolvedLocA.location_code;
+          } else {
+            payload.location_a_type = 'custom';
+            payload.location_a_custom_id = row.resolvedLocA.id;
+          }
+        } else if (isPopCode(payload.location_a_pop_code)) {
+          payload.location_a_type = 'pop';
+        }
+
+        if (row.resolvedLocB) {
+          if (row.resolvedLocB.type === 'pop') {
+            payload.location_b_type = 'pop';
+            payload.location_b_pop_code = row.resolvedLocB.location_code;
+          } else {
+            payload.location_b_type = 'custom';
+            payload.location_b_custom_id = row.resolvedLocB.id;
+          }
+        } else if (isPopCode(payload.location_b_pop_code)) {
+          payload.location_b_type = 'pop';
+        }
+
+        if (payload.carrier_name) {
+          try {
+            const matches = await carrierQuoteApi.getCarriers(payload.carrier_name);
+            if (matches && matches.length > 0) {
+              const inputLower = payload.carrier_name.toLowerCase();
+              const exact = matches.find(m => m.carrier_name.toLowerCase() === inputLower);
+              const startsWith = matches.find(m => m.carrier_name.toLowerCase().startsWith(inputLower));
+              const best = exact || startsWith || matches[0];
+              payload.carrier_name = best.carrier_name;
+              payload.carrier_id = best.id;
+            }
+          } catch (_) { /* keep typed name */ }
+        }
+
+        ['bandwidth_value', 'mrc_12', 'nrc_12', 'mrc_24', 'nrc_24', 'mrc_36', 'nrc_36', 'expected_latency'].forEach(f => {
+          if (payload[f]) payload[f] = parseFloat(payload[f]);
+        });
+        if (payload.mtu) payload.mtu = parseInt(payload.mtu, 10);
+        if (payload.bandwidth_unit === 'Dark Fiber') payload.bandwidth_value = null;
+
+        await carrierQuoteApi.createQuote(payload);
+        created++;
+      } catch (rowErr) {
+        failures.push(`Row ${row.rowNum}: ${rowErr.response?.data?.error || rowErr.message}`);
+      }
+    }
+
+    setSaving(false);
+    setCsvProcessStage('Complete');
+    setCsvProcessDetail(`Created ${created} of ${totalAttempted} quotes.`);
+    if (created > 0) {
+      setSuccess(`Created ${created} of ${totalAttempted} quotes from CSV.`);
+    }
+    if (failures.length) {
+      setError(failures.slice(0, 5).join(' · ') + (failures.length > 5 ? ` (+${failures.length - 5} more)` : ''));
+    }
+    setTimeout(() => setCsvProcessOpen(false), 1200);
+  };
+
   const handleCsvImport = (file) => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
-        // Strip BOM if present
         let text = e.target.result;
         if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
         const lines = text.split(/\r?\n/).filter(l => l.trim());
@@ -428,106 +740,150 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
           return;
         }
 
-        // Build label -> value map from vertical rows
-        const dataMap = {};
-        const startIdx = parseCsvLine(lines[0])[0].trim().toLowerCase() === 'field' ? 1 : 0;
-        for (let i = startIdx; i < lines.length; i++) {
-          const cols = parseCsvLine(lines[i]);
-          const label = (cols[0] || '').trim();
-          const value = (cols[1] || '').trim();
-          if (label) dataMap[label] = value;
+        const headerCols = parseCsvLine(lines[0]).map(c => c.trim());
+        const firstHeader = (headerCols[0] || '').toLowerCase();
+        if (firstHeader === 'field') {
+          setError('Vertical CSV templates are no longer supported. Download the new horizontal template (one quote per row).');
+          return;
         }
-
-        // Map to form fields, skip empty values
-        const updates = {};
-        let fieldsPopulated = 0;
-        let importedValidityDays = '';
-        const dateFields = ['quote_date'];
-        CSV_ROWS.forEach(row => {
-          const val = dataMap[row.label];
-          if (val !== undefined && val !== '') {
-            if (row.field === '_quote_validity_days') {
-              importedValidityDays = String(val).trim();
-            } else if (!row.field.startsWith('_')) {
-              updates[row.field] = dateFields.includes(row.field) ? normaliseDateValue(val) : val;
-            }
-            fieldsPopulated++;
-          }
-        });
-        if (importedValidityDays) setQuoteValidityDays(importedValidityDays);
-
-        // Handle Location A: POP code vs custom location
-        const locAName = dataMap['Location A Name'] || '';
-        const locAAddress = dataMap['Location A Address'] || '';
-        const locACity = dataMap['Location A City'] || '';
-        const locACountry = dataMap['Location A Country'] || '';
-        if (updates.location_a_pop_code) {
-          updates.location_a_type = 'pop';
-        } else if (locAName) {
-          // Create custom location via API
-          try {
-            const result = await carrierQuoteApi.createCustomLocation({
-              location_name: locAName, address: locAAddress, city: locACity, country: locACountry
-            });
-            updates.location_a_type = 'custom';
-            updates.location_a_custom_id = result.id;
-            updates.location_a_custom_name = result.location_name;
-            updates.location_a_pop_code = result.location_name;
-          } catch (locErr) {
-            console.warn('Failed to create custom Location A:', locErr);
-          }
-        }
-
-        // Handle Location B: POP code vs custom location
-        const locBName = dataMap['Location B Name'] || '';
-        const locBAddress = dataMap['Location B Address'] || '';
-        const locBCity = dataMap['Location B City'] || '';
-        const locBCountry = dataMap['Location B Country'] || '';
-        if (updates.location_b_pop_code) {
-          updates.location_b_type = 'pop';
-        } else if (locBName) {
-          try {
-            const result = await carrierQuoteApi.createCustomLocation({
-              location_name: locBName, address: locBAddress, city: locBCity, country: locBCountry
-            });
-            updates.location_b_type = 'custom';
-            updates.location_b_custom_id = result.id;
-            updates.location_b_custom_name = result.location_name;
-            updates.location_b_pop_code = result.location_name;
-          } catch (locErr) {
-            console.warn('Failed to create custom Location B:', locErr);
-          }
-        }
-
-        if (fieldsPopulated === 0) {
-          setError('No matching data found — ensure field names match the template');
+        if (!headerCols.some(h => h === 'Carrier Name' || h === 'Location A POP Code')) {
+          setError('Unrecognised CSV headers. Download the template and keep the header row unchanged.');
           return;
         }
 
-        // Carrier name fuzzy lookup
-        if (updates.carrier_name) {
-          try {
-            const matches = await carrierQuoteApi.getCarriers(updates.carrier_name);
-            if (matches && matches.length > 0) {
-              // Find best match: exact first, then starts-with, then first result
-              const inputLower = updates.carrier_name.toLowerCase();
-              const exact = matches.find(m => m.carrier_name.toLowerCase() === inputLower);
-              const startsWith = matches.find(m => m.carrier_name.toLowerCase().startsWith(inputLower));
-              const best = exact || startsWith || matches[0];
-              updates.carrier_name = best.carrier_name;
-              updates.carrier_id = best.id;
-              setCarriers(matches);
-            }
-          } catch (carrierErr) {
-            console.warn('Carrier lookup failed:', carrierErr);
-          }
+        // Collect non-empty data rows (skip blank rows + Field/Instructions guide; ignore AH–AI)
+        const dataRows = [];
+        for (let i = 1; i < lines.length; i++) {
+          const values = parseCsvLine(lines[i]);
+          const dataMap = {};
+          let anyReal = false;
+          headerCols.forEach((label, idx) => {
+            const val = (values[idx] || '').trim();
+            if (!label) return;
+            if (
+              label === CSV_FIELD_GUIDE_HEADER || label === 'Field'
+              || label === CSV_INSTRUCTIONS_HEADER || label === 'Instructions'
+            ) return;
+            dataMap[label] = val;
+            if (val) anyReal = true;
+          });
+          if (anyReal) dataRows.push({ rowNum: i + 1, dataMap });
         }
 
-        setFormData(prev => ({ ...prev, ...updates }));
-        setSuccess(`CSV imported — ${fieldsPopulated} field${fieldsPopulated !== 1 ? 's' : ''} populated. Please review all fields before submitting.`);
+        if (dataRows.length === 0) {
+          setError('No data rows found — fill at least one quote row under the header');
+          return;
+        }
+
+        // Single row → populate the form for review; custom (non-POP) locations must
+        // go through Site Validation before they're attached to the form
+        if (dataRows.length === 1) {
+          const parsed = parseCsvRowData(dataRows[0].dataMap);
+          if (parsed.fieldsPopulated === 0) {
+            setError('No matching data found — ensure field names match the template');
+            return;
+          }
+          if (parsed.importedValidityDays) setQuoteValidityDays(parsed.importedValidityDays);
+
+          const updates = parsed.updates;
+          if (updates.carrier_name) {
+            try {
+              const matches = await carrierQuoteApi.getCarriers(updates.carrier_name);
+              if (matches && matches.length > 0) {
+                const inputLower = updates.carrier_name.toLowerCase();
+                const exact = matches.find(m => m.carrier_name.toLowerCase() === inputLower);
+                const startsWith = matches.find(m => m.carrier_name.toLowerCase().startsWith(inputLower));
+                const best = exact || startsWith || matches[0];
+                updates.carrier_name = best.carrier_name;
+                updates.carrier_id = best.id;
+                setCarriers(matches);
+              }
+            } catch (carrierErr) {
+              console.warn('Carrier lookup failed:', carrierErr);
+            }
+          }
+          setFormData(prev => ({ ...prev, ...updates }));
+          if (updates.location_a_pop_code) setLocationBuildingTypes(prev => ({ ...prev, a: 'datacenter' }));
+          if (updates.location_b_pop_code) setLocationBuildingTypes(prev => ({ ...prev, b: 'datacenter' }));
+
+          const needsA = !updates.location_a_pop_code && hasCustomLocationData(parsed.customLocA);
+          const needsB = !updates.location_b_pop_code && hasCustomLocationData(parsed.customLocB);
+
+          if (needsA) {
+            setCsvChainNext(needsB ? { side: 'b', initialValues: toSiteValidationInitial(parsed.customLocB) } : null);
+            setCustomLocTarget('a');
+            setSiteValidationInitial(toSiteValidationInitial(parsed.customLocA));
+            setSiteValidationKey(k => k + 1);
+            setCustomLocDialogOpen(true);
+            setSuccess('CSV imported — verify the Location A address to continue.');
+          } else if (needsB) {
+            setCsvChainNext(null);
+            setCustomLocTarget('b');
+            setSiteValidationInitial(toSiteValidationInitial(parsed.customLocB));
+            setSiteValidationKey(k => k + 1);
+            setCustomLocDialogOpen(true);
+            setSuccess('CSV imported — verify the Location B address to continue.');
+          } else {
+            setSuccess(`CSV imported — ${parsed.fieldsPopulated} field${parsed.fieldsPopulated !== 1 ? 's' : ''} populated. Please review before submitting.`);
+          }
+          return;
+        }
+
+        // Multiple rows → verify every custom (non-POP) address via Site Validation
+        // first, then create the quotes. Nothing is written to the database until
+        // each custom location has been confirmed.
+        setSaving(true);
+        setCsvProcessOpen(true);
+        setCsvProcessStage('Processing CSV');
+        setCsvProcessDetail(`Reading ${dataRows.length} row(s)…`);
+
+        const preFailed = [];
+        const validRows = [];
+        const reviewQueue = [];
+
+        dataRows.forEach(({ rowNum, dataMap }) => {
+          const parsed = parseCsvRowData(dataMap);
+          const { updates } = parsed;
+          if (!updates.carrier_name || !updates.service_type || !updates.region || !updates.bandwidth_unit) {
+            preFailed.push({ rowNum, error: 'Carrier Name, Service Type, Region, and Bandwidth Unit are required' });
+            return;
+          }
+          const rowKey = `csvrow-${rowNum}`;
+          const entry = {
+            rowKey, rowNum, updates: { ...updates }, resolvedLocA: null, resolvedLocB: null
+          };
+          if (!updates.location_a_pop_code && hasCustomLocationData(parsed.customLocA)) {
+            reviewQueue.push({ rowKey, rowNum, side: 'a', initialValues: toSiteValidationInitial(parsed.customLocA) });
+          }
+          if (!updates.location_b_pop_code && hasCustomLocationData(parsed.customLocB)) {
+            reviewQueue.push({ rowKey, rowNum, side: 'b', initialValues: toSiteValidationInitial(parsed.customLocB) });
+          }
+          validRows.push(entry);
+        });
+
+        pendingCsvRowsRef.current = validRows;
+
+        if (validRows.length === 0) {
+          setSaving(false);
+          setCsvProcessOpen(false);
+          setError(`All ${preFailed.length} row(s) failed validation: ` + preFailed.map(f => `Row ${f.rowNum}: ${f.error}`).join(' · '));
+          return;
+        }
+
+        if (reviewQueue.length > 0) {
+          csvPreFailedRef.current = preFailed;
+          advanceCsvBulkReview(reviewQueue, 0, preFailed);
+          return;
+        }
+
+        setCsvProcessStage('Creating quotes');
+        setCsvProcessDetail(`Saving ${validRows.length} quote(s)…`);
+        await commitCsvBulkRows(validRows, preFailed);
       } catch (err) {
         console.error('CSV parse error:', err);
         setError('Failed to parse CSV file: ' + err.message);
+        setSaving(false);
+        setCsvProcessOpen(false);
       }
     };
     reader.readAsText(file);
@@ -677,32 +1033,158 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
     }
   };
 
-  // Create custom location
-  const handleCreateCustomLocation = async () => {
-    if (!newCustomLoc.location_name) {
-      setError('Location name is required');
+  // Confirm site validation / create or reuse custom location
+  const handleSiteValidationConfirm = (result) => {
+    const target = customLocTarget;
+
+    // If a single-row CSV import queued Location B, open it immediately after A confirms
+    const proceedChain = () => {
+      if (csvChainNext) {
+        const next = csvChainNext;
+        setCsvChainNext(null);
+        setCustomLocTarget(next.side);
+        setSiteValidationInitial(next.initialValues);
+        setSiteValidationKey(k => k + 1);
+        setCustomLocDialogOpen(true);
+      } else {
+        setCustomLocDialogOpen(false);
+      }
+    };
+
+    if (result.reuse_pop) {
+      setFormData(prev => ({
+        ...prev,
+        [`location_${target}_type`]: 'pop',
+        [`location_${target}_pop_code`]: result.location_code,
+        [`location_${target}_custom_id`]: null,
+        [`location_${target}_custom_name`]: ''
+      }));
+      setLocationBuildingTypes(prev => ({ ...prev, [target]: 'datacenter' }));
+      setLocationDetailsCache(prev => ({ ...prev, [target]: null }));
+      setSuccess(`Linked to POP ${result.location_code}`);
+      proceedChain();
       return;
     }
 
-    try {
-      const result = await carrierQuoteApi.createCustomLocation(newCustomLoc);
-      const target = customLocTarget;
-      
-      setFormData(prev => ({
-        ...prev,
-        [`location_${target}_type`]: 'custom',
-        [`location_${target}_custom_id`]: result.id,
-        [`location_${target}_custom_name`]: result.location_name,
-        [`location_${target}_pop_code`]: result.location_name
-      }));
+    setFormData(prev => ({
+      ...prev,
+      [`location_${target}_type`]: 'custom',
+      [`location_${target}_custom_id`]: result.id,
+      [`location_${target}_custom_name`]: result.location_name,
+      [`location_${target}_pop_code`]: result.location_name
+    }));
+    setLocationBuildingTypes(prev => ({
+      ...prev,
+      [target]: result.building_type || 'retail'
+    }));
+    setLocationDetailsCache(prev => ({
+      ...prev,
+      [target]: {
+        id: result.id,
+        location_name: result.location_name || '',
+        address: result.address || '',
+        city: result.city || '',
+        country: result.country || '',
+        building_type: result.building_type || 'retail',
+        street_name: result.street_name || '',
+        street_number: result.street_number || '',
+        postal_code: result.postal_code || '',
+        latitude: result.latitude,
+        longitude: result.longitude
+      }
+    }));
 
-      setCustomLocDialogOpen(false);
-      setNewCustomLoc({ location_name: '', address: '', city: '', country: '' });
-      setSuccess('Custom location created');
-      searchCustomLocations('');
-    } catch (err) {
-      setError('Failed to create custom location: ' + (err.response?.data?.error || err.message));
+    setSiteValidationInitial({});
+    setSuccess(result.already_exists ? 'Location saved' : 'Custom location created');
+    searchCustomLocations('');
+    proceedChain();
+  };
+
+  const openSiteValidation = async (target) => {
+    setCustomLocTarget(target);
+    const cached = locationDetailsCache[target];
+    const customId = formData[`location_${target}_custom_id`];
+    const locType = formData[`location_${target}_type`];
+    const popCode = formData[`location_${target}_pop_code`];
+
+    const toPopDetails = (loc) => ({
+      fixed_pop: true,
+      location_code: loc.location_code,
+      location_name: loc.datacenter_name || loc.location_code || '',
+      address: loc.datacenter_address || '',
+      city: loc.city || '',
+      country: loc.country || '',
+      building_type: 'datacenter',
+      street_name: '',
+      street_number: '',
+      postal_code: '',
+      latitude: loc.latitude != null ? Number(loc.latitude) : null,
+      longitude: loc.longitude != null ? Number(loc.longitude) : null
+    });
+
+    if (cached && cached.fixed_pop && cached.location_code) {
+      setSiteValidationInitial({ ...cached });
+    } else if (cached && cached.id) {
+      setSiteValidationInitial({ ...cached });
+    } else if (customId) {
+      try {
+        const loc = await carrierQuoteApi.getCustomLocation(customId);
+        const details = {
+          id: loc.id,
+          location_name: loc.location_name || '',
+          address: loc.address || '',
+          city: loc.city || '',
+          country: loc.country || '',
+          building_type: loc.building_type || 'retail',
+          street_name: loc.street_name || '',
+          street_number: loc.street_number || '',
+          postal_code: loc.postal_code || '',
+          latitude: loc.latitude,
+          longitude: loc.longitude
+        };
+        setLocationDetailsCache(prev => ({ ...prev, [target]: details }));
+        setSiteValidationInitial(details);
+      } catch (err) {
+        setSiteValidationInitial({ building_type: 'retail' });
+        setError('Could not load location details: ' + (err.response?.data?.error || err.message));
+      }
+    } else if (locType === 'pop' && popCode) {
+      try {
+        // Prefer exact code; also accept "CODE - Name" leftover from older autocomplete behaviour
+        const raw = String(popCode).trim();
+        const codeCandidate = (raw.includes(' - ') ? raw.split(' - ')[0] : raw).trim();
+        const codeKey = codeCandidate.toUpperCase();
+        const fromOptions = popLocations.find(p =>
+          String(p.location_code || '').trim().toUpperCase() === codeKey
+          || String(p.datacenter_name || '').trim().toUpperCase() === codeKey
+          || String(p.location_code || '').trim().toUpperCase() === raw.toUpperCase()
+        );
+        let loc = fromOptions;
+        if (!loc) {
+          loc = await carrierQuoteApi.getPopLocation(codeCandidate);
+        }
+        if (!loc || !loc.location_code) {
+          throw new Error('POP location not found');
+        }
+        const details = toPopDetails(loc);
+        setFormData(prev => ({
+          ...prev,
+          [`location_${target}_pop_code`]: loc.location_code,
+          [`location_${target}_type`]: 'pop'
+        }));
+        setLocationDetailsCache(prev => ({ ...prev, [target]: details }));
+        setLocationBuildingTypes(prev => ({ ...prev, [target]: 'datacenter' }));
+        setSiteValidationInitial(details);
+      } catch (err) {
+        setSiteValidationInitial({ building_type: 'datacenter', location_name: String(popCode).trim() });
+        setError('Could not load POP location: ' + (err.response?.data?.error || err.message));
+      }
+    } else {
+      setSiteValidationInitial({ building_type: 'retail' });
     }
+
+    setSiteValidationKey(k => k + 1);
+    setCustomLocDialogOpen(true);
   };
 
   // Combined location options for autocomplete (POP + Custom)
@@ -712,14 +1194,22 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
       id: null,
       code: loc.location_code,
       label: `${loc.location_code} - ${loc.datacenter_name || loc.city || ''}`,
-      customId: null
+      customId: null,
+      building_type: 'datacenter',
+      datacenter_name: loc.datacenter_name,
+      datacenter_address: loc.datacenter_address,
+      city: loc.city,
+      country: loc.country,
+      latitude: loc.latitude,
+      longitude: loc.longitude
     }));
     const customOptions = customLocations.map(loc => ({
       type: 'custom',
       id: loc.id,
       code: loc.location_name,
       label: `${loc.location_name}${loc.address ? ' - ' + loc.address : ''}${loc.city ? ', ' + loc.city : ''}`,
-      customId: loc.id
+      customId: loc.id,
+      building_type: loc.building_type || null
     }));
     return [...popOptions, ...customOptions];
   };
@@ -873,7 +1363,7 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
         <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Route</Typography>
         <Grid container spacing={2.5}>
           <Grid item xs={12} md={6}>
-            <Box sx={{ display: 'flex', gap: 1 }}>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
               <Autocomplete
                 freeSolo
                 size="small"
@@ -882,7 +1372,21 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
                 getOptionLabel={(opt) => typeof opt === 'string' ? opt : opt.label || opt.code || ''}
                 groupBy={(opt) => opt.type === 'pop' ? 'POP Locations' : 'Custom Locations'}
                 inputValue={formData.location_a_pop_code || formData.location_a_custom_name || ''}
-                onInputChange={(_, value) => {
+                onInputChange={(_, value, reason) => {
+                  // 'reset' fires after option select — onChange owns the real POP/custom code
+                  if (reason === 'reset') return;
+                  if (reason === 'clear') {
+                    setFormData(prev => ({
+                      ...prev,
+                      location_a_pop_code: '',
+                      location_a_type: 'pop',
+                      location_a_custom_id: null,
+                      location_a_custom_name: ''
+                    }));
+                    setLocationBuildingTypes(prev => ({ ...prev, a: null }));
+                    setLocationDetailsCache(prev => ({ ...prev, a: null }));
+                    return;
+                  }
                   setFormData(prev => ({
                     ...prev,
                     location_a_pop_code: value,
@@ -890,6 +1394,8 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
                     location_a_custom_id: null,
                     location_a_custom_name: ''
                   }));
+                  setLocationBuildingTypes(prev => ({ ...prev, a: null }));
+                  setLocationDetailsCache(prev => ({ ...prev, a: null }));
                   searchPopLocations(value);
                   searchCustomLocations(value);
                 }}
@@ -903,6 +1409,24 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
                         location_a_custom_id: null,
                         location_a_custom_name: ''
                       }));
+                      setLocationBuildingTypes(prev => ({ ...prev, a: 'datacenter' }));
+                      setLocationDetailsCache(prev => ({
+                        ...prev,
+                        a: {
+                          fixed_pop: true,
+                          location_code: value.code,
+                          location_name: value.datacenter_name || value.code,
+                          address: value.datacenter_address || '',
+                          city: value.city || '',
+                          country: value.country || '',
+                          building_type: 'datacenter',
+                          street_name: '',
+                          street_number: '',
+                          postal_code: '',
+                          latitude: value.latitude != null ? Number(value.latitude) : null,
+                          longitude: value.longitude != null ? Number(value.longitude) : null
+                        }
+                      }));
                     } else {
                       setFormData(prev => ({
                         ...prev,
@@ -911,20 +1435,37 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
                         location_a_custom_id: value.customId,
                         location_a_custom_name: value.code
                       }));
+                      setLocationBuildingTypes(prev => ({ ...prev, a: value.building_type || null }));
+                      setLocationDetailsCache(prev => ({
+                        ...prev,
+                        a: value.customId ? {
+                          id: value.customId,
+                          location_name: value.code,
+                          building_type: value.building_type || 'retail'
+                        } : null
+                      }));
                     }
                   }
                 }}
                 renderInput={(params) => <TextField {...params} label="Location A" />}
               />
-              <Tooltip title="Add New Custom Location">
-                <IconButton size="small" onClick={() => { setCustomLocTarget('a'); setCustomLocDialogOpen(true); }}>
+              <Tooltip title="Add / edit & validate location">
+                <IconButton size="small" onClick={() => openSiteValidation('a')}>
                   <AddIcon />
                 </IconButton>
               </Tooltip>
             </Box>
+            {locationBuildingTypes.a && (
+              <Chip
+                size="small"
+                label={locationBuildingTypes.a === 'datacenter' ? 'Datacenter' : 'Retail'}
+                sx={{ mt: 0.75 }}
+                color={locationBuildingTypes.a === 'datacenter' ? 'primary' : 'default'}
+              />
+            )}
           </Grid>
           <Grid item xs={12} md={6}>
-            <Box sx={{ display: 'flex', gap: 1 }}>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
               <Autocomplete
                 freeSolo
                 size="small"
@@ -933,7 +1474,20 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
                 getOptionLabel={(opt) => typeof opt === 'string' ? opt : opt.label || opt.code || ''}
                 groupBy={(opt) => opt.type === 'pop' ? 'POP Locations' : 'Custom Locations'}
                 inputValue={formData.location_b_pop_code || formData.location_b_custom_name || ''}
-                onInputChange={(_, value) => {
+                onInputChange={(_, value, reason) => {
+                  if (reason === 'reset') return;
+                  if (reason === 'clear') {
+                    setFormData(prev => ({
+                      ...prev,
+                      location_b_pop_code: '',
+                      location_b_type: 'pop',
+                      location_b_custom_id: null,
+                      location_b_custom_name: ''
+                    }));
+                    setLocationBuildingTypes(prev => ({ ...prev, b: null }));
+                    setLocationDetailsCache(prev => ({ ...prev, b: null }));
+                    return;
+                  }
                   setFormData(prev => ({
                     ...prev,
                     location_b_pop_code: value,
@@ -941,6 +1495,8 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
                     location_b_custom_id: null,
                     location_b_custom_name: ''
                   }));
+                  setLocationBuildingTypes(prev => ({ ...prev, b: null }));
+                  setLocationDetailsCache(prev => ({ ...prev, b: null }));
                   searchPopLocations(value);
                   searchCustomLocations(value);
                 }}
@@ -954,6 +1510,24 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
                         location_b_custom_id: null,
                         location_b_custom_name: ''
                       }));
+                      setLocationBuildingTypes(prev => ({ ...prev, b: 'datacenter' }));
+                      setLocationDetailsCache(prev => ({
+                        ...prev,
+                        b: {
+                          fixed_pop: true,
+                          location_code: value.code,
+                          location_name: value.datacenter_name || value.code,
+                          address: value.datacenter_address || '',
+                          city: value.city || '',
+                          country: value.country || '',
+                          building_type: 'datacenter',
+                          street_name: '',
+                          street_number: '',
+                          postal_code: '',
+                          latitude: value.latitude != null ? Number(value.latitude) : null,
+                          longitude: value.longitude != null ? Number(value.longitude) : null
+                        }
+                      }));
                     } else {
                       setFormData(prev => ({
                         ...prev,
@@ -962,17 +1536,34 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
                         location_b_custom_id: value.customId,
                         location_b_custom_name: value.code
                       }));
+                      setLocationBuildingTypes(prev => ({ ...prev, b: value.building_type || null }));
+                      setLocationDetailsCache(prev => ({
+                        ...prev,
+                        b: value.customId ? {
+                          id: value.customId,
+                          location_name: value.code,
+                          building_type: value.building_type || 'retail'
+                        } : null
+                      }));
                     }
                   }
                 }}
                 renderInput={(params) => <TextField {...params} label="Location B" />}
               />
-              <Tooltip title="Add New Custom Location">
-                <IconButton size="small" onClick={() => { setCustomLocTarget('b'); setCustomLocDialogOpen(true); }}>
+              <Tooltip title="Add / edit & validate location">
+                <IconButton size="small" onClick={() => openSiteValidation('b')}>
                   <AddIcon />
                 </IconButton>
               </Tooltip>
             </Box>
+            {locationBuildingTypes.b && (
+              <Chip
+                size="small"
+                label={locationBuildingTypes.b === 'datacenter' ? 'Datacenter' : 'Retail'}
+                sx={{ mt: 0.75 }}
+                color={locationBuildingTypes.b === 'datacenter' ? 'primary' : 'default'}
+              />
+            )}
           </Grid>
         </Grid>
       </Paper>
@@ -1354,55 +1945,77 @@ const AddCarrierQuote = ({ onNavigateBack, editQuoteId, duplicateData }) => {
         </Box>
       </Paper>
 
-      {/* Custom Location Dialog */}
-      <Dialog open={customLocDialogOpen} onClose={() => setCustomLocDialogOpen(false)} maxWidth="sm" fullWidth disableRestoreFocus>
-        <DialogTitle>Add Custom Location (Location {customLocTarget.toUpperCase()})</DialogTitle>
+      {/* Site Validation Dialog */}
+      <SiteValidationDialog
+        key={`site-val-${customLocTarget}-${siteValidationKey}`}
+        open={customLocDialogOpen}
+        onClose={() => { setCsvChainNext(null); setCustomLocDialogOpen(false); }}
+        onConfirm={handleSiteValidationConfirm}
+        initialValues={siteValidationInitial}
+        title={`Site validation (Location ${String(customLocTarget).toUpperCase()})`}
+      />
+
+      {/* Multi-row CSV import: processing dialog + dedicated Site Validation queue.
+          Quotes are only created after every custom address has been confirmed. */}
+      <Dialog open={csvProcessOpen} disableEscapeKeyDown maxWidth="sm" fullWidth sx={{ zIndex: 1400 }}>
+        <DialogTitle>Processing CSV import</DialogTitle>
         <DialogContent>
-          <Grid container spacing={2} sx={{ mt: 0.5 }}>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                size="small"
-                label="Location Name *"
-                value={newCustomLoc.location_name}
-                onChange={(e) => setNewCustomLoc(prev => ({ ...prev, location_name: e.target.value }))}
-                helperText="e.g., Equinix CH3, ABCLON1, etc."
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                size="small"
-                label="Address"
-                value={newCustomLoc.address}
-                onChange={(e) => setNewCustomLoc(prev => ({ ...prev, address: e.target.value }))}
-              />
-            </Grid>
-            <Grid item xs={6}>
-              <TextField
-                fullWidth
-                size="small"
-                label="City"
-                value={newCustomLoc.city}
-                onChange={(e) => setNewCustomLoc(prev => ({ ...prev, city: e.target.value }))}
-              />
-            </Grid>
-            <Grid item xs={6}>
-              <TextField
-                fullWidth
-                size="small"
-                label="Country"
-                value={newCustomLoc.country}
-                onChange={(e) => setNewCustomLoc(prev => ({ ...prev, country: e.target.value }))}
-              />
-            </Grid>
-          </Grid>
+          <Typography variant="subtitle1" sx={{ mb: 1 }}>{csvProcessStage || 'Working…'}</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {csvProcessDetail || 'Please wait…'}
+          </Typography>
+          <LinearProgress
+            variant={csvBulkOpen && csvBulkQueue.length ? 'determinate' : 'indeterminate'}
+            value={csvBulkQueue.length ? Math.round((csvBulkIndex / Math.max(csvBulkQueue.length, 1)) * 100) : 0}
+          />
+          {csvBulkOpen && csvBulkQueue.length > 0 && (
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>
+              Complete each Site Validation dialog ({csvBulkIndex + 1} of {csvBulkQueue.length}). Quotes are created only after all addresses are confirmed.
+            </Typography>
+          )}
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCustomLocDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreateCustomLocation}>Create Location</Button>
-        </DialogActions>
+        {csvBulkOpen && (
+          <DialogActions>
+            <Button
+              color="inherit"
+              onClick={() => {
+                setCsvBulkOpen(false);
+                setCsvProcessOpen(false);
+                setSaving(false);
+                setError('Address verification cancelled. Quotes were not created.');
+                setCsvBulkQueue([]);
+                csvBulkQueueRef.current = [];
+                setCsvBulkIndex(0);
+                pendingCsvRowsRef.current = [];
+                csvPreFailedRef.current = [];
+              }}
+            >
+              Cancel import
+            </Button>
+          </DialogActions>
+        )}
       </Dialog>
+
+      <SiteValidationDialog
+        key={`csv-bulk-${csvBulkIndex}-${(csvBulkQueue[csvBulkIndex] && csvBulkQueue[csvBulkIndex].rowKey) || 'none'}-${(csvBulkQueue[csvBulkIndex] && csvBulkQueue[csvBulkIndex].side) || ''}`}
+        open={csvBulkOpen}
+        dialogSx={{ zIndex: 1500 }}
+        onClose={() => {
+          setCsvBulkOpen(false);
+          setCsvProcessOpen(false);
+          setSaving(false);
+          setError('Address verification cancelled. Quotes were not created.');
+          setCsvBulkQueue([]);
+          csvBulkQueueRef.current = [];
+          setCsvBulkIndex(0);
+          pendingCsvRowsRef.current = [];
+          csvPreFailedRef.current = [];
+        }}
+        onConfirm={handleCsvBulkReviewConfirm}
+        initialValues={(csvBulkQueue[csvBulkIndex] && csvBulkQueue[csvBulkIndex].initialValues) || { building_type: 'retail' }}
+        title={`Address ${csvBulkIndex + 1} of ${Math.max(csvBulkQueue.length, 1)} — verify Row ${(csvBulkQueue[csvBulkIndex] && csvBulkQueue[csvBulkIndex].rowNum) || ''} Location ${String((csvBulkQueue[csvBulkIndex] && csvBulkQueue[csvBulkIndex].side) || '').toUpperCase()}`}
+        confirmLabel={csvBulkIndex < csvBulkQueue.length - 1 ? 'Next address' : 'Confirm & create quotes'}
+      />
 
       {/* Success/Error Snackbars */}
       <Snackbar open={!!success} autoHideDuration={6000} onClose={() => setSuccess('')} anchorOrigin={{ vertical: 'top', horizontal: 'center' }}>

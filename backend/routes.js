@@ -29,6 +29,8 @@ const {
 } = require('./dbErrorHandler');
 const LiveLatencyService = require('./liveLatencyService');
 const outageMonitor = require('./outageMonitorService');
+const { generateNetworkMapPdf } = require('./networkMapRenderer');
+const quoteAddressUtils = require('./quoteAddressUtils');
 
 // Regex for circuit_id: 6 uppercase letters + 6 digits
 const CIRCUIT_ID_REGEX = /^[A-Z]{6}[0-9]{6}$/;
@@ -190,6 +192,45 @@ router.get('/health/database', (req, res) => {
 // AUTHENTICATION ENDPOINTS
 // ====================================
 
+// Build the standard { permissions, modulePermissions, moduleVisibility } trio used by
+// both the normal /login endpoint and the no-credential /voice-guest-login endpoint.
+const buildPermissionsPayload = (userId, callback) => {
+  getUserModulePermissions(userId, (err, modulePermissions) => {
+    if (err) return callback(err);
+
+    // Derive visibility from permissions (if a user has permission, module is visible)
+    const moduleVisibility = {};
+    const allModules = [
+      'network_routes', 'network_design', 'locations', 'carriers',
+      'cnx_colocation_inventory', 'cnx_colocation_availability', 'cnx_colocation_pricing',
+      'exchange_rates', 'market_data_contacts', 'extranet_providers', 'extranet_pricing',
+      'change_logs', 'user_management',
+      'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
+      'allocated_cost_calculator', 'kmz_viewer', 'route_finder', 'carrier_quote_repository',
+      'voice_one_directory'
+    ];
+
+    allModules.forEach(module => {
+      // Module is visible if user has any permission level for it
+      moduleVisibility[module] = !!modulePermissions[module];
+    });
+
+    // Convert per-module permissions to legacy format for frontend compatibility
+    const legacyPermissions = {};
+    Object.keys(modulePermissions).forEach(module => {
+      const permLevel = modulePermissions[module];
+      legacyPermissions[module] = {
+        can_view: permLevel === 'sales' || permLevel === 'read_only' || permLevel === 'provisioner',
+        can_create: permLevel === 'provisioner',
+        can_edit: permLevel === 'provisioner',
+        can_delete: permLevel === 'provisioner'
+      };
+    });
+
+    callback(null, { permissions: legacyPermissions, modulePermissions, moduleVisibility });
+  });
+};
+
 // Login endpoint
 router.post('/login', async (req, res) => {
   const { username, password } = req.body;
@@ -223,42 +264,12 @@ router.post('/login', async (req, res) => {
       const token = generateToken(user);
       
       // Use new per-module permission system
-      getUserModulePermissions(user.id, (err, modulePermissions) => {
+      buildPermissionsPayload(user.id, (err, payload) => {
         if (err) {
           console.error('Error getting permissions:', err);
           return res.status(500).json({ error: 'Failed to get permissions' });
         }
-        
-        // Derive visibility from permissions (if a user has permission, module is visible)
-        const moduleVisibility = {};
-        const allModules = [
-          'network_routes', 'network_design', 'locations', 'carriers',
-          'cnx_colocation_inventory', 'cnx_colocation_availability', 'cnx_colocation_pricing',
-          'exchange_rates', 'exchange_feeds', 'exchange_contacts', 'exchange_pricing',
-          'extranet_providers', 'extranet_contacts', 'extranet_pricing',
-          'change_logs', 'user_management',
-          'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
-          'allocated_cost_calculator', 'kmz_viewer', 'route_finder', 'carrier_quote_repository',
-          'voice_one_directory'
-        ];
-        
-        allModules.forEach(module => {
-          // Module is visible if user has any permission level for it
-          moduleVisibility[module] = !!modulePermissions[module];
-        });
-        
-        // Convert per-module permissions to legacy format for frontend compatibility
-        const legacyPermissions = {};
-        Object.keys(modulePermissions).forEach(module => {
-          const permLevel = modulePermissions[module];
-          legacyPermissions[module] = {
-            can_view: permLevel === 'sales' || permLevel === 'read_only' || permLevel === 'provisioner',
-            can_create: permLevel === 'provisioner',
-            can_edit: permLevel === 'provisioner',
-            can_delete: permLevel === 'provisioner'
-          };
-        });
-        
+
         // Log login activity
         logUserActivity(user.id, 'LOGIN', {
           ipAddress: req.ip || req.connection.remoteAddress,
@@ -274,15 +285,62 @@ router.post('/login', async (req, res) => {
             full_name: user.full_name,
             role: user.user_role
           },
-          permissions: legacyPermissions,
-          modulePermissions, // New per-module permissions
-          moduleVisibility,
+          ...payload,
           passwordResetRequired
         });
       });
     });
   } catch (error) {
     res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// No-credential "Voice Guest" login - drops the caller straight into a read-only
+// session scoped to the voice_one_directory module. Backed by a hidden system
+// account (see migration 045); if that account is missing/inactive this cleanly
+// disables the feature rather than erroring in a confusing way.
+router.post('/voice-guest-login', async (req, res) => {
+  try {
+    db.get('SELECT * FROM users WHERE username = ? AND status = "active"', ['voice_guest'], (err, user) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      if (!user) {
+        return res.status(503).json({ error: 'Voice guest access is not currently available' });
+      }
+
+      const token = generateToken(user);
+
+      buildPermissionsPayload(user.id, (err, payload) => {
+        if (err) {
+          console.error('Error getting guest permissions:', err);
+          return res.status(500).json({ error: 'Failed to get permissions' });
+        }
+
+        logUserActivity(user.id, 'LOGIN', {
+          ipAddress: req.ip || req.connection.remoteAddress,
+          userAgent: req.get('User-Agent'),
+          guest: true
+        });
+
+        res.json({
+          token,
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            full_name: user.full_name,
+            role: user.user_role
+          },
+          ...payload,
+          passwordResetRequired: false,
+          isGuest: true
+        });
+      });
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Guest login failed' });
   }
 });
 
@@ -293,42 +351,16 @@ router.get('/me', authenticateToken, (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
     
     // Use new per-module permission system
-    getUserModulePermissions(user.id, (err, modulePermissions) => {
+    buildPermissionsPayload(user.id, (err, payload) => {
       if (err) return res.status(500).json({ error: 'Failed to get permissions' });
-      
-      // Derive visibility from permissions (if a user has permission, module is visible)
-      const moduleVisibility = {};
-      const allModules = [
-        'network_routes', 'network_design', 'locations', 'carriers',
-        'cnx_colocation_inventory', 'cnx_colocation_availability', 'cnx_colocation_pricing',
-        'exchange_rates', 'exchange_feeds', 'exchange_contacts', 'exchange_pricing',
-        'extranet_providers', 'extranet_contacts', 'extranet_pricing',
-        'change_logs', 'user_management',
-        'bulk_upload', 'core_outages', 'minimum_pricing', 'pricing_logic', 'promo_pricing',
-        'allocated_cost_calculator', 'kmz_viewer', 'route_finder', 'carrier_quote_repository',
-        'voice_one_directory'
-      ];
-      
-      // For administrators, all modules are visible
-      const isAdmin = user.user_role === 'administrator';
-      
-      allModules.forEach(module => {
-        // Module is visible if user is admin OR has any permission level for it
-        moduleVisibility[module] = isAdmin || !!modulePermissions[module];
-      });
-      
-      // Convert per-module permissions to legacy format for frontend compatibility
-      const legacyPermissions = {};
-      Object.keys(modulePermissions).forEach(module => {
-        const permLevel = modulePermissions[module];
-        legacyPermissions[module] = {
-          can_view: permLevel === 'sales' || permLevel === 'read_only' || permLevel === 'provisioner',
-          can_create: permLevel === 'provisioner',
-          can_edit: permLevel === 'provisioner',
-          can_delete: permLevel === 'provisioner'
-        };
-      });
-      
+
+      // Administrators see every module regardless of explicit per-module grants
+      if (user.user_role === 'administrator') {
+        Object.keys(payload.moduleVisibility).forEach(module => {
+          payload.moduleVisibility[module] = true;
+        });
+      }
+
       res.json({
         user: {
           id: user.id,
@@ -337,10 +369,9 @@ router.get('/me', authenticateToken, (req, res) => {
           full_name: user.full_name,
           role: user.user_role
         },
-        permissions: legacyPermissions,
-        modulePermissions, // New per-module permissions
-        moduleVisibility,
-        passwordResetRequired: user.password_reset_required === 1
+        ...payload,
+        passwordResetRequired: user.password_reset_required === 1,
+        isGuest: user.username === 'voice_guest'
       });
     });
   });
@@ -1952,6 +1983,94 @@ router.post('/carriers/:id/contacts/:contactId/approve', authenticateToken, auth
   });
 });
 
+// ====================================
+// CUSTOMERS (shared master list)
+// ====================================
+// Single source of truth for customer names, used by Network Design,
+// Allocated Cost Calculator, Extranet Pricing, One Directory, Exchange
+// Pricing, and Customer Routes. Any authenticated user may search/create —
+// the consuming module's own permission check gates whether they can save
+// a record that references a customer.
+
+function normalizeCustomerName(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+// Search active customers for autocomplete
+router.get('/customers', authenticateToken, (req, res) => {
+  const { q } = req.query;
+  let query = 'SELECT id, name, active FROM customers WHERE active = 1';
+  const params = [];
+
+  if (q && String(q).trim()) {
+    query += ' AND name LIKE ?';
+    params.push(`%${String(q).trim()}%`);
+  }
+
+  query += ' ORDER BY name LIMIT 50';
+
+  db.all(query, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+// Create a customer, reusing an existing one if the normalized name already matches
+router.post('/customers', authenticateToken, (req, res) => {
+  const { name } = req.body;
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return res.status(400).json({ error: 'Customer name is required' });
+
+  const normalized = normalizeCustomerName(trimmed);
+
+  db.get('SELECT id, name, active FROM customers WHERE name_normalized = ?', [normalized], (err, existing) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    if (existing) {
+      return res.status(200).json({ ...existing, already_exists: true });
+    }
+
+    db.run(
+      'INSERT INTO customers (name, name_normalized, created_by) VALUES (?, ?, ?)',
+      [trimmed, normalized, req.user.id],
+      function(insertErr) {
+        if (insertErr) return res.status(500).json({ error: insertErr.message });
+
+        logChange(req.user.id, 'customers', this.lastID, 'CREATE', null, { name: trimmed }, req);
+
+        res.status(201).json({ id: this.lastID, name: trimmed, active: 1, already_exists: false });
+      }
+    );
+  });
+});
+
+// Rename a customer (historical records keep their denormalized name snapshot)
+router.put('/customers/:id', authenticateToken, (req, res) => {
+  const { id } = req.params;
+  const { name, active } = req.body;
+
+  db.get('SELECT * FROM customers WHERE id = ?', [id], (err, existing) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!existing) return res.status(404).json({ error: 'Customer not found' });
+
+    const newName = name !== undefined ? String(name).trim() : existing.name;
+    if (!newName) return res.status(400).json({ error: 'Customer name is required' });
+    const newActive = active !== undefined ? (active ? 1 : 0) : existing.active;
+
+    db.run(
+      'UPDATE customers SET name = ?, name_normalized = ?, active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [newName, normalizeCustomerName(newName), newActive, id],
+      function(updateErr) {
+        if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+        logChange(req.user.id, 'customers', id, 'UPDATE', existing, { name: newName, active: newActive }, req);
+
+        res.json({ id: Number(id), name: newName, active: newActive });
+      }
+    );
+  });
+});
+
 // Repository Types endpoints
 router.get('/repository_types', (req, res) => {
   db.all('SELECT * FROM repository_types ORDER BY name', [], (err, rows) => {
@@ -2975,6 +3094,22 @@ async function validateRowForeignKeys(row, module) {
         errors.push(`Database error validating exchange_id: ${err.message}`);
       }
     }
+  } else if (module === 'market_data_contacts') {
+    if (row.organization_id) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          db.get('SELECT id FROM market_data_organizations WHERE id = ?', [row.organization_id], (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          });
+        });
+        if (!result) {
+          errors.push(`Invalid organization_id: ${row.organization_id} does not exist`);
+        }
+      } catch (err) {
+        errors.push(`Database error validating organization_id: ${err.message}`);
+      }
+    }
   } else if (module === 'extranet_providers') {
     // Validate region
     const validRegions = ['AMERs', 'APAC', 'EMEA'];
@@ -3382,7 +3517,28 @@ router.delete('/network_routes/:circuit_id', authenticateToken, authorizeModuleP
             // Don't fail the request, just log the warning
           }
           
-          res.json({ message: 'Deleted' });
+          // Also remove matching Live Latency API config so admin list stays in sync
+          db.get('SELECT * FROM live_latency_config WHERE circuit_id = ?', [circuit_id], (llErr, existingConfig) => {
+            if (llErr) {
+              console.error('Warning: Failed to look up live_latency_config for deleted route:', llErr);
+              return res.json({ message: 'Deleted' });
+            }
+            if (!existingConfig) {
+              return res.json({ message: 'Deleted' });
+            }
+            db.run('DELETE FROM live_latency_config WHERE circuit_id = ?', [circuit_id], function(llDelErr) {
+              if (llDelErr) {
+                console.error('Warning: Failed to delete live_latency_config for circuit:', circuit_id, llDelErr);
+              } else {
+                try {
+                  logChange(req.user.id, 'live_latency_config', existingConfig.id, 'DELETE', existingConfig, null, req);
+                } catch (logError) {
+                  console.error('Warning: Failed to log live_latency_config deletion:', logError);
+                }
+              }
+              res.json({ message: 'Deleted' });
+            });
+          });
         });
       });
     });
@@ -3464,6 +3620,322 @@ router.delete('/network_routes/:circuit_id/delete_kmz', authenticateToken, autho
   });
 });
 
+// ====================================
+// CUSTOMER ROUTES (Customer Service / Aggregate KMZ database)
+// ====================================
+// Shares the `network_routes` permission — no separate module key.
+// Locations reuse the same POP (location_reference) / custom
+// (quote_custom_locations) model as the Carrier Quote Repository.
+
+const customerRouteKmzStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, path.join(__dirname, 'kmz_files'));
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'customer-route-kmz-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+const customerRouteKmzUpload = multer({ storage: customerRouteKmzStorage });
+
+const CUSTOMER_ROUTE_TYPES = ['Aggregate', 'Service'];
+
+function validateCustomerRouteBody(data) {
+  if (!data.route_type || !CUSTOMER_ROUTE_TYPES.includes(data.route_type)) {
+    return 'route_type must be either "Aggregate" or "Service"';
+  }
+  if (!data.customer_name || !String(data.customer_name).trim()) {
+    return 'Customer name is required';
+  }
+  if (!['pop', 'custom'].includes(data.location_a_type)) {
+    return 'Location A is required';
+  }
+  if (data.location_a_type === 'pop' && !data.location_a_pop_code) {
+    return 'Location A POP code is required';
+  }
+  if (data.location_a_type === 'custom' && !data.location_a_custom_id) {
+    return 'Location A custom location is required';
+  }
+  if (!['pop', 'custom'].includes(data.location_b_type)) {
+    return 'Location B is required';
+  }
+  if (data.location_b_type === 'pop' && !data.location_b_pop_code) {
+    return 'Location B POP code is required';
+  }
+  if (data.location_b_type === 'custom' && !data.location_b_custom_id) {
+    return 'Location B custom location is required';
+  }
+  return null;
+}
+
+// List all customer routes (with KMZ history summary for the table)
+router.get('/customer_routes', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
+  const { route_type, q } = req.query;
+  let query = `
+    SELECT cr.*,
+      (SELECT COUNT(*) FROM customer_route_kmz_files k WHERE k.circuit_id = cr.circuit_id) as kmz_count,
+      (SELECT MAX(uploaded_at) FROM customer_route_kmz_files k WHERE k.circuit_id = cr.circuit_id) as latest_kmz_uploaded_at
+    FROM customer_routes cr
+    WHERE 1=1
+  `;
+  const params = [];
+
+  if (route_type && CUSTOMER_ROUTE_TYPES.includes(route_type)) {
+    query += ' AND cr.route_type = ?';
+    params.push(route_type);
+  }
+  if (q && String(q).trim()) {
+    query += ' AND (cr.circuit_id LIKE ? OR cr.customer_name LIKE ? OR cr.notes LIKE ?)';
+    const like = `%${String(q).trim()}%`;
+    params.push(like, like, like);
+  }
+
+  query += ' ORDER BY cr.circuit_id ASC';
+
+  db.all(query, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+// Get a single customer route with full KMZ history
+router.get('/customer_routes/:circuit_id', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
+  const { circuit_id } = req.params;
+  db.get('SELECT * FROM customer_routes WHERE circuit_id = ?', [circuit_id], (err, route) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!route) return res.status(404).json({ error: 'Customer route not found' });
+
+    db.all(
+      'SELECT * FROM customer_route_kmz_files WHERE circuit_id = ? ORDER BY uploaded_at DESC',
+      [circuit_id],
+      (kmzErr, kmzFiles) => {
+        if (kmzErr) return res.status(500).json({ error: kmzErr.message });
+        res.json({ ...route, kmz_files: kmzFiles || [] });
+      }
+    );
+  });
+});
+
+// Create a customer route
+router.post('/customer_routes', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), (req, res) => {
+  const data = req.body;
+
+  if (!isValidCircuitId(data.circuit_id)) {
+    return res.status(400).json({ error: 'Invalid circuit_id format' });
+  }
+
+  const validationError = validateCustomerRouteBody(data);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+
+  const fields = [
+    'circuit_id', 'route_type', 'customer_id', 'customer_name',
+    'location_a_type', 'location_a_pop_code', 'location_a_custom_id',
+    'location_b_type', 'location_b_pop_code', 'location_b_custom_id',
+    'notes', 'created_by', 'updated_by'
+  ];
+  const placeholders = fields.map(() => '?').join(',');
+  const values = fields.map(f => {
+    if (f === 'created_by' || f === 'updated_by') return req.user.id;
+    return data[f] ?? null;
+  });
+
+  db.run(
+    `INSERT INTO customer_routes (${fields.join(',')}) VALUES (${placeholders})`,
+    values,
+    function(err) {
+      if (err) {
+        if (err.message && err.message.includes('UNIQUE')) {
+          return res.status(409).json({ error: `A customer route with Circuit ID "${data.circuit_id}" already exists` });
+        }
+        return res.status(500).json({ error: err.message });
+      }
+
+      logChange(req.user.id, 'customer_routes', data.circuit_id, 'CREATE', null, data, req);
+      res.status(201).json({ circuit_id: data.circuit_id });
+    }
+  );
+});
+
+// Update a customer route (circuit_id immutable)
+router.put('/customer_routes/:circuit_id', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), (req, res) => {
+  const { circuit_id } = req.params;
+  const data = req.body;
+
+  const validationError = validateCustomerRouteBody(data);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+
+  db.get('SELECT * FROM customer_routes WHERE circuit_id = ?', [circuit_id], (err, oldRoute) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldRoute) return res.status(404).json({ error: 'Customer route not found' });
+
+    const fields = [
+      'route_type', 'customer_id', 'customer_name',
+      'location_a_type', 'location_a_pop_code', 'location_a_custom_id',
+      'location_b_type', 'location_b_pop_code', 'location_b_custom_id',
+      'notes', 'updated_by'
+    ];
+    const setClause = fields.map(f => `${f} = ?`).join(', ') + ', updated_at = CURRENT_TIMESTAMP';
+    const values = fields.map(f => {
+      if (f === 'updated_by') return req.user.id;
+      return data[f] ?? null;
+    });
+    values.push(circuit_id);
+
+    db.run(
+      `UPDATE customer_routes SET ${setClause} WHERE circuit_id = ?`,
+      values,
+      function(updateErr) {
+        if (updateErr) return res.status(500).json({ error: updateErr.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Customer route not found' });
+
+        logChange(req.user.id, 'customer_routes', circuit_id, 'UPDATE', oldRoute, data, req);
+        res.json({ message: 'Updated' });
+      }
+    );
+  });
+});
+
+// Delete a customer route (and all of its KMZ history files)
+router.delete('/customer_routes/:circuit_id', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), (req, res) => {
+  const { circuit_id } = req.params;
+
+  db.get('SELECT * FROM customer_routes WHERE circuit_id = ?', [circuit_id], (err, oldRoute) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!oldRoute) return res.status(404).json({ error: 'Customer route not found' });
+
+    db.all('SELECT stored_filename FROM customer_route_kmz_files WHERE circuit_id = ?', [circuit_id], (kmzErr, kmzFiles) => {
+      if (kmzErr) return res.status(500).json({ error: kmzErr.message });
+
+      db.run('DELETE FROM customer_routes WHERE circuit_id = ?', [circuit_id], function(delErr) {
+        if (delErr) return res.status(500).json({ error: delErr.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Customer route not found' });
+
+        (kmzFiles || []).forEach(f => {
+          const filePath = path.join(kmzDir, f.stored_filename);
+          if (fs.existsSync(filePath)) {
+            try { fs.unlinkSync(filePath); } catch (fileErr) {
+              console.error('Failed to delete customer route KMZ file:', fileErr);
+            }
+          }
+        });
+
+        logChange(req.user.id, 'customer_routes', circuit_id, 'DELETE', oldRoute, null, req);
+        res.json({ message: 'Deleted' });
+      });
+    });
+  });
+});
+
+// Upload one or more KMZ files for a customer route (appended to history, never overwritten)
+router.post(
+  '/customer_routes/:circuit_id/kmz',
+  authenticateToken,
+  authorizeModulePermission('network_routes', 'provisioner'),
+  customerRouteKmzUpload.array('kmz_files', 10),
+  (req, res) => {
+    const { circuit_id } = req.params;
+    const files = req.files || [];
+    if (files.length === 0) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    db.get('SELECT circuit_id FROM customer_routes WHERE circuit_id = ?', [circuit_id], (err, route) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!route) return res.status(404).json({ error: 'Customer route not found' });
+
+      let remaining = files.length;
+      const inserted = [];
+      let hadError = null;
+
+      files.forEach((file) => {
+        db.run(
+          'INSERT INTO customer_route_kmz_files (circuit_id, stored_filename, original_filename, uploaded_by) VALUES (?, ?, ?, ?)',
+          [circuit_id, file.filename, file.originalname, req.user.id],
+          function(insertErr) {
+            remaining--;
+            if (insertErr) {
+              hadError = insertErr;
+            } else {
+              inserted.push({ id: this.lastID, stored_filename: file.filename, original_filename: file.originalname });
+            }
+            if (remaining === 0) {
+              if (hadError) return res.status(500).json({ error: hadError.message });
+
+              logChange(req.user.id, 'customer_routes', circuit_id, 'UPDATE',
+                null,
+                { file_action: 'KMZ_UPLOAD', files: inserted.map(f => f.original_filename) },
+                req);
+
+              res.json({ message: 'KMZ file(s) uploaded', files: inserted });
+            }
+          }
+        );
+      });
+    });
+  }
+);
+
+// List KMZ upload history for a customer route
+router.get('/customer_routes/:circuit_id/kmz', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
+  const { circuit_id } = req.params;
+  db.all(
+    'SELECT * FROM customer_route_kmz_files WHERE circuit_id = ? ORDER BY uploaded_at DESC',
+    [circuit_id],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
+});
+
+// Download a specific KMZ file from a customer route's history
+router.get('/customer_routes/kmz/:fileId/download', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
+  const { fileId } = req.params;
+  db.get('SELECT * FROM customer_route_kmz_files WHERE id = ?', [fileId], (err, file) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!file) return res.status(404).json({ error: 'KMZ file not found' });
+
+    const filePath = path.join(kmzDir, file.stored_filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'KMZ file not found on disk' });
+    }
+
+    const downloadName = file.original_filename || file.stored_filename;
+    res.download(filePath, downloadName);
+  });
+});
+
+// Delete a single KMZ history entry (and its file on disk)
+router.delete('/customer_routes/kmz/:fileId', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), (req, res) => {
+  const { fileId } = req.params;
+  db.get('SELECT * FROM customer_route_kmz_files WHERE id = ?', [fileId], (err, file) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!file) return res.status(404).json({ error: 'KMZ file not found' });
+
+    db.run('DELETE FROM customer_route_kmz_files WHERE id = ?', [fileId], function(delErr) {
+      if (delErr) return res.status(500).json({ error: delErr.message });
+
+      const filePath = path.join(kmzDir, file.stored_filename);
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch (fileErr) {
+          console.error('Failed to delete customer route KMZ file from filesystem:', fileErr);
+        }
+      }
+
+      logChange(req.user.id, 'customer_routes', file.circuit_id, 'UPDATE',
+        { file_action: 'KMZ_DELETE', deleted_filename: file.original_filename },
+        null,
+        req);
+
+      res.json({ message: 'KMZ file deleted successfully' });
+    });
+  });
+});
+
 // Export network_routes as CSV
 router.get('/network_routes_export', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
   db.all(`SELECT circuit_id, kmz_file_path, live_latency, expected_latency, test_results_link, cable_system, 
@@ -3486,6 +3958,111 @@ router.get('/network_routes_export', authenticateToken, authorizeModulePermissio
     res.header('Content-Type', 'text/csv');
     res.attachment('network_routes.csv');
     res.send(csv);
+  });
+});
+
+// Generate a PDF network map diagram for the selected regions/detail fields.
+// Query params:
+//   regions  - comma-separated subset of AMERs, EMEA, APAC (at least one required)
+//   details  - comma-separated subset of ucn, latency, bandwidth, carrier
+const VALID_MAP_REGIONS = ['AMERs', 'EMEA', 'APAC'];
+router.get('/network_routes_export_map', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
+  const regions = (req.query.regions || '')
+    .split(',')
+    .map((r) => r.trim())
+    .filter((r) => VALID_MAP_REGIONS.includes(r));
+
+  if (regions.length === 0) {
+    return res.status(400).json({ error: 'At least one valid region (AMERs, EMEA, APAC) must be selected.' });
+  }
+
+  const detailKeys = (req.query.details || '')
+    .split(',')
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
+  const details = {
+    ucn: detailKeys.includes('ucn'),
+    latency: detailKeys.includes('latency'),
+    bandwidth: detailKeys.includes('bandwidth'),
+    carrier: detailKeys.includes('carrier'),
+  };
+
+  // Include routes whose own region is directly selected, plus INTER routes
+  // that touch a selected region on either end (via each end's location region).
+  const regionPlaceholders = regions.map(() => '?').join(',');
+  const routesSql = `
+    SELECT nr.circuit_id, nr.location_a, nr.location_b, nr.region, nr.expected_latency, nr.bandwidth, nr.underlying_carrier
+    FROM network_routes nr
+    LEFT JOIN location_reference lr_a ON nr.location_a = lr_a.location_code
+    LEFT JOIN location_reference lr_b ON nr.location_b = lr_b.location_code
+    WHERE nr.route_status = 'Active'
+      AND (
+        nr.region IN (${regionPlaceholders})
+        OR (nr.region = 'INTER' AND (lr_a.region IN (${regionPlaceholders}) OR lr_b.region IN (${regionPlaceholders})))
+      )
+  `;
+  const routesParams = [...regions, ...regions, ...regions];
+
+  db.all(routesSql, routesParams, (err, routeRows) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    if (routeRows.length === 0) {
+      return res.status(404).json({ error: 'No active routes found for the selected region(s).' });
+    }
+
+    const locationCodes = Array.from(new Set(
+      routeRows.flatMap((r) => [r.location_a, r.location_b]).filter(Boolean)
+    ));
+
+    const locationPlaceholders = locationCodes.map(() => '?').join(',');
+    const locationsSql = `
+      SELECT location_code, region, city, country, datacenter_name, datacenter_address
+      FROM location_reference
+      WHERE status = 'Active' AND location_code IN (${locationPlaceholders})
+    `;
+
+    db.all(locationsSql, locationCodes, (err2, locationRows) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+
+      const nodes = locationRows.map((loc) => ({
+        code: loc.location_code,
+        region: loc.region,
+        city: loc.city,
+        country: loc.country,
+        datacenterName: loc.datacenter_name,
+        address: loc.datacenter_address,
+        inSelectedRegions: regions.includes(loc.region),
+      }));
+
+      // Group routes by unordered (location_a, location_b) pair into a single edge.
+      const edgesByKey = new Map();
+      routeRows.forEach((r) => {
+        const key = [r.location_a, r.location_b].sort().join('|');
+        if (!edgesByKey.has(key)) {
+          edgesByKey.set(key, { locationA: r.location_a, locationB: r.location_b, routes: [] });
+        }
+        edgesByKey.get(key).routes.push({
+          circuit_id: r.circuit_id,
+          expected_latency: r.expected_latency,
+          bandwidth: r.bandwidth,
+          underlying_carrier: r.underlying_carrier,
+          region: r.region,
+        });
+      });
+      const edges = Array.from(edgesByKey.values());
+
+      generateNetworkMapPdf(nodes, edges, { regions, details, generatedAt: new Date() })
+        .then((pdfBuffer) => {
+          const filename = `network-map-${regions.join('-')}-${Date.now()}.pdf`;
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+          res.send(pdfBuffer);
+        })
+        .catch((pdfErr) => {
+          console.error('Network map PDF generation failed:', pdfErr);
+          res.status(500).json({ error: 'Failed to generate network map PDF.' });
+        });
+    });
   });
 });
 
@@ -3806,6 +4383,153 @@ router.post('/network_routes/:circuit_id/upload_test_results', authenticateToken
       .catch(err => {
         res.status(500).json({ error: err.message });
       });
+  });
+});
+
+// ========================================
+// SELF-SERVICE LIVE LATENCY PROBE CONFIG
+// ========================================
+// Allows any user with network_routes create/edit permission to register a
+// Live Latency API probe for their route by simply supplying the probe name
+// (API Instance Name). All other connection details use the standard defaults.
+const LIVE_LATENCY_PROBE_DEFAULTS = {
+  api_base_url: 'https://ivpi-ipcnwk1.ipc.com/api/v1/vistamart/data',
+  api_indicator: 'AnyVendor - Response Time (ms) - BPI',
+  auth_username: 'infovista_api_ro',
+  auth_password: 'vg34%k89$',
+  update_interval_minutes: 15
+};
+
+// Get the current probe configuration (if any) for a circuit
+router.get('/network_routes/:circuit_id/live_latency_probe', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
+  const { circuit_id } = req.params;
+  db.get(
+    'SELECT circuit_id, api_instance_name, enabled FROM live_latency_config WHERE circuit_id = ?',
+    [circuit_id],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({
+        configured: !!row,
+        api_instance_name: row ? row.api_instance_name : '',
+        enabled: row ? !!row.enabled : false
+      });
+    }
+  );
+});
+
+// Create or update the probe configuration for a circuit using default connection details
+router.post('/network_routes/:circuit_id/live_latency_probe', authenticateToken, authorizeModulePermission('network_routes', 'provisioner'), (req, res) => {
+  const { circuit_id } = req.params;
+  const apiInstanceName = (req.body.api_instance_name || '').trim();
+
+  if (!isValidCircuitId(circuit_id)) {
+    return res.status(400).json({ error: 'Invalid circuit_id format' });
+  }
+
+  if (!apiInstanceName) {
+    return res.status(400).json({ error: 'Probe name (API Instance Name) is required' });
+  }
+
+  db.get('SELECT circuit_id FROM network_routes WHERE circuit_id = ?', [circuit_id], (err, routeRow) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!routeRow) return res.status(404).json({ error: 'Circuit ID not found in network routes database' });
+
+    let encryptedPassword;
+    try {
+      const latencyService = new LiveLatencyService();
+      encryptedPassword = latencyService.encryptPassword(LIVE_LATENCY_PROBE_DEFAULTS.auth_password);
+    } catch (encryptErr) {
+      console.error('Error encrypting default probe password:', encryptErr);
+      return res.status(500).json({ error: 'Failed to prepare probe configuration' });
+    }
+
+    db.get('SELECT id FROM live_latency_config WHERE circuit_id = ?', [circuit_id], (err, existing) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      if (existing) {
+        db.run(
+          `UPDATE live_latency_config SET
+             api_instance_name = ?,
+             api_base_url = ?,
+             api_indicator = ?,
+             auth_username = ?,
+             auth_password_encrypted = ?,
+             update_interval_minutes = ?,
+             enabled = 1,
+             failure_count = 0,
+             disabled_until = NULL,
+             updated_by = ?,
+             updated_at = CURRENT_TIMESTAMP
+           WHERE circuit_id = ?`,
+          [
+            apiInstanceName,
+            LIVE_LATENCY_PROBE_DEFAULTS.api_base_url,
+            LIVE_LATENCY_PROBE_DEFAULTS.api_indicator,
+            LIVE_LATENCY_PROBE_DEFAULTS.auth_username,
+            encryptedPassword,
+            LIVE_LATENCY_PROBE_DEFAULTS.update_interval_minutes,
+            req.user.id,
+            circuit_id
+          ],
+          function(updateErr) {
+            if (updateErr) {
+              console.error('Error updating probe configuration:', updateErr);
+              return res.status(500).json({ error: 'Failed to update probe configuration' });
+            }
+
+            logChange(req.user.id, 'live_latency_config', existing.id, 'UPDATE', null, {
+              circuit_id,
+              api_instance_name: apiInstanceName,
+              action: 'SELF_SERVICE_PROBE_UPDATE'
+            }, req);
+
+            res.json({
+              success: true,
+              message: 'Probe configuration updated successfully',
+              data: { circuit_id, api_instance_name: apiInstanceName }
+            });
+          }
+        );
+      } else {
+        db.run(
+          `INSERT INTO live_latency_config
+             (circuit_id, enabled, api_base_url, api_instance_name, api_indicator, auth_username, auth_password_encrypted, update_interval_minutes, created_by, updated_by)
+           VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            circuit_id,
+            LIVE_LATENCY_PROBE_DEFAULTS.api_base_url,
+            apiInstanceName,
+            LIVE_LATENCY_PROBE_DEFAULTS.api_indicator,
+            LIVE_LATENCY_PROBE_DEFAULTS.auth_username,
+            encryptedPassword,
+            LIVE_LATENCY_PROBE_DEFAULTS.update_interval_minutes,
+            req.user.id,
+            req.user.id
+          ],
+          function(insertErr) {
+            if (insertErr) {
+              if (insertErr.message.includes('UNIQUE constraint failed')) {
+                return res.status(409).json({ error: 'Configuration already exists for this circuit' });
+              }
+              console.error('Error creating probe configuration:', insertErr);
+              return res.status(500).json({ error: 'Failed to create probe configuration' });
+            }
+
+            logChange(req.user.id, 'live_latency_config', this.lastID, 'CREATE', null, {
+              circuit_id,
+              api_instance_name: apiInstanceName,
+              action: 'SELF_SERVICE_PROBE_CREATE'
+            }, req);
+
+            res.status(201).json({
+              success: true,
+              message: 'Probe configuration created successfully',
+              data: { id: this.lastID, circuit_id, api_instance_name: apiInstanceName }
+            });
+          }
+        );
+      }
+    });
   });
 });
 
@@ -4141,6 +4865,33 @@ router.put('/locations/:id/cross-connect', authenticateToken, authorizeModulePer
   });
 });
 
+// Get sales-facing Cross Connect pricing for all active locations (Network Routes Repository submodule)
+router.get('/cross-connects-pricing', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
+  db.all(
+    `SELECT location_code, city, country, region, datacenter_name, status,
+     cross_connect_nrc, cross_connect_nrc_currency, cross_connect_mrc, cross_connect_mrc_currency,
+     cross_connect_mandatory, customer_owned_xc, cross_connect_notes
+     FROM location_reference
+     WHERE status = 'Active'
+     ORDER BY location_code`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      const processedRows = rows.map(row => ({
+        ...row,
+        cross_connect_nrc_currency: row.cross_connect_nrc_currency || 'USD',
+        cross_connect_mrc_currency: row.cross_connect_mrc_currency || 'USD',
+        cross_connect_mandatory: row.cross_connect_mandatory || 0,
+        customer_owned_xc: row.customer_owned_xc || 0,
+        cross_connect_notes: row.cross_connect_notes || ''
+      }));
+
+      res.json(processedRows);
+    }
+  );
+});
+
 // Delete location
 router.delete('/locations/:id', authenticateToken, authorizeModulePermission('locations', 'provisioner'), (req, res) => {
   const locationId = req.params.id;
@@ -4415,26 +5166,15 @@ router.delete('/exchange_rates/:id', authenticateToken, authorizeModulePermissio
         });
       }
       
-      // Check if exchange rate is used in exchange feeds pass through fees
-      db.get('SELECT COUNT(*) as count FROM exchange_feeds WHERE pass_through_currency = ?', [rate.currency_code], (err, feedUsage) => {
+      // If not in use, proceed with deletion
+      db.run('DELETE FROM exchange_rates WHERE id = ?', [rateId], function(err) {
         if (err) return res.status(500).json({ error: err.message });
-        
-        if (feedUsage.count > 0) {
-          return res.status(400).json({ 
-            error: 'Exchange Rate in use - Please remove from any live function before deletion'
-          });
-        }
-        
-        // If not in use, proceed with deletion
-        db.run('DELETE FROM exchange_rates WHERE id = ?', [rateId], function(err) {
-          if (err) return res.status(500).json({ error: err.message });
-          if (this.changes === 0) return res.status(404).json({ error: 'Exchange rate not found' });
-          
-          // Log the deletion
-          logChange(req.user.id, 'exchange_rates', rate.currency_code, 'DELETE', rate, null, req);
-          
-          res.json({ message: 'Exchange rate deleted successfully' });
-        });
+        if (this.changes === 0) return res.status(404).json({ error: 'Exchange rate not found' });
+
+        // Log the deletion
+        logChange(req.user.id, 'exchange_rates', rate.currency_code, 'DELETE', rate, null, req);
+
+        res.json({ message: 'Exchange rate deleted successfully' });
       });
     });
   });
@@ -7329,6 +8069,12 @@ router.get('/cnx-colocation/availability', authenticateToken, authorizeModulePer
         const totalClients = locationRacks.reduce((sum, r) => sum + r.client_count, 0);
         const totalDevices = locationRacks.reduce((sum, r) => sum + r.device_count, 0);
         const totalIPCReserved = locationRacks.reduce((sum, r) => sum + r.ipc_reserved_ru, 0);
+        // Location available power excludes remaining power on racks with no further RUs available
+        // (rack-level available_power is still shown as total_power_kva - allocated_power)
+        const locationAvailablePower = locationRacks.reduce((sum, r) => {
+          if (r.available_ru <= 0) return sum;
+          return sum + Math.max(0, r.available_power);
+        }, 0);
         
         return {
           ...location,
@@ -7336,7 +8082,7 @@ router.get('/cnx-colocation/availability', authenticateToken, authorizeModulePer
           allocated_power: totalAllocatedPower,
           ipc_reserved_ru: totalIPCReserved,
           available_ru: location.total_ru_capacity - totalAllocatedRU - totalIPCReserved,
-          available_power: parseFloat((location.total_power_capacity - totalAllocatedPower).toFixed(2)),
+          available_power: parseFloat(locationAvailablePower.toFixed(2)),
           client_count: totalClients,
           device_count: totalDevices,
           racks: locationRacks
@@ -9495,6 +10241,25 @@ const bulkUploadModules = {
       more_info: 'Primary technical contact for exchange operations'
     }
   },
+  market_data_contacts: {
+    table: 'market_data_contacts',
+    templateFields: [
+      'organization_id', 'contact_name', 'job_title', 'country', 'phone_number',
+      'email', 'contact_type', 'daily_contact', 'more_info'
+    ],
+    requiredFields: ['organization_id', 'contact_name'],
+    sampleData: {
+      organization_id: '1',
+      contact_name: 'John Doe',
+      job_title: 'Technical Director',
+      country: 'United States',
+      phone_number: '+1-555-0123',
+      email: 'john.doe@example.com',
+      contact_type: 'Technical',
+      daily_contact: 'false',
+      more_info: 'Primary technical contact'
+    }
+  },
   exchange_rates: {
     table: 'exchange_rates',
     templateFields: ['currency_code', 'exchange_rate'],
@@ -9984,8 +10749,14 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
   
   // Special handling for certain modules
   if (module === 'carrier_contacts') {
-    // Add carrier_name to the export
-    query = `SELECT cc.*, c.carrier_name 
+    // Add carrier_name and mapped parent carrier region to the export
+    query = `SELECT cc.*, c.carrier_name,
+             CASE 
+               WHEN c.region = 'North America' THEN 'AMERs'
+               WHEN c.region = 'Asia Pacific' THEN 'APAC'
+               WHEN c.region = 'Europe' THEN 'EMEA'
+               ELSE c.region
+             END as region
              FROM carrier_contacts cc 
              LEFT JOIN carriers c ON cc.carrier_id = c.id 
              LIMIT ?`;
@@ -10010,8 +10781,8 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
              LEFT JOIN pop_capabilities pc ON lr.id = pc.location_id 
              LIMIT ?`;
   } else if (module === 'carriers') {
-    // Map database regions to frontend values for export
-    query = `SELECT carrier_name, previously_known_as, status,
+    // Map database regions to frontend values for export; include carrier_id (carriers.id)
+    query = `SELECT id as carrier_id, carrier_name, previously_known_as, status,
              CASE 
                WHEN region = 'North America' THEN 'AMERs'
                WHEN region = 'Asia Pacific' THEN 'APAC'
@@ -10138,7 +10909,10 @@ router.get('/bulk-upload/database/:module', authenticateToken, authorizeRole('ad
       let csvFields = config.templateFields;
       
       if (module === 'carrier_contacts') {
-        csvFields = [...config.templateFields, 'carrier_name'];
+        csvFields = [...config.templateFields, 'carrier_name', 'region'];
+      } else if (module === 'carriers') {
+        // Export includes carrier_id (DB id); not part of upload template fields
+        csvFields = ['carrier_id', ...config.templateFields];
       } else if (module === 'pop_capabilities') {
         csvFields = [
           'location_code', 'region', 'city', 'country', 'datacenter_name', 'datacenter_address',
@@ -10301,6 +11075,10 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
               }
             }
           });
+          // Carriers: accept optional carrier_id from database export re-uploads (not in template)
+          if (module === 'carriers' && row.carrier_id !== undefined && row.carrier_id !== null && String(row.carrier_id).trim() !== '') {
+            cleanedRow.carrier_id = String(row.carrier_id).trim();
+          }
           cleanedRow._originalRowNumber = originalRowNumber;
           
           // Step 3: Data format validation
@@ -10794,28 +11572,55 @@ router.post('/bulk-upload/:module', authenticateToken, authorizeRole('administra
                 cleanRow.status = 'active';
               }
               
-              // Check for existing carrier with same name
-              const existingCarrier = await new Promise((resolve, reject) => {
-                db.get(
-                  'SELECT id FROM carriers WHERE LOWER(TRIM(carrier_name)) = LOWER(TRIM(?))',
-                  [cleanRow.carrier_name],
-                  (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                  }
-                );
-              });
+              // Prefer match by carrier_id when provided (from database export re-upload)
+              let existingCarrier = null;
+              if (cleanRow.carrier_id) {
+                existingCarrier = await new Promise((resolve, reject) => {
+                  db.get(
+                    'SELECT id FROM carriers WHERE id = ?',
+                    [cleanRow.carrier_id],
+                    (err, row) => {
+                      if (err) reject(err);
+                      else resolve(row);
+                    }
+                  );
+                });
+                if (!existingCarrier) {
+                  insertErrors.push(`Row ${index + 1}: Invalid carrier_id: ${cleanRow.carrier_id} does not exist`);
+                  continue;
+                }
+              } else {
+                // Fall back to match by carrier name
+                existingCarrier = await new Promise((resolve, reject) => {
+                  db.get(
+                    'SELECT id FROM carriers WHERE LOWER(TRIM(carrier_name)) = LOWER(TRIM(?))',
+                    [cleanRow.carrier_name],
+                    (err, row) => {
+                      if (err) reject(err);
+                      else resolve(row);
+                    }
+                  );
+                });
+              }
               
               if (existingCarrier) {
-                // Update existing carrier
-                const updateFields = config.templateFields.slice(1); // Skip carrier_name (or use all fields)
-                sql = `UPDATE carriers SET ${updateFields.map(field => `${field} = ?`).join(', ')} WHERE LOWER(TRIM(carrier_name)) = LOWER(TRIM(?))`;
-                values = [
-                  ...updateFields.map(field => cleanRow[field]),
-                  cleanRow.carrier_name
-                ];
+                // Update existing carrier (by id when carrier_id provided, else by name)
+                if (cleanRow.carrier_id) {
+                  sql = `UPDATE carriers SET ${config.templateFields.map(field => `${field} = ?`).join(', ')} WHERE id = ?`;
+                  values = [
+                    ...config.templateFields.map(field => cleanRow[field]),
+                    existingCarrier.id
+                  ];
+                } else {
+                  const updateFields = config.templateFields.slice(1); // Skip carrier_name
+                  sql = `UPDATE carriers SET ${updateFields.map(field => `${field} = ?`).join(', ')} WHERE LOWER(TRIM(carrier_name)) = LOWER(TRIM(?))`;
+                  values = [
+                    ...updateFields.map(field => cleanRow[field]),
+                    cleanRow.carrier_name
+                  ];
+                }
               } else {
-                // Insert new carrier
+                // Insert new carrier (never insert carrier_id — DB auto-increments id)
                 sql = `INSERT INTO carriers (${config.templateFields.join(', ')}) VALUES (${config.templateFields.map(() => '?').join(', ')})`;
                 values = config.templateFields.map(field => cleanRow[field]);
               }
@@ -12160,12 +12965,13 @@ const getPromoRulesWithLocations = () => {
         return;
       }
       
-      // Parse locations strings into arrays and include required_circuit_ids
+      // Parse locations strings into arrays and include required/excluded circuit_ids
       const rulesWithLocations = rules.map(rule => ({
         ...rule,
         source_locations: rule.source_locations ? rule.source_locations.split(',') : [],
         destination_locations: rule.destination_locations ? rule.destination_locations.split(',') : [],
-        required_circuit_ids: rule.required_circuit_ids ? rule.required_circuit_ids.split(',').map(c => c.trim()).filter(c => c) : []
+        required_circuit_ids: rule.required_circuit_ids ? rule.required_circuit_ids.split(',').map(c => c.trim()).filter(c => c) : [],
+        excluded_circuit_ids: rule.excluded_circuit_ids ? rule.excluded_circuit_ids.split(',').map(c => c.trim()).filter(c => c) : []
       }));
       
       resolve(rulesWithLocations);
@@ -12244,7 +13050,7 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
   const {
     rule_name, source_locations, destination_locations,
     price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
-    required_circuit_ids
+    required_circuit_ids, excluded_circuit_ids
   } = req.body;
   
   // Validate required fields
@@ -12273,14 +13079,17 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
     return res.status(500).json({ error: 'Failed to validate locations' });
   }
   
-  // Process required_circuit_ids - convert array to comma-separated string
+  // Process required_circuit_ids / excluded_circuit_ids - convert arrays to comma-separated strings
   // Handle both string array and object array (where objects have circuit_id property)
-  const requiredCircuitsString = Array.isArray(required_circuit_ids) && required_circuit_ids.length > 0
-    ? required_circuit_ids
+  const circuitIdsToString = (circuitIds) => Array.isArray(circuitIds) && circuitIds.length > 0
+    ? circuitIds
         .map(c => typeof c === 'string' ? c : (c && c.circuit_id ? c.circuit_id : null))
         .filter(c => c && c.trim && c.trim())
         .join(',')
     : null;
+
+  const requiredCircuitsString = circuitIdsToString(required_circuit_ids);
+  const excludedCircuitsString = circuitIdsToString(excluded_circuit_ids);
 
   // Helper function to insert locations
   const insertLocations = (ruleId, callback) => {
@@ -12331,10 +13140,10 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
   // Insert the main rule
   db.run(
     `INSERT INTO promo_pricing_rules (rule_name, price_under_100mb, price_100_to_999mb, 
-     price_1000_to_2999mb, price_3000mb_plus, required_circuit_ids, is_active, created_by) 
-     VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+     price_1000_to_2999mb, price_3000mb_plus, required_circuit_ids, excluded_circuit_ids, is_active, created_by) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     [rule_name, parseFloat(price_under_100mb) || 0, parseFloat(price_100_to_999mb) || 0, 
-     parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, requiredCircuitsString, req.user.id],
+     parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, requiredCircuitsString, excludedCircuitsString, req.user.id],
     function(err) {
       if (err) {
         return res.status(500).json({ error: 'Promo pricing insert error: ' + err.message });
@@ -12368,7 +13177,8 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
             logChange(req.user.id, 'promo_pricing_rules', ruleId, 'CREATE', null, {
               rule_name, source_locations, destination_locations, 
               price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
-              required_circuit_ids: requiredCircuitsString
+              required_circuit_ids: requiredCircuitsString,
+              excluded_circuit_ids: excludedCircuitsString
             }, req);
             
             res.json({ message: 'Promo pricing rule created successfully', id: ruleId });
@@ -12385,7 +13195,7 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
   const {
     rule_name, source_locations, destination_locations,
     price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
-    required_circuit_ids
+    required_circuit_ids, excluded_circuit_ids
   } = req.body;
   
   // Validate same-city constraint for source locations only (destinations can span multiple cities)
@@ -12401,14 +13211,17 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
     return res.status(500).json({ error: 'Failed to validate locations' });
   }
   
-  // Process required_circuit_ids - convert array to comma-separated string
+  // Process required_circuit_ids / excluded_circuit_ids - convert arrays to comma-separated strings
   // Handle both string array and object array (where objects have circuit_id property)
-  const requiredCircuitsString = Array.isArray(required_circuit_ids) && required_circuit_ids.length > 0
-    ? required_circuit_ids
+  const circuitIdsToStringForUpdate = (circuitIds) => Array.isArray(circuitIds) && circuitIds.length > 0
+    ? circuitIds
         .map(c => typeof c === 'string' ? c : (c && c.circuit_id ? c.circuit_id : null))
         .filter(c => c && c.trim && c.trim())
         .join(',')
     : null;
+
+  const requiredCircuitsString = circuitIdsToStringForUpdate(required_circuit_ids);
+  const excludedCircuitsString = circuitIdsToStringForUpdate(excluded_circuit_ids);
   
   db.run('BEGIN TRANSACTION', (err) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -12428,9 +13241,9 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
       // Update the promo rule
       db.run(
         `UPDATE promo_pricing_rules SET rule_name = ?, price_under_100mb = ?, price_100_to_999mb = ?, 
-         price_1000_to_2999mb = ?, price_3000mb_plus = ?, required_circuit_ids = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+         price_1000_to_2999mb = ?, price_3000mb_plus = ?, required_circuit_ids = ?, excluded_circuit_ids = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [rule_name, parseFloat(price_under_100mb) || 0, parseFloat(price_100_to_999mb) || 0, 
-         parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, requiredCircuitsString, req.user.id, ruleId],
+         parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, requiredCircuitsString, excludedCircuitsString, req.user.id, ruleId],
         function(err) {
           if (err) {
             db.run('ROLLBACK');
@@ -12473,7 +13286,8 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
                   logChange(req.user.id, 'promo_pricing_rules', ruleId, 'UPDATE', oldRule, {
                     rule_name, source_locations, destination_locations,
                     price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
-                    required_circuit_ids: requiredCircuitsString
+                    required_circuit_ids: requiredCircuitsString,
+                    excluded_circuit_ids: excludedCircuitsString
                   }, req);
                   
                   res.json({ message: 'Promo pricing rule updated successfully' });
@@ -15437,6 +16251,7 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
     provider_secondary_city,
     provider_region,
     customer_name,
+    customer_id,
     member_primary_city,
     member_secondary_city,
     member_resiliency,
@@ -15756,8 +16571,8 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
           user_id, provider_primary_city, provider_secondary_city, member_primary_city, member_secondary_city,
           member_resiliency, member_on_off_net, member_cloud, bandwidth, traffic_type, ipsec_required,
           contract_term, currency_requested, discount_requested, discount_percent, base_price_usd,
-          final_mrc, final_nrc, calculation_breakdown, region, tier, customer_name
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          final_mrc, final_nrc, calculation_breakdown, region, tier, customer_name, customer_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           req.user.id,
           provider_primary_city,
@@ -15780,7 +16595,8 @@ router.post('/extranet-pricing/calculate', authenticateToken, authorizeModulePer
           JSON.stringify(breakdown),
           pricingRegion,
           highestTier,
-          customer_name || null
+          customer_name || null,
+          customer_id || null
         ],
         (err) => {
           if (err) console.error('Failed to log pricing calculation:', err);
@@ -15872,7 +16688,7 @@ router.get('/extranet-pricing/resolve-datacenter/:code', authenticateToken, auth
 // Calculates pricing for multiple items and applies bundle discounts
 router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeModulePermission('extranet_pricing', 'read_only'), async (req, res) => {
   try {
-    const { items, contract_term, currency_requested, discount_percent, customer_name } = req.body;
+    const { items, contract_term, currency_requested, discount_percent, customer_name, customer_id } = req.body;
     
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'At least one item is required in the bundle' });
@@ -16225,15 +17041,15 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
             mrc_discount_percent, nrc_discount_percent,
             total_mrc, total_nrc, 
             total_mrc_usd_before_discount, total_nrc_usd_before_discount,
-            exchange_rate, has_poa_items, customer_name
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            exchange_rate, has_poa_items, customer_name, customer_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             req.user.id, items.length, contract_term, currency_requested || 'USD',
             requestedDiscount, autoNrcDiscount,
             totalMrcConverted, totalNrcConverted,
             Math.round(totalMrcUsdBeforeDiscount * 100) / 100,
             Math.round(totalNrcUsdBeforeDiscount * 100) / 100,
-            exchangeRate, hasPoaItems ? 1 : 0, customer_name || null
+            exchangeRate, hasPoaItems ? 1 : 0, customer_name || null, customer_id || null
           ],
           function(err) {
             if (err) reject(err);
@@ -16256,8 +17072,8 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
             ipsec_required, contract_term, currency_requested,
             discount_requested, discount_percent, base_price_usd,
             final_mrc, final_nrc, calculation_breakdown, region, tier,
-            bundle_id, provider_name, product_name, isf_code, customer_name
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            bundle_id, provider_name, product_name, isf_code, customer_name, customer_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             req.user.id,
             origItem.provider_primary_city,
@@ -16284,7 +17100,8 @@ router.post('/extranet-pricing/calculate-bundle', authenticateToken, authorizeMo
             origItem.provider_name || null,
             origItem.product_name || null,
             origItem.isf || null,
-            customer_name || null
+            customer_name || null,
+            customer_id || null
           ],
           (err) => {
             if (err) console.error('Failed to log bundle item:', err);
@@ -18512,6 +19329,7 @@ const getPromoRulesForSales = () => {
         pr.price_1000_to_2999mb,
         pr.price_3000mb_plus,
         pr.required_circuit_ids,
+        pr.excluded_circuit_ids,
         pr.created_at,
         GROUP_CONCAT(DISTINCT CASE WHEN pl.location_type = 'source' THEN pl.location_code END) as source_locations,
         GROUP_CONCAT(DISTINCT CASE WHEN pl.location_type = 'destination' THEN pl.location_code END) as destination_locations
@@ -18585,7 +19403,8 @@ const getPromoRulesForSales = () => {
             price_100mb: rule.price_100_to_999mb || 0,
             price_1000mb: rule.price_1000_to_2999mb || 0,
             price_10gb: rule.price_3000mb_plus || 0,
-            has_required_circuits: !!(rule.required_circuit_ids && rule.required_circuit_ids.trim())
+            has_required_circuits: !!(rule.required_circuit_ids && rule.required_circuit_ids.trim()),
+            has_excluded_circuits: !!(rule.excluded_circuit_ids && rule.excluded_circuit_ids.trim())
           };
         });
         
@@ -18679,7 +19498,17 @@ router.post('/route_finder/check-promo-match', authenticateToken, authorizeModul
       const routeCircuitIds = [...new Set([...primary_circuit_ids, ...secondary_circuit_ids])];
       
       // Find valid promo rules (those without required circuits, or where required circuits are in the route)
+      // AND where none of the route's circuits are in the rule's excluded circuit list.
+      // Exclusion always takes precedence over a required-circuit match.
       const validRules = matchingRules.filter(rule => {
+        // Excluded circuits disqualify the promo if present anywhere in the route
+        if (rule.excluded_circuit_ids && rule.excluded_circuit_ids.trim()) {
+          const excludedCircuits = rule.excluded_circuit_ids.split(',').map(c => c.trim()).filter(c => c);
+          if (excludedCircuits.some(exCircuit => routeCircuitIds.includes(exCircuit))) {
+            return false;
+          }
+        }
+
         if (!rule.required_circuit_ids || !rule.required_circuit_ids.trim()) {
           // No required circuits - promo applies
           return true;
@@ -19095,6 +19924,407 @@ router.post('/route_finder/calculate-protected-promo', authenticateToken, author
   } catch (err) {
     console.error('Error in calculate-protected-promo:', err);
     res.status(500).json({ error: 'Failed to calculate protected promo pricing' });
+  }
+});
+
+// ============================================================================
+// ROUTE FINDER - "FIND PROMO PRICING" (constrained route search)
+// ============================================================================
+// Unlike /check-promo-match (which only checks whether the *already computed*
+// shortest-latency route happens to qualify for promo pricing), this endpoint
+// actively searches for the best route between the source/destination that
+// satisfies a promo rule's required/excluded circuit constraints for the
+// requested bandwidth tier - i.e. it finds the best route for which promo
+// pricing is valid, rather than checking a route that was chosen for other reasons.
+router.post('/route_finder/find_promo_route', authenticateToken, authorizeModulePermission('route_finder', 'read_only'), async (req, res) => {
+  try {
+    const {
+      source,
+      destination,
+      bandwidth,
+      mtu_required = 1500,
+      route_mode,
+      include_ull,
+      use_cisco_only_routes
+    } = req.body;
+
+    if (!source || !destination) {
+      return res.status(400).json({ error: 'Source and destination are required' });
+    }
+
+    if (!bandwidth) {
+      return res.status(400).json({ error: 'Bandwidth is required to find promo pricing' });
+    }
+
+    const requestedBandwidth = parseFloat(bandwidth);
+
+    // Determine which pricing tier applies to the requested bandwidth
+    let priceField;
+    let tierKey;
+    if (requestedBandwidth < 100) {
+      priceField = 'price_under_100mb';
+      tierKey = 'price_10mb';
+    } else if (requestedBandwidth < 1000) {
+      priceField = 'price_100_to_999mb';
+      tierKey = 'price_100mb';
+    } else if (requestedBandwidth < 3000) {
+      priceField = 'price_1000_to_2999mb';
+      tierKey = 'price_1000mb';
+    } else {
+      priceField = 'price_3000mb_plus';
+      tierKey = 'price_10gb';
+    }
+
+    // Promisified helpers (routes.js otherwise uses callback-style db access)
+    const dbAll = (sql, params = []) => new Promise((resolve, reject) => {
+      db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows));
+    });
+
+    // 1. Find active promo rules matching this location pair (either direction)
+    const matchingRules = await dbAll(
+      `SELECT pr.*, 
+              pls.location_code as source_match, 
+              pld.location_code as dest_match
+       FROM promo_pricing_rules pr
+       INNER JOIN promo_pricing_locations pls ON pr.id = pls.promo_rule_id AND pls.location_type = 'source'
+       INNER JOIN promo_pricing_locations pld ON pr.id = pld.promo_rule_id AND pld.location_type = 'destination'
+       WHERE pr.is_active = 1
+         AND ((pls.location_code = ? AND pld.location_code = ?) 
+              OR (pls.location_code = ? AND pld.location_code = ?))`,
+      [source, destination, destination, source]
+    );
+
+    if (matchingRules.length === 0) {
+      return res.json({ found: false, reason: 'no_promo_rule' });
+    }
+
+    // 2. Keep only rules that have a configured (>0) price for the requested bandwidth tier,
+    //    cheapest first - this is what makes the price/latency tie-break work: the first rule
+    //    that yields a valid, margin-passing route is the cheapest one that does.
+    const candidateRules = matchingRules
+      .filter(rule => (parseFloat(rule[priceField]) || 0) > 0)
+      .sort((a, b) => (parseFloat(a[priceField]) || 0) - (parseFloat(b[priceField]) || 0));
+
+    if (candidateRules.length === 0) {
+      return res.json({ found: false, reason: 'no_price_configured' });
+    }
+
+    // 3. Build the routing graph (mirrors /route_finder/find_routes filtering rules)
+    const routes = await dbAll(
+      `SELECT nr.*, 
+              lr_a.status as status_a, 
+              lr_b.status as status_b
+       FROM network_routes nr
+       LEFT JOIN location_reference lr_a ON nr.location_a = lr_a.location_code
+       LEFT JOIN location_reference lr_b ON nr.location_b = lr_b.location_code
+       WHERE nr.location_a IS NOT NULL AND nr.location_b IS NOT NULL
+       AND (lr_a.status IS NULL OR lr_a.status != 'Under Decommission')
+       AND (lr_b.status IS NULL OR lr_b.status != 'Under Decommission')`
+    );
+
+    const graph = {};
+    routes.forEach(route => {
+      const { location_a, location_b, expected_latency, bandwidth: routeBandwidth, underlying_carrier, circuit_id, cable_system, equipment_type, is_special } = route;
+
+      let routeBandwidthMbps = routeBandwidth;
+      let routeBandwidthDisplay = routeBandwidth;
+
+      if (routeBandwidth && routeBandwidth.toLowerCase && routeBandwidth.toLowerCase().includes('dark fiber')) {
+        routeBandwidthMbps = '200000';
+        routeBandwidthDisplay = 'Dark Fiber';
+      }
+
+      if (requestedBandwidth && routeBandwidthMbps) {
+        const requiredBandwidth = requestedBandwidth * 2;
+        if (parseFloat(routeBandwidthMbps) < requiredBandwidth) {
+          return;
+        }
+      }
+
+      const routeStatus = route.route_status || 'Active';
+      if (routeStatus === 'Under Decommission') {
+        return;
+      }
+
+      const equipType = equipment_type || 'Nokia';
+      if (!use_cisco_only_routes && equipType === 'Cisco') {
+        return;
+      }
+
+      const routeMtu = route.mtu || 9212;
+      if (routeMtu < mtu_required) {
+        return;
+      }
+
+      if (!include_ull && is_special) {
+        return;
+      }
+
+      if (!graph[location_a]) graph[location_a] = {};
+      if (!graph[location_b]) graph[location_b] = {};
+
+      const weight = parseFloat(expected_latency) || 100;
+      const existingRoute = graph[location_a][location_b];
+      if (!existingRoute || weight < existingRoute.weight) {
+        const routeData = {
+          weight,
+          bandwidth: routeBandwidthDisplay,
+          carrier: underlying_carrier,
+          circuit_id,
+          cable_system: cable_system || null
+        };
+        graph[location_a][location_b] = routeData;
+        graph[location_b][location_a] = routeData;
+      }
+    });
+
+    if (!graph[source] || !graph[destination]) {
+      return res.json({ found: false, reason: 'no_valid_route' });
+    }
+
+    // Dijkstra's algorithm (returns both the node path and total latency)
+    const dijkstra = (searchGraph, start, end) => {
+      if (!searchGraph[start] || !searchGraph[end]) return null;
+
+      const distances = {};
+      const previous = {};
+      const unvisited = new Set(Object.keys(searchGraph));
+
+      Object.keys(searchGraph).forEach(node => {
+        distances[node] = node === start ? 0 : Infinity;
+        previous[node] = null;
+      });
+
+      while (unvisited.size > 0) {
+        let current = null;
+        let minDistance = Infinity;
+
+        for (const node of unvisited) {
+          if (distances[node] < minDistance) {
+            minDistance = distances[node];
+            current = node;
+          }
+        }
+
+        if (current === null || distances[current] === Infinity) break;
+
+        unvisited.delete(current);
+
+        if (current === end) break;
+
+        Object.keys(searchGraph[current]).forEach(neighbor => {
+          if (unvisited.has(neighbor)) {
+            const newDistance = distances[current] + searchGraph[current][neighbor].weight;
+            if (newDistance < distances[neighbor]) {
+              distances[neighbor] = newDistance;
+              previous[neighbor] = current;
+            }
+          }
+        });
+      }
+
+      const path = [];
+      let current = end;
+      while (current !== null) {
+        path.unshift(current);
+        current = previous[current];
+      }
+
+      if (path[0] !== start) return null;
+
+      return { path, totalLatency: distances[end] };
+    };
+
+    // Removes edges for the given circuit IDs from a graph (returns a fresh deep copy)
+    const buildGraphWithoutCircuits = (baseGraph, circuitIdsToRemove) => {
+      const filtered = JSON.parse(JSON.stringify(baseGraph));
+      if (!circuitIdsToRemove || circuitIdsToRemove.length === 0) return filtered;
+      const removeSet = new Set(circuitIdsToRemove);
+      Object.keys(filtered).forEach(fromNode => {
+        Object.keys(filtered[fromNode]).forEach(toNode => {
+          const edge = filtered[fromNode][toNode];
+          if (edge && edge.circuit_id && removeSet.has(edge.circuit_id)) {
+            delete filtered[fromNode][toNode];
+          }
+        });
+      });
+      return filtered;
+    };
+
+    // Finds one edge (a, b, edgeData) in the graph matching a given circuit ID
+    const findEdgeByCircuitId = (searchGraph, circuitId) => {
+      for (const fromNode of Object.keys(searchGraph)) {
+        for (const toNode of Object.keys(searchGraph[fromNode])) {
+          const edge = searchGraph[fromNode][toNode];
+          if (edge && edge.circuit_id === circuitId) {
+            return { a: fromNode, b: toNode, edge };
+          }
+        }
+      }
+      return null;
+    };
+
+    // Builds a full path (and its route segments) through a specific required circuit edge,
+    // trying both orientations of the edge and keeping whichever gives the lower total latency.
+    const findPathViaRequiredCircuit = (searchGraph, start, end, circuitId) => {
+      const found = findEdgeByCircuitId(searchGraph, circuitId);
+      if (!found) return null;
+      const { a, b, edge } = found;
+
+      const optionA = (() => {
+        const toA = dijkstra(searchGraph, start, a);
+        const fromB = dijkstra(searchGraph, b, end);
+        if (!toA || !fromB) return null;
+        return {
+          path: [...toA.path, ...fromB.path],
+          totalLatency: toA.totalLatency + edge.weight + fromB.totalLatency
+        };
+      })();
+
+      const optionB = (() => {
+        const toB = dijkstra(searchGraph, start, b);
+        const fromA = dijkstra(searchGraph, a, end);
+        if (!toB || !fromA) return null;
+        return {
+          path: [...toB.path, ...fromA.path],
+          totalLatency: toB.totalLatency + edge.weight + fromA.totalLatency
+        };
+      })();
+
+      if (optionA && optionB) return optionA.totalLatency <= optionB.totalLatency ? optionA : optionB;
+      return optionA || optionB;
+    };
+
+    // Reconstructs route segment details (circuit_id, latency, bandwidth, etc.) from a node path
+    const buildRouteSegments = (searchGraph, path) => {
+      const segments = [];
+      for (let i = 0; i < path.length - 1; i++) {
+        const from = path[i];
+        const to = path[i + 1];
+        const edge = searchGraph[from] && searchGraph[from][to];
+        if (!edge) return null; // Path is not fully connected in this graph - invalid
+        segments.push({
+          from,
+          to,
+          latency: edge.weight,
+          bandwidth: edge.bandwidth,
+          carrier: edge.carrier,
+          circuit_id: edge.circuit_id,
+          cable_system: edge.cable_system
+        });
+      }
+      return segments;
+    };
+
+    // 4. For each candidate rule (cheapest first), find the best route that satisfies
+    //    its required/excluded circuit constraints.
+    const pricingConfig = await getPricingLogicConfig();
+    const promoMinMargin = pricingConfig.promoPricing?.minimumMarginPercent || 35;
+    const primaryUtilUnder = pricingConfig.utilizationFactors?.primaryUnder10000 || 0.9;
+    const primaryUtilOver = pricingConfig.utilizationFactors?.primaryOver10000 || 0.9;
+
+    let bestMarginNotMet = false;
+
+    for (const rule of candidateRules) {
+      const requiredCircuits = rule.required_circuit_ids
+        ? rule.required_circuit_ids.split(',').map(c => c.trim()).filter(c => c)
+        : [];
+      const excludedCircuits = rule.excluded_circuit_ids
+        ? rule.excluded_circuit_ids.split(',').map(c => c.trim()).filter(c => c)
+        : [];
+
+      const filteredGraph = buildGraphWithoutCircuits(graph, excludedCircuits);
+      if (!filteredGraph[source] || !filteredGraph[destination]) continue;
+
+      let bestForRule = null;
+
+      if (requiredCircuits.length === 0) {
+        const direct = dijkstra(filteredGraph, source, destination);
+        if (direct) bestForRule = direct;
+      } else {
+        requiredCircuits.forEach(circuitId => {
+          const viaRequired = findPathViaRequiredCircuit(filteredGraph, source, destination, circuitId);
+          if (viaRequired && (!bestForRule || viaRequired.totalLatency < bestForRule.totalLatency)) {
+            bestForRule = viaRequired;
+          }
+        });
+      }
+
+      if (!bestForRule) continue;
+
+      const routeSegments = buildRouteSegments(filteredGraph, bestForRule.path);
+      if (!routeSegments) continue;
+
+      const routeCircuitIds = [...new Set(routeSegments.map(s => s.circuit_id).filter(Boolean))];
+      const promoPriceUSD = parseFloat(rule[priceField]) || 0;
+
+      // Validate minimum margin requirement for this specific route + bandwidth
+      let allocatedCost = 0;
+      if (routeCircuitIds.length > 0) {
+        const placeholders = routeCircuitIds.map(() => '?').join(',');
+        const routeCosts = await dbAll(
+          `SELECT circuit_id, cost, currency, bandwidth FROM network_routes WHERE circuit_id IN (${placeholders})`,
+          routeCircuitIds
+        );
+        const rates = await dbAll('SELECT * FROM exchange_rates WHERE status = "Active"');
+        const exchangeRates = {};
+        rates.forEach(rate => { exchangeRates[rate.currency_code] = rate.exchange_rate; });
+
+        routeCosts.forEach(routeCost => {
+          let cost = parseFloat(routeCost.cost) || 0;
+          const currency = routeCost.currency || 'USD';
+          if (currency !== 'USD' && exchangeRates[currency]) {
+            cost = cost / exchangeRates[currency];
+          }
+
+          let costRouteBandwidth = parseFloat(routeCost.bandwidth) || 1000;
+          if (routeCost.bandwidth && routeCost.bandwidth.toLowerCase && routeCost.bandwidth.toLowerCase().includes('dark fiber')) {
+            costRouteBandwidth = 200000;
+          }
+
+          const utilizationFactor = costRouteBandwidth <= 10000 ? primaryUtilUnder : primaryUtilOver;
+          const allocationRatio = requestedBandwidth / (costRouteBandwidth * utilizationFactor);
+          allocatedCost += cost * allocationRatio;
+        });
+      }
+
+      const actualMargin = promoPriceUSD > 0 ? ((promoPriceUSD - allocatedCost) / promoPriceUSD) * 100 : 0;
+      const marginMet = promoPriceUSD > 0 && actualMargin >= promoMinMargin;
+
+      if (!marginMet) {
+        bestMarginNotMet = true;
+        continue; // Try the next-cheapest candidate rule
+      }
+
+      // Found the cheapest rule with a valid, margin-passing, constraint-satisfying route
+      return res.json({
+        found: true,
+        route: {
+          path: bestForRule.path,
+          totalLatency: bestForRule.totalLatency,
+          hops: routeSegments.length,
+          route: routeSegments
+        },
+        bandwidthTier: tierKey,
+        price: promoPriceUSD,
+        marginDetails: {
+          allocatedCost: Math.round(allocatedCost * 100) / 100,
+          actualMargin: Math.round(actualMargin * 100) / 100,
+          requiredMargin: promoMinMargin
+        },
+        usedRequiredCircuit: requiredCircuits.length > 0
+          ? routeCircuitIds.find(c => requiredCircuits.includes(c)) || null
+          : null
+      });
+    }
+
+    return res.json({
+      found: false,
+      reason: bestMarginNotMet ? 'margin_not_met' : 'no_valid_route'
+    });
+  } catch (err) {
+    console.error('Error in find_promo_route:', err);
+    res.status(500).json({ error: 'Failed to find promo pricing route: ' + err.message });
   }
 });
 
@@ -19860,15 +21090,33 @@ router.get('/carrier_quotes/currencies', authenticateToken, (req, res) => {
 });
 
 // Get POP locations for autocomplete (from location_reference table)
-router.get('/carrier_quotes/pop_locations', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
-  const { q } = req.query;
+router.get('/carrier_quotes/pop_locations', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), (req, res) => {
+  const { q, code } = req.query;
+
+  // Exact code lookup (case-insensitive) used by Site Validation / + button
+  if (code && String(code).trim()) {
+    return db.get(
+      `SELECT location_code, datacenter_name, datacenter_address, city, country, latitude, longitude
+       FROM location_reference
+       WHERE UPPER(TRIM(location_code)) = UPPER(TRIM(?))
+          OR UPPER(TRIM(datacenter_name)) = UPPER(TRIM(?))
+       LIMIT 1`,
+      [String(code).trim(), String(code).trim()],
+      (err, location) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!location) return res.status(404).json({ error: 'POP location not found' });
+        res.json(location);
+      }
+    );
+  }
   
-  let query = 'SELECT location_code, datacenter_name, city, country FROM location_reference';
+  let query = `SELECT location_code, datacenter_name, datacenter_address, city, country, latitude, longitude
+               FROM location_reference`;
   let params = [];
   
   if (q && q.length >= 1) {
-    query += ' WHERE location_code LIKE ? OR datacenter_name LIKE ? OR city LIKE ?';
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    query += ' WHERE location_code LIKE ? OR datacenter_name LIKE ? OR city LIKE ? OR datacenter_address LIKE ?';
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
   }
   
   query += ' ORDER BY location_code LIMIT 50';
@@ -19877,6 +21125,24 @@ router.get('/carrier_quotes/pop_locations', authenticateToken, authorizeModulePe
     if (err) return res.status(500).json({ error: err.message });
     res.json(locations);
   });
+});
+
+// Get a single POP location by code (legacy path — also case-insensitive)
+router.get('/carrier_quotes/pop_locations/by_code/:code', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), (req, res) => {
+  const code = decodeURIComponent(req.params.code || '').trim();
+  db.get(
+    `SELECT location_code, datacenter_name, datacenter_address, city, country, latitude, longitude
+     FROM location_reference
+     WHERE UPPER(TRIM(location_code)) = UPPER(TRIM(?))
+        OR UPPER(TRIM(datacenter_name)) = UPPER(TRIM(?))
+     LIMIT 1`,
+    [code, code],
+    (err, location) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!location) return res.status(404).json({ error: 'POP location not found' });
+      res.json(location);
+    }
+  );
 });
 
 // Get carriers for autocomplete
@@ -19914,22 +21180,647 @@ router.get('/carrier_quotes/carriers', authenticateToken, authorizeModulePermiss
 });
 
 // Get custom locations for autocomplete
-router.get('/carrier_quotes/custom_locations', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
-  const { q } = req.query;
-  
-  let query = 'SELECT * FROM quote_custom_locations';
-  let params = [];
-  
+router.get('/carrier_quotes/custom_locations', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), (req, res) => {
+  const { q, building_type, usage, limit, offset, count } = req.query;
+
+  const conditions = [];
+  const params = [];
+
   if (q && q.length >= 1) {
-    query += ' WHERE location_name LIKE ?';
-    params.push(`%${q}%`);
+    conditions.push('(location_name LIKE ? OR address LIKE ? OR city LIKE ? OR country LIKE ? OR street_name LIKE ? OR postal_code LIKE ?)');
+    const like = `%${q}%`;
+    params.push(like, like, like, like, like, like);
   }
-  
-  query += ' ORDER BY location_name LIMIT 50';
-  
+
+  // building_type filter also supports 'missing' — used by the bulk building-type
+  // cleanup screen to quickly find custom locations that still need one set.
+  if (building_type === 'missing') {
+    conditions.push("(building_type IS NULL OR building_type = '')");
+  } else if (building_type === 'datacenter' || building_type === 'retail') {
+    conditions.push('building_type = ?');
+    params.push(building_type);
+  }
+
+  // usage=unused/used — how many quotes in the repository actually reference this
+  // location; drives the "purge unused" / merge cleanup screen.
+  const quoteCountExpr = `(SELECT COUNT(*) FROM carrier_quotes cq WHERE cq.location_a_custom_id = qcl.id OR cq.location_b_custom_id = qcl.id)`;
+  if (usage === 'unused') {
+    conditions.push(`${quoteCountExpr} = 0`);
+  } else if (usage === 'used') {
+    conditions.push(`${quoteCountExpr} > 0`);
+  }
+
+  const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+
+  const respondWithCount = () => {
+    db.get(`SELECT COUNT(*) as total FROM quote_custom_locations qcl${whereClause}`, params, (countErr, countRow) => {
+      if (countErr) return res.status(500).json({ error: countErr.message });
+
+      const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500);
+      const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
+      const query = `SELECT qcl.*, ${quoteCountExpr} as quote_count FROM quote_custom_locations qcl${whereClause} ORDER BY qcl.location_name LIMIT ? OFFSET ?`;
+
+      db.all(query, [...params, parsedLimit, parsedOffset], (err, locations) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ locations, total: countRow ? countRow.total : locations.length });
+      });
+    });
+  };
+
+  // Backward-compatible plain-array response for existing Autocomplete callers
+  // (LocationSiteField, AddCarrierQuote) unless the caller explicitly opts into
+  // paging/counting/filtering via limit, offset, building_type, usage, or count.
+  if (count === 'true' || building_type || usage || limit !== undefined || offset !== undefined) {
+    return respondWithCount();
+  }
+
+  const query = `SELECT * FROM quote_custom_locations${whereClause} ORDER BY location_name LIMIT 50`;
   db.all(query, params, (err, locations) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(locations);
+  });
+});
+
+// Get a single custom location by id
+router.get('/carrier_quotes/custom_locations/:id', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), (req, res) => {
+  db.get('SELECT * FROM quote_custom_locations WHERE id = ?', [req.params.id], (err, location) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!location) return res.status(404).json({ error: 'Custom location not found' });
+    res.json(location);
+  });
+});
+
+// --- Carrier quote location match / geocode helpers ---
+function getGeocodeCache(queryHash) {
+  return new Promise((resolve) => {
+    db.get(
+      'SELECT response_json FROM quote_geocode_cache WHERE query_hash = ?',
+      [queryHash],
+      (err, row) => {
+        if (err || !row) return resolve(null);
+        try {
+          resolve(JSON.parse(row.response_json));
+        } catch (_) {
+          resolve(null);
+        }
+      }
+    );
+  });
+}
+
+function setGeocodeCache(queryHash, queryType, requestPayload, responsePayload) {
+  return new Promise((resolve) => {
+    db.run(
+      `INSERT OR REPLACE INTO quote_geocode_cache (query_hash, query_type, request_json, response_json, created_at)
+       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [queryHash, queryType, JSON.stringify(requestPayload || {}), JSON.stringify(responsePayload || {})],
+      () => resolve()
+    );
+  });
+}
+
+// Fuzzy-match against existing custom locations + POP addresses
+router.post('/carrier_quotes/locations/match', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), (req, res) => {
+  const input = {
+    location_name: req.body.location_name || req.body.name || '',
+    address: req.body.address || '',
+    street_name: req.body.street_name || '',
+    street_number: req.body.street_number || '',
+    city: req.body.city || '',
+    postal_code: req.body.postal_code || '',
+    country: req.body.country || ''
+  };
+
+  if (!input.location_name && !input.address && !input.street_name && !input.city) {
+    return res.json({ normalized: '', warnings: [], matches: [] });
+  }
+
+  // Only suggest custom locations that are actually used by a quote in the
+  // Carrier Quote Repository — never orphaned/unused rows in quote_custom_locations
+  // (e.g. left over from a cancelled import or a quote that failed to save).
+  // exclude_id lets a location being edited in place skip matching itself.
+  const excludeId = parseInt(req.body.exclude_id, 10);
+  const excludeClause = Number.isFinite(excludeId) ? ' AND qcl.id != ?' : '';
+  const matchParams = Number.isFinite(excludeId) ? [excludeId] : [];
+  db.all(
+    `SELECT qcl.* FROM quote_custom_locations qcl
+     WHERE EXISTS (
+       SELECT 1 FROM carrier_quotes cq
+       WHERE cq.location_a_custom_id = qcl.id OR cq.location_b_custom_id = qcl.id
+     )${excludeClause}`,
+    matchParams,
+    (err, customRows) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    db.all(
+      `SELECT location_code, datacenter_name, datacenter_address, city, country, latitude, longitude
+       FROM location_reference`,
+      [],
+      (popErr, popRows) => {
+        if (popErr) return res.status(500).json({ error: popErr.message });
+
+        const customCandidates = (customRows || []).map(r => ({
+          source: 'custom',
+          id: r.id,
+          location_name: r.location_name,
+          address: r.address,
+          street_name: r.street_name,
+          street_number: r.street_number,
+          city: r.city,
+          postal_code: r.postal_code,
+          country: r.country,
+          building_type: r.building_type || null,
+          latitude: r.latitude,
+          longitude: r.longitude
+        }));
+
+        const popCandidates = (popRows || []).map(r => ({
+          source: 'pop',
+          id: null,
+          location_code: r.location_code,
+          location_name: r.datacenter_name || r.location_code,
+          name: r.datacenter_name,
+          datacenter_name: r.datacenter_name,
+          address: r.datacenter_address,
+          city: r.city,
+          country: r.country,
+          building_type: 'datacenter',
+          latitude: r.latitude,
+          longitude: r.longitude
+        }));
+
+        const matches = quoteAddressUtils.rankMatches(input, [...customCandidates, ...popCandidates], {
+          minScore: 0.45,
+          limit: 10
+        });
+
+        const normalized = quoteAddressUtils.normalizeComposite(input);
+        const warnings = [];
+        if (!input.city) warnings.push('City is missing');
+        if (!input.country) warnings.push('Country is missing');
+        if (!input.address && !input.street_name) warnings.push('Street address is missing');
+
+        res.json({
+          normalized,
+          warnings,
+          matches
+        });
+      }
+    );
+  });
+});
+
+// Interactive Nominatim forward verify (cached + rate-limited)
+router.post('/carrier_quotes/locations/verify', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), async (req, res) => {
+  try {
+    const fields = {
+      location_name: req.body.location_name || '',
+      address: req.body.address || '',
+      street_name: req.body.street_name || '',
+      street_number: req.body.street_number || '',
+      city: req.body.city || '',
+      postal_code: req.body.postal_code || '',
+      country: req.body.country || ''
+    };
+
+    const result = await quoteAddressUtils.nominatimForward(fields, {
+      getCache: getGeocodeCache,
+      setCache: setGeocodeCache
+    });
+
+    if (result.error && (!result.results || result.results.length === 0)) {
+      return res.status(502).json({ error: result.error, results: [] });
+    }
+
+    res.json({
+      attribution: '© OpenStreetMap contributors',
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Address verification failed' });
+  }
+});
+
+// Interactive Nominatim reverse (pin drag)
+router.post('/carrier_quotes/locations/reverse', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), async (req, res) => {
+  try {
+    const lat = parseFloat(req.body.latitude ?? req.body.lat);
+    const lon = parseFloat(req.body.longitude ?? req.body.lon);
+    if (Number.isNaN(lat) || Number.isNaN(lon)) {
+      return res.status(400).json({ error: 'latitude and longitude are required' });
+    }
+
+    const result = await quoteAddressUtils.nominatimReverse(lat, lon, {
+      getCache: getGeocodeCache,
+      setCache: setGeocodeCache
+    });
+
+    if (result.error && !result.result) {
+      return res.status(502).json({ error: result.error, result: null });
+    }
+
+    res.json({
+      attribution: '© OpenStreetMap contributors',
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Reverse geocode failed' });
+  }
+});
+
+// Quote analytics aggregates for GTM / pricing insight
+router.get('/carrier_quotes/analytics', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
+  const {
+    date_from, date_to, region, service_type, building_pair,
+    display_currency = 'USD', term = '12',
+    carrier, carriers, search,
+    location, location_a, location_b,
+    protection, bandwidth_unit, source_currency,
+    contract_term, cable_system, transit_countries, transit_cities,
+    min_mrc, max_mrc, min_nrc, max_nrc,
+    min_bandwidth_mbps, max_bandwidth_mbps,
+    min_latency, max_latency,
+    exclude_expired, city_a, city_b, country_a, country_b,
+    building_type_a, building_type_b
+  } = req.query;
+
+  const termKey = ['12', '24', '36'].includes(String(term)) ? String(term) : '12';
+
+  const splitList = (val) => {
+    if (Array.isArray(val)) return val.map(v => String(v).trim()).filter(Boolean);
+    if (val === undefined || val === null || val === '') return [];
+    return String(val).split('|').map(v => v.trim()).filter(Boolean);
+  };
+
+  const carrierList = [...splitList(carriers), ...splitList(carrier)];
+  const regionList = splitList(region);
+  const serviceList = splitList(service_type);
+  const protectionList = splitList(protection);
+
+  let conditions = [];
+  let params = [];
+  if (date_from) { conditions.push('cq.quote_date >= ?'); params.push(date_from); }
+  if (date_to) { conditions.push('cq.quote_date <= ?'); params.push(date_to); }
+
+  if (regionList.length === 1) {
+    conditions.push('cq.region = ?');
+    params.push(regionList[0]);
+  } else if (regionList.length > 1) {
+    conditions.push(`cq.region IN (${regionList.map(() => '?').join(',')})`);
+    params.push(...regionList);
+  }
+
+  if (serviceList.length === 1) {
+    conditions.push('cq.service_type = ?');
+    params.push(serviceList[0]);
+  } else if (serviceList.length > 1) {
+    conditions.push(`cq.service_type IN (${serviceList.map(() => '?').join(',')})`);
+    params.push(...serviceList);
+  }
+
+  if (carrierList.length === 1) {
+    conditions.push('LOWER(cq.carrier_name) = LOWER(?)');
+    params.push(carrierList[0]);
+  } else if (carrierList.length > 1) {
+    conditions.push(`LOWER(cq.carrier_name) IN (${carrierList.map(() => 'LOWER(?)').join(',')})`);
+    params.push(...carrierList);
+  }
+
+  if (protectionList.length === 1) {
+    conditions.push('cq.protection = ?');
+    params.push(protectionList[0]);
+  } else if (protectionList.length > 1) {
+    conditions.push(`cq.protection IN (${protectionList.map(() => '?').join(',')})`);
+    params.push(...protectionList);
+  }
+
+  if (bandwidth_unit) { conditions.push('cq.bandwidth_unit = ?'); params.push(bandwidth_unit); }
+  if (source_currency) { conditions.push('cq.currency = ?'); params.push(source_currency); }
+  if (cable_system) { conditions.push('cq.cable_system LIKE ?'); params.push(`%${cable_system}%`); }
+  if (transit_countries) { conditions.push('cq.transit_countries LIKE ?'); params.push(`%${transit_countries}%`); }
+  if (transit_cities) { conditions.push('cq.transit_cities LIKE ?'); params.push(`%${transit_cities}%`); }
+
+  if (contract_term) {
+    const ct = parseInt(contract_term, 10);
+    if (ct === 12) conditions.push('(cq.mrc_12 IS NOT NULL OR cq.nrc_12 IS NOT NULL)');
+    else if (ct === 24) conditions.push('(cq.mrc_24 IS NOT NULL OR cq.nrc_24 IS NOT NULL)');
+    else if (ct === 36) conditions.push('(cq.mrc_36 IS NOT NULL OR cq.nrc_36 IS NOT NULL)');
+  }
+
+  if (location) {
+    conditions.push(`(
+      cq.location_a_pop_code LIKE ? OR cq.location_b_pop_code LIKE ?
+      OR loc_a.location_name LIKE ? OR loc_b.location_name LIKE ?
+      OR loc_a.city LIKE ? OR loc_b.city LIKE ?
+      OR pop_a.city LIKE ? OR pop_b.city LIKE ?
+      OR pop_a.datacenter_name LIKE ? OR pop_b.datacenter_name LIKE ?
+    )`);
+    const like = `%${location}%`;
+    params.push(like, like, like, like, like, like, like, like, like, like);
+  }
+
+  if (location_a) {
+    conditions.push('(cq.location_a_pop_code LIKE ? OR loc_a.location_name LIKE ? OR loc_a.city LIKE ? OR pop_a.city LIKE ? OR pop_a.datacenter_name LIKE ?)');
+    const like = `%${location_a}%`;
+    params.push(like, like, like, like, like);
+  }
+
+  if (location_b) {
+    conditions.push('(cq.location_b_pop_code LIKE ? OR loc_b.location_name LIKE ? OR loc_b.city LIKE ? OR pop_b.city LIKE ? OR pop_b.datacenter_name LIKE ?)');
+    const like = `%${location_b}%`;
+    params.push(like, like, like, like, like);
+  }
+
+  if (search) {
+    conditions.push(`(
+      cq.quote_reference LIKE ? OR cq.carrier_name LIKE ? OR cq.carrier_quote_ref LIKE ?
+      OR cq.cable_system LIKE ? OR cq.transit_cities LIKE ? OR cq.notes LIKE ?
+      OR cq.location_a_pop_code LIKE ? OR cq.location_b_pop_code LIKE ? OR cq.transit_countries LIKE ?
+    )`);
+    const like = `%${search}%`;
+    params.push(like, like, like, like, like, like, like, like, like);
+  }
+
+  if (min_latency !== undefined && min_latency !== '') {
+    conditions.push('cq.expected_latency >= ?');
+    params.push(Number(min_latency));
+  }
+  if (max_latency !== undefined && max_latency !== '') {
+    conditions.push('cq.expected_latency <= ?');
+    params.push(Number(max_latency));
+  }
+
+  const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const sql = `
+    SELECT cq.id, cq.quote_reference, cq.carrier_name, cq.service_type, cq.region,
+           cq.bandwidth_value, cq.bandwidth_unit, cq.currency, cq.protection,
+           cq.expected_latency, cq.transit_countries, cq.transit_cities, cq.cable_system,
+           cq.quote_date, cq.expiry_date,
+           cq.mrc_12, cq.nrc_12, cq.mrc_24, cq.nrc_24, cq.mrc_36, cq.nrc_36,
+           cq.location_a_type, cq.location_b_type,
+           cq.location_a_pop_code, cq.location_b_pop_code,
+           loc_a.location_name as loc_a_name, loc_a.city as loc_a_city, loc_a.country as loc_a_country,
+           loc_a.building_type as loc_a_building_type,
+           loc_b.location_name as loc_b_name, loc_b.city as loc_b_city, loc_b.country as loc_b_country,
+           loc_b.building_type as loc_b_building_type,
+           pop_a.city as pop_a_city, pop_a.country as pop_a_country, pop_a.datacenter_name as pop_a_name,
+           pop_b.city as pop_b_city, pop_b.country as pop_b_country, pop_b.datacenter_name as pop_b_name
+    FROM carrier_quotes cq
+    LEFT JOIN quote_custom_locations loc_a ON cq.location_a_custom_id = loc_a.id
+    LEFT JOIN quote_custom_locations loc_b ON cq.location_b_custom_id = loc_b.id
+    LEFT JOIN location_reference pop_a ON cq.location_a_pop_code = pop_a.location_code
+    LEFT JOIN location_reference pop_b ON cq.location_b_pop_code = pop_b.location_code
+    ${whereSql}
+  `;
+
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    db.all('SELECT currency_code, exchange_rate FROM exchange_rates', [], (rateErr, rates) => {
+      if (rateErr) return res.status(500).json({ error: rateErr.message });
+
+      const rateMap = { USD: 1 };
+      (rates || []).forEach(r => {
+        if (r.currency_code && r.exchange_rate) rateMap[r.currency_code] = Number(r.exchange_rate);
+      });
+
+      const toDisplay = (amount, fromCurrency) => {
+        if (amount === null || amount === undefined || Number.isNaN(Number(amount))) return null;
+        const from = fromCurrency || 'USD';
+        const fromRate = rateMap[from] || 1;
+        const toRate = rateMap[display_currency] || 1;
+        const inUsd = Number(amount) / fromRate;
+        return inUsd * toRate;
+      };
+
+      const resolveEndpoint = (type, popCode, customName, customCity, customCountry, customBuilding, popName, popCity, popCountry) => {
+        if (type === 'pop') {
+          return {
+            label: popCode || popName || 'POP',
+            city: popCity || '',
+            country: popCountry || '',
+            building_type: 'datacenter'
+          };
+        }
+        return {
+          label: customName || 'Custom',
+          city: customCity || '',
+          country: customCountry || '',
+          building_type: customBuilding || 'unspecified'
+        };
+      };
+
+      const normalizeBuildingPairFilter = (raw) => {
+        if (!raw) return null;
+        const v = String(raw).trim().toLowerCase();
+        if (v === 'dc-dc' || v === 'dc–dc' || v === 'datacenter-datacenter') return 'datacenter-datacenter';
+        if (v === 'dc-retail' || v === 'dc–retail' || v === 'datacenter-retail' || v === 'retail-datacenter') return 'dc-retail';
+        if (v === 'retail-retail') return 'retail-retail';
+        return v;
+      };
+      const buildingPairFilter = normalizeBuildingPairFilter(building_pair);
+
+      const now = new Date();
+      let enriched = (rows || []).map(r => {
+        const a = resolveEndpoint(
+          r.location_a_type, r.location_a_pop_code, r.loc_a_name, r.loc_a_city, r.loc_a_country,
+          r.loc_a_building_type, r.pop_a_name, r.pop_a_city, r.pop_a_country
+        );
+        const b = resolveEndpoint(
+          r.location_b_type, r.location_b_pop_code, r.loc_b_name, r.loc_b_city, r.loc_b_country,
+          r.loc_b_building_type, r.pop_b_name, r.pop_b_city, r.pop_b_country
+        );
+        const pairType = `${a.building_type === 'retail' ? 'retail' : (a.building_type === 'datacenter' ? 'datacenter' : 'unspecified')}-${b.building_type === 'retail' ? 'retail' : (b.building_type === 'datacenter' ? 'datacenter' : 'unspecified')}`;
+        const mrc = toDisplay(r[`mrc_${termKey}`], r.currency);
+        const nrc = toDisplay(r[`nrc_${termKey}`], r.currency);
+        let bwMbps = null;
+        if (r.bandwidth_value != null && r.bandwidth_unit === 'Mbps') bwMbps = Number(r.bandwidth_value);
+        else if (r.bandwidth_value != null && r.bandwidth_unit === 'Gbps') bwMbps = Number(r.bandwidth_value) * 1000;
+        const perMbps = (mrc != null && bwMbps && bwMbps > 0) ? mrc / bwMbps : null;
+        let ageDays = null;
+        if (r.quote_date) {
+          const qd = new Date(r.quote_date);
+          if (!Number.isNaN(qd.getTime())) ageDays = Math.floor((now - qd) / 86400000);
+        }
+        let expired = false;
+        if (r.expiry_date) {
+          const ed = new Date(r.expiry_date);
+          if (!Number.isNaN(ed.getTime())) expired = ed < now;
+        }
+
+        return {
+          ...r,
+          endpoint_a: a,
+          endpoint_b: b,
+          city_pair: `${a.city || a.label} → ${b.city || b.label}`,
+          country_pair: `${a.country || '?'} → ${b.country || '?'}`,
+          building_pair: pairType,
+          mrc_display: mrc,
+          nrc_display: nrc,
+          per_mbps: perMbps,
+          bw_mbps: bwMbps,
+          age_days: ageDays,
+          expired
+        };
+      });
+
+      enriched = enriched.filter(r => {
+        if (buildingPairFilter === 'datacenter-datacenter' && r.building_pair !== 'datacenter-datacenter') return false;
+        if (buildingPairFilter === 'retail-retail' && r.building_pair !== 'retail-retail') return false;
+        if (buildingPairFilter === 'dc-retail' && !(r.building_pair === 'datacenter-retail' || r.building_pair === 'retail-datacenter')) return false;
+
+        if (building_type_a) {
+          const want = String(building_type_a).toLowerCase();
+          if (r.endpoint_a.building_type !== want) return false;
+        }
+        if (building_type_b) {
+          const want = String(building_type_b).toLowerCase();
+          if (r.endpoint_b.building_type !== want) return false;
+        }
+
+        if (city_a && !(r.endpoint_a.city || '').toLowerCase().includes(String(city_a).toLowerCase())) return false;
+        if (city_b && !(r.endpoint_b.city || '').toLowerCase().includes(String(city_b).toLowerCase())) return false;
+        if (country_a && !(r.endpoint_a.country || '').toLowerCase().includes(String(country_a).toLowerCase())) return false;
+        if (country_b && !(r.endpoint_b.country || '').toLowerCase().includes(String(country_b).toLowerCase())) return false;
+
+        if (min_mrc !== undefined && min_mrc !== '' && (r.mrc_display == null || r.mrc_display < Number(min_mrc))) return false;
+        if (max_mrc !== undefined && max_mrc !== '' && (r.mrc_display == null || r.mrc_display > Number(max_mrc))) return false;
+        if (min_nrc !== undefined && min_nrc !== '' && (r.nrc_display == null || r.nrc_display < Number(min_nrc))) return false;
+        if (max_nrc !== undefined && max_nrc !== '' && (r.nrc_display == null || r.nrc_display > Number(max_nrc))) return false;
+
+        if (min_bandwidth_mbps !== undefined && min_bandwidth_mbps !== '' && (r.bw_mbps == null || r.bw_mbps < Number(min_bandwidth_mbps))) return false;
+        if (max_bandwidth_mbps !== undefined && max_bandwidth_mbps !== '' && (r.bw_mbps == null || r.bw_mbps > Number(max_bandwidth_mbps))) return false;
+
+        if (String(exclude_expired) === '1' || String(exclude_expired).toLowerCase() === 'true') {
+          if (r.expired) return false;
+        }
+
+        return true;
+      });
+
+      const avg = (arr) => {
+        const vals = arr.filter(v => v != null && !Number.isNaN(v));
+        if (!vals.length) return null;
+        return vals.reduce((s, v) => s + v, 0) / vals.length;
+      };
+
+      const groupAgg = (keyFn) => {
+        const map = new Map();
+        enriched.forEach(r => {
+          const key = keyFn(r) || 'Unknown';
+          if (!map.has(key)) map.set(key, { key, n: 0, mrcs: [], nrcs: [], perMbps: [] });
+          const g = map.get(key);
+          g.n += 1;
+          if (r.mrc_display != null) g.mrcs.push(r.mrc_display);
+          if (r.nrc_display != null) g.nrcs.push(r.nrc_display);
+          if (r.per_mbps != null) g.perMbps.push(r.per_mbps);
+        });
+        return Array.from(map.values())
+          .map(g => ({
+            key: g.key,
+            n: g.n,
+            avg_mrc: avg(g.mrcs),
+            avg_nrc: avg(g.nrcs),
+            avg_per_mbps: avg(g.perMbps)
+          }))
+          .sort((a, b) => b.n - a.n);
+      };
+
+      const termCurve = [12, 24, 36].map(t => {
+        const mrcs = enriched.map(r => toDisplay(r[`mrc_${t}`], r.currency)).filter(v => v != null);
+        const nrcs = enriched.map(r => toDisplay(r[`nrc_${t}`], r.currency)).filter(v => v != null);
+        return { term: t, n: Math.max(mrcs.length, nrcs.length), avg_mrc: avg(mrcs), avg_nrc: avg(nrcs) };
+      });
+
+      const latencyScatter = enriched
+        .filter(r => r.expected_latency != null && r.mrc_display != null)
+        .map(r => ({
+          latency: Number(r.expected_latency),
+          mrc: r.mrc_display,
+          carrier: r.carrier_name,
+          quote_reference: r.quote_reference
+        }));
+
+      const carrierSpread = (() => {
+        const byPair = new Map();
+        enriched.forEach(r => {
+          if (r.mrc_display == null) return;
+          const k = r.city_pair;
+          if (!byPair.has(k)) byPair.set(k, []);
+          byPair.get(k).push({ carrier: r.carrier_name, mrc: r.mrc_display });
+        });
+        return Array.from(byPair.entries())
+          .map(([city_pair, items]) => {
+            const mrcs = items.map(i => i.mrc);
+            return {
+              city_pair,
+              n: items.length,
+              min_mrc: Math.min(...mrcs),
+              max_mrc: Math.max(...mrcs),
+              avg_mrc: avg(mrcs),
+              spread: Math.max(...mrcs) - Math.min(...mrcs),
+              carriers: items
+            };
+          })
+          .filter(x => x.n >= 2)
+          .sort((a, b) => b.spread - a.spread)
+          .slice(0, 25);
+      })();
+
+      const freshness = {
+        total: enriched.length,
+        expired: enriched.filter(r => r.expired).length,
+        avg_age_days: avg(enriched.map(r => r.age_days).filter(v => v != null)),
+        older_than_90: enriched.filter(r => r.age_days != null && r.age_days > 90).length
+      };
+
+      res.json({
+        display_currency,
+        term: Number(termKey),
+        sample_size: enriched.length,
+        applied_filters: {
+          carriers: carrierList,
+          regions: regionList,
+          service_types: serviceList,
+          protections: protectionList,
+          date_from: date_from || null,
+          date_to: date_to || null,
+          building_pair: buildingPairFilter,
+          location_a: location_a || null,
+          location_b: location_b || null
+        },
+        by_city_pair: groupAgg(r => r.city_pair).slice(0, 50),
+        by_country_pair: groupAgg(r => r.country_pair).slice(0, 50),
+        by_location: groupAgg(r => `${r.endpoint_a.label} / ${r.endpoint_b.label}`).slice(0, 50),
+        by_transit_countries: groupAgg(r => r.transit_countries || 'Direct / Unspecified').slice(0, 50),
+        by_building_pair: groupAgg(r => {
+          if (r.building_pair.includes('unspecified')) return r.building_pair;
+          if (r.building_pair === 'datacenter-datacenter') return 'DC–DC';
+          if (r.building_pair === 'datacenter-retail' || r.building_pair === 'retail-datacenter') return 'DC–Retail';
+          if (r.building_pair === 'retail-retail') return 'Retail–Retail';
+          return r.building_pair;
+        }),
+        by_bandwidth: groupAgg(r => {
+          if (r.bandwidth_unit === 'Dark Fiber') return 'Dark Fiber';
+          if (r.bandwidth_value == null) return 'Unknown';
+          return `${r.bandwidth_value} ${r.bandwidth_unit}`;
+        }).slice(0, 40),
+        by_service_type: groupAgg(r => r.service_type),
+        by_carrier: groupAgg(r => r.carrier_name).slice(0, 40),
+        by_protection: groupAgg(r => r.protection || 'Unspecified'),
+        by_region: groupAgg(r => r.region),
+        term_discount_curve: termCurve,
+        latency_vs_price: latencyScatter.slice(0, 200),
+        carrier_spread_by_city_pair: carrierSpread,
+        freshness,
+        overall: {
+          avg_mrc: avg(enriched.map(r => r.mrc_display)),
+          avg_nrc: avg(enriched.map(r => r.nrc_display)),
+          avg_per_mbps: avg(enriched.map(r => r.per_mbps))
+        }
+      });
+    });
   });
 });
 
@@ -20004,10 +21895,22 @@ router.get('/carrier_quotes/:id', authenticateToken, authorizeModulePermission('
            loc_a.address as location_a_custom_address,
            loc_a.city as location_a_custom_city,
            loc_a.country as location_a_custom_country,
+           loc_a.building_type as location_a_building_type,
+           loc_a.street_name as location_a_street_name,
+           loc_a.street_number as location_a_street_number,
+           loc_a.postal_code as location_a_postal_code,
+           loc_a.latitude as location_a_latitude,
+           loc_a.longitude as location_a_longitude,
            loc_b.location_name as location_b_custom_name,
            loc_b.address as location_b_custom_address,
            loc_b.city as location_b_custom_city,
            loc_b.country as location_b_custom_country,
+           loc_b.building_type as location_b_building_type,
+           loc_b.street_name as location_b_street_name,
+           loc_b.street_number as location_b_street_number,
+           loc_b.postal_code as location_b_postal_code,
+           loc_b.latitude as location_b_latitude,
+           loc_b.longitude as location_b_longitude,
            pop_a.city as location_a_city,
            pop_a.datacenter_name as location_a_datacenter,
            pop_b.city as location_b_city,
@@ -20760,25 +22663,337 @@ router.delete('/carrier_quotes/:quoteId/price_stages/:stageId', authenticateToke
 });
 
 // Create a custom location
-router.post('/carrier_quotes/custom_locations', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
-  const { location_name, address, city, country, latitude, longitude } = req.body;
+router.post('/carrier_quotes/custom_locations', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), (req, res) => {
+  const {
+    location_name, address, city, country, latitude, longitude,
+    building_type, street_name, street_number, postal_code,
+    reuse_existing = true
+  } = req.body;
   
   if (!location_name) return res.status(400).json({ error: 'Location name is required' });
-  
-  db.run(`
-    INSERT INTO quote_custom_locations (location_name, address, city, country, latitude, longitude, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, [location_name, address || null, city || null, country || null, latitude || null, longitude || null, req.user.id], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    
-    res.status(201).json({
-      id: this.lastID,
+
+  const normalizedBuilding = building_type
+    ? String(building_type).toLowerCase()
+    : null;
+  if (normalizedBuilding && !['datacenter', 'retail'].includes(normalizedBuilding)) {
+    return res.status(400).json({ error: "building_type must be 'datacenter' or 'retail'" });
+  }
+
+  const compositeAddress = quoteAddressUtils.buildCompositeAddress({
+    street_number,
+    street_name,
+    address,
+    city,
+    postal_code,
+    country
+  }) || address || null;
+
+  const inputFields = {
+    location_name,
+    address: compositeAddress,
+    street_name: street_name || '',
+    street_number: street_number || '',
+    city: city || '',
+    postal_code: postal_code || '',
+    country: country || ''
+  };
+
+  const finishInsert = () => {
+    db.run(`
+      INSERT INTO quote_custom_locations (
+        location_name, address, city, country, latitude, longitude, created_by,
+        building_type, street_name, street_number, postal_code
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
       location_name,
-      address,
+      compositeAddress,
+      city || null,
+      country || null,
+      latitude || null,
+      longitude || null,
+      req.user.id,
+      normalizedBuilding,
+      street_name || null,
+      street_number || null,
+      postal_code || null
+    ], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      res.status(201).json({
+        id: this.lastID,
+        location_name,
+        address: compositeAddress,
+        city,
+        country,
+        building_type: normalizedBuilding,
+        street_name: street_name || null,
+        street_number: street_number || null,
+        postal_code: postal_code || null,
+        latitude: latitude || null,
+        longitude: longitude || null,
+        already_exists: false
+      });
+    });
+  };
+
+  if (!reuse_existing) {
+    return finishInsert();
+  }
+
+  db.all('SELECT * FROM quote_custom_locations', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    const inputNorm = quoteAddressUtils.normalizeComposite(inputFields);
+    const exact = (rows || []).find(r => {
+      const candNorm = quoteAddressUtils.normalizeComposite({
+        location_name: r.location_name,
+        address: r.address,
+        street_name: r.street_name,
+        street_number: r.street_number,
+        city: r.city,
+        postal_code: r.postal_code,
+        country: r.country
+      });
+      const nameSame = quoteAddressUtils.normalizeText(r.location_name) === quoteAddressUtils.normalizeText(location_name);
+      return inputNorm && candNorm && inputNorm === candNorm && nameSame;
+    });
+
+    if (exact) {
+      return res.status(200).json({
+        id: exact.id,
+        location_name: exact.location_name,
+        address: exact.address,
+        city: exact.city,
+        country: exact.country,
+        building_type: exact.building_type,
+        street_name: exact.street_name,
+        street_number: exact.street_number,
+        postal_code: exact.postal_code,
+        latitude: exact.latitude,
+        longitude: exact.longitude,
+        already_exists: true
+      });
+    }
+
+    finishInsert();
+  });
+});
+
+router.put('/carrier_quotes/custom_locations/:id', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), (req, res) => {
+  const { id } = req.params;
+  const {
+    location_name, address, city, country, latitude, longitude,
+    building_type, street_name, street_number, postal_code
+  } = req.body;
+
+  if (!location_name) return res.status(400).json({ error: 'Location name is required' });
+
+  const normalizedBuilding = building_type
+    ? String(building_type).toLowerCase()
+    : null;
+  if (normalizedBuilding && !['datacenter', 'retail'].includes(normalizedBuilding)) {
+    return res.status(400).json({ error: "building_type must be 'datacenter' or 'retail'" });
+  }
+
+  const compositeAddress = quoteAddressUtils.buildCompositeAddress({
+    street_number,
+    street_name,
+    address,
+    city,
+    postal_code,
+    country
+  }) || address || null;
+
+  db.run(`
+    UPDATE quote_custom_locations SET
+      location_name = ?, address = ?, city = ?, country = ?,
+      latitude = ?, longitude = ?,
+      building_type = ?, street_name = ?, street_number = ?, postal_code = ?
+    WHERE id = ?
+  `, [
+    location_name,
+    compositeAddress,
+    city || null,
+    country || null,
+    latitude || null,
+    longitude || null,
+    normalizedBuilding,
+    street_name || null,
+    street_number || null,
+    postal_code || null,
+    id
+  ], function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    if (this.changes === 0) return res.status(404).json({ error: 'Custom location not found' });
+    res.json({
+      id: Number(id),
+      location_name,
+      address: compositeAddress,
       city,
-      country
+      country,
+      building_type: normalizedBuilding,
+      street_name: street_name || null,
+      street_number: street_number || null,
+      postal_code: postal_code || null,
+      latitude: latitude || null,
+      longitude: longitude || null
     });
   });
+});
+
+// Lightweight building-type-only update — does NOT touch address/city/country/
+// lat-lng or require re-verification. Used by the bulk "Custom Locations"
+// cleanup screen so admins can quickly fix Building Type on many existing
+// locations without re-editing (or re-verifying) full location detail.
+router.patch('/carrier_quotes/custom_locations/:id/building_type', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), (req, res) => {
+  const { id } = req.params;
+  const normalizedBuilding = req.body.building_type ? String(req.body.building_type).toLowerCase() : null;
+
+  if (!normalizedBuilding || !['datacenter', 'retail'].includes(normalizedBuilding)) {
+    return res.status(400).json({ error: "building_type must be 'datacenter' or 'retail'" });
+  }
+
+  db.get('SELECT * FROM quote_custom_locations WHERE id = ?', [id], (err, existing) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!existing) return res.status(404).json({ error: 'Custom location not found' });
+
+    db.run('UPDATE quote_custom_locations SET building_type = ? WHERE id = ?', [normalizedBuilding, id], function(updErr) {
+      if (updErr) return res.status(500).json({ error: updErr.message });
+
+      logChange(
+        req.user.id, 'quote_custom_locations', id, 'UPDATE_BUILDING_TYPE',
+        { building_type: existing.building_type }, { building_type: normalizedBuilding }, req
+      );
+
+      res.json({ id: Number(id), building_type: normalizedBuilding });
+    });
+  });
+});
+
+// Purge every custom location that isn't referenced by any quote in the
+// Carrier Quote Repository. Registered before the /:id DELETE route so this
+// literal path is matched first. Deliberately a single explicit bulk action
+// (not automatic) so nothing is ever deleted without the admin choosing to.
+router.delete('/carrier_quotes/custom_locations/purge_unused', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), (req, res) => {
+  db.all(
+    `SELECT id, location_name, address FROM quote_custom_locations qcl
+     WHERE NOT EXISTS (
+       SELECT 1 FROM carrier_quotes cq
+       WHERE cq.location_a_custom_id = qcl.id OR cq.location_b_custom_id = qcl.id
+     )`,
+    [],
+    (err, unusedRows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!unusedRows.length) return res.json({ deleted: 0, locations: [] });
+
+      const ids = unusedRows.map(r => r.id);
+      const placeholders = ids.map(() => '?').join(',');
+      db.run(`DELETE FROM quote_custom_locations WHERE id IN (${placeholders})`, ids, function(delErr) {
+        if (delErr) return res.status(500).json({ error: delErr.message });
+
+        logChange(
+          req.user.id, 'quote_custom_locations', null, 'PURGE_UNUSED',
+          null, { deleted_ids: ids, deleted_names: unusedRows.map(r => r.location_name) }, req
+        );
+
+        res.json({ deleted: this.changes, locations: unusedRows });
+      });
+    }
+  );
+});
+
+// Merge one or more duplicate custom locations into a single canonical
+// (target) location — standardizes addresses without losing quote history.
+// Every carrier_quotes row pointing at a source id is repointed to the
+// target, then the now-unused source rows are deleted.
+router.post('/carrier_quotes/custom_locations/merge', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), (req, res) => {
+  const targetId = parseInt(req.body.target_id, 10);
+  const sourceIds = Array.isArray(req.body.source_ids)
+    ? [...new Set(req.body.source_ids.map(v => parseInt(v, 10)).filter(v => Number.isFinite(v) && v !== targetId))]
+    : [];
+
+  if (!Number.isFinite(targetId)) return res.status(400).json({ error: 'target_id is required' });
+  if (!sourceIds.length) return res.status(400).json({ error: 'source_ids must include at least one other location to merge' });
+
+  db.get('SELECT * FROM quote_custom_locations WHERE id = ?', [targetId], (err, target) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!target) return res.status(404).json({ error: 'Target location not found' });
+
+    const placeholders = sourceIds.map(() => '?').join(',');
+    db.all(`SELECT * FROM quote_custom_locations WHERE id IN (${placeholders})`, sourceIds, (srcErr, sourceRows) => {
+      if (srcErr) return res.status(500).json({ error: srcErr.message });
+      if (sourceRows.length !== sourceIds.length) {
+        return res.status(404).json({ error: 'One or more source locations were not found' });
+      }
+
+      db.run(
+        `UPDATE carrier_quotes SET location_a_custom_id = ?, location_a_pop_code = ? WHERE location_a_custom_id IN (${placeholders})`,
+        [targetId, target.location_name, ...sourceIds],
+        function(updAErr) {
+          if (updAErr) return res.status(500).json({ error: updAErr.message });
+          const repointedA = this.changes;
+
+          db.run(
+            `UPDATE carrier_quotes SET location_b_custom_id = ?, location_b_pop_code = ? WHERE location_b_custom_id IN (${placeholders})`,
+            [targetId, target.location_name, ...sourceIds],
+            function(updBErr) {
+              if (updBErr) return res.status(500).json({ error: updBErr.message });
+              const repointedB = this.changes;
+
+              db.run(`DELETE FROM quote_custom_locations WHERE id IN (${placeholders})`, sourceIds, function(delErr) {
+                if (delErr) return res.status(500).json({ error: delErr.message });
+
+                logChange(
+                  req.user.id, 'quote_custom_locations', targetId, 'MERGE',
+                  { source_ids: sourceIds, source_names: sourceRows.map(r => r.location_name) },
+                  { target_id: targetId, target_name: target.location_name, quotes_repointed: repointedA + repointedB },
+                  req
+                );
+
+                res.json({
+                  target_id: targetId,
+                  merged_ids: sourceIds,
+                  quotes_repointed: repointedA + repointedB,
+                  locations_deleted: this.changes
+                });
+              });
+            }
+          );
+        }
+      );
+    });
+  });
+});
+
+// Delete a single custom location — blocked if it's still referenced by any
+// quote (use merge instead so quote history isn't lost).
+router.delete('/carrier_quotes/custom_locations/:id', authenticateToken, authorizeAnyModulePermission(['carrier_quote_repository', 'network_routes'], 'read_only'), (req, res) => {
+  const { id } = req.params;
+
+  db.get(
+    'SELECT COUNT(*) as cnt FROM carrier_quotes WHERE location_a_custom_id = ? OR location_b_custom_id = ?',
+    [id, id],
+    (err, usage) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (usage && usage.cnt > 0) {
+        return res.status(409).json({ error: `Cannot delete — still used by ${usage.cnt} quote(s). Merge into another location instead.` });
+      }
+
+      db.get('SELECT * FROM quote_custom_locations WHERE id = ?', [id], (getErr, existing) => {
+        if (getErr) return res.status(500).json({ error: getErr.message });
+        if (!existing) return res.status(404).json({ error: 'Custom location not found' });
+
+        db.run('DELETE FROM quote_custom_locations WHERE id = ?', [id], function(delErr) {
+          if (delErr) return res.status(500).json({ error: delErr.message });
+
+          logChange(req.user.id, 'quote_custom_locations', id, 'DELETE', existing, null, req);
+
+          res.json({ deleted: true, id: Number(id) });
+        });
+      });
+    }
+  );
 });
 
 // ====================================
@@ -20948,7 +23163,8 @@ router.post('/voice/one-directory/calculate', authenticateToken, authorizeModule
     b2b_agility,
     safe_connect_bandwidth,
     contract_term,
-    currency_requested
+    currency_requested,
+    growth_percentage
   } = req.body;
 
   if (!directory_users || !customer_location || !member_resiliency || !contract_term) {
@@ -20979,7 +23195,11 @@ router.post('/voice/one-directory/calculate', authenticateToken, authorizeModule
     // 2. Calculate required bandwidth from directory users
     const avgCalls = params.avg_calls_per_user || 2;
     const callBw = params.call_bandwidth_kbps || 100;
-    const growthPct = params.growth_percentage || 20;
+    // Allow the caller to override the admin-configured growth % for this specific quote
+    const parsedGrowthOverride = parseFloat(growth_percentage);
+    const growthPct = (growth_percentage !== undefined && growth_percentage !== null && growth_percentage !== '' && !isNaN(parsedGrowthOverride) && parsedGrowthOverride >= 0)
+      ? parsedGrowthOverride
+      : (params.growth_percentage || 20);
 
     const rawBandwidthKbps = directory_users * avgCalls * callBw * (1 + growthPct / 100);
     const rawBandwidthMb = rawBandwidthKbps / 1000;
@@ -21008,9 +23228,10 @@ router.post('/voice/one-directory/calculate', authenticateToken, authorizeModule
     // 4. Round up to next rate card bandwidth
     let directoryBw = findBandwidth(rawBandwidthMb);
 
-    // 4a. Enforce minimum directory bandwidth if configured
+    // 4a. Enforce minimum directory bandwidth if configured - Off Net only.
+    // On Net quotes are not floored by this admin-configured minimum.
     const minBwMb = parseFloat(params.minimum_bandwidth_mb) || 0;
-    if (minBwMb > 0 && directoryBw.mb < minBwMb) {
+    if (minBwMb > 0 && member_on_off_net === 'Off Net' && directoryBw.mb < minBwMb) {
       directoryBw = findBandwidth(minBwMb);
     }
 
@@ -21295,10 +23516,107 @@ router.post('/voice/one-directory/calculate', authenticateToken, authorizeModule
   }
 });
 
+// Bandwidth-only calculator: given a number of users (and optional growth % override),
+// return the required bandwidth using the same formula/admin parameters as /calculate,
+// without any pricing/customer data - so nothing is written to the pricing logs.
+router.post('/voice/one-directory/calculate-bandwidth', authenticateToken, authorizeModulePermission('voice_one_directory', 'read_only'), async (req, res) => {
+  const { directory_users, growth_percentage, member_on_off_net } = req.body;
+
+  const directoryUsers = parseInt(directory_users);
+  if (!directoryUsers || directoryUsers <= 0) {
+    return res.status(400).json({ error: 'directory_users is required and must be a positive number' });
+  }
+
+  try {
+    const params = await new Promise((resolve, reject) => {
+      db.all('SELECT param_key, param_value, param_type FROM one_directory_parameters', [], (err, rows) => {
+        if (err) reject(err);
+        else {
+          const p = {};
+          rows.forEach(r => {
+            if (r.param_type === 'json') {
+              p[r.param_key] = r.param_value;
+            } else {
+              const numVal = parseFloat(r.param_value);
+              p[r.param_key] = !isNaN(numVal) ? numVal : r.param_value;
+            }
+          });
+          resolve(p);
+        }
+      });
+    });
+
+    const avgCalls = params.avg_calls_per_user || 2;
+    const callBw = params.call_bandwidth_kbps || 100;
+    const parsedGrowthOverride = parseFloat(growth_percentage);
+    const growthPct = (growth_percentage !== undefined && growth_percentage !== null && growth_percentage !== '' && !isNaN(parsedGrowthOverride) && parsedGrowthOverride >= 0)
+      ? parsedGrowthOverride
+      : (params.growth_percentage || 20);
+
+    const rawBandwidthKbps = directoryUsers * avgCalls * callBw * (1 + growthPct / 100);
+    const rawBandwidthMb = rawBandwidthKbps / 1000;
+
+    const allBandwidths = await new Promise((resolve, reject) => {
+      db.all('SELECT DISTINCT bandwidth FROM extranet_rate_card ORDER BY id', [], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows.map(r => r.bandwidth));
+      });
+    });
+
+    const parseBw = (bw) => {
+      const v = parseFloat(bw.replace(/[^0-9.]/g, ''));
+      return bw.toLowerCase().includes('kb') ? v / 1000 : v;
+    };
+    const sortedBws = allBandwidths.map(bw => ({ label: bw, mb: parseBw(bw) })).sort((a, b) => a.mb - b.mb);
+    const findBandwidth = (targetMb) => {
+      for (const bw of sortedBws) {
+        if (bw.mb >= targetMb) return bw;
+      }
+      return sortedBws[sortedBws.length - 1];
+    };
+
+    let recommendedBw = findBandwidth(rawBandwidthMb);
+    const isOffNet = member_on_off_net === 'Off Net';
+
+    // Enforce the same admin-configured minimum directory bandwidth used by /calculate -
+    // Off Net only. On Net quotes are not floored by this admin-configured minimum.
+    const minBwMb = parseFloat(params.minimum_bandwidth_mb) || 0;
+    let minimumApplied = false;
+    if (minBwMb > 0 && isOffNet && recommendedBw.mb < minBwMb) {
+      recommendedBw = findBandwidth(minBwMb);
+      minimumApplied = true;
+    }
+
+    // Off Net members carry the same minimum total bandwidth floor (default 10Mb) as /calculate
+    const offNetMinMb = parseFloat(params.off_net_min_bandwidth_mb) || 10;
+    if (isOffNet && recommendedBw.mb < offNetMinMb) {
+      recommendedBw = findBandwidth(offNetMinMb);
+      minimumApplied = true;
+    }
+
+    res.json({
+      directory_users: directoryUsers,
+      avg_calls_per_user: avgCalls,
+      call_bandwidth_kbps: callBw,
+      growth_percentage: growthPct,
+      member_on_off_net: member_on_off_net === 'Off Net' ? 'Off Net' : 'On Net',
+      raw_bandwidth_mb: rawBandwidthMb,
+      recommended_bandwidth: recommendedBw.label,
+      recommended_bandwidth_mb: recommendedBw.mb,
+      minimum_bandwidth_mb: minBwMb,
+      off_net_min_bandwidth_mb: offNetMinMb,
+      minimum_applied: minimumApplied
+    });
+  } catch (error) {
+    console.error('Error calculating bandwidth:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Calculate bundle pricing for One Directory
 router.post('/voice/one-directory/calculate-bundle', authenticateToken, authorizeModulePermission('voice_one_directory', 'read_only'), async (req, res) => {
   try {
-    const { items, currency_requested, customer_name } = req.body;
+    const { items, currency_requested, customer_name, customer_id } = req.body;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'At least one item is required in the bundle' });
@@ -21372,7 +23690,14 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
 
     const avgCalls = params.avg_calls_per_user || 2;
     const callBw = params.call_bandwidth_kbps || 100;
-    const growthPct = params.growth_percentage || 20;
+    const defaultGrowthPct = params.growth_percentage || 20;
+    // Each item may override the admin-configured growth % for its own quote
+    const resolveGrowthPct = (item) => {
+      const parsed = parseFloat(item.growth_percentage);
+      return (item.growth_percentage !== undefined && item.growth_percentage !== null && item.growth_percentage !== '' && !isNaN(parsed) && parsed >= 0)
+        ? parsed
+        : defaultGrowthPct;
+    };
 
     // ISF display names
     const isfNames = {
@@ -21412,14 +23737,16 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
       const item = items[i];
       try {
         // Calculate bandwidth from directory users
-        const rawBwKbps = item.directory_users * avgCalls * callBw * (1 + growthPct / 100);
+        const itemGrowthPct = resolveGrowthPct(item);
+        const rawBwKbps = item.directory_users * avgCalls * callBw * (1 + itemGrowthPct / 100);
         const rawBwMb = rawBwKbps / 1000;
 
         let directoryBw = findBandwidth(rawBwMb);
 
-        // Enforce minimum directory bandwidth if configured
+        // Enforce minimum directory bandwidth if configured - Off Net only.
+        // On Net quotes are not floored by this admin-configured minimum.
         const minBwMb = parseFloat(params.minimum_bandwidth_mb) || 0;
-        if (minBwMb > 0 && directoryBw.mb < minBwMb) {
+        if (minBwMb > 0 && item.member_on_off_net === 'Off Net' && directoryBw.mb < minBwMb) {
           directoryBw = findBandwidth(minBwMb);
         }
 
@@ -21540,6 +23867,9 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
         const bundleMrcDiscount = discountableMrcUsd * (appliedMrcDiscount / 100);
         const discountedMrcUsd = discountableMrcUsd - bundleMrcDiscount;
         const itemTotalMrc = discountedMrcUsd + nonDiscountableMrcUsd;
+        // Ratio used to scale each discountable service line so they sum exactly
+        // to discountedMrcUsd (and therefore each service + non-discountable = itemTotalMrc)
+        const discountRatio = discountableMrcUsd > 0 ? discountedMrcUsd / discountableMrcUsd : 1;
 
         // NRC - only on One Directory ISF, one per basket item
         let itemNrc = typeof params.nrc_12_month === 'number' ? params.nrc_12_month : 1000;
@@ -21572,7 +23902,7 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
           },
           services: itemServices.map(s => ({
             ...s,
-            mrc_converted: s.poa ? null : Math.round(s.mrc_usd * exchangeRate * 100) / 100
+            mrc_converted: s.poa ? null : Math.round((s.discountable ? s.mrc_usd * discountRatio : s.mrc_usd) * exchangeRate * 100) / 100
           })),
           isf_count: itemServices.length,
           item_summary: {
@@ -21593,6 +23923,7 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
             tier_used: pricingTier,
             resiliency_multiplier: resiliencyMultiplier,
             contract_discount_pct: contractDiscountPct,
+            growth_percentage: itemGrowthPct,
             discountable_mrc_usd: discountableMrcUsd,
             non_discountable_mrc_usd: nonDiscountableMrcUsd,
             bundle_mrc_discount: bundleMrcDiscount,
@@ -21602,7 +23933,7 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
             services: itemServices.map(s => ({
               name: s.name,
               bandwidth: s.bandwidth,
-              mrc: s.poa ? null : Math.round(s.mrc_usd * exchangeRate * 100) / 100,
+              mrc: s.poa ? null : Math.round((s.discountable ? s.mrc_usd * discountRatio : s.mrc_usd) * exchangeRate * 100) / 100,
               nrc: s.nrc_usd != null ? Math.round(s.nrc_usd * exchangeRate * 100) / 100 : 0,
               discountable: s.discountable
             }))
@@ -21626,15 +23957,15 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
           `INSERT INTO one_directory_bundle_logs (
             user_id, item_count, currency, mrc_discount_percent, nrc_discount_percent,
             total_mrc, total_nrc, total_mrc_usd_before_discount, total_nrc_usd_before_discount,
-            exchange_rate, has_poa_items, customer_name
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            exchange_rate, has_poa_items, customer_name, customer_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             req.user.id, items.length, currency_requested || 'USD',
             appliedMrcDiscount, autoNrcDiscount,
             totalMrcConverted, totalNrcConverted,
             Math.round(totalMrcUsdBeforeDiscount * 100) / 100,
             Math.round(totalNrcUsdBeforeDiscount * 100) / 100,
-            exchangeRate, hasPoaItems ? 1 : 0, customer_name || null
+            exchangeRate, hasPoaItems ? 1 : 0, customer_name || null, customer_id || null
           ],
           function(err) {
             if (err) reject(err);
@@ -21654,8 +23985,8 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
             user_id, directory_users, calculated_bandwidth, customer_location, customer_region, customer_tier,
             member_resiliency, member_on_off_net, b2b_agility, safe_connect_bandwidth, bandwidth,
             contract_term, currency_requested, base_price_usd, final_mrc, final_nrc,
-            calculation_breakdown, bundle_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            calculation_breakdown, bundle_id, customer_name, customer_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             req.user.id, origItem.directory_users,
             calcItem.item_summary.raw_bandwidth_mb ? `${calcItem.item_summary.raw_bandwidth_mb.toFixed(2)}Mb` : null,
@@ -21668,7 +23999,7 @@ router.post('/voice/one-directory/calculate-bundle', authenticateToken, authoriz
             origItem.contract_term, currency_requested || 'USD',
             calcItem.breakdown ? calcItem.breakdown.directory_rate_card_base : null,
             calcItem.pricing.mrc, calcItem.pricing.nrc,
-            JSON.stringify(calcItem.breakdown), bundleLogId
+            JSON.stringify(calcItem.breakdown), bundleLogId, customer_name || null, customer_id || null
           ],
           (err) => { if (err) console.error('Error logging bundle item:', err); }
         );
@@ -21805,6 +24136,31 @@ router.get('/voice/one-directory/logs', authenticateToken, authorizeModulePermis
                 try {
                   const breakdown = JSON.parse(row.calculation_breakdown);
                   services = breakdown.services || [];
+
+                  // Retroactive reconciliation for bundles logged before the discount-proportioning
+                  // fix: older records stored each discountable service's pre-discount mrc, so their
+                  // sum matches discountable_mrc_usd (before the bundle discount) rather than the
+                  // discounted item total. Detect that shape and scale those services down so they
+                  // sum exactly to the item total, exactly like newly-run quotes already do.
+                  const discountableMrcUsd = breakdown.discountable_mrc_usd;
+                  const bundleMrcDiscount = breakdown.bundle_mrc_discount;
+                  if (services.length > 0 && discountableMrcUsd > 0 && bundleMrcDiscount > 0.001) {
+                    const exchangeRate = parseFloat(bundle.exchange_rate) || 1;
+                    const discountableServiceSum = services
+                      .filter(s => s.discountable && !s.poa && typeof s.mrc === 'number')
+                      .reduce((sum, s) => sum + s.mrc, 0);
+                    const rawExpectedSum = discountableMrcUsd * exchangeRate;
+                    // Within a cent (floating point noise) of the pre-discount total => not yet reconciled
+                    const looksUnreconciled = Math.abs(discountableServiceSum - rawExpectedSum) <= 0.01;
+                    if (looksUnreconciled) {
+                      const ratio = (discountableMrcUsd - bundleMrcDiscount) / discountableMrcUsd;
+                      services = services.map(s => (s.discountable && !s.poa && typeof s.mrc === 'number')
+                        ? { ...s, mrc: Math.round(s.mrc * ratio * 100) / 100 }
+                        : s
+                      );
+                    }
+                  }
+
                   if (includeBreakdown) {
                     breakdownData = breakdown;
                   }
@@ -22114,5 +24470,8 @@ router.post('/api/admin/latency-matrix/refresh', authenticateToken, authorizeRol
     res.status(500).json({ error: err.message });
   }
 });
+
+// Market Data & Extranet contacts (merged module)
+router.use(require('./marketDataRoutes'));
 
 module.exports = router;

@@ -729,36 +729,36 @@ const FeedbackManager = ({ initialTab = 0 }) => {
                 </Card>
               </Grid>
               <Grid item xs={12} sm={6} md={3}>
-                <Card sx={{ bgcolor: 'error.light', color: 'white' }}>
+                <Card sx={{ bgcolor: 'error.50', border: 1, borderColor: 'error.main' }}>
                   <CardContent>
-                    <Typography gutterBottom>
+                    <Typography gutterBottom color="error.main">
                       Urgent Bugs
                     </Typography>
-                    <Typography variant="h4">
+                    <Typography variant="h4" color="error.main">
                       {statistics.urgentBugs}
                     </Typography>
                   </CardContent>
                 </Card>
               </Grid>
               <Grid item xs={12} sm={6} md={3}>
-                <Card sx={{ bgcolor: 'warning.light', color: 'white' }}>
+                <Card sx={{ bgcolor: 'warning.50', border: 1, borderColor: 'warning.main' }}>
                   <CardContent>
-                    <Typography gutterBottom>
+                    <Typography gutterBottom color="warning.main">
                       Urgent Features
                     </Typography>
-                    <Typography variant="h4">
+                    <Typography variant="h4" color="warning.main">
                       {statistics.urgentFeatures}
                     </Typography>
                   </CardContent>
                 </Card>
               </Grid>
               <Grid item xs={12} sm={6} md={3}>
-                <Card sx={{ bgcolor: 'success.light', color: 'white' }}>
+                <Card sx={{ bgcolor: 'success.50', border: 1, borderColor: 'success.main' }}>
                   <CardContent>
-                    <Typography gutterBottom>
+                    <Typography gutterBottom color="success.main">
                       Completed
                     </Typography>
-                    <Typography variant="h4">
+                    <Typography variant="h4" color="success.main">
                       {statistics.byStatus?.find(s => s.status === 'Complete')?.count || 0}
                     </Typography>
                   </CardContent>
@@ -998,7 +998,7 @@ const FeedbackManager = ({ initialTab = 0 }) => {
                 </Grid>
                 <Grid item xs={12}>
                   <Typography variant="subtitle2" color="textSecondary">Description</Typography>
-                  <Paper sx={{ p: 2, mt: 1, bgcolor: 'grey.100' }}>
+                  <Paper sx={{ p: 2, mt: 1, bgcolor: 'action.hover' }}>
                     <Typography>{detailsDialog.feedback.description}</Typography>
                   </Paper>
                 </Grid>
@@ -1195,7 +1195,7 @@ const FeedbackManager = ({ initialTab = 0 }) => {
           <Typography variant="body1" gutterBottom>
             Are you sure you want to delete this feedback submission?
           </Typography>
-          <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+          <Box sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
             <Typography variant="body2" color="text.secondary" gutterBottom>
               <strong>Feedback ID:</strong> #{deleteDialog.feedbackId}
             </Typography>
@@ -1207,7 +1207,7 @@ const FeedbackManager = ({ initialTab = 0 }) => {
           <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
             This will permanently delete:
           </Typography>
-          <ul style={{ marginTop: 8, color: 'rgba(0, 0, 0, 0.6)' }}>
+          <ul style={{ marginTop: 8 }} >
             <li>The feedback submission</li>
             <li>All comments and admin notes</li>
             <li>All file attachments</li>

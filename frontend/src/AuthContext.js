@@ -23,6 +23,7 @@ export const AuthProvider = ({ children }) => {
   const [connectionError, setConnectionError] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passwordResetRequired, setPasswordResetRequired] = useState(false);
+  const [isGuest, setIsGuest] = useState(false);
   
   // Session timeout refs (using useRef to avoid re-renders)
   const sessionTimeoutRef = useRef(null);
@@ -141,6 +142,7 @@ export const AuthProvider = ({ children }) => {
           setModulePermissions(response.data.modulePermissions || {});
           setModuleVisibility(response.data.moduleVisibility || {});
           setPasswordResetRequired(response.data.passwordResetRequired || false);
+          setIsGuest(response.data.isGuest || false);
           setIsAuthenticated(true);
         } catch (error) {
           console.error('Auth check failed:', error);
@@ -178,6 +180,7 @@ export const AuthProvider = ({ children }) => {
       setModulePermissions(modulePermissions || {});
       setModuleVisibility(moduleVisibility || {});
       setPasswordResetRequired(passwordResetRequired || false);
+      setIsGuest(false);
       setIsAuthenticated(true);
       
       return { success: true, passwordResetRequired: passwordResetRequired || false };
@@ -198,6 +201,47 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // No-credential login that drops the caller into a read-only Voice - One Directory
+  // only session. See POST /voice-guest-login on the backend.
+  const loginAsGuest = async () => {
+    try {
+      setConnectionError(null);
+
+      const response = await axios.post(`${API_BASE_URL}/voice-guest-login`);
+
+      const { token, user, permissions, modulePermissions, moduleVisibility } = response.data;
+
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      localStorage.setItem('authToken', token);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      setToken(token);
+      setUser(user);
+      setPermissions(permissions);
+      setModulePermissions(modulePermissions || {});
+      setModuleVisibility(moduleVisibility || {});
+      setPasswordResetRequired(false);
+      setIsGuest(true);
+      setIsAuthenticated(true);
+
+      return { success: true };
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+
+      if (isConnectionError(error)) {
+        setConnectionError(errorMessage);
+      } else {
+        console.error('Guest login failed:', errorMessage);
+      }
+
+      return {
+        success: false,
+        error: errorMessage
+      };
+    }
+  };
+
   const logout = () => {
     clearSessionTimeouts();
     setToken(null);
@@ -206,6 +250,7 @@ export const AuthProvider = ({ children }) => {
     setModuleVisibility({});
     setIsAuthenticated(false);
     setPasswordResetRequired(false);
+    setIsGuest(false);
     setShowTimeoutWarning(false);
     localStorage.removeItem('authToken');
     delete axios.defaults.headers.common['Authorization'];
@@ -308,6 +353,8 @@ export const AuthProvider = ({ children }) => {
     loading,
     connectionError,
     login,
+    loginAsGuest,
+    isGuest,
     logout,
     changePassword,
     forcedPasswordChange,

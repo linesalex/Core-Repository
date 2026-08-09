@@ -24,6 +24,7 @@ import {
   downloadRackDeviceExport
 } from './api';
 import { carrierQuoteApi } from './api';
+import SiteValidationDialog from './SiteValidationDialog';
 
 const CARRIER_QUOTE_MODULE_ID = 'carrier_quotes';
 
@@ -33,33 +34,118 @@ const CARRIER_QUOTE_FIELDS = [
   { label: 'Carrier Quote Reference', field: 'carrier_quote_ref', instruction: 'The carrier\'s own reference number' },
   { label: 'Service Type', field: 'service_type', instruction: 'MPLS | Ethernet | Dark Fiber | Wavelength' },
   { label: 'Region', field: 'region', instruction: 'AMERs | APAC | EMEA | INTER' },
-  { label: 'Location A POP Code', field: 'location_a_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) OR fill in Name/Address/City/Country below' },
-  { label: 'Location A Name', field: '_loc_a_name', instruction: 'Only required if POP code is not provided' },
-  { label: 'Location A Address', field: '_loc_a_address', instruction: 'Street address for custom location' },
+  { label: 'Location A POP Code', field: 'location_a_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) or leave blank for custom' },
+  { label: 'Location A Name', field: '_loc_a_name', instruction: 'Site name — only required if POP code is not provided' },
+  { label: 'Location A Street Name', field: '_loc_a_street_name', instruction: 'Street name for custom location' },
+  { label: 'Location A Street Number', field: '_loc_a_street_number', instruction: 'Street number for custom location' },
   { label: 'Location A City', field: '_loc_a_city', instruction: 'City for custom location' },
-  { label: 'Location A Country', field: '_loc_a_country', instruction: 'Country for custom location' },
-  { label: 'Location B POP Code', field: 'location_b_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) OR fill in Name/Address/City/Country below' },
-  { label: 'Location B Name', field: '_loc_b_name', instruction: 'Only required if POP code is not provided' },
-  { label: 'Location B Address', field: '_loc_b_address', instruction: 'Street address for custom location' },
+  { label: 'Location A Postal Code', field: '_loc_a_postal_code', instruction: 'Postal / ZIP code for custom location' },
+  { label: 'Location A Country', field: '_loc_a_country', instruction: 'Country for custom location (ISO preferred e.g. GB)' },
+  { label: 'Location A Building Type', field: '_loc_a_building_type', instruction: 'Datacenter | Retail — required for custom location' },
+  { label: 'Location B POP Code', field: 'location_b_pop_code', instruction: 'Enter POP code (e.g. IPCLON7) or leave blank for custom' },
+  { label: 'Location B Name', field: '_loc_b_name', instruction: 'Site name — only required if POP code is not provided' },
+  { label: 'Location B Street Name', field: '_loc_b_street_name', instruction: 'Street name for custom location' },
+  { label: 'Location B Street Number', field: '_loc_b_street_number', instruction: 'Street number for custom location' },
   { label: 'Location B City', field: '_loc_b_city', instruction: 'City for custom location' },
-  { label: 'Location B Country', field: '_loc_b_country', instruction: 'Country for custom location' },
+  { label: 'Location B Postal Code', field: '_loc_b_postal_code', instruction: 'Postal / ZIP code for custom location' },
+  { label: 'Location B Country', field: '_loc_b_country', instruction: 'Country for custom location (ISO preferred e.g. GB)' },
+  { label: 'Location B Building Type', field: '_loc_b_building_type', instruction: 'Datacenter | Retail — required for custom location' },
   { label: 'Bandwidth Unit', field: 'bandwidth_unit', instruction: 'Mbps | Gbps | Dark Fiber' },
   { label: 'Bandwidth Value', field: 'bandwidth_value', instruction: 'Not required if Bandwidth Unit is Dark Fiber' },
   { label: 'Currency', field: 'currency', instruction: 'e.g. USD, EUR, GBP' },
-  { label: 'MRC (12 Month)', field: 'mrc_12', instruction: 'Monthly Recurring Cost for 12-month term. Leave blank if not quoted.' },
-  { label: 'NRC (12 Month)', field: 'nrc_12', instruction: 'Non-Recurring Cost for 12-month term. Leave blank if not quoted.' },
-  { label: 'MRC (24 Month)', field: 'mrc_24', instruction: 'Monthly Recurring Cost for 24-month term. Leave blank if not quoted.' },
-  { label: 'NRC (24 Month)', field: 'nrc_24', instruction: 'Non-Recurring Cost for 24-month term. Leave blank if not quoted.' },
-  { label: 'MRC (36 Month)', field: 'mrc_36', instruction: 'Monthly Recurring Cost for 36-month term. Leave blank if not quoted.' },
-  { label: 'NRC (36 Month)', field: 'nrc_36', instruction: 'Non-Recurring Cost for 36-month term. Leave blank if not quoted.' },
+  { label: 'MRC (12 Month)', field: 'mrc_12', instruction: 'Monthly Recurring Cost for 12-month term' },
+  { label: 'NRC (12 Month)', field: 'nrc_12', instruction: 'Non-Recurring Cost for 12-month term' },
+  { label: 'MRC (24 Month)', field: 'mrc_24', instruction: 'Monthly Recurring Cost for 24-month term' },
+  { label: 'NRC (24 Month)', field: 'nrc_24', instruction: 'Non-Recurring Cost for 24-month term' },
+  { label: 'MRC (36 Month)', field: 'mrc_36', instruction: 'Monthly Recurring Cost for 36-month term' },
+  { label: 'NRC (36 Month)', field: 'nrc_36', instruction: 'Non-Recurring Cost for 36-month term' },
   { label: 'Expected Latency (ms)', field: 'expected_latency', instruction: 'Round-trip latency in milliseconds' },
   { label: 'Protection', field: 'protection', instruction: 'Unprotected | Protected' },
   { label: 'Cable System', field: 'cable_system', instruction: 'Name of submarine cable system if applicable' },
   { label: 'Quote Date', field: 'quote_date', instruction: 'DD/MM/YYYY e.g. 23/02/2026' },
-  { label: 'Quote Validity (Days)', field: '_quote_validity_days', instruction: 'Number of days from quote date e.g. 60' },
+  { label: 'Quote Validity (Days)', field: '_quote_validity_days', instruction: 'Number of days from quote date' },
   { label: 'MTU', field: 'mtu', instruction: 'Maximum Transmission Unit' },
   { label: 'Notes', field: 'notes', instruction: 'Any additional notes' }
 ];
+
+// After data columns: Field (guide) + Instructions (guide) — never imported.
+// With 37 data columns (A–AK), guide is AL = Field, AM = Instructions.
+const CARRIER_QUOTE_FIELD_GUIDE_HEADER = 'Field';
+const CARRIER_QUOTE_INSTRUCTIONS_HEADER = 'Instructions';
+const emptyDataCells = () => CARRIER_QUOTE_FIELDS.map(() => '');
+const buildCarrierQuoteInstructionRows = () => {
+  const width = CARRIER_QUOTE_FIELDS.length + 2;
+  const fieldIdx = CARRIER_QUOTE_FIELDS.length;
+  const instrIdx = CARRIER_QUOTE_FIELDS.length + 1;
+  const row = (fieldLabel, instruction) => {
+    const cells = Array(width).fill('');
+    cells[fieldIdx] = fieldLabel;
+    cells[instrIdx] = instruction;
+    return cells;
+  };
+  return [
+    Array(width).fill(''),
+    row(CARRIER_QUOTE_FIELD_GUIDE_HEADER, CARRIER_QUOTE_INSTRUCTIONS_HEADER),
+    ...CARRIER_QUOTE_FIELDS.map(r => row(r.label, r.instruction))
+  ];
+};
+
+const normalizeBuildingType = (value) => {
+  const v = String(value || '').trim().toLowerCase();
+  if (v === 'datacenter' || v === 'dc' || v === 'data centre' || v === 'data center') return 'datacenter';
+  if (v === 'retail') return 'retail';
+  return '';
+};
+
+const composeAddress = (loc = {}) => {
+  if (loc.address && String(loc.address).trim()) return String(loc.address).trim();
+  const line = [loc.street_number, loc.street_name].filter(Boolean).join(' ').trim();
+  return [line, loc.city, loc.postal_code, loc.country].filter(Boolean).join(', ');
+};
+
+const toSiteValidationInitial = (customLoc) => ({
+  location_name: customLoc.name || '',
+  street_name: customLoc.street_name || '',
+  street_number: customLoc.street_number || '',
+  city: customLoc.city || '',
+  postal_code: customLoc.postal_code || '',
+  country: customLoc.country || '',
+  address: composeAddress(customLoc),
+  building_type: normalizeBuildingType(customLoc.building_type) || 'retail'
+});
+
+const isPopCode = (code) => !!(code && String(code).trim());
+
+const hasCustomLocationData = (loc = {}) => !!(
+  loc.name || loc.street_name || loc.street_number || loc.city
+  || loc.postal_code || loc.country || loc.address
+);
+
+/** Trim Excel header keys so "Carrier Name " still matches */
+const normalizeExcelRowKeys = (rowObj) => {
+  const out = {};
+  Object.keys(rowObj || {}).forEach((k) => {
+    out[String(k).replace(/^\uFEFF/, '').trim()] = rowObj[k];
+  });
+  return out;
+};
+
+/** Prefer sheet named Quotes; otherwise first sheet with carrier-quote headers */
+const findCarrierQuoteSheetName = (wb) => {
+  const byName = wb.SheetNames.find(n => String(n).trim().toLowerCase() === 'quotes');
+  if (byName) return byName;
+  for (const name of wb.SheetNames) {
+    const lower = String(name).trim().toLowerCase();
+    if (lower === 'instructions' || lower === 'field guide') continue;
+    const ws = wb.Sheets[name];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const header = (rows[0] || []).map(c => String(c || '').replace(/^\uFEFF/, '').trim());
+    if (header.includes('Carrier Name') || header.includes('Location A POP Code')) {
+      return name;
+    }
+  }
+  return null;
+};
 
 const BulkUpload = ({ onDataRefresh }) => {
   const { hasRole } = useAuth();
@@ -104,6 +190,23 @@ const BulkUpload = ({ onDataRefresh }) => {
   // Carrier quote bulk upload state
   const [carrierQuoteResults, setCarrierQuoteResults] = useState(null);
   const isCarrierQuoteModule = selectedModule === CARRIER_QUOTE_MODULE_ID;
+  const [pendingQuoteRows, setPendingQuoteRows] = useState([]);
+  const pendingQuoteRowsRef = useRef([]);
+  const [siteReviewQueue, setSiteReviewQueue] = useState([]);
+  const siteReviewQueueRef = useRef([]);
+  const [siteReviewIndex, setSiteReviewIndex] = useState(0);
+  const [siteReviewOpen, setSiteReviewOpen] = useState(false);
+  const [bulkProcessOpen, setBulkProcessOpen] = useState(false);
+  const [bulkProcessStage, setBulkProcessStage] = useState('');
+  const [bulkProcessDetail, setBulkProcessDetail] = useState('');
+
+  const updatePendingQuoteRows = (updater) => {
+    setPendingQuoteRows(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      pendingQuoteRowsRef.current = next;
+      return next;
+    });
+  };
 
   // Enhanced cleanup function to reset ALL upload state
   const cleanupUploadState = () => {
@@ -261,47 +364,47 @@ const BulkUpload = ({ onDataRefresh }) => {
     return s;
   };
 
-  // Download carrier quote Excel template
+  // Download carrier quote Excel template (horizontal quotes + Field/Instructions in AH–AI)
   const handleCarrierQuoteTemplateDownload = () => {
     const wb = XLSX.utils.book_new();
-    const wsData = [['Field', 'Value', 'Instructions']];
-    CARRIER_QUOTE_FIELDS.forEach(r => wsData.push([r.label, '', r.instruction]));
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    ws['!cols'] = [{ wch: 28 }, { wch: 30 }, { wch: 60 }];
-    XLSX.utils.book_append_sheet(wb, ws, 'Quote 1');
+    const headers = [
+      ...CARRIER_QUOTE_FIELDS.map(r => r.label),
+      CARRIER_QUOTE_FIELD_GUIDE_HEADER,
+      CARRIER_QUOTE_INSTRUCTIONS_HEADER
+    ];
+    const blankQuoteRows = Array.from({ length: 5 }, () => [...emptyDataCells(), '', '']);
+    const guideRows = buildCarrierQuoteInstructionRows();
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...blankQuoteRows, ...guideRows]);
+    ws['!cols'] = [
+      ...CARRIER_QUOTE_FIELDS.map(r => ({ wch: Math.min(28, Math.max(14, r.label.length + 2)) })),
+      { wch: 28 },
+      { wch: 70 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws, 'Quotes');
 
     const instrWs = XLSX.utils.aoa_to_sheet([
       ['Carrier Quote Bulk Upload Instructions'],
       [''],
-      ['1. Each sheet represents one carrier quote.'],
-      ['2. Duplicate the "Quote 1" sheet for each additional quote you want to add.'],
-      ['3. Fill in Column B (Value) for each field. Column A (Field) must not be changed.'],
+      ['1. Use the "Quotes" sheet. Each DATA ROW (rows 2+) is one carrier quote (data columns only).'],
+      ['2. After Notes, Field / Instructions columns are a guide only — ignored on upload.'],
+      ['3. Do not rename header columns. Add as many quote rows as needed under the header (above the Field / Instructions guide).'],
       ['4. Required fields: Carrier Name, Service Type, Region, Bandwidth Unit.'],
       ['5. Bandwidth Value is required unless Bandwidth Unit is "Dark Fiber".'],
-      ['6. Dates should be entered as DD/MM/YYYY (e.g. 23/02/2026).'],
-      ['7. Save the file and upload via the Bulk Upload facility.'],
-      [''],
-      ['Duplicate sheet for multi quote entry.']
+      ['6. Custom locations (no POP): Name + Street Name/Number + City + Postal Code + Country + Building Type. Site Validation opens for every custom endpoint.'],
+      ['7. POP-linked endpoints are always treated as Datacenter and skip Site Validation.'],
+      ['8. Dates should be entered as DD/MM/YYYY (e.g. 23/02/2026).'],
+      ['9. In Site Validation, review matches and Confirm / Next address before quotes are created.'],
+      ['10. Save the file and upload via the Bulk Upload facility.']
     ]);
-    instrWs['!cols'] = [{ wch: 70 }];
+    instrWs['!cols'] = [{ wch: 90 }];
     XLSX.utils.book_append_sheet(wb, instrWs, 'Instructions');
 
     XLSX.writeFile(wb, 'carrier_quote_bulk_template.xlsx');
     setSuccess('Carrier quote template downloaded');
   };
 
-  // Parse a single Excel sheet into quote data
-  const parseCarrierQuoteSheet = (ws) => {
-    const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
-    const dataMap = {};
-    const startIdx = data.length > 0 && String(data[0][0] || '').trim().toLowerCase() === 'field' ? 1 : 0;
-    for (let i = startIdx; i < data.length; i++) {
-      const row = data[i] || [];
-      const label = String(row[0] || '').trim();
-      const value = row[1] !== undefined && row[1] !== null ? row[1] : '';
-      if (label) dataMap[label] = value;
-    }
-
+  // Parse horizontal Quotes sheet (or legacy vertical sheet) into quote data
+  const parseCarrierQuoteRowObject = (rowObj) => {
     const quoteData = {};
     const dateFields = ['quote_date'];
     let fieldsPopulated = 0;
@@ -309,10 +412,16 @@ const BulkUpload = ({ onDataRefresh }) => {
     const customLocA = {};
     const customLocB = {};
 
+    const cleaned = normalizeExcelRowKeys(rowObj);
+    delete cleaned[CARRIER_QUOTE_FIELD_GUIDE_HEADER];
+    delete cleaned[CARRIER_QUOTE_INSTRUCTIONS_HEADER];
+    delete cleaned.Field;
+    delete cleaned.Instructions;
+
     CARRIER_QUOTE_FIELDS.forEach(r => {
-      const val = dataMap[r.label];
-      if (val !== undefined && val !== '') {
-        const strVal = String(val).trim();
+      const raw = cleaned[r.label];
+      if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
+        const strVal = String(raw).trim();
         if (r.field === '_quote_validity_days') {
           validityDays = strVal;
         } else if (r.field.startsWith('_loc_a_')) {
@@ -320,13 +429,31 @@ const BulkUpload = ({ onDataRefresh }) => {
         } else if (r.field.startsWith('_loc_b_')) {
           customLocB[r.field.replace('_loc_b_', '')] = strVal;
         } else if (!r.field.startsWith('_')) {
-          quoteData[r.field] = dateFields.includes(r.field) ? normaliseDateValue(val) : strVal;
+          quoteData[r.field] = dateFields.includes(r.field) ? normaliseDateValue(raw) : strVal;
         }
         fieldsPopulated++;
       }
     });
 
-    // Calculate expiry_date from quote_date + validity days
+    // Legacy free-text Address column (older templates)
+    const legacyAddrA = cleaned['Location A Address'];
+    if (legacyAddrA !== undefined && legacyAddrA !== null && String(legacyAddrA).trim() !== '') {
+      customLocA.address = String(legacyAddrA).trim();
+      fieldsPopulated++;
+    }
+    const legacyAddrB = cleaned['Location B Address'];
+    if (legacyAddrB !== undefined && legacyAddrB !== null && String(legacyAddrB).trim() !== '') {
+      customLocB.address = String(legacyAddrB).trim();
+      fieldsPopulated++;
+    }
+
+    if (customLocA.building_type) {
+      customLocA.building_type = normalizeBuildingType(customLocA.building_type) || customLocA.building_type;
+    }
+    if (customLocB.building_type) {
+      customLocB.building_type = normalizeBuildingType(customLocB.building_type) || customLocB.building_type;
+    }
+
     if (quoteData.quote_date && validityDays && parseInt(validityDays, 10) > 0) {
       const d = new Date(quoteData.quote_date);
       if (!isNaN(d.getTime())) {
@@ -338,7 +465,196 @@ const BulkUpload = ({ onDataRefresh }) => {
     return { quoteData, customLocA, customLocB, fieldsPopulated };
   };
 
-  // Handle carrier quote bulk upload
+  // Legacy vertical sheet support (Field / Value columns)
+  const parseCarrierQuoteSheetVertical = (ws) => {
+    const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
+    const dataMap = {};
+    const startIdx = data.length > 0 && String(data[0][0] || '').trim().toLowerCase() === 'field' ? 1 : 0;
+    for (let i = startIdx; i < data.length; i++) {
+      const row = data[i] || [];
+      const label = String(row[0] || '').trim();
+      const value = row[1] !== undefined && row[1] !== null ? row[1] : '';
+      if (label) dataMap[label] = value;
+    }
+    return parseCarrierQuoteRowObject(dataMap);
+  };
+
+  // Every non-POP custom location must go through Site Validation (user picks match or confirms)
+  const queueCustomSiteReview = (row, side, customLoc, reviewQueue) => {
+    if (!hasCustomLocationData(customLoc)) return;
+    reviewQueue.push({
+      rowKey: row.rowKey,
+      rowLabel: row.rowLabel,
+      side,
+      initialValues: toSiteValidationInitial(customLoc)
+    });
+  };
+
+  const commitCarrierQuoteRows = async (rows) => {
+    const results = { total: rows.length, created: 0, failed: 0, details: [] };
+
+    for (let i = 0; i < rows.length; i++) {
+      const { rowLabel, quoteData, customLocA, customLocB, resolvedLocA, resolvedLocB } = rows[i];
+      try {
+        const payload = { ...quoteData };
+
+        if (payload.carrier_name) {
+          const matches = await carrierQuoteApi.getCarriers(payload.carrier_name);
+          if (matches && matches.length > 0) {
+            const inputLower = payload.carrier_name.toLowerCase();
+            const exact = matches.find(m => m.carrier_name.toLowerCase() === inputLower);
+            const startsWith = matches.find(m => m.carrier_name.toLowerCase().startsWith(inputLower));
+            const best = exact || startsWith || matches[0];
+            payload.carrier_name = best.carrier_name;
+            payload.carrier_id = best.id;
+          }
+        }
+
+        if (resolvedLocA) {
+          if (resolvedLocA.type === 'pop') {
+            payload.location_a_type = 'pop';
+            payload.location_a_pop_code = resolvedLocA.location_code;
+            payload.location_a_custom_id = null;
+          } else {
+            payload.location_a_type = 'custom';
+            payload.location_a_custom_id = resolvedLocA.id;
+          }
+        } else if (!isPopCode(payload.location_a_pop_code) && hasCustomLocationData(customLocA)) {
+          throw new Error('Location A was not address-verified — re-run bulk upload');
+        } else if (isPopCode(payload.location_a_pop_code)) {
+          payload.location_a_type = 'pop';
+        }
+
+        if (resolvedLocB) {
+          if (resolvedLocB.type === 'pop') {
+            payload.location_b_type = 'pop';
+            payload.location_b_pop_code = resolvedLocB.location_code;
+            payload.location_b_custom_id = null;
+          } else {
+            payload.location_b_type = 'custom';
+            payload.location_b_custom_id = resolvedLocB.id;
+          }
+        } else if (!isPopCode(payload.location_b_pop_code) && hasCustomLocationData(customLocB)) {
+          throw new Error('Location B was not address-verified — re-run bulk upload');
+        } else if (isPopCode(payload.location_b_pop_code)) {
+          payload.location_b_type = 'pop';
+        }
+
+        ['bandwidth_value', 'mrc_12', 'nrc_12', 'mrc_24', 'nrc_24', 'mrc_36', 'nrc_36', 'expected_latency'].forEach(f => {
+          if (payload[f]) payload[f] = parseFloat(payload[f]);
+        });
+        if (payload.mtu) payload.mtu = parseInt(payload.mtu, 10);
+        if (payload.bandwidth_unit === 'Dark Fiber') payload.bandwidth_value = null;
+
+        const result = await carrierQuoteApi.createQuote(payload);
+        results.created++;
+        results.details.push({ sheet: rowLabel, status: 'success', message: `Created as ${result.quote_reference}` });
+      } catch (err) {
+        results.failed++;
+        results.details.push({ sheet: rowLabel, status: 'error', message: err.response?.data?.error || err.message });
+      }
+    }
+
+    setCarrierQuoteResults(results);
+    setBulkProcessStage('Complete');
+    setBulkProcessDetail(`Created ${results.created} of ${results.total} quotes.`);
+    if (results.created > 0) {
+      setSuccess(`Successfully created ${results.created} of ${results.total} quotes`);
+    }
+    if (results.failed > 0 && results.created === 0) {
+      setError(`All ${results.failed} quotes failed. Check details below.`);
+    } else if (results.failed > 0) {
+      setError(`${results.failed} of ${results.total} quotes had errors. Check details below.`);
+    }
+    setUploading(false);
+    // Keep process dialog briefly visible then close
+    setTimeout(() => setBulkProcessOpen(false), 1200);
+  };
+
+  const advanceSiteReview = (queue, index) => {
+    const q = queue || [];
+    siteReviewQueueRef.current = q;
+    if (index >= q.length) {
+      setSiteReviewOpen(false);
+      setSiteReviewQueue([]);
+      siteReviewQueueRef.current = [];
+      setSiteReviewIndex(0);
+      setBulkProcessStage('Creating quotes');
+      setBulkProcessDetail(`Saving ${pendingQuoteRowsRef.current.length} quote(s)…`);
+      commitCarrierQuoteRows(pendingQuoteRowsRef.current);
+      return;
+    }
+    const item = q[index];
+    setSiteReviewQueue(q);
+    setSiteReviewIndex(index);
+    setBulkProcessStage('Address verification');
+    setBulkProcessDetail(
+      `Address ${index + 1} of ${q.length}: ${item.rowLabel} Location ${String(item.side || '').toUpperCase()} — complete the map dialog to continue.`
+    );
+    setBulkProcessOpen(true);
+    setSiteReviewOpen(true);
+  };
+
+  const handleSiteReviewConfirm = (result) => {
+    const queue = siteReviewQueueRef.current.length ? siteReviewQueueRef.current : siteReviewQueue;
+    const index = siteReviewIndex;
+    const item = queue[index];
+    if (!item) return;
+
+    if (!result.reuse_pop && !result.id) {
+      setError('Address confirm did not return a saved location. Try Confirm again.');
+      return;
+    }
+
+    updatePendingQuoteRows(prev => prev.map(row => {
+      if (row.rowKey !== item.rowKey) return row;
+      const next = { ...row };
+      if (item.side === 'a') {
+        if (result.reuse_pop) {
+          next.resolvedLocA = { type: 'pop', location_code: result.location_code };
+          next.quoteData = { ...next.quoteData, location_a_pop_code: result.location_code };
+        } else {
+          next.resolvedLocA = { type: 'custom', id: result.id };
+          next.customLocA = {
+            ...next.customLocA,
+            name: result.location_name,
+            street_name: result.street_name || '',
+            street_number: result.street_number || '',
+            postal_code: result.postal_code || '',
+            address: result.address || composeAddress(result),
+            city: result.city,
+            country: result.country,
+            building_type: result.building_type,
+            latitude: result.latitude,
+            longitude: result.longitude
+          };
+        }
+      } else if (result.reuse_pop) {
+        next.resolvedLocB = { type: 'pop', location_code: result.location_code };
+        next.quoteData = { ...next.quoteData, location_b_pop_code: result.location_code };
+      } else {
+        next.resolvedLocB = { type: 'custom', id: result.id };
+        next.customLocB = {
+          ...next.customLocB,
+          name: result.location_name,
+          street_name: result.street_name || '',
+          street_number: result.street_number || '',
+          postal_code: result.postal_code || '',
+          address: result.address || composeAddress(result),
+          city: result.city,
+          country: result.country,
+          building_type: result.building_type,
+          latitude: result.latitude,
+          longitude: result.longitude
+        };
+      }
+      return next;
+    }));
+
+    advanceSiteReview(queue, index + 1);
+  };
+
+  // Handle carrier quote bulk upload (horizontal Quotes sheet preferred)
   const handleCarrierQuoteBulkUpload = async () => {
     if (!uploadFile) {
       setError('Please select an Excel file');
@@ -350,122 +666,172 @@ const BulkUpload = ({ onDataRefresh }) => {
     setSuccess('');
     setCarrierQuoteResults(null);
     setUploadResult(null);
+    setPendingQuoteRows([]);
+    pendingQuoteRowsRef.current = [];
+    setSiteReviewQueue([]);
+    siteReviewQueueRef.current = [];
+    setSiteReviewOpen(false);
+    setBulkProcessOpen(true);
+    setBulkProcessStage('Processing bulk upload');
+    setBulkProcessDetail('Reading Excel file…');
 
     try {
       const arrayBuffer = await uploadFile.arrayBuffer();
       const wb = XLSX.read(arrayBuffer, { type: 'array' });
 
-      const quoteSheets = wb.SheetNames.filter(n => n.toLowerCase() !== 'instructions');
-      if (quoteSheets.length === 0) {
-        setError('No quote sheets found. Ensure sheets are named (not "Instructions").');
+      const parsedRows = [];
+      const quotesSheetName = findCarrierQuoteSheetName(wb);
+
+      setBulkProcessDetail(
+        quotesSheetName
+          ? `Parsing sheet "${quotesSheetName}"…`
+          : 'Looking for quote sheets…'
+      );
+
+      if (quotesSheetName) {
+        const ws = wb.Sheets[quotesSheetName];
+        const jsonRows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+        jsonRows.forEach((rowObj, idx) => {
+          const parsed = parseCarrierQuoteRowObject(rowObj);
+          const { quoteData, customLocA, customLocB } = parsed;
+          const isGuideOrEmpty = !quoteData.carrier_name && !quoteData.service_type
+            && !quoteData.region && !quoteData.bandwidth_unit
+            && !isPopCode(quoteData.location_a_pop_code) && !isPopCode(quoteData.location_b_pop_code)
+            && !hasCustomLocationData(customLocA) && !hasCustomLocationData(customLocB);
+          if (parsed.fieldsPopulated > 0 && !isGuideOrEmpty) {
+            parsedRows.push({
+              rowKey: `row-${idx + 2}`,
+              rowLabel: `Row ${idx + 2}`,
+              ...parsed,
+              resolvedLocA: null,
+              resolvedLocB: null
+            });
+          }
+        });
+      } else {
+        const quoteSheets = wb.SheetNames.filter(n => {
+          const lower = String(n).toLowerCase();
+          return lower !== 'instructions' && lower !== 'field guide';
+        });
+        quoteSheets.forEach((sheetName) => {
+          const ws = wb.Sheets[sheetName];
+          const parsed = parseCarrierQuoteSheetVertical(ws);
+          if (parsed.fieldsPopulated > 0) {
+            parsedRows.push({
+              rowKey: sheetName,
+              rowLabel: sheetName,
+              ...parsed,
+              resolvedLocA: null,
+              resolvedLocB: null
+            });
+          }
+        });
+      }
+
+      if (parsedRows.length === 0) {
+        setError('No quote data found. Use a sheet with a header row including Carrier Name (template sheet name: Quotes).');
         setUploading(false);
+        setBulkProcessOpen(false);
         return;
       }
 
-      const results = { total: quoteSheets.length, created: 0, failed: 0, details: [] };
+      setBulkProcessDetail(`Found ${parsedRows.length} quote row(s). Preparing address verification…`);
 
-      for (let i = 0; i < quoteSheets.length; i++) {
-        const sheetName = quoteSheets[i];
-        const ws = wb.Sheets[sheetName];
-        const { quoteData, customLocA, customLocB, fieldsPopulated } = parseCarrierQuoteSheet(ws);
+      const validRows = [];
+      const reviewQueue = [];
 
-        if (fieldsPopulated === 0) {
-          results.failed++;
-          results.details.push({ sheet: sheetName, status: 'skipped', message: 'No data found' });
-          continue;
-        }
-
+      for (const row of parsedRows) {
+        const { quoteData, customLocA, customLocB } = row;
         if (!quoteData.carrier_name) {
-          results.failed++;
-          results.details.push({ sheet: sheetName, status: 'error', message: 'Carrier Name is required' });
+          validRows.push({ ...row, _preError: 'Carrier Name is required' });
           continue;
         }
-        if (!quoteData.service_type) {
-          results.failed++;
-          results.details.push({ sheet: sheetName, status: 'error', message: 'Service Type is required' });
-          continue;
-        }
-        if (!quoteData.region) {
-          results.failed++;
-          results.details.push({ sheet: sheetName, status: 'error', message: 'Region is required' });
-          continue;
-        }
-        if (!quoteData.bandwidth_unit) {
-          results.failed++;
-          results.details.push({ sheet: sheetName, status: 'error', message: 'Bandwidth Unit is required' });
-          continue;
-        }
-
-        try {
-          // Carrier name fuzzy lookup
-          if (quoteData.carrier_name) {
-            const matches = await carrierQuoteApi.getCarriers(quoteData.carrier_name);
-            if (matches && matches.length > 0) {
-              const inputLower = quoteData.carrier_name.toLowerCase();
-              const exact = matches.find(m => m.carrier_name.toLowerCase() === inputLower);
-              const startsWith = matches.find(m => m.carrier_name.toLowerCase().startsWith(inputLower));
-              const best = exact || startsWith || matches[0];
-              quoteData.carrier_name = best.carrier_name;
-              quoteData.carrier_id = best.id;
-            }
-          }
-
-          // Handle Location A custom
-          if (!quoteData.location_a_pop_code && customLocA.name) {
-            try {
-              const loc = await carrierQuoteApi.createCustomLocation({
-                location_name: customLocA.name, address: customLocA.address || '',
-                city: customLocA.city || '', country: customLocA.country || ''
-              });
-              quoteData.location_a_type = 'custom';
-              quoteData.location_a_custom_id = loc.id;
-            } catch (e) { /* use POP fallback */ }
-          }
-
-          // Handle Location B custom
-          if (!quoteData.location_b_pop_code && customLocB.name) {
-            try {
-              const loc = await carrierQuoteApi.createCustomLocation({
-                location_name: customLocB.name, address: customLocB.address || '',
-                city: customLocB.city || '', country: customLocB.country || ''
-              });
-              quoteData.location_b_type = 'custom';
-              quoteData.location_b_custom_id = loc.id;
-            } catch (e) { /* use POP fallback */ }
-          }
-
-          // Parse numeric fields
-          ['bandwidth_value', 'mrc_12', 'nrc_12', 'mrc_24', 'nrc_24', 'mrc_36', 'nrc_36', 'expected_latency'].forEach(f => {
-            if (quoteData[f]) quoteData[f] = parseFloat(quoteData[f]);
+        if (!quoteData.service_type || !quoteData.region || !quoteData.bandwidth_unit) {
+          validRows.push({
+            ...row,
+            _preError: 'Service Type, Region, and Bandwidth Unit are required'
           });
-          if (quoteData.mtu) quoteData.mtu = parseInt(quoteData.mtu, 10);
-          if (quoteData.bandwidth_unit === 'Dark Fiber') quoteData.bandwidth_value = null;
-
-          const result = await carrierQuoteApi.createQuote(quoteData);
-          results.created++;
-          results.details.push({ sheet: sheetName, status: 'success', message: `Created as ${result.quote_reference}` });
-        } catch (err) {
-          results.failed++;
-          results.details.push({ sheet: sheetName, status: 'error', message: err.response?.data?.error || err.message });
+          continue;
         }
+
+        // Custom (non-POP) endpoints always go through Site Validation — building type can be set there
+        if (!isPopCode(quoteData.location_a_pop_code) && hasCustomLocationData(customLocA)) {
+          queueCustomSiteReview(row, 'a', customLocA, reviewQueue);
+        }
+        if (!isPopCode(quoteData.location_b_pop_code) && hasCustomLocationData(customLocB)) {
+          queueCustomSiteReview(row, 'b', customLocB, reviewQueue);
+        }
+
+        validRows.push(row);
       }
 
-      setCarrierQuoteResults(results);
-      if (results.created > 0) {
-        setSuccess(`Successfully created ${results.created} of ${results.total} quotes`);
+      const preFailed = validRows.filter(r => r._preError);
+      const toCreate = validRows.filter(r => !r._preError);
+
+      if (preFailed.length && toCreate.length === 0 && reviewQueue.length === 0) {
+        setCarrierQuoteResults({
+          total: preFailed.length,
+          created: 0,
+          failed: preFailed.length,
+          details: preFailed.map(r => ({ sheet: r.rowLabel, status: 'error', message: r._preError }))
+        });
+        setError(`All ${preFailed.length} quotes failed validation.`);
+        setUploading(false);
+        setBulkProcessOpen(false);
+        return;
       }
-      if (results.failed > 0 && results.created === 0) {
-        setError(`All ${results.failed} quotes failed. Check details below.`);
-      } else if (results.failed > 0) {
-        setError(`${results.failed} of ${results.total} quotes had errors. Check details below.`);
+
+      setPendingQuoteRows(toCreate);
+      pendingQuoteRowsRef.current = toCreate;
+
+      if (reviewQueue.length > 0) {
+        setSuccess(`${toCreate.length} quote(s) ready. Verify ${reviewQueue.length} custom address(es) to finish import.`);
+        if (preFailed.length) {
+          setCarrierQuoteResults({
+            total: preFailed.length,
+            created: 0,
+            failed: preFailed.length,
+            details: preFailed.map(r => ({ sheet: r.rowLabel, status: 'error', message: r._preError }))
+          });
+        }
+        setUploadFile(null);
+        const fileInput = document.getElementById('bulk-upload-file');
+        if (fileInput) fileInput.value = '';
+        // Keep process dialog open; Site Validation opens on top
+        advanceSiteReview(reviewQueue, 0);
+        return;
       }
+
+      setBulkProcessStage('Creating quotes');
+      setBulkProcessDetail(`No custom addresses to verify. Saving ${toCreate.length} quote(s)…`);
+
+      if (preFailed.length) {
+        await commitCarrierQuoteRows(toCreate);
+        setCarrierQuoteResults(prev => {
+          const base = prev || { total: 0, created: 0, failed: 0, details: [] };
+          return {
+            total: base.total + preFailed.length,
+            created: base.created,
+            failed: base.failed + preFailed.length,
+            details: [
+              ...preFailed.map(r => ({ sheet: r.rowLabel, status: 'error', message: r._preError })),
+              ...base.details
+            ]
+          };
+        });
+      } else {
+        await commitCarrierQuoteRows(toCreate);
+      }
+
       setUploadFile(null);
       const fileInput = document.getElementById('bulk-upload-file');
       if (fileInput) fileInput.value = '';
     } catch (err) {
       setError('Failed to parse Excel file: ' + err.message);
-    } finally {
+      setBulkProcessOpen(false);
       setUploading(false);
+    } finally {
+      // Do not force-close process dialog here — address verification / create still in progress
     }
   };
 
@@ -978,7 +1344,7 @@ const BulkUpload = ({ onDataRefresh }) => {
               </Typography>
               
               {selectedModule === 'cnx_rack_devices' && (
-                <Box sx={{ mb: 2, p: 2, backgroundColor: 'grey.50', borderRadius: 1 }}>
+                <Box sx={{ mb: 2, p: 2, backgroundColor: 'action.hover', borderRadius: 1 }}>
                   <Typography variant="subtitle2" gutterBottom>
                     Select Rack for Export
                   </Typography>
@@ -1328,6 +1694,74 @@ const BulkUpload = ({ onDataRefresh }) => {
           <Button onClick={() => setHistoryOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
+
+      <Dialog
+        open={bulkProcessOpen}
+        disableEscapeKeyDown
+        maxWidth="sm"
+        fullWidth
+        sx={{ zIndex: 1400 }}
+      >
+        <DialogTitle>Processing bulk upload</DialogTitle>
+        <DialogContent>
+          <Typography variant="subtitle1" sx={{ mb: 1 }}>{bulkProcessStage || 'Working…'}</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {bulkProcessDetail || 'Please wait…'}
+          </Typography>
+          <LinearProgress
+            variant={siteReviewOpen && siteReviewQueue.length ? 'determinate' : 'indeterminate'}
+            value={
+              siteReviewQueue.length
+                ? Math.round((siteReviewIndex / Math.max(siteReviewQueue.length, 1)) * 100)
+                : 0
+            }
+          />
+          {siteReviewOpen && siteReviewQueue.length > 0 && (
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>
+              Complete each Site Validation dialog ({siteReviewIndex + 1} of {siteReviewQueue.length}). Quotes are created only after all addresses are confirmed.
+            </Typography>
+          )}
+        </DialogContent>
+        {siteReviewOpen && (
+          <DialogActions>
+            <Button
+              color="inherit"
+              onClick={() => {
+                setSiteReviewOpen(false);
+                setBulkProcessOpen(false);
+                setUploading(false);
+                setError('Site validation cancelled. Quotes were not created.');
+                setPendingQuoteRows([]);
+                pendingQuoteRowsRef.current = [];
+                setSiteReviewQueue([]);
+                siteReviewQueueRef.current = [];
+              }}
+            >
+              Cancel upload
+            </Button>
+          </DialogActions>
+        )}
+      </Dialog>
+
+      <SiteValidationDialog
+        key={`site-review-${siteReviewIndex}-${(siteReviewQueue[siteReviewIndex] && siteReviewQueue[siteReviewIndex].rowKey) || 'none'}-${(siteReviewQueue[siteReviewIndex] && siteReviewQueue[siteReviewIndex].side) || ''}`}
+        open={siteReviewOpen}
+        dialogSx={{ zIndex: 1500 }}
+        onClose={() => {
+          setSiteReviewOpen(false);
+          setBulkProcessOpen(false);
+          setUploading(false);
+          setError('Site validation cancelled. Quotes were not created.');
+          setPendingQuoteRows([]);
+          pendingQuoteRowsRef.current = [];
+          setSiteReviewQueue([]);
+          siteReviewQueueRef.current = [];
+        }}
+        onConfirm={handleSiteReviewConfirm}
+        initialValues={(siteReviewQueue[siteReviewIndex] && siteReviewQueue[siteReviewIndex].initialValues) || { building_type: 'retail' }}
+        title={`Address ${siteReviewIndex + 1} of ${Math.max(siteReviewQueue.length, 1)} — verify ${(siteReviewQueue[siteReviewIndex] && siteReviewQueue[siteReviewIndex].rowLabel) || ''} Location ${(siteReviewQueue[siteReviewIndex] && siteReviewQueue[siteReviewIndex].side || '').toUpperCase()}`}
+        confirmLabel={siteReviewIndex < siteReviewQueue.length - 1 ? 'Next address' : 'Confirm & create quotes'}
+      />
     </Box>
   );
 };

@@ -1669,7 +1669,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0, permissionModule =
                 </Typography>
                 
                 {existingDesignFile && !productFormData.design_file ? (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, border: '1px solid #ddd', borderRadius: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                     <Typography variant="body2" sx={{ flexGrow: 1, fontSize: '0.75rem' }}>
                       Current file: {existingDesignFile}
                     </Typography>
@@ -1709,7 +1709,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0, permissionModule =
                 </Typography>
                 
                 {existingDesignTemplate && !productFormData.design_template ? (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, border: '1px solid #ddd', borderRadius: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                     <Typography variant="body2" sx={{ flexGrow: 1, fontSize: '0.75rem' }}>
                       Current template: {existingDesignTemplate}
                     </Typography>
@@ -1883,7 +1883,7 @@ const ExtranetDataManager = ({ hasPermission, initialTab = 0, permissionModule =
           
           {/* Tracking Information */}
           {currentProductForInfo && (
-            <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e0e0e0' }}>
+            <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
               <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
                 {productTracking && productTracking.updated_date ? (
                   <>Last Updated: {productTracking.username || 'Unknown User'} {formatTrackingDate(productTracking.updated_date)}</>

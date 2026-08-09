@@ -1164,7 +1164,7 @@ function KMZMapViewer({ onClose, routeFinderData }) {
               />
             }
             label="Show Location Pins"
-            sx={{ mb: 1, borderBottom: '1px solid #e0e0e0', pb: 1 }}
+            sx={{ mb: 1, borderBottom: '1px solid', borderColor: 'divider', pb: 1 }}
           />
           
           {/* Dark Fiber - Expanded by default (but collapsed in route finder mode) */}
@@ -1369,8 +1369,8 @@ function KMZMapViewer({ onClose, routeFinderData }) {
             renderOption={(props, option) => {
               if (option.isBulkOption) {
                 return (
-                  <li {...props} style={{ fontWeight: 'bold', backgroundColor: '#e3f2fd' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <li {...props} style={{ fontWeight: 'bold', backgroundColor: 'transparent' }} className="kmz-bulk-option">
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, bgcolor: 'info.50', width: '100%', px: 1, py: 0.5, borderRadius: 1 }}>
                       <Typography variant="body2" color="primary">
                         🗂️ Add all {option.count} routes for {option.location}
                       </Typography>
@@ -1462,7 +1462,7 @@ function KMZMapViewer({ onClose, routeFinderData }) {
                         key={route.circuit_id}
                         sx={{ 
                           py: 0.5,
-                          borderBottom: '1px solid #f0f0f0',
+                          borderBottom: '1px solid', borderColor: 'divider',
                           '&:hover': { bgcolor: 'action.hover' }
                         }}
                       >
@@ -1689,7 +1689,7 @@ function KMZMapViewer({ onClose, routeFinderData }) {
                 width: 24,
                 height: 24,
                 backgroundColor: color.hex,
-                border: '2px solid #ddd',
+                border: '2px solid', borderColor: 'divider',
                 borderRadius: 1
               }}
             />

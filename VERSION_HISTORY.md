@@ -7,7 +7,152 @@
 
 ---
 
+### New Features
+
+#### Market Data & Extranet Module Merge
+Exchange Data and Extranet Data are consolidated into a single **Market Data & Extranet** sidebar parent.
+
+**Changes:**
+- Unified **Market Data & Extranet Contacts** submodule backed by `market_data_organizations` + `market_data_contacts` (Exchange contact field set)
+- Migration `047` merges Exchange/Extranet contacts and retires Exchange Feeds / Exchange Pricing / Extranet Contacts storage and permission keys
+- Extrant Providers, Extrant Pricing Tool, Pricing Admin, and Extrant pricing cities/rate cards **remain**; `047` does not drop them on production
+- Migration `048` only ensures missing provider/pricing tables exist (no-op when already present)
+- Permission catalog groups `market_data_contacts`, `extranet_providers`, and `extranet_pricing` under **Market Data & Extranet**
+- Pricing Admin provider rate card table uses theme-aware backgrounds for dark mode readability
+- Analytics Extranet Pricing tab retained
+
+**Files added:** `frontend/src/MarketDataContactsManager.js`, `backend/marketDataRoutes.js`, `backend/migrations/047_merge_market_data_contacts.js`, `backend/migrations/048_restore_extranet_pricing_providers.js`, `backend/test_v350_market_data_extranet_merge.js`  
+**Files removed:** `frontend/src/ExchangeDataManager.js`, `frontend/src/ExchangePricingTool.js`  
+**Files changed:** `frontend/src/App.js`, `frontend/src/UserManagement.js`, `frontend/src/api.js`, `frontend/src/ChangeLogsViewer.js`, `frontend/src/AnalyticsDashboard.js`, `frontend/src/ExtranetPricingAdmin.js`, `backend/routes.js`, `backend/auth.js`
+
+**Test script:** `backend/test_v350_market_data_extranet_merge.js` — static verification of merge UI, preserved Extrant modules, migration safety, permissions, and rate-card dark mode
+
+#### Application Dark Mode
+App-wide light/dark theme with a user-menu toggle (next to Text Size), localStorage persistence, and dark as the default for new sessions.
+
+**Changes:**
+- New `ThemeModeProvider` (`frontend/src/ThemeContext.js`) wrapping the app with MUI `ThemeProvider` + `CssBaseline`
+- Light/dark only (no OS system mode); preference key `themeMode` in `localStorage`
+- Soft tint palette tokens (`primary.50` / `success.50` / etc.) adapt for dark surfaces
+- Replaced hardcoded light backgrounds (`grey.50`/`grey.100`, `#fff`, pastel hex cards) and low-contrast `.dark` text colors across One Directory, Extranet Pricing (including basket Bundle Breakdown), Design Tool, Allocated Cost, Route Finder, Analytics, Core Outages, Network Routes, Feedback, and related screens
+- Email/quote HTML templates intentionally left light-themed
+
+**Files added:** `frontend/src/ThemeContext.js`, `backend/test_v350_dark_mode.js`
+**Files changed:** `frontend/src/App.js` and theme-aware updates across pricing, analytics, outages, routes, colo, and admin UI modules
+
+**Test script:** `backend/test_v350_dark_mode.js` — static verification of ThemeContext, App wiring, contrast fixes, and light email HTML retention
+
+#### Network Routes Repository — Cross Connects Pricing Submodule
+New sales-facing **Cross Connects Pricing** page under Network Routes Repository, displaying cross connect pricing sourced from Manage Locations → Cross Connect Info.
+
+**Changes:**
+- New table showing POP Code, Datacenter Name, City, Country, NRC, MRC, Currency, Mandatory, Customer-Owned, and Datacenter Notes for every active location
+- Displayed NRC/MRC apply the existing Cross Connect margin (Pricing Logic Manager) and convert to a selectable output currency — raw internal cost is never shown
+- Single search box matches POP Code, Datacenter Name, or Datacenter Notes (reuses the existing Cross Connect Notes field)
+- New read-only endpoint: `GET /cross-connects-pricing`, gated by the existing `network_routes` module permission (no new permission required; visible to Sales)
+- New API helper: `getCrossConnectsPricing()` in `frontend/src/api.js`
+
+**Files changed:** `backend/routes.js`, `frontend/src/api.js`, `frontend/src/App.js`
+**Files added:** `frontend/src/CrossConnectsPricing.js`
+
+**Test script:** `backend/test_v350_cross_connects_pricing.js` — static verification of backend endpoint, API wrapper, App.js wiring, and pricing/search logic (14 checks)
+
+#### Promo Pricing Manager — Excluded Circuit IDs
+Admins can now exclude specific circuits from promo pricing eligibility, in addition to the existing "required circuits" list.
+
+**Changes:**
+- New "Excluded Circuit IDs" multi-select on the Add/Edit Promo Rule dialog — if a route uses ANY of these circuits, the promo will not apply
+- Exclusion always takes precedence over a required-circuit match (if a circuit is listed in both, the promo can never apply via that circuit)
+- Warning banner shown in the dialog if a circuit is listed in both the required and excluded lists
+- New "Excluded Circuits" column in the promo rules table
+- `POST /promo-pricing` and `PUT /promo-pricing/:id` now accept and persist `excluded_circuit_ids`
+- `POST /route_finder/check-promo-match` now disqualifies a route if any of its circuits are in a rule's excluded list
+- Migration 044 adds `excluded_circuit_ids` column to `promo_pricing_rules`
+
+**Files changed:** `backend/routes.js`, `backend/migrations/044_add_promo_excluded_circuits.js`, `frontend/src/PromoPricingManager.js`
+
+#### CNX Ethernet Route Finder — "Find Promo Pricing" Button
+New button that actively searches for the best route between the selected source/destination for which promo pricing is valid at the chosen bandwidth, rather than only checking whether the default shortest-latency route happens to qualify.
+
+**Changes:**
+- New "Find Promo Pricing" button next to "Find Route" (requires source, destination, and bandwidth)
+- Backend evaluates all promo rules matching the location pair (cheapest tier price first), builds the routing graph with each rule's excluded circuits removed, and finds the lowest-latency path — routed through a required circuit if the rule specifies one
+- Minimum margin requirement is enforced per candidate route/rule before it's accepted; if not met, the next-cheapest rule is tried
+- Results panel shows the winning route's segments, latency, and promo price, or an explanatory message (no promo rule, no price configured for that tier, no route satisfies the constraints, or margin not met)
+- New backend endpoint: `POST /route_finder/find_promo_route`
+- New API helper: `findPromoRoute()` in `frontend/src/api.js`
+
+**Files changed:** `backend/routes.js`, `frontend/src/RouteFinder.js`, `frontend/src/api.js`
+
+**Test script:** `backend/test_v350_promo_exclusions.js` — static verification of migration, backend endpoints, and frontend wiring (24 checks)
+
+#### Voice - One Directory: Guest Login, Custom Growth %, Bandwidth Calculator & Pricing Log Fixes
+Several enhancements to the Voice - One Directory module: no-credential guest access, a per-quote Growth % override, a standalone Bandwidth Calculator tab, and fixes to bundle discount reconciliation and historical export in Pricing Logs.
+
+**Voice Guest Login:**
+- New "Continue as Voice Guest (Read-Only)" button on the login screen — no username/password required
+- Backed by a hidden system account (`voice_guest`) with `read_only` access to `voice_one_directory` only (migration `045_add_voice_guest_account.js`)
+- New public endpoint `POST /voice-guest-login` issues a JWT for the guest account (returns 503 if the account is missing/disabled, doubling as a kill switch); `GET /me` now returns `isGuest` so a page refresh doesn't drop the guest session
+- Guest sessions render a minimal `VoiceGuestShell` (slim app bar + Exit button) showing only the One Directory tool — the full Drawer/sidebar app is skipped entirely
+
+**Customizable Growth %:**
+- New "Growth %" field directly below "Directory Users" on the quote form, pre-filled from the live admin-configured default and overridable per quote
+- `POST /voice/one-directory/calculate` and `/calculate-bundle` now accept an optional `growth_percentage` override (falls back to the admin default when omitted/invalid)
+
+**Bandwidth Calculator tab:**
+- New 3rd tab ("Bandwidth Calculator") in the One Directory tool — enter Number of Users, Growth %, and On/Off Net to get the required bandwidth, with no pricing/customer data involved (nothing written to pricing logs)
+- New endpoint `POST /voice/one-directory/calculate-bandwidth`, reusing the same rate-card bandwidth tiers and admin parameters as `/calculate` so results always match a tier the main pricing tool would also produce
+
+**Bundle discount reconciliation (Pricing Logs):**
+- `POST /voice/one-directory/calculate-bundle` now scales each discountable service line by the actual bundle discount ratio applied, so individual services sum exactly to the item total (previously services showed pre-discount prices that didn't reconcile)
+- `GET /voice/one-directory/logs` retroactively applies the same ratio to older, already-logged bundles it detects as unreconciled, so historical data displays correctly without a data migration
+- Pricing Logs tab now shows exact (non-rounded) item/service figures; only the top-level bundle total keeps the existing round-up-to-nearest-$5 "headline" display
+
+**Per-bundle CSV export from Pricing Logs:**
+- New download icon on each bundle row in Pricing Logs exports that specific historical bundle to CSV (same row layout as the live "Export Bundle to CSV"), sourced from the already-fetched log data — no new backend endpoint needed
+
+**Files changed:** `backend/routes.js`, `frontend/src/App.js`, `frontend/src/AuthContext.js`, `frontend/src/LoginForm.js`, `frontend/src/OneDirectoryPricingTool.js`
+**Files added:** `backend/migrations/045_add_voice_guest_account.js`
+
+---
+
 ### Bug Fixes
+
+#### Manage Carriers — Export `carrier_id` on Database Export
+Bulk Download Database Export for `carriers` now includes `carrier_id` (carriers table `id`) as the first column. Upload template unchanged; re-uploads that include `carrier_id` update by id (name match still used when omitted).
+
+**Files changed:** `backend/routes.js`  
+**Test script:** `backend/test_v350_carrier_id_export.js`
+
+#### Network Routes — Delete Cascades Live Latency API Config
+Deleting a network route also deletes the matching `live_latency_config` row by `circuit_id` so Live Latency API admin does not keep orphaned configs.
+
+**Files changed:** `backend/routes.js`  
+**Test script:** `backend/test_v350_route_delete_live_latency.js`
+
+#### Colocation Availability — Full Racks Don't Count Toward Location Available Power
+Location-level available power excludes remaining kVA from racks with no further RUs available. Per-rack available power display is unchanged.
+
+**Files changed:** `backend/routes.js`  
+**Test script:** `backend/test_v350_colo_available_power.js`
+
+#### Carrier Contacts — Region Column on Database Export
+Bulk Download Database Export for `carrier_contacts` includes the parent carrier’s `region` (AMERs / APAC / EMEA) immediately after `carrier_name`.
+
+**Files changed:** `backend/routes.js`  
+**Test script:** `backend/test_v350_carrier_contacts_region_export.js`
+
+#### Allocated Cost Calculator — Circuit ID Label & Location Display
+In Allocated Cost Calculator only: “Quote Request ID” renamed to “Circuit ID” (form, results, email/CSV, history); source/destination display is `POP Code - Datacenter Name`. Quote request modules untouched.
+
+**Files changed:** `frontend/src/AllocatedCostCalculator.js`  
+**Test script:** `backend/test_v350_allocated_cost_labels.js`
+
+#### Extranet Pricing Logs — Manual Calculation Breakdown Expand
+Expanding a pricing-log bundle no longer auto-opens each item’s Calculation Breakdown (JSON). Admins click an individual item to open/close JSON, matching individual log behavior.
+
+**Files changed:** `frontend/src/ExtranetPricingTool.js`  
+**Test script:** `backend/test_v350_extranet_logs_breakdown_manual.js`
 
 #### One Directory Pricing Tool — Permission Error Fix
 Users with `voice_one_directory` module access but without `extranet_pricing` module permissions could not load the One Directory Pricing Tool due to 403 errors on cities and currencies endpoints.
@@ -19,6 +164,15 @@ Users with `voice_one_directory` module access but without `extranet_pricing` mo
 - Switched from `Promise.all` to `Promise.allSettled` so partial data load failures are handled gracefully rather than blocking the entire tool
 
 **Files changed:** `backend/routes.js`, `frontend/src/OneDirectoryPricingTool.js`
+
+#### Voice - One Directory: On Net Quotes Incorrectly Floored to Admin Minimum Bandwidth
+The admin-configured `minimum_bandwidth_mb` parameter (intended as an Off Net-only floor, alongside the separate Off Net 10Mb rule) was being applied to On Net quotes as well, so On Net results stayed stuck at the configured minimum (e.g. 10Mb) regardless of actual calculated bandwidth.
+
+**Changes:**
+- `minimum_bandwidth_mb` is now applied only when `member_on_off_net === 'Off Net'`, consistently across `/voice/one-directory/calculate`, `/calculate-bundle`, and the new `/calculate-bandwidth` endpoint
+- On Net quotes and bandwidth-calculator lookups now size purely off the calculated raw bandwidth (rounded up to the nearest rate-card tier), with no artificial floor
+
+**Files changed:** `backend/routes.js`
 
 ---
 

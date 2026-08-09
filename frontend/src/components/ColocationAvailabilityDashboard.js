@@ -162,7 +162,7 @@ const ColocationAvailabilityDashboard = () => {
       <TableContainer component={Paper}>
         <Table size="small">
           <TableHead>
-            <TableRow sx={{ backgroundColor: 'grey.50' }}>
+            <TableRow sx={{ backgroundColor: 'action.hover' }}>
               <TableCell width="40px"></TableCell>
               <TableCell><strong>Location</strong></TableCell>
               <TableCell><strong>City</strong></TableCell>
@@ -259,12 +259,12 @@ const ColocationAvailabilityDashboard = () => {
                     <TableRow>
                       <TableCell colSpan={10} sx={{ py: 0, px: 0 }}>
                         <Collapse in={isExpanded} timeout="auto" unmountOnExit>
-                          <Box sx={{ p: 2, backgroundColor: 'grey.50' }}>
+                          <Box sx={{ p: 2, backgroundColor: 'action.hover' }}>
                             <Typography variant="subtitle2" gutterBottom sx={{ mb: 1 }}>
                               <strong>Racks at {location.location_code} - {location.datacenter_name}</strong>
                             </Typography>
                             {location.racks && location.racks.length > 0 ? (
-                              <Table size="small" sx={{ backgroundColor: '#fff' }}>
+                              <Table size="small" sx={{ backgroundColor: 'background.paper' }}>
                                 <TableHead>
                                   <TableRow>
                                     <TableCell><strong>Rack ID</strong></TableCell>

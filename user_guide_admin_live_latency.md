@@ -41,6 +41,30 @@ The Live Latency API Admin module manages the connection to external latency mon
 
 ---
 
+## Searching Configurations
+
+The **Configurations** tab includes a search box above the table so you can quickly find a specific circuit's probe configuration by **Circuit ID**.
+
+**Tips:**
+- Search is case-insensitive and matches partial text
+- Results update instantly as you type
+- Click the **X** icon in the search box to clear the filter
+- The count above the table shows how many configurations match your search
+
+---
+
+## Self-Service Probe Creation (Network Routes)
+
+Users adding or editing a route in the Network Routes Repository can register a Live Latency probe themselves, without needing Admin access:
+
+1. In **Add Route** or **Edit Route**, find the **Live Latency Monitoring** section
+2. Enter the **Live Latency Probe Name (API Instance Name)**
+3. Save the route as normal
+
+The system automatically creates (or updates) the circuit's Live Latency API configuration using the standard default connection details (API URL, indicator, username, and password) — the user only needs to know the probe name. Administrators can still review, edit, or override these configurations here in the **Configurations** tab.
+
+---
+
 ## API Configuration
 
 ### API Endpoint

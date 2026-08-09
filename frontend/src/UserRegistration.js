@@ -105,7 +105,7 @@ const UserRegistration = ({ onShowLogin }) => {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#f5f5f5',
+        backgroundColor: 'background.default',
         padding: 2
       }}
     >

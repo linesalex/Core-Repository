@@ -784,7 +784,7 @@ const CarriersManager = ({ hasPermission }) => {
                 <TableRow>
                   <TableCell colSpan={4} sx={{ p: 0, border: 0 }}>
                     <Collapse in={expandedCarrier === carrier.id || (contactSearchText && matchingCarrierIds.has(carrier.id))} timeout="auto" unmountOnExit>
-                      <Box sx={{ p: 2, backgroundColor: '#f5f5f5' }}>
+                      <Box sx={{ p: 2, backgroundColor: 'action.hover' }}>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                           <Typography variant="h6" component="h3">
                             Contact Details

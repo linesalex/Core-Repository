@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Box, TextField, Button, Grid, MenuItem, Autocomplete, Chip } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DownloadIcon from '@mui/icons-material/Download';
+import MapIcon from '@mui/icons-material/Map';
 import { styled } from '@mui/material/styles';
 
 const initialFilters = {
@@ -30,7 +31,7 @@ const SmallTextField = styled(TextField)(({ theme }) => ({
   },
 }));
 
-function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission, resetFilters, modulePermission }) {
+function SearchExportBar({ onSearch, onExport, onExportMap, onRefresh, hasPermission, resetFilters, modulePermission }) {
   const [filters, setFilters] = useState(initialFilters);
   const debounceRef = useRef();
   const prevResetFilters = useRef(resetFilters);
@@ -226,6 +227,14 @@ function SearchExportBar({ onSearch, onExport, onRefresh, hasPermission, resetFi
           <Grid item>
             <Button variant="outlined" color="secondary" startIcon={<DownloadIcon />} onClick={onExport}>
               Export CSV
+            </Button>
+          </Grid>
+        )}
+        {/* Hide Export Network Map button for Sales permission users */}
+        {modulePermission !== 'sales' && (
+          <Grid item>
+            <Button variant="outlined" color="secondary" startIcon={<MapIcon />} onClick={onExportMap}>
+              Export Network Map
             </Button>
           </Grid>
         )}

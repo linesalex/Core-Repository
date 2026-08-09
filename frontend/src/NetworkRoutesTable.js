@@ -5,7 +5,7 @@ import {
   Chip, Box, Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress,
   Alert, Snackbar, Select, FormControl, InputLabel
 } from '@mui/material';
-import { styled } from '@mui/material/styles';
+import { styled, useTheme } from '@mui/material/styles';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
@@ -150,6 +150,7 @@ const darkFiberLinkStyle = {
 };
 
 function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onOpenDarkFiber, userRole, modulePermission, userId, onRefreshSuccess }) {
+  const theme = useTheme();
   const [visibleColumns, setVisibleColumns] = useState(getDefaultColumns(userRole, modulePermission));
   const [columnMenuAnchor, setColumnMenuAnchor] = useState(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -433,7 +434,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
   };
 
   const getLiveLatencyColor = (row) => {
-    if (isDataStale(row)) return '#000000'; // Black for stale/N/A
+    if (isDataStale(row)) return theme.palette.text.disabled; // Muted for stale/N/A
     if (row.live_latency === 0) return '#f44336'; // Red for 0ms latency (circuit down)
     
     const expected = parseFloat(row.expected_latency);
@@ -1030,7 +1031,7 @@ function NetworkRoutesTable({ rows, onMoreDetails, onSelectRow, selectedRow, onO
                 <Typography variant="h6" gutterBottom>Extracted Data Points</Typography>
                 <Box sx={{ maxHeight: 300, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: 1, p: 2 }}>
                   {apiCallDialog.data.extracted_values.map((point, index) => (
-                    <Box key={index} sx={{ mb: 1, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                    <Box key={index} sx={{ mb: 1, p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
                       <Typography variant="body2">
                         <strong>#{index + 1}:</strong> {point.value}ms at {new Date(point.timestamp).toLocaleString()}
                         {point.quality && ` (Quality: ${point.quality})`}

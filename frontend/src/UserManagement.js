@@ -73,14 +73,10 @@ const UserManagement = () => {
     { key: 'locations', label: 'Network Data — Manage Locations', group: 'Network Data' },
     { key: 'carriers', label: 'Network Data — Manage Carriers', group: 'Network Data' },
     { key: 'exchange_rates', label: 'Network Data — Exchange Rates', group: 'Network Data' },
-    // Market Data group — Exchange Data
-    { key: 'exchange_feeds', label: 'Market Data — Exchange Feeds', group: 'Market Data' },
-    { key: 'exchange_contacts', label: 'Market Data — Exchange Contacts', group: 'Market Data' },
-    { key: 'exchange_pricing', label: 'Market Data — Exchange Pricing Tool', group: 'Market Data' },
-    // Market Data group — Extranet Data
-    { key: 'extranet_providers', label: 'Market Data — Extranet Providers', group: 'Market Data' },
-    { key: 'extranet_contacts', label: 'Market Data — Extranet Contacts', group: 'Market Data' },
-    { key: 'extranet_pricing', label: 'Market Data — Extranet Pricing Tool', group: 'Market Data' },
+    // Market Data & Extranet group
+    { key: 'market_data_contacts', label: 'Market Data & Extranet — Contacts', group: 'Market Data & Extranet' },
+    { key: 'extranet_providers', label: 'Market Data & Extranet — Extranet Providers', group: 'Market Data & Extranet' },
+    { key: 'extranet_pricing', label: 'Market Data & Extranet — Extranet Pricing Tool', group: 'Market Data & Extranet' },
     // CNX Colocation group
     { key: 'cnx_colocation_inventory', label: 'CNX Colocation — Inventory', group: 'CNX Colocation' },
     { key: 'cnx_colocation_availability', label: 'CNX Colocation — Availability', group: 'CNX Colocation' },

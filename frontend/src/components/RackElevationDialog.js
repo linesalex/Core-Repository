@@ -6,6 +6,7 @@ import {
   TableHead, TableRow, Alert, Tabs, Tab, Divider, ToggleButton, ToggleButtonGroup,
   Checkbox, ListItemText, OutlinedInput
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -34,6 +35,7 @@ const CLIENT_COLORS = [
 ];
 
 const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
+  const theme = useTheme();
   const [loading, setLoading] = useState(true);
   const [elevationData, setElevationData] = useState(null);
   const [selectedRU, setSelectedRU] = useState(null);
@@ -157,7 +159,7 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
       case 'device':
         return occupancyInfo.client ? (clientColorMap[occupancyInfo.client.id] || '#64b5f6') : '#64b5f6';
       default:
-        return '#f5f5f5';
+        return theme.palette.mode === 'dark' ? theme.palette.grey[800] : '#f5f5f5';
     }
   };
 
@@ -508,7 +510,8 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
                   px: 1.5,
                   py: 0.3,
                   backgroundColor: color,
-                  border: selectedRU?.ruNumber === ruNum ? '2px solid #1976d2' : '1px solid rgba(0,0,0,0.15)',
+                  border: selectedRU?.ruNumber === ruNum ? '2px solid' : '1px solid',
+                  borderColor: selectedRU?.ruNumber === ruNum ? 'primary.main' : 'divider',
                   cursor: activeTab === 0 
                     ? 'default' 
                     : isAssigning 
@@ -532,7 +535,7 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
                 }}
                 onClick={() => handleRUClick(ruNum, occupancyInfo)}
               >
-                <Typography variant="caption" fontWeight="bold" sx={{ minWidth: 30, color: occupancyInfo.type === 'free' ? '#666' : '#000' }}>
+                <Typography variant="caption" fontWeight="bold" sx={{ minWidth: 30, color: occupancyInfo.type === 'free' ? 'text.secondary' : '#000' }}>
                   U{ruNum}
                 </Typography>
                 <Typography variant="caption" noWrap sx={{ flex: 1, textAlign: 'center', fontSize: '0.7rem' }}>
@@ -636,7 +639,7 @@ const RackElevationDialog = ({ open, onClose, rackId, onDeviceChange }) => {
                       <Typography variant="subtitle2" gutterBottom><strong>Legend</strong></Typography>
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Box sx={{ width: 16, height: 16, backgroundColor: '#f5f5f5', border: '1px solid #ddd', borderRadius: 0.5 }} />
+                          <Box sx={{ width: 16, height: 16, backgroundColor: theme.palette.mode === 'dark' ? 'grey.800' : '#f5f5f5', border: '1px solid', borderColor: 'divider', borderRadius: 0.5 }} />
                           <Typography variant="caption">Free</Typography>
                         </Box>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

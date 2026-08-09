@@ -20,6 +20,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import EditIcon from '@mui/icons-material/Edit';
 import { useAuth } from './AuthContext';
 import { networkDesignApi } from './api';
+import CustomerAutocomplete from './CustomerAutocomplete';
 
 // Tab Panel Component
 function TabPanel(props) {
@@ -59,7 +60,8 @@ const AllocatedCostCalculator = () => {
     outputCurrency: 'USD',
     contractTerm: 12,
     quoteRequestId: '',
-    customerName: ''
+    customerName: '',
+    customerId: null
   });
   
   // Manual Incremental Costs state
@@ -813,7 +815,8 @@ const AllocatedCostCalculator = () => {
       outputCurrency: 'USD',
       contractTerm: 12,
       quoteRequestId: '',
-      customerName: ''
+      customerName: '',
+      customerId: null
     });
     
     // Clear validation
@@ -926,6 +929,7 @@ const AllocatedCostCalculator = () => {
         contractTerm: formData.contractTerm,
         quoteRequestId: formData.quoteRequestId,
         customerName: formData.customerName,
+        customerId: formData.customerId,
         calling_module: 'allocated_cost_calculator',
         protection_required: formData.pricingType === 'protected',
         incrementalCosts: incrementalCosts // Include manual incremental costs
@@ -1151,7 +1155,7 @@ const AllocatedCostCalculator = () => {
                   <Typography variant="body2" fontWeight="500">{params.customerName || params.customer_name || 'N/A'}</Typography>
                 </Grid>
                 <Grid item xs={6} md={3}>
-                  <Typography variant="caption" color="text.secondary">Quote ID</Typography>
+                  <Typography variant="caption" color="text.secondary">Circuit ID</Typography>
                   <Typography variant="body2" fontWeight="500">{params.quoteRequestId || params.quote_request_id || 'N/A'}</Typography>
                 </Grid>
                 <Grid item xs={6} md={3}>
@@ -1194,7 +1198,7 @@ const AllocatedCostCalculator = () => {
               <TableContainer>
                 <Table size="small">
                   <TableHead>
-                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                    <TableRow sx={{ bgcolor: 'action.hover' }}>
                       <TableCell><strong>Circuit ID</strong></TableCell>
                       <TableCell><strong>Segment</strong></TableCell>
                       <TableCell><strong>Latency</strong></TableCell>
@@ -1207,7 +1211,7 @@ const AllocatedCostCalculator = () => {
                     {primaryPath.route.map((segment, index) => (
                       <TableRow 
                         key={index}
-                        sx={{ bgcolor: (segment.isVirtual || segment.isUpgraded) ? '#90EE90' : 'inherit' }}
+                        sx={{ bgcolor: (segment.isVirtual || segment.isUpgraded) ? 'success.50' : 'inherit' }}
                       >
                         <TableCell>{segment.circuit_id_display || segment.circuit_id || 'N/A'}</TableCell>
                         <TableCell>{segment.from} → {segment.to}</TableCell>
@@ -1240,7 +1244,7 @@ const AllocatedCostCalculator = () => {
               <TableContainer>
                 <Table size="small">
                   <TableHead>
-                    <TableRow sx={{ bgcolor: 'grey.100' }}>
+                    <TableRow sx={{ bgcolor: 'action.hover' }}>
                       <TableCell><strong>Circuit ID</strong></TableCell>
                       <TableCell><strong>Segment</strong></TableCell>
                       <TableCell><strong>Latency</strong></TableCell>
@@ -1253,7 +1257,7 @@ const AllocatedCostCalculator = () => {
                     {diversePath.route.map((segment, index) => (
                       <TableRow 
                         key={index}
-                        sx={{ bgcolor: (segment.isVirtual || segment.isUpgraded) ? '#90EE90' : 'inherit' }}
+                        sx={{ bgcolor: (segment.isVirtual || segment.isUpgraded) ? 'success.50' : 'inherit' }}
                       >
                         <TableCell>{segment.circuit_id_display || segment.circuit_id || 'N/A'}</TableCell>
                         <TableCell>{segment.from} → {segment.to}</TableCell>
@@ -1285,7 +1289,7 @@ const AllocatedCostCalculator = () => {
                 
                 return (
                   <Grid item xs={12} md={4} key={index}>
-                    <Card sx={{ height: '100%', bgcolor: result.pathType === 'primary' ? 'grey.50' : (result.pathType === 'protected' ? 'primary.50' : 'info.50') }}>
+                    <Card sx={{ height: '100%', bgcolor: result.pathType === 'primary' ? 'action.hover' : (result.pathType === 'protected' ? 'primary.50' : 'info.50') }}>
                       <CardHeader 
                         title={result.pathType === 'primary' ? 'Primary Path' : (result.pathType === 'protected' ? 'Protected Service' : 'Secondary Path')}
                         subheader={`${pricing.contractTerm || 12}-Month Contract`}
@@ -1354,7 +1358,7 @@ const AllocatedCostCalculator = () => {
               
               return (
                 <Accordion key={index} defaultExpanded>
-                  <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ bgcolor: 'grey.50' }}>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ bgcolor: 'action.hover' }}>
                     <Typography variant="subtitle2" fontWeight="600">
                       📊 {result.pathType === 'primary' ? 'Primary' : result.pathType === 'protection' ? 'Secondary' : 'Protected'} Path - Allocated Cost Calculation
                     </Typography>
@@ -1640,11 +1644,11 @@ const AllocatedCostCalculator = () => {
   };
   
   const generateEmailBody = () => {
-    // Helper function to get location display as "Datacenter Name (POP_CODE)"
+    // Helper function to get location display as "POP Code - Datacenter Name"
     const getLocationDisplay = (locationCode) => {
       const location = locations.find(loc => loc.location_code === locationCode);
       if (location && location.datacenter_name) {
-        return `${location.datacenter_name} (${locationCode})`;
+        return `${locationCode} - ${location.datacenter_name}`;
       }
       return locationCode;
     };
@@ -1709,7 +1713,7 @@ const AllocatedCostCalculator = () => {
     emailBody += `<h2 style="color: #2E5090; border-bottom: 2px solid #4472C4; padding-bottom: 10px;">Allocated Cost Calculator Results</h2>`;
     emailBody += `<table style="margin-bottom: 20px; font-family: Arial, sans-serif;">`;
     emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Customer Name:</td><td>${formData.customerName || 'Not Specified'}</td></tr>`;
-    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Quote Request ID:</td><td>${formData.quoteRequestId || 'Not Specified'}</td></tr>`;
+    emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Circuit ID:</td><td>${formData.quoteRequestId || 'Not Specified'}</td></tr>`;
     emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Source Location:</td><td>${getLocationDisplay(formData.source)}</td></tr>`;
     emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Destination Location:</td><td>${getLocationDisplay(formData.destination)}</td></tr>`;
     emailBody += `<tr><td style="padding: 5px 20px 5px 0; font-weight: bold;">Bandwidth:</td><td>${formData.bandwidth} Mbps</td></tr>`;
@@ -1778,12 +1782,21 @@ const AllocatedCostCalculator = () => {
       return str;
     };
 
+    // Location display: "POP Code - Datacenter Name"
+    const formatLocationDisplay = (locationCode) => {
+      const location = locations.find(loc => loc.location_code === locationCode);
+      if (location && location.datacenter_name) {
+        return `${locationCode} - ${location.datacenter_name}`;
+      }
+      return locationCode || '';
+    };
+
     const rows = [];
 
     // CSV Header
     const headers = [
       'Customer Name',
-      'Quote Request ID',
+      'Circuit ID',
       'Source',
       'Destination',
       'Bandwidth (Mbps)',
@@ -1825,8 +1838,8 @@ const AllocatedCostCalculator = () => {
     const commonFields = [
       formData.customerName || '',
       formData.quoteRequestId || '',
-      formData.source,
-      formData.destination,
+      formatLocationDisplay(formData.source),
+      formatLocationDisplay(formData.destination),
       formData.bandwidth,
       formData.outputCurrency,
       formData.contractTerm,
@@ -2033,19 +2046,18 @@ const AllocatedCostCalculator = () => {
             <Grid container spacing={3}>
               {/* Customer Name */}
               <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
+                <CustomerAutocomplete
                   label="Customer Name"
                   value={formData.customerName}
-                  onChange={(e) => handleInputChange('customerName', e.target.value)}
+                  onChange={(name, customerId) => setFormData(prev => ({ ...prev, customerName: name, customerId }))}
                 />
               </Grid>
               
-              {/* Quote Request ID */}
+              {/* Circuit ID */}
               <Grid item xs={12} md={6}>
                 <TextField
                   fullWidth
-                  label="Quote Request ID"
+                  label="Circuit ID"
                   value={formData.quoteRequestId}
                   onChange={(e) => handleInputChange('quoteRequestId', e.target.value)}
                 />
@@ -2055,7 +2067,9 @@ const AllocatedCostCalculator = () => {
               <Grid item xs={12} md={6}>
                 <Autocomplete
                   options={locations}
-                  getOptionLabel={(option) => `${option.location_code} - ${option.city}, ${option.country}`}
+                  getOptionLabel={(option) => option.datacenter_name
+                    ? `${option.location_code} - ${option.datacenter_name}`
+                    : option.location_code}
                   value={locations.find(loc => loc.location_code === formData.source) || null}
                   onChange={(event, newValue) => {
                     handleInputChange('source', newValue ? newValue.location_code : '');
@@ -2077,7 +2091,9 @@ const AllocatedCostCalculator = () => {
               <Grid item xs={12} md={6}>
                 <Autocomplete
                   options={locations}
-                  getOptionLabel={(option) => `${option.location_code} - ${option.city}, ${option.country}`}
+                  getOptionLabel={(option) => option.datacenter_name
+                    ? `${option.location_code} - ${option.datacenter_name}`
+                    : option.location_code}
                   value={locations.find(loc => loc.location_code === formData.destination) || null}
                   onChange={(event, newValue) => {
                     handleInputChange('destination', newValue ? newValue.location_code : '');
@@ -2508,7 +2524,7 @@ const AllocatedCostCalculator = () => {
                         {/* Additional Row for Core Incremental Upgrade - Circuit Selection and Current Info */}
                         {cost.costType === 'core_incremental_upgrade' && (
                           <TableRow key={`${cost.id}-circuit`}>
-                            <TableCell colSpan={8} sx={{ bgcolor: '#f5f5f5' }}>
+                            <TableCell colSpan={8} sx={{ bgcolor: 'action.hover' }}>
                               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                                 {/* Circuit Selection */}
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -2628,7 +2644,7 @@ const AllocatedCostCalculator = () => {
                             {searchResults.primaryPath.route?.map((segment, index) => (
                               <TableRow 
                                 key={index}
-                                sx={{ bgcolor: (segment.isVirtual || segment.isUpgraded) ? '#90EE90' : 'inherit' }}
+                                sx={{ bgcolor: (segment.isVirtual || segment.isUpgraded) ? 'success.50' : 'inherit' }}
                               >
                                 <TableCell>{segment.circuit_id_display || segment.circuit_id || 'N/A'}</TableCell>
                                 <TableCell>{segment.from} → {segment.to}</TableCell>
@@ -2678,7 +2694,7 @@ const AllocatedCostCalculator = () => {
                               {searchResults.diversePath.route?.map((segment, index) => (
                                 <TableRow 
                                   key={index}
-                                  sx={{ bgcolor: (segment.isVirtual || segment.isUpgraded) ? '#90EE90' : 'inherit' }}
+                                  sx={{ bgcolor: (segment.isVirtual || segment.isUpgraded) ? 'success.50' : 'inherit' }}
                                 >
                                   <TableCell>{segment.circuit_id_display || segment.circuit_id || 'N/A'}</TableCell>
                                   <TableCell>{segment.from} → {segment.to}</TableCell>
@@ -2820,7 +2836,7 @@ const AllocatedCostCalculator = () => {
                   return (
                     <Grid item xs={12} key={`details-${index}`}>
                     <Accordion defaultExpanded>
-                      <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ bgcolor: 'grey.50' }}>
+                      <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ bgcolor: 'action.hover' }}>
                         <Typography variant="h6" fontWeight="600">
                           📊 {result.pathType === 'primary' ? 'Primary' : result.pathType === 'protection' ? 'Secondary' : 'Protected'} Path - Complete Calculation Breakdown
                         </Typography>
@@ -2996,7 +3012,7 @@ const AllocatedCostCalculator = () => {
                                             </TableCell>
                                             <TableCell>
                                               <Box sx={{ bgcolor: 'warning.50', p: 1, borderRadius: 1 }}>
-                                                <Typography variant="body2" fontWeight="bold" color="warning.dark">
+                                                <Typography variant="body2" fontWeight="bold" color="warning.main">
                                                   = {segment.convertedCost.toFixed(2)} {formData.outputCurrency}
                                                 </Typography>
                                               </Box>
@@ -3034,7 +3050,7 @@ const AllocatedCostCalculator = () => {
                                                 <Typography variant="caption" display="block" sx={{ fontFamily: 'monospace' }}>
                                                   {segment.convertedCost.toFixed(2)} × {noFactorRatio.toFixed(6)}
                                                 </Typography>
-                                                <Typography variant="body2" fontWeight="bold" color="warning.dark">
+                                                <Typography variant="body2" fontWeight="bold" color="warning.main">
                                                   = {noFactorCost.toFixed(2)} {formData.outputCurrency}
                                                 </Typography>
                                               </Box>
@@ -3086,7 +3102,7 @@ const AllocatedCostCalculator = () => {
                                 2️⃣ Minimum Price Calculation
                               </Typography>
                               
-                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 2, mb: 2 }}>
+                              <Box sx={{ bgcolor: 'background.paper', p: 2, borderRadius: 2, mb: 2 }}>
                                 <Typography variant="body2" color="error.main" gutterBottom fontWeight="600">Formula:</Typography>
                                 <Typography variant="body2" sx={{ fontFamily: 'monospace', mb: 1.5, color: 'text.secondary' }}>
                                   Minimum Price = Allocated Cost / (1 - Minimum Margin / 100)
@@ -3118,7 +3134,7 @@ const AllocatedCostCalculator = () => {
                                 </Alert>
                               )}
                               
-                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 2, mt: 2, border: '2px solid', borderColor: 'error.main' }}>
+                              <Box sx={{ bgcolor: 'background.paper', p: 2, borderRadius: 2, mt: 2, border: '2px solid', borderColor: 'error.main' }}>
                                 <Typography variant="body2" color="error.main" gutterBottom fontWeight="600">
                                   Final Minimum Price (Rounded to nearest $10):
                                 </Typography>
@@ -3139,7 +3155,7 @@ const AllocatedCostCalculator = () => {
                                 3️⃣ Suggested Price Calculation
                               </Typography>
                               
-                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 2, mb: 2 }}>
+                              <Box sx={{ bgcolor: 'background.paper', p: 2, borderRadius: 2, mb: 2 }}>
                                 <Typography variant="body2" color="success.main" gutterBottom fontWeight="600">Formula:</Typography>
                                 <Typography variant="body2" sx={{ fontFamily: 'monospace', mb: 1.5, color: 'text.secondary' }}>
                                   Suggested Price = Allocated Cost / (1 - Suggested Margin / 100)
@@ -3171,7 +3187,7 @@ const AllocatedCostCalculator = () => {
                                 </Alert>
                               )}
                               
-                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 2, mt: 2, border: '2px solid', borderColor: 'success.main' }}>
+                              <Box sx={{ bgcolor: 'background.paper', p: 2, borderRadius: 2, mt: 2, border: '2px solid', borderColor: 'success.main' }}>
                                 <Typography variant="body2" color="success.main" gutterBottom fontWeight="600">
                                   Final Suggested Price (Rounded to nearest $10):
                                 </Typography>
@@ -3194,7 +3210,7 @@ const AllocatedCostCalculator = () => {
                 {formData.pricingType === 'protected' && pricingResults.protectionPricing && pricingResults.protectionPricing.detailedCalculations && (
                   <Grid item xs={12} key="details-protected">
                     <Accordion defaultExpanded>
-                      <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ bgcolor: 'grey.50' }}>
+                      <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ bgcolor: 'action.hover' }}>
                         <Typography variant="h6" fontWeight="600">
                           📊 🛡️ Protected Service - Complete Calculation Breakdown
                         </Typography>
@@ -3202,7 +3218,7 @@ const AllocatedCostCalculator = () => {
                       <AccordionDetails sx={{ p: 3 }}>
                         {pricingResults.protectionPricing.detailedCalculations && (
                           <Paper sx={{ p: 2.5, mb: 3, bgcolor: 'warning.50', border: '2px solid', borderColor: 'warning.main', borderRadius: 2 }}>
-                            <Typography variant="subtitle1" gutterBottom color="warning.dark" fontWeight="600" sx={{ mb: 1.5 }}>
+                            <Typography variant="subtitle1" gutterBottom color="warning.main" fontWeight="600" sx={{ mb: 1.5 }}>
                               🛡️ Protected Service Calculation
                             </Typography>
                             
@@ -3214,7 +3230,7 @@ const AllocatedCostCalculator = () => {
                             
                             {/* Allocated Cost Breakdown */}
                             {pricingResults.protectionPricing.detailedCalculations.allocatedCostBreakdown && (
-                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 2, mb: 2 }}>
+                              <Box sx={{ bgcolor: 'background.paper', p: 2, borderRadius: 2, mb: 2 }}>
                                 <Typography variant="body2" gutterBottom fontWeight="600">Allocated Cost Formula:</Typography>
                                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                                   {pricingResults.protectionPricing.detailedCalculations.allocatedCostBreakdown.formula}
@@ -3230,7 +3246,7 @@ const AllocatedCostCalculator = () => {
                             
                             {/* Minimum Price Breakdown */}
                             {pricingResults.protectionPricing.detailedCalculations.minimumPriceBreakdown && (
-                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 2, mb: 2 }}>
+                              <Box sx={{ bgcolor: 'background.paper', p: 2, borderRadius: 2, mb: 2 }}>
                                 <Typography variant="body2" gutterBottom fontWeight="600">Minimum Price Formula:</Typography>
                                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                                   {pricingResults.protectionPricing.detailedCalculations.minimumPriceBreakdown.formula}
@@ -3246,7 +3262,7 @@ const AllocatedCostCalculator = () => {
                             
                             {/* Suggested Price Breakdown */}
                             {pricingResults.protectionPricing.detailedCalculations.suggestedPriceBreakdown && (
-                              <Box sx={{ bgcolor: 'white', p: 2, borderRadius: 2, mb: 2 }}>
+                              <Box sx={{ bgcolor: 'background.paper', p: 2, borderRadius: 2, mb: 2 }}>
                                 <Typography variant="body2" gutterBottom fontWeight="600">Suggested Price Formula:</Typography>
                                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                                   {pricingResults.protectionPricing.detailedCalculations.suggestedPriceBreakdown.formula}
@@ -3377,10 +3393,10 @@ const AllocatedCostCalculator = () => {
                   <TextField
                     fullWidth
                     size="small"
-                    label="Search Quote Request ID"
+                    label="Search Circuit ID"
                     value={logSearchTerm}
                     onChange={handleLogSearchChange}
-                    placeholder="Enter Quote Request ID..."
+                    placeholder="Enter Circuit ID..."
                     InputProps={{
                       startAdornment: (
                         <InputAdornment position="start">
@@ -3429,7 +3445,7 @@ const AllocatedCostCalculator = () => {
                   <TableCell><strong>User</strong></TableCell>
                   <TableCell><strong>Action</strong></TableCell>
                   <TableCell><strong>Customer Name</strong></TableCell>
-                  <TableCell><strong>Quote Request ID</strong></TableCell>
+                  <TableCell><strong>Circuit ID</strong></TableCell>
                   <TableCell><strong>Request Summary</strong></TableCell>
                   <TableCell align="center" sx={{ width: 150 }}><strong>Actions</strong></TableCell>
                 </TableRow>
@@ -3511,7 +3527,7 @@ const AllocatedCostCalculator = () => {
                     </TableRow>
                     {expandedLogs.has(log.id) && (
                       <TableRow>
-                        <TableCell colSpan={7} sx={{ backgroundColor: '#f8f9fa', border: 'none' }}>
+                        <TableCell colSpan={7} sx={{ backgroundColor: 'action.hover', border: 'none' }}>
                           <Box sx={{ p: 2 }}>
                             {/* View Mode Toggle */}
                             <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
@@ -3549,10 +3565,11 @@ const AllocatedCostCalculator = () => {
                                       wordBreak: 'break-word',
                                       maxHeight: '400px',
                                       overflow: 'auto',
-                                      backgroundColor: '#f5f5f5',
+                                      backgroundColor: 'action.hover',
                                       padding: 2,
                                       borderRadius: 1,
-                                      border: '1px solid #ddd'
+                                      border: '1px solid',
+                                      borderColor: 'divider'
                                     }}
                                   >
                                     {log.new_values ? JSON.stringify(JSON.parse(log.new_values), null, 2) : 'No data available'}

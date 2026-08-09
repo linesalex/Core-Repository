@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Box, CssBaseline, Drawer, List, ListItem, ListItemIcon, ListItemText, AppBar, Toolbar, Typography, Button, Container, Paper, 
+  Box, Drawer, List, ListItem, ListItemIcon, ListItemText, AppBar, Toolbar, Typography, Button, Container, Paper, 
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse, Menu, MenuItem, IconButton, Chip, CircularProgress,
-  Alert, Divider, Avatar, Grid, Snackbar, Slider, Badge, Tooltip
+  Alert, Divider, Avatar, Grid, Snackbar, Slider, Badge, Tooltip, Switch
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -30,6 +30,8 @@ import CalculateIcon from '@mui/icons-material/Calculate';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import ApiIcon from '@mui/icons-material/Api';
 import TextFormatIcon from '@mui/icons-material/TextFormat';
+import DarkModeIcon from '@mui/icons-material/DarkMode';
+import LightModeIcon from '@mui/icons-material/LightMode';
 import FeedbackIcon from '@mui/icons-material/Feedback';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import BusinessCenterIcon from '@mui/icons-material/BusinessCenter';
@@ -37,16 +39,18 @@ import AnalyticsIcon from '@mui/icons-material/Analytics';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import PublicIcon from '@mui/icons-material/Public';
 import SearchIcon from '@mui/icons-material/Search';
-import LanIcon from '@mui/icons-material/Lan';
+import CableIcon from '@mui/icons-material/Cable';
 import { AuthProvider, useAuth } from './AuthContext';
 import { TextSizeProvider, useTextSize } from './TextSizeContext';
+import { ThemeModeProvider, useThemeMode } from './ThemeContext';
 import LoginForm from './LoginForm';
 import UserRegistration from './UserRegistration';
 import NetworkRoutesTable from './NetworkRoutesTable';
+import CrossConnectsPricing from './CrossConnectsPricing';
+import CustomerRoutesTable from './CustomerRoutesTable';
 import NetworkDesignTool from './NetworkDesignTool';
 import AllocatedCostCalculator from './AllocatedCostCalculator';
 import ExchangeRatesManager from './ExchangeRatesManager';
-import ExchangePricingTool from './ExchangePricingTool';
 import LocationDataManager from './LocationDataManager';
 import MinimumPricingManager from './MinimumPricingManager';
 import PricingLogicManager from './PricingLogicManager';
@@ -58,7 +62,7 @@ import UserManagement from './UserManagement';
 import ChangeLogsViewer from './ChangeLogsViewer';
 import CoreOutagesTable from './CoreOutagesTable';
 import CarriersManager from './CarriersManager';
-import ExchangeDataManager from './ExchangeDataManager';
+import MarketDataContactsManager from './MarketDataContactsManager';
 import ExtranetDataManager from './ExtranetDataManager';
 import ExtranetPricingAdmin from './ExtranetPricingAdmin';
 import ExtranetPricingTool from './ExtranetPricingTool';
@@ -69,18 +73,22 @@ import AnalyticsDashboard from './AnalyticsDashboard';
 import SystemSettingsManager from './SystemSettingsManager';
 import CarrierQuoteRepository from './CarrierQuoteRepository';
 import AddCarrierQuote from './AddCarrierQuote';
+import CarrierQuoteAnalytics from './CarrierQuoteAnalytics';
+import ManageCustomLocations from './ManageCustomLocations';
 import OneDirectoryPricingTool from './OneDirectoryPricingTool';
 import OneDirectoryAdmin from './OneDirectoryAdmin';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 import RequestQuoteIcon from '@mui/icons-material/RequestQuote';
+import EditLocationAltIcon from '@mui/icons-material/EditLocationAlt';
 import NoteAddIcon from '@mui/icons-material/NoteAdd';
 import PhoneIcon from '@mui/icons-material/Phone';
 
-import { fetchRoutes, fetchRoutesWithKMZ, searchRoutes, exportRoutesCSV, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking, getFeedbackNotificationCount, logLatencyMatrixReferral } from './api';
+import { fetchRoutes, fetchRoutesWithKMZ, searchRoutes, exportRoutesCSV, exportNetworkMapPDF, addRoute, editRoute, deleteRoute, uploadKMZ, fetchRoute, uploadTestResults, getLiveLatencyStatus, getRouteTracking, getFeedbackNotificationCount, logLatencyMatrixReferral, pushLiveLatencyProbe } from './api';
 import { API_BASE_URL } from './config';
 import SearchExportBar from './SearchExportBar';
 import RouteFormDialog from './RouteFormDialog';
 import DarkFiberModal from './DarkFiberModal';
+import NetworkMapExportDialog from './NetworkMapExportDialog';
 import KMZMapViewer from './KMZMapViewer';
 import RouteFinder from './RouteFinder';
 import RouteChanges from './RouteChanges';
@@ -92,10 +100,34 @@ import GridOnIcon from '@mui/icons-material/GridOn';
 
 const drawerWidth = 280;
 
+// Minimal shell for the no-credential "Voice Guest" session - deliberately skips the
+// full Drawer/sidebar app entirely so guests only ever see the One Directory tool.
+function VoiceGuestShell({ onLogout }) {
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: 'background.default' }}>
+      <AppBar position="static">
+        <Toolbar>
+          <PhoneIcon sx={{ mr: 1.5 }} />
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>
+            Voice - One Directory <Typography component="span" variant="body2" sx={{ opacity: 0.8 }}>(Guest Access - Read Only)</Typography>
+          </Typography>
+          <Button color="inherit" startIcon={<LogoutIcon />} onClick={onLogout}>
+            Exit
+          </Button>
+        </Toolbar>
+      </AppBar>
+      <Container maxWidth="xl" sx={{ py: 3, flexGrow: 1 }}>
+        <OneDirectoryPricingTool />
+      </Container>
+    </Box>
+  );
+}
+
 // Main authenticated application component
 function AuthenticatedApp() {
-  const { user, logout, isAuthenticated, loading: authLoading, hasModuleAccess, isModuleVisible, hasPermission, hasRole, permissions, modulePermissions, connectionError, passwordResetRequired } = useAuth();
+  const { user, logout, isAuthenticated, isGuest, loading: authLoading, hasModuleAccess, isModuleVisible, hasPermission, hasRole, permissions, modulePermissions, connectionError, passwordResetRequired } = useAuth();
   const { textSizeScale, updateTextSize, resetTextSize } = useTextSize();
+  const { isDarkMode, toggleMode } = useThemeMode();
   
   // View state for non-authenticated views
   const [currentView, setCurrentView] = useState('login'); // 'login' or 'register'
@@ -113,6 +145,7 @@ function AuthenticatedApp() {
   const [routeTracking, setRouteTracking] = useState(null);
   const [darkFiberOpen, setDarkFiberOpen] = useState(false);
   const [darkFiberCircuitId, setDarkFiberCircuitId] = useState(null);
+  const [mapExportOpen, setMapExportOpen] = useState(false);
   const [networkRoutesOpen, setNetworkRoutesOpen] = useState(true);
   
   // KMZ Map Viewer state
@@ -127,8 +160,7 @@ function AuthenticatedApp() {
   // Pre-computed route data from latency matrix click-through
   const [matrixRouteData, setMatrixRouteData] = useState(null);
   const [networkDesignOpen, setNetworkDesignOpen] = useState(false);
-  const [exchangeDataOpen, setExchangeDataOpen] = useState(false);
-  const [extranetDataOpen, setExtranetDataOpen] = useState(false);
+  const [marketDataOpen, setMarketDataOpen] = useState(false);
   const [exchangeRatesOpen, setExchangeRatesOpen] = useState(false);
   const [networkDataOpen, setNetworkDataOpen] = useState(false);
   const [cnxColocationOpen, setCnxColocationOpen] = useState(false);
@@ -332,6 +364,11 @@ function AuthenticatedApp() {
     return <LoginForm onShowRegister={() => setCurrentView('register')} />;
   }
 
+  // Voice Guest sessions only ever see the One Directory tool - skip the full app entirely
+  if (isGuest) {
+    return <VoiceGuestShell onLogout={logout} />;
+  }
+
   // Client-side filtering logic (like LocationDataManager pattern)
   // Skip client-side filtering if we already did server-side filtering
   const filteredRows = isServerSideFiltered ? rows : rows.filter(route => {
@@ -459,6 +496,39 @@ function AuthenticatedApp() {
       });
   };
 
+  const handleOpenMapExport = () => {
+    if (!hasPermission('network_routes', 'view')) return;
+    if (modulePermissions?.network_routes === 'sales') return;
+    setMapExportOpen(true);
+  };
+
+  const handleExportNetworkMap = async (regions, details) => {
+    try {
+      const response = await exportNetworkMapPDF(regions, details);
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `network-map-${regions.join('-')}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      // The API call uses responseType: 'blob', so error bodies (JSON) arrive as a Blob too.
+      if (err?.response?.data instanceof Blob) {
+        const text = await err.response.data.text();
+        let message = 'Failed to generate the network map PDF.';
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed?.error) message = parsed.error;
+        } catch {
+          // Response body wasn't JSON - fall back to the default message.
+        }
+        throw new Error(message);
+      }
+      throw err;
+    }
+  };
+
   const handleAdd = () => {
     if (!hasPermission('network_routes', 'create')) return;
     
@@ -485,24 +555,38 @@ function AuthenticatedApp() {
     setSelectedRow(null);
   };
 
-  const handleFormSubmit = async (values, file, testResultsFiles) => {
+  const handleFormSubmit = async (values, file, testResultsFiles, probeName) => {
     setLoading(true);
     
     try {
       let uploadedFiles = 0;
+      let circuitId;
       if (formMode === 'add') {
+        circuitId = values.circuit_id;
         await addRoute(values);
-        if (file) await uploadKMZ(values.circuit_id, file);
+        if (file) await uploadKMZ(circuitId, file);
         if (testResultsFiles && testResultsFiles.length > 0) {
-          await uploadTestResults(values.circuit_id, testResultsFiles);
+          await uploadTestResults(circuitId, testResultsFiles);
           uploadedFiles = testResultsFiles.length;
         }
       } else if (formMode === 'edit') {
-        await editRoute(selectedRow.circuit_id, values);
-        if (file) await uploadKMZ(selectedRow.circuit_id, file);
+        circuitId = selectedRow.circuit_id;
+        await editRoute(circuitId, values);
+        if (file) await uploadKMZ(circuitId, file);
         if (testResultsFiles && testResultsFiles.length > 0) {
-          await uploadTestResults(selectedRow.circuit_id, testResultsFiles);
+          await uploadTestResults(circuitId, testResultsFiles);
           uploadedFiles = testResultsFiles.length;
+        }
+      }
+      
+      let probeWarning = '';
+      if (probeName && circuitId) {
+        try {
+          await pushLiveLatencyProbe(circuitId, probeName);
+        } catch (probeErr) {
+          console.error('Failed to push Live Latency probe configuration:', probeErr);
+          probeWarning = 'Route saved, but the Live Latency probe configuration failed: ' +
+            (probeErr.response?.data?.error || probeErr.message);
         }
       }
       
@@ -510,7 +594,9 @@ function AuthenticatedApp() {
       setFormOpen(false);
       setSelectedRow(null);
       
-      if (uploadedFiles > 0) {
+      if (probeWarning) {
+        setError(probeWarning);
+      } else if (uploadedFiles > 0) {
         setError('');
         alert(`✅ Successfully uploaded ${uploadedFiles} test results file${uploadedFiles > 1 ? 's' : ''}!`);
       }
@@ -794,48 +880,27 @@ function AuthenticatedApp() {
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
       
-      case 'exchange-feeds':
-        return hasModuleAccess('exchange_feeds') ? (
-          <ExchangeDataManager hasPermission={hasPermission} initialTab={0} permissionModule="exchange_feeds" />
+      case 'market-data-contacts':
+        return hasModuleAccess('market_data_contacts') ? (
+          <MarketDataContactsManager hasPermission={hasPermission} />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
-      
-      case 'exchange-contacts':
-        return hasModuleAccess('exchange_contacts') ? (
-          <ExchangeDataManager hasPermission={hasPermission} initialTab={1} permissionModule="exchange_contacts" />
-        ) : (
-          <Alert severity="error">You don't have permission to view this module</Alert>
-        );
-      
-      case 'exchange-pricing':
-        return hasModuleAccess('exchange_pricing') ? (
-          <ExchangePricingTool />
-        ) : (
-          <Alert severity="error">You don't have permission to view this module</Alert>
-        );
-      
+
       case 'extranet-providers':
         return hasModuleAccess('extranet_providers') ? (
           <ExtranetDataManager hasPermission={hasPermission} initialTab={0} permissionModule="extranet_providers" />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
-      
-      case 'extranet-contacts':
-        return hasModuleAccess('extranet_contacts') ? (
-          <ExtranetDataManager hasPermission={hasPermission} initialTab={1} permissionModule="extranet_contacts" />
-        ) : (
-          <Alert severity="error">You don't have permission to view this module</Alert>
-        );
-      
+
       case 'extranet-pricing':
         return hasModuleAccess('extranet_pricing') ? (
           <ExtranetPricingTool />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
-      
+
       case 'extranet-pricing-admin':
         return hasRole('administrator') ? (
           <ExtranetPricingAdmin hasPermission={hasPermission} />
@@ -914,10 +979,24 @@ function AuthenticatedApp() {
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
+
+      case 'cross-connects-pricing':
+        return hasModuleAccess('network_routes') ? (
+          <CrossConnectsPricing />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
       
       case 'route-changes':
         return hasModuleAccess('network_routes') ? (
           <RouteChanges onNavigateToRoute={handleNavigateToRoute} />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+      
+      case 'customer-routes':
+        return hasModuleAccess('network_routes') ? (
+          <CustomerRoutesTable />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
@@ -954,6 +1033,20 @@ function AuthenticatedApp() {
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
+
+      case 'carrier-quote-analytics':
+        return hasModuleAccess('carrier_quote_repository') ? (
+          <CarrierQuoteAnalytics />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
+
+      case 'carrier-quote-custom-locations':
+        return hasModuleAccess('carrier_quote_repository') ? (
+          <ManageCustomLocations />
+        ) : (
+          <Alert severity="error">You don't have permission to view this module</Alert>
+        );
       
       case 'feedback':
         return <FeedbackManager initialTab={feedbackInitialTab} />;
@@ -982,15 +1075,13 @@ function AuthenticatedApp() {
 
   return (
     <Box sx={{ display: 'flex' }}>
-      <CssBaseline />
-      
       {/* App Bar */}
       <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
         <Toolbar>
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.4.7
+              v3.5.0
             </Typography>
           </Typography>
           
@@ -1098,6 +1189,22 @@ function AuthenticatedApp() {
                 </Box>
               </Box>
             </MenuItem>
+            <MenuItem disableRipple onClick={(e) => e.stopPropagation()}>
+              <Box sx={{ width: '100%', px: 1, py: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  {isDarkMode ? <DarkModeIcon fontSize="small" sx={{ mr: 1 }} /> : <LightModeIcon fontSize="small" sx={{ mr: 1 }} />}
+                  <Typography variant="body2">
+                    Dark Mode
+                  </Typography>
+                </Box>
+                <Switch
+                  checked={isDarkMode}
+                  onChange={toggleMode}
+                  size="small"
+                  inputProps={{ 'aria-label': 'toggle dark mode' }}
+                />
+              </Box>
+            </MenuItem>
             <Divider />
             <MenuItem onClick={handleLogout}>
               <LogoutIcon sx={{ mr: 1 }} />
@@ -1123,7 +1230,7 @@ function AuthenticatedApp() {
             <ListItem
               button
               onClick={() => setCurrentTab('home')}
-              sx={{ backgroundColor: currentTab === 'home' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+              sx={{ backgroundColor: currentTab === 'home' ? 'action.selected' : 'transparent' }}
             >
               <ListItemIcon><HomeIcon /></ListItemIcon>
               <ListItemText primary="Home" />
@@ -1143,7 +1250,7 @@ function AuthenticatedApp() {
                     <ListItem 
                       button 
                       onClick={() => setCurrentTab('network-routes')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'network-routes' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'network-routes' ? 'action.selected' : 'transparent' }}
                     >
                       <ListItemIcon><RouterIcon /></ListItemIcon>
                       <ListItemText primary="Network Routes" />
@@ -1187,10 +1294,20 @@ function AuthenticatedApp() {
                     <ListItem 
                       button 
                       onClick={() => setCurrentTab('route-changes')} 
-                      sx={{ pl: 6, backgroundColor: currentTab === 'route-changes' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      sx={{ pl: 6, backgroundColor: currentTab === 'route-changes' ? 'action.selected' : 'transparent' }}
                     >
                       <ListItemIcon><WarningIcon /></ListItemIcon>
                       <ListItemText primary="Route Updates" />
+                    </ListItem>
+
+                    {/* Customer Routes - nested under Network Routes */}
+                    <ListItem 
+                      button 
+                      onClick={() => setCurrentTab('customer-routes')} 
+                      sx={{ pl: 6, backgroundColor: currentTab === 'customer-routes' ? 'action.selected' : 'transparent' }}
+                    >
+                      <ListItemIcon><ContactsIcon /></ListItemIcon>
+                      <ListItemText primary="Customer Routes" />
                     </ListItem>
 
                     {/* CNX Ethernet (Route Finder & Promos) */}
@@ -1198,7 +1315,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('route-finder')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'route-finder' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'route-finder' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><SearchIcon /></ListItemIcon>
                         <ListItemText 
@@ -1214,7 +1331,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('kmz-viewer')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'kmz-viewer' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'kmz-viewer' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><PublicIcon /></ListItemIcon>
                         <ListItemText primary="KMZ Viewer" />
@@ -1225,12 +1342,22 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('core-outages')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'core-outages' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'core-outages' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><WarningIcon /></ListItemIcon>
                         <ListItemText primary="Core Outages" />
                       </ListItem>
                     )}
+
+                    {/* Cross Connects Pricing - sales-facing pricing from Manage Locations -> Cross Connect Info */}
+                    <ListItem
+                      button
+                      onClick={() => setCurrentTab('cross-connects-pricing')}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'cross-connects-pricing' ? 'action.selected' : 'transparent' }}
+                    >
+                      <ListItemIcon><CableIcon /></ListItemIcon>
+                      <ListItemText primary="Cross Connects Pricing" />
+                    </ListItem>
                   </List>
                 </Collapse>
               </>
@@ -1249,7 +1376,7 @@ function AuthenticatedApp() {
                     <ListItem 
                       button 
                       onClick={() => setCurrentTab('network-design')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'network-design' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'network-design' ? 'action.selected' : 'transparent' }}
                     >
                       <ListItemIcon><DesignServicesIcon /></ListItemIcon>
                       <ListItemText primary="Design & Pricing" />
@@ -1258,7 +1385,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('allocated-cost-calculator')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'allocated-cost-calculator' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'allocated-cost-calculator' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><CalculateIcon /></ListItemIcon>
                         <ListItemText primary="Allocated Cost Calculator" />
@@ -1268,7 +1395,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('minimum-pricing')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'minimum-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'minimum-pricing' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><AttachMoneyIcon /></ListItemIcon>
                         <ListItemText primary="Minimum Pricing" />
@@ -1278,7 +1405,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('pricing-logic')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'pricing-logic' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'pricing-logic' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><SettingsIcon /></ListItemIcon>
                         <ListItemText primary="Pricing Logic" />
@@ -1288,7 +1415,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('promo-pricing')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'promo-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'promo-pricing' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><LocalOfferIcon /></ListItemIcon>
                         <ListItemText primary="Promo Pricing" />
@@ -1299,100 +1426,51 @@ function AuthenticatedApp() {
               </>
             )}
 
-            {/* Exchange Data */}
-            {(hasModuleAccess('exchange_feeds') || hasModuleAccess('exchange_contacts') || hasModuleAccess('exchange_pricing')) && (
+            {/* Market Data & Extranet */}
+            {(hasModuleAccess('market_data_contacts') || hasModuleAccess('extranet_providers') || hasModuleAccess('extranet_pricing') || hasRole('administrator')) && (
               <>
-                <ListItem button onClick={() => setExchangeDataOpen(!exchangeDataOpen)}>
+                <ListItem button onClick={() => setMarketDataOpen(!marketDataOpen)}>
                   <ListItemIcon><DataObjectIcon /></ListItemIcon>
-                  <ListItemText primary="Exchange Data" />
-                  {exchangeDataOpen ? <ExpandLess /> : <ExpandMore />}
+                  <ListItemText primary="Market Data & Extranet" />
+                  {marketDataOpen ? <ExpandLess /> : <ExpandMore />}
                 </ListItem>
-                <Collapse in={exchangeDataOpen} timeout="auto" unmountOnExit>
+                <Collapse in={marketDataOpen} timeout="auto" unmountOnExit>
                   <List component="div" disablePadding>
-                    {hasModuleAccess('exchange_feeds') && (
-                      <ListItem 
-                        button 
-                        onClick={() => setCurrentTab('exchange-feeds')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'exchange-feeds' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                      >
-                        <ListItemIcon><TableRowsIcon /></ListItemIcon>
-                        <ListItemText primary="Exchange Feeds" />
-                      </ListItem>
-                    )}
-                    {hasModuleAccess('exchange_contacts') && (
-                      <ListItem 
-                        button 
-                        onClick={() => setCurrentTab('exchange-contacts')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'exchange-contacts' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    {hasModuleAccess('market_data_contacts') && (
+                      <ListItem
+                        button
+                        onClick={() => setCurrentTab('market-data-contacts')}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'market-data-contacts' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><ContactsIcon /></ListItemIcon>
-                        <ListItemText primary="Exchange Contacts" />
+                        <ListItemText primary="Market Data & Extranet Contacts" />
                       </ListItem>
                     )}
-                    {hasModuleAccess('exchange_pricing') && (
-                      <ListItem 
-                        button 
-                        onClick={() => setCurrentTab('exchange-pricing')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'exchange-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                      >
-                        <ListItemIcon><CalculateIcon /></ListItemIcon>
-                        <ListItemText primary="Pricing Tool" />
-                      </ListItem>
-                    )}
-                  </List>
-                </Collapse>
-              </>
-            )}
-
-            {/* Extranet Data */}
-            {(hasModuleAccess('extranet_providers') || hasModuleAccess('extranet_contacts') || hasModuleAccess('extranet_pricing') || hasRole('administrator')) && (
-              <>
-                <ListItem button onClick={() => setExtranetDataOpen(!extranetDataOpen)}>
-                  <ListItemIcon><LanIcon /></ListItemIcon>
-                  <ListItemText primary="Extranet Data" />
-                  {extranetDataOpen ? <ExpandLess /> : <ExpandMore />}
-                </ListItem>
-                <Collapse in={extranetDataOpen} timeout="auto" unmountOnExit>
-                  <List component="div" disablePadding>
-                    {/* Extranet Providers */}
                     {hasModuleAccess('extranet_providers') && (
-                      <ListItem 
-                        button 
-                        onClick={() => setCurrentTab('extranet-providers')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'extranet-providers' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      <ListItem
+                        button
+                        onClick={() => setCurrentTab('extranet-providers')}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'extranet-providers' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><TableRowsIcon /></ListItemIcon>
                         <ListItemText primary="Extranet Providers" />
                       </ListItem>
                     )}
-                    {/* Extranet Contacts */}
-                    {hasModuleAccess('extranet_contacts') && (
-                      <ListItem 
-                        button 
-                        onClick={() => setCurrentTab('extranet-contacts')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'extranet-contacts' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
-                      >
-                        <ListItemIcon><ContactsIcon /></ListItemIcon>
-                        <ListItemText primary="Extranet Contacts" />
-                      </ListItem>
-                    )}
-                    {/* Extranet Pricing Tool */}
                     {hasModuleAccess('extranet_pricing') && (
-                      <ListItem 
-                        button 
-                        onClick={() => setCurrentTab('extranet-pricing')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'extranet-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      <ListItem
+                        button
+                        onClick={() => setCurrentTab('extranet-pricing')}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'extranet-pricing' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><CalculateIcon /></ListItemIcon>
                         <ListItemText primary="Extranet Pricing Tool" />
                       </ListItem>
                     )}
-                    {/* Pricing Admin - Admin only */}
                     {hasRole('administrator') && (
-                      <ListItem 
-                        button 
-                        onClick={() => setCurrentTab('extranet-pricing-admin')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'extranet-pricing-admin' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      <ListItem
+                        button
+                        onClick={() => setCurrentTab('extranet-pricing-admin')}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'extranet-pricing-admin' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><SettingsIcon /></ListItemIcon>
                         <ListItemText primary="Pricing Admin" />
@@ -1417,7 +1495,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('location-data')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'location-data' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'location-data' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><LocationOnIcon /></ListItemIcon>
                         <ListItemText primary="Manage Locations" />
@@ -1427,7 +1505,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('carriers')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'carriers' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'carriers' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><BusinessIcon /></ListItemIcon>
                         <ListItemText primary="Manage Carriers" />
@@ -1452,7 +1530,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('cnx-colocation-inventory')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation-inventory' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation-inventory' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><LocationOnIcon /></ListItemIcon>
                         <ListItemText primary="Colocation Inventory" />
@@ -1462,7 +1540,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('cnx-colocation-availability')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation-availability' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation-availability' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><DashboardIcon /></ListItemIcon>
                         <ListItemText primary="Availability Dashboard" />
@@ -1472,7 +1550,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('cnx-colocation-pricing')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation-pricing' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'cnx-colocation-pricing' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><CalculateIcon /></ListItemIcon>
                         <ListItemText primary="Pricing Tool" />
@@ -1497,7 +1575,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('voice-one-directory')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'voice-one-directory' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'voice-one-directory' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><CalculateIcon /></ListItemIcon>
                         <ListItemText primary="One Directory" />
@@ -1507,7 +1585,7 @@ function AuthenticatedApp() {
                       <ListItem 
                         button 
                         onClick={() => setCurrentTab('voice-one-directory-admin')} 
-                        sx={{ pl: 4, backgroundColor: currentTab === 'voice-one-directory-admin' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                        sx={{ pl: 4, backgroundColor: currentTab === 'voice-one-directory-admin' ? 'action.selected' : 'transparent' }}
                       >
                         <ListItemIcon><AdminPanelSettingsIcon /></ListItemIcon>
                         <ListItemText primary="One Directory Admin" />
@@ -1531,7 +1609,7 @@ function AuthenticatedApp() {
                     <ListItem 
                       button 
                       onClick={() => setCurrentTab('exchange-rates')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'exchange-rates' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'exchange-rates' ? 'action.selected' : 'transparent' }}
                     >
                       <ListItemIcon><CurrencyExchangeIcon /></ListItemIcon>
                       <ListItemText primary="Manage Exchange Rates" />
@@ -1554,7 +1632,7 @@ function AuthenticatedApp() {
                     <ListItem 
                       button 
                       onClick={() => { setEditQuoteId(null); setCurrentTab('add-carrier-quote'); }}
-                      sx={{ pl: 4, backgroundColor: currentTab === 'add-carrier-quote' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'add-carrier-quote' ? 'action.selected' : 'transparent' }}
                     >
                       <ListItemIcon><NoteAddIcon /></ListItemIcon>
                       <ListItemText primary="Add Quote" />
@@ -1562,10 +1640,26 @@ function AuthenticatedApp() {
                     <ListItem 
                       button 
                       onClick={() => setCurrentTab('carrier-quote-repository')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'carrier-quote-repository' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'carrier-quote-repository' ? 'action.selected' : 'transparent' }}
                     >
                       <ListItemIcon><RequestQuoteIcon /></ListItemIcon>
                       <ListItemText primary="Quote Repository" />
+                    </ListItem>
+                    <ListItem
+                      button
+                      onClick={() => setCurrentTab('carrier-quote-analytics')}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'carrier-quote-analytics' ? 'action.selected' : 'transparent' }}
+                    >
+                      <ListItemIcon><AnalyticsIcon /></ListItemIcon>
+                      <ListItemText primary="Quote Analytics" />
+                    </ListItem>
+                    <ListItem
+                      button
+                      onClick={() => setCurrentTab('carrier-quote-custom-locations')}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'carrier-quote-custom-locations' ? 'action.selected' : 'transparent' }}
+                    >
+                      <ListItemIcon><EditLocationAltIcon /></ListItemIcon>
+                      <ListItemText primary="Custom Locations" />
                     </ListItem>
                   </List>
                 </Collapse>
@@ -1577,7 +1671,7 @@ function AuthenticatedApp() {
               <ListItem 
                 button 
                 onClick={() => setCurrentTab('change-logs')} 
-                sx={{ backgroundColor: currentTab === 'change-logs' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                sx={{ backgroundColor: currentTab === 'change-logs' ? 'action.selected' : 'transparent' }}
               >
                 <ListItemIcon><HistoryIcon /></ListItemIcon>
                 <ListItemText primary="Change Logs" />
@@ -1597,7 +1691,7 @@ function AuthenticatedApp() {
                   <ListItem
                     button
                     onClick={() => setCurrentTab('analytics')}
-                    sx={{ pl: 4, backgroundColor: currentTab === 'analytics' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    sx={{ pl: 4, backgroundColor: currentTab === 'analytics' ? 'action.selected' : 'transparent' }}
                   >
                     <ListItemIcon><AnalyticsIcon /></ListItemIcon>
                     <ListItemText primary="Analytics" />
@@ -1605,7 +1699,7 @@ function AuthenticatedApp() {
                   <ListItem
                     button
                     onClick={() => setCurrentTab('system-settings')}
-                    sx={{ pl: 4, backgroundColor: currentTab === 'system-settings' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                    sx={{ pl: 4, backgroundColor: currentTab === 'system-settings' ? 'action.selected' : 'transparent' }}
                   >
                     <ListItemIcon><SettingsIcon /></ListItemIcon>
                     <ListItemText primary="System Settings" />
@@ -1613,7 +1707,7 @@ function AuthenticatedApp() {
                   <ListItem
                       button 
                       onClick={() => setCurrentTab('live-latency-admin')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'live-latency-admin' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'live-latency-admin' ? 'action.selected' : 'transparent' }}
                     >
                       <ListItemIcon><ApiIcon /></ListItemIcon>
                       <ListItemText primary="Live Latency API" />
@@ -1621,7 +1715,7 @@ function AuthenticatedApp() {
                     <ListItem 
                       button 
                       onClick={() => setCurrentTab('bulk-upload')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'bulk-upload' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'bulk-upload' ? 'action.selected' : 'transparent' }}
                     >
                       <ListItemIcon><CloudUploadIcon /></ListItemIcon>
                       <ListItemText primary="Bulk Upload" />
@@ -1629,7 +1723,7 @@ function AuthenticatedApp() {
                     <ListItem 
                       button 
                       onClick={() => setCurrentTab('user-management')} 
-                      sx={{ pl: 4, backgroundColor: currentTab === 'user-management' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'user-management' ? 'action.selected' : 'transparent' }}
                     >
                       <ListItemIcon><PeopleIcon /></ListItemIcon>
                       <ListItemText primary="User Management" />
@@ -1637,7 +1731,7 @@ function AuthenticatedApp() {
                     <ListItem
                       button
                       onClick={() => setCurrentTab('latency-matrix-admin')}
-                      sx={{ pl: 4, backgroundColor: currentTab === 'latency-matrix-admin' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+                      sx={{ pl: 4, backgroundColor: currentTab === 'latency-matrix-admin' ? 'action.selected' : 'transparent' }}
                     >
                       <ListItemIcon><GridOnIcon /></ListItemIcon>
                       <ListItemText primary="Latency Matrix" />
@@ -1655,7 +1749,7 @@ function AuthenticatedApp() {
                 setFeedbackInitialTab(0); // Default to "New Submission" tab when clicking menu
                 setCurrentTab('feedback');
               }} 
-              sx={{ backgroundColor: currentTab === 'feedback' ? 'rgba(0, 0, 0, 0.04)' : 'transparent' }}
+              sx={{ backgroundColor: currentTab === 'feedback' ? 'action.selected' : 'transparent' }}
             >
               <ListItemIcon><FeedbackIcon /></ListItemIcon>
               <ListItemText primary="Feedback" />
@@ -1681,6 +1775,7 @@ function AuthenticatedApp() {
             <SearchExportBar 
               onSearch={handleSearch}
               onExport={handleExport}
+              onExportMap={handleOpenMapExport}
               onRefresh={refreshData}
               hasPermission={hasPermission}
               resetFilters={filterResetTrigger}
@@ -1702,6 +1797,12 @@ function AuthenticatedApp() {
         initialValues={formMode === 'edit' ? selectedRow : {}}
         isEdit={formMode === 'edit'}
         onFileDeleted={handleFileDeleted}
+      />
+
+      <NetworkMapExportDialog
+        open={mapExportOpen}
+        onClose={() => setMapExportOpen(false)}
+        onExport={handleExportNetworkMap}
       />
 
               <Dialog 
@@ -1840,7 +1941,7 @@ function AuthenticatedApp() {
             
             {/* Tracking Information */}
             <Grid item xs={12}>
-              <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e0e0e0' }}>
+              <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
                 <Typography variant="body2" color="text.secondary">
                   {routeTracking && routeTracking.updated_date ? (
                     <>Last Updated: {routeTracking.username || 'Unknown User'} {formatTrackingDate(routeTracking.updated_date)}</>
@@ -1906,14 +2007,16 @@ function AuthenticatedApp() {
   );
 }
 
-// Main App component with AuthProvider and TextSizeProvider
+// Main App component with AuthProvider, ThemeModeProvider, and TextSizeProvider
 function App() {
   return (
-    <AuthProvider>
-      <TextSizeProvider>
-        <AuthenticatedApp />
-      </TextSizeProvider>
-    </AuthProvider>
+    <ThemeModeProvider>
+      <AuthProvider>
+        <TextSizeProvider>
+          <AuthenticatedApp />
+        </TextSizeProvider>
+      </AuthProvider>
+    </ThemeModeProvider>
   );
 }
 

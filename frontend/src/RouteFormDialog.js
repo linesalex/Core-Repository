@@ -4,7 +4,7 @@ import {
   TextField, Button, Grid, Checkbox, FormControlLabel, Typography, Box, Chip, Stack, Divider, Alert,
   Select, MenuItem, FormControl, InputLabel, Autocomplete
 } from '@mui/material';
-import { uploadTestResults, getTestResultsFiles, deleteTestResultsFile, locationDataApi } from './api';
+import { uploadTestResults, getTestResultsFiles, deleteTestResultsFile, locationDataApi, getLiveLatencyProbe } from './api';
 import { API_BASE_URL } from './config';
 import axios from 'axios';
 import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
@@ -48,6 +48,10 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
   const [error, setError] = useState('');
   const [fileLoading, setFileLoading] = useState(false);
   const [kmzDeleteLoading, setKmzDeleteLoading] = useState(false);
+  
+  // Live Latency probe (self-service) state
+  const [probeName, setProbeName] = useState('');
+  const [probeLoading, setProbeLoading] = useState(false);
   
   // Validation states
   const [formErrors, setFormErrors] = useState({});
@@ -176,6 +180,8 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
       
       // Load existing test results files
       loadExistingFiles(initialValues.circuit_id);
+      // Load existing Live Latency probe configuration (if any)
+      loadExistingProbe(initialValues.circuit_id);
     } else {
       // When adding, ensure all fields are blank
       setValues(defaultValues);
@@ -194,6 +200,8 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
       setReplacedByInputValue('');
       setReplacesInputValue('');
       setCircuitOptions([]);
+      // Clear probe state
+      setProbeName('');
     }
     setFile(null);
     setTestResultsFiles([]);
@@ -212,6 +220,21 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
       setExistingFiles([]);
     } finally {
       setFileLoading(false);
+    }
+  };
+
+  const loadExistingProbe = async (circuitId) => {
+    if (!circuitId) return;
+    
+    setProbeLoading(true);
+    try {
+      const probe = await getLiveLatencyProbe(circuitId);
+      setProbeName(probe?.api_instance_name || '');
+    } catch (err) {
+      console.error('Failed to load existing Live Latency probe:', err);
+      setProbeName('');
+    } finally {
+      setProbeLoading(false);
     }
   };
 
@@ -527,7 +550,7 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
 
       setError('');
       setFormErrors({}); // Clear validation errors on success
-      onSubmit({ ...values }, file, testResultsFiles);
+      onSubmit({ ...values }, file, testResultsFiles, probeName.trim());
     } catch (err) {
       setError('An error occurred during validation');
     }
@@ -561,7 +584,7 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
               errors={formErrors}
               sx={{
                 '& .MuiInputBase-input': {
-                  backgroundColor: isEdit ? '#f5f5f5' : 'transparent',
+                  backgroundColor: isEdit ? 'action.disabledBackground' : 'transparent',
                 }
               }}
             />
@@ -607,6 +630,22 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
             />
           </Grid>
           <Grid item xs={12}>
+            <Divider sx={{ my: 1 }} />
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+              Live Latency Monitoring
+            </Typography>
+            <TextField
+              label="Live Latency Probe Name (API Instance Name)"
+              value={probeName}
+              onChange={(e) => setProbeName(e.target.value)}
+              fullWidth
+              disabled={probeLoading}
+              placeholder="e.g., ipcpar1-epe002_NYKPAR279885_Probe"
+              helperText="Optional: Enter the probe/API instance name to automatically configure Live Latency API monitoring for this circuit using the default connection settings"
+            />
+            <Divider sx={{ my: 1 }} />
+          </Grid>
+          <Grid item xs={12}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               <Typography variant="body2" color="text.secondary">
                 KMZ File
@@ -614,7 +653,7 @@ function RouteFormDialog({ open, onClose, onSubmit, initialValues = {}, isEdit =
               
               {values.kmz_file_path && !file ? (
                 // Show existing KMZ file with delete option
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, border: '1px solid #ddd', borderRadius: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                   <Typography variant="body2" sx={{ flexGrow: 1 }}>
                     Current file: {values.kmz_file_path}
                   </Typography>

@@ -18,6 +18,13 @@ import SecurityIcon from '@mui/icons-material/Security';
 import { API_BASE_URL } from './config';
 import axios from 'axios';
 import LoadingIndicator from './components/LoadingIndicator';
+import { alpha } from '@mui/material/styles';
+
+const regionHeaderBg = {
+  AMERs: 'primary.50',
+  APAC: 'success.50',
+  EMEA: 'secondary.50'
+};
 
 const ExtranetPricingAdmin = ({ hasPermission }) => {
   // Data states
@@ -672,7 +679,19 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
               <Table stickyHeader size="small" sx={{ tableLayout: 'fixed' }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ fontWeight: 'bold', width: 70, position: 'sticky', left: 0, zIndex: 3, backgroundColor: '#fff' }}>Bandwidth</TableCell>
+                    <TableCell
+                      sx={{
+                        fontWeight: 'bold',
+                        width: 70,
+                        position: 'sticky',
+                        left: 0,
+                        zIndex: 3,
+                        backgroundColor: 'background.paper',
+                        color: 'text.primary'
+                      }}
+                    >
+                      Bandwidth
+                    </TableCell>
                     {regions.map(region => (
                       getTiersForRegion(region).map(tier => (
                         <TableCell 
@@ -681,8 +700,8 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                           sx={{ 
                             fontWeight: 'bold', 
                             p: 0.5,
-                            backgroundColor: region === 'AMERs' ? '#e3f2fd' : 
-                                           region === 'APAC' ? '#e8f5e9' : '#f3e5f5'
+                            backgroundColor: regionHeaderBg[region] || 'action.hover',
+                            color: 'text.primary'
                           }}
                         >
                           <Box sx={{ fontSize: '0.65rem' }}>{region}</Box>
@@ -695,7 +714,19 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                 <TableBody>
                   {bandwidths.map(bandwidth => (
                     <TableRow key={bandwidth} hover>
-                      <TableCell sx={{ fontWeight: 'bold', position: 'sticky', left: 0, backgroundColor: '#fff', zIndex: 1, fontSize: '0.75rem' }}>{bandwidth}</TableCell>
+                      <TableCell
+                        sx={{
+                          fontWeight: 'bold',
+                          position: 'sticky',
+                          left: 0,
+                          backgroundColor: 'background.paper',
+                          color: 'text.primary',
+                          zIndex: 1,
+                          fontSize: '0.75rem'
+                        }}
+                      >
+                        {bandwidth}
+                      </TableCell>
                       {regions.map(region => (
                         getTiersForRegion(region).map(tier => {
                           const key = `${bandwidth}-${region}-${tier}`;
@@ -720,7 +751,16 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                                   width: '100%',
                                   minWidth: 50,
                                   '& .MuiOutlinedInput-root': {
-                                    backgroundColor: isEdited ? '#fff3e0' : (priceValue === 'POA' ? '#f5f5f5' : 'transparent')
+                                    backgroundColor: (theme) =>
+                                      isEdited
+                                        ? theme.palette.warning[50] || alpha(theme.palette.warning.main, 0.16)
+                                        : (priceValue === 'POA'
+                                          ? alpha(theme.palette.text.primary, theme.palette.mode === 'dark' ? 0.08 : 0.04)
+                                          : 'transparent'),
+                                    color: 'text.primary'
+                                  },
+                                  '& .MuiOutlinedInput-input': {
+                                    color: 'text.primary'
                                   }
                                 }}
                               />
@@ -887,7 +927,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['resiliency_non_resilient'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['resiliency_non_resilient'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -901,7 +941,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['resiliency_single_site'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['resiliency_single_site'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -915,7 +955,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['resiliency_split_site'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['resiliency_split_site'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -929,7 +969,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['resiliency_dual_site'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['resiliency_dual_site'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                   </Grid>
@@ -960,7 +1000,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['traffic_live_live'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['traffic_live_live'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -974,7 +1014,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['traffic_live_standby'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['traffic_live_standby'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                   </Grid>
@@ -1005,7 +1045,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['cloud_discount'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['cloud_discount'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                   </Grid>
@@ -1045,7 +1085,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                           endAdornment: <InputAdornment position="end">items</InputAdornment>
                         }}
                         inputProps={{ min: 1 }}
-                        sx={{ backgroundColor: editedParameters['bundle_tier_1_max'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['bundle_tier_1_max'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -1061,7 +1101,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                           endAdornment: <InputAdornment position="end">items</InputAdornment>
                         }}
                         inputProps={{ min: 2 }}
-                        sx={{ backgroundColor: editedParameters['bundle_tier_2_max'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['bundle_tier_2_max'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                   </Grid>
@@ -1082,7 +1122,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['bundle_discount_mrc_1_3'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_mrc_1_3'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -1096,7 +1136,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['bundle_discount_nrc_1_3'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_nrc_1_3'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                   </Grid>
@@ -1117,7 +1157,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['bundle_discount_mrc_4_5'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_mrc_4_5'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -1131,7 +1171,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['bundle_discount_nrc_4_5'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_nrc_4_5'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                   </Grid>
@@ -1152,7 +1192,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['bundle_discount_mrc_6_plus'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_mrc_6_plus'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -1166,7 +1206,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['bundle_discount_nrc_6_plus'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['bundle_discount_nrc_6_plus'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                   </Grid>
@@ -1204,7 +1244,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           startAdornment: <InputAdornment position="start">$</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['nrc_12_month'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['nrc_12_month'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -1228,7 +1268,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           startAdornment: <InputAdornment position="start">$</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['nrc_24_month'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['nrc_24_month'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -1242,7 +1282,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['contract_24_discount'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['contract_24_discount'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                   </Grid>
@@ -1261,7 +1301,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           startAdornment: <InputAdornment position="start">$</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['nrc_36_month'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['nrc_36_month'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -1275,7 +1315,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                         InputProps={{
                           endAdornment: <InputAdornment position="end">%</InputAdornment>
                         }}
-                        sx={{ backgroundColor: editedParameters['contract_36_discount'] !== undefined ? '#fff3e0' : 'transparent' }}
+                        sx={{ backgroundColor: editedParameters['contract_36_discount'] !== undefined ? 'warning.50' : 'transparent' }}
                       />
                     </Grid>
                   </Grid>
@@ -1318,7 +1358,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
               <TableContainer component={Paper} variant="outlined">
                 <Table size="small">
                   <TableHead>
-                    <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
+                    <TableRow sx={{ backgroundColor: 'action.hover' }}>
                       <TableCell sx={{ fontWeight: 'bold' }}>Bandwidth Tier</TableCell>
                       <TableCell align="center" sx={{ fontWeight: 'bold' }}>Non-Resilient MRC</TableCell>
                       <TableCell align="center" sx={{ fontWeight: 'bold' }}>Resilient MRC</TableCell>
@@ -1352,7 +1392,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                                 }}
                                 sx={{ 
                                   width: 120,
-                                  backgroundColor: editedIpsec[`${surcharge.id}-non_resilient_mrc`] !== undefined ? '#fff3e0' : 'transparent'
+                                  backgroundColor: editedIpsec[`${surcharge.id}-non_resilient_mrc`] !== undefined ? 'warning.50' : 'transparent'
                                 }}
                               />
                             )}
@@ -1384,7 +1424,7 @@ const ExtranetPricingAdmin = ({ hasPermission }) => {
                                 }}
                                 sx={{ 
                                   width: 120,
-                                  backgroundColor: editedIpsec[`${surcharge.id}-resilient_mrc`] !== undefined ? '#fff3e0' : 'transparent'
+                                  backgroundColor: editedIpsec[`${surcharge.id}-resilient_mrc`] !== undefined ? 'warning.50' : 'transparent'
                                 }}
                               />
                             )}

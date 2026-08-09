@@ -507,34 +507,34 @@ const CoreOutagesTable = () => {
                     </TableRow>
                   ) : (
                     currentOutages.map((outage) => (
-                      <TableRow key={outage.circuit_id} sx={{ backgroundColor: 'rgba(255, 235, 238, 0.5)' }}>
+                      <TableRow key={outage.circuit_id} sx={{ backgroundColor: 'error.50' }}>
                         <TableCell>
-                          <Typography variant="body2" fontWeight="bold" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" fontWeight="bold" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.circuit_id}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.location_a || 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.location_b || 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.bandwidth ? `${outage.bandwidth} Mbps` : 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.underlying_carrier || 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.cable_system || 'N/A'}
                           </Typography>
                         </TableCell>
@@ -546,7 +546,7 @@ const CoreOutagesTable = () => {
                           />
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {formatDate(outage.outage_start_time)}
                           </Typography>
                         </TableCell>
@@ -556,7 +556,7 @@ const CoreOutagesTable = () => {
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.ticket_number || '-'}
                           </Typography>
                         </TableCell>
@@ -720,42 +720,42 @@ const CoreOutagesTable = () => {
                     outageHistory.map((outage, index) => (
                       <TableRow key={`${outage.circuit_id}-${index}`}>
                         <TableCell>
-                          <Typography variant="body2" fontWeight="bold" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" fontWeight="bold" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.circuit_id}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.location_a || 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.location_b || 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.bandwidth ? `${outage.bandwidth} Mbps` : 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.underlying_carrier || 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.cable_system || 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {formatDate(outage.outage_start_time)}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {formatDate(outage.outage_end_time)}
                           </Typography>
                         </TableCell>
@@ -767,7 +767,7 @@ const CoreOutagesTable = () => {
                           />
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {outage.ticket_number || '-'}
                           </Typography>
                         </TableCell>
@@ -878,29 +878,29 @@ const CoreOutagesTable = () => {
                     </TableRow>
                   ) : (
                     latencyWarnings.map((warning) => (
-                      <TableRow key={warning.circuit_id} sx={{ backgroundColor: 'rgba(255, 243, 224, 0.5)' }}>
+                      <TableRow key={warning.circuit_id} sx={{ backgroundColor: 'warning.50' }}>
                         <TableCell>
-                          <Typography variant="body2" fontWeight="bold" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" fontWeight="bold" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {warning.circuit_id}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {warning.location_a || 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {warning.location_b || 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {warning.bandwidth ? `${warning.bandwidth} Mbps` : 'N/A'}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {warning.underlying_carrier || 'N/A'}
                           </Typography>
                         </TableCell>
@@ -912,7 +912,7 @@ const CoreOutagesTable = () => {
                           />
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {warning.expected_latency}ms
                           </Typography>
                         </TableCell>
@@ -924,7 +924,7 @@ const CoreOutagesTable = () => {
                           />
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ color: '#000', fontSize: '0.75rem' }}>
+                          <Typography variant="body2" sx={{ color: 'text.primary', fontSize: '0.75rem' }}>
                             {warning.ticket_number || '-'}
                           </Typography>
                         </TableCell>

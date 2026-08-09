@@ -78,6 +78,20 @@ The Network Routes Repository is your central database for managing all network 
 
 ---
 
+## Live Latency Probe (Optional)
+
+Both **Add Route** and **Edit Route** include a **Live Latency Monitoring** section where you can register a probe for live latency tracking:
+
+1. Enter the **Live Latency Probe Name (API Instance Name)** — this is the exact instance name from the monitoring system
+2. Leave it blank if you don't want to set up live latency monitoring
+3. Save the route as normal
+
+You don't need to enter anything else — the API URL, indicator, username, and password are filled in automatically using the standard defaults. If a probe is already configured for the circuit, editing the route will show the existing probe name so you can update it.
+
+An Administrator can review or adjust the full configuration later from **Admin → Live Latency API**.
+
+---
+
 ## Editing a Route
 
 1. Click on route row to select it (highlights blue)
@@ -116,6 +130,41 @@ The Network Routes Repository is your central database for managing all network 
 - All filters work together
 - Partial matches work for most fields
 - Click **Refresh** to clear filters
+
+---
+
+## Cross Connects Pricing (Sales)
+
+A read-only, sales-facing pricing table nested under **Network Routes Repository**.
+
+### What It Is
+Shows the same cross-connect pricing configured in **Manage Locations → Cross-Connect Info**, formatted for sales use — with margin applied and no internal cost visible.
+
+### Accessing
+Left sidebar → **Network Routes Repository** → **Cross Connects Pricing**
+
+### What You See
+| Column | Description |
+|--------|-------------|
+| POP Code | Location code (e.g. `LON`) |
+| Datacenter Name | Facility name |
+| City / Country | Location |
+| NRC / MRC | Sales sell price (margin already applied), or **POA** if not priced, or **"Customer must provide X/C"** if customer-owned |
+| Currency | Selected output currency |
+| Mandatory | "Required" badge if the cross-connect is mandatory |
+| Customer-Owned | "Customer Owned" badge if the customer must supply their own cross-connect |
+| Datacenter Notes | Notes from the location's Cross-Connect Info (same field as "Cross Connect Notes" in Manage Locations) |
+
+### Searching
+Type in the search box to filter by:
+- **POP Code** (e.g. `LON`)
+- **Datacenter Name** (e.g. `Equinix LD5`)
+- **Datacenter Notes** (matches notes text, e.g. facility access details)
+
+### Changing Currency
+Use the **Currency** dropdown to convert all prices to a single output currency (uses the same exchange rates as CNX Ethernet Route Finder).
+
+**Note:** To update the underlying cost data, use **Manage Locations → Cross-Connect Info** (requires Provisioner/Administrator access).
 
 ---
 

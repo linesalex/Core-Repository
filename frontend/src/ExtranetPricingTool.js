@@ -18,6 +18,7 @@ import LocationOnIcon from '@mui/icons-material/LocationOn';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import ReceiptIcon from '@mui/icons-material/Receipt';
 import DownloadIcon from '@mui/icons-material/Download';
+import CustomerAutocomplete from './CustomerAutocomplete';
 import InfoIcon from '@mui/icons-material/Info';
 import HistoryIcon from '@mui/icons-material/History';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -70,6 +71,7 @@ const ExtranetPricingTool = () => {
     product_name: '',
     // Member
     customer_name: '',
+    customer_id: null,
     member_primary_city: null,
     member_secondary_city: null,
     member_resiliency: '',
@@ -603,6 +605,7 @@ const ExtranetPricingTool = () => {
         provider_secondary_city: formData.provider_secondary_city?.city_name || null,
         provider_region: formData.provider_region,
         customer_name: formData.customer_name || null,
+        customer_id: formData.customer_id || null,
         member_primary_city: formData.member_primary_city?.city_name,
         member_secondary_city: formData.member_secondary_city?.city_name || null,
         member_resiliency: formData.member_resiliency,
@@ -756,13 +759,15 @@ const ExtranetPricingTool = () => {
 
       // Use customer_name from formData or from the first basket item's snapshot
       const customerName = formData.customer_name || basketItems[0]?.formSnapshot?.customer_name || '';
+      const customerId = formData.customer_id || basketItems[0]?.formSnapshot?.customer_id || null;
 
       const response = await axios.post(`${API_BASE_URL}/extranet-pricing/calculate-bundle`, {
         items,
         contract_term: formData.contract_term,
         currency_requested: formData.currency_requested,
         discount_percent: parseFloat(selectedBundleDiscount) || 0,
-        customer_name: customerName || null
+        customer_name: customerName || null,
+        customer_id: customerId
       }, {
         headers: { 
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
@@ -813,6 +818,7 @@ const ExtranetPricingTool = () => {
         provider_name: item.provider_name || '',
         product_name: item.product_name || '',
         customer_name: bundleLog.customer_name || '',
+        customer_id: bundleLog.customer_id || null,
         member_primary_city: findCity(item.member_primary_city),
         member_secondary_city: item.member_secondary_city ? findCity(item.member_secondary_city) : null,
         member_resiliency: item.member_resiliency || '',
@@ -840,6 +846,7 @@ const ExtranetPricingTool = () => {
     setFormData(prev => ({
       ...prev,
       customer_name: bundleLog.customer_name || prev.customer_name,
+      customer_id: bundleLog.customer_id || prev.customer_id,
       contract_term: bundleLog.contract_term || prev.contract_term,
       currency_requested: bundleLog.currency || prev.currency_requested
     }));
@@ -860,6 +867,7 @@ const ExtranetPricingTool = () => {
       provider_name: '',
       product_name: '',
       customer_name: '',
+      customer_id: null,
       member_primary_city: null,
       member_secondary_city: null,
       member_resiliency: '',
@@ -1252,14 +1260,12 @@ const ExtranetPricingTool = () => {
                   <SectionHeader icon={PersonIcon} title="Member Location & Details" color="secondary" />
                   <Grid container spacing={2}>
                     <Grid item xs={12}>
-                      <TextField
-                        fullWidth
+                      <CustomerAutocomplete
                         size="small"
                         label="Member Customer Name"
                         value={formData.customer_name}
-                        onChange={(e) => handleInputChange('customer_name', e.target.value)}
+                        onChange={(name, customerId) => setFormData(prev => ({ ...prev, customer_name: name, customer_id: customerId }))}
                         disabled={parametersLocked || basketItems.length > 0}
-                        placeholder="Enter customer name"
                         helperText={basketItems.length > 0 ? 'Locked — shared across all basket items' : ''}
                       />
                     </Grid>
@@ -1519,7 +1525,7 @@ const ExtranetPricingTool = () => {
               <TableContainer component={Paper} variant="outlined" sx={{ mb: 3 }}>
                 <Table size="small">
                   <TableHead>
-                    <TableRow sx={{ backgroundColor: 'grey.100' }}>
+                    <TableRow sx={{ backgroundColor: 'action.hover' }}>
                       <TableCell><strong>#</strong></TableCell>
                       <TableCell><strong>Provider</strong></TableCell>
                       <TableCell><strong>Product / ISF</strong></TableCell>
@@ -1771,7 +1777,7 @@ const ExtranetPricingTool = () => {
                           <Typography 
                             variant="h4" 
                             sx={{ 
-                              color: 'warning.dark', 
+                              color: 'warning.main', 
                               fontWeight: 700,
                               fontSize: { xs: '1.5rem', sm: '1.75rem' }
                             }}
@@ -1794,7 +1800,7 @@ const ExtranetPricingTool = () => {
                           sx={{ 
                             fontSize: '0.8125rem', 
                             color: 'text.secondary',
-                            backgroundColor: 'grey.50',
+                            backgroundColor: 'action.hover',
                             borderRadius: 1,
                             p: 1.5
                           }}
@@ -1859,7 +1865,7 @@ const ExtranetPricingTool = () => {
 
                   {/* Terms and Conditions */}
                   <Grid item xs={12}>
-                    <Card variant="outlined" sx={{ backgroundColor: 'grey.50' }}>
+                    <Card variant="outlined" sx={{ backgroundColor: 'action.hover' }}>
                       <CardContent>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                           <InfoIcon color="info" />
@@ -1894,7 +1900,7 @@ const ExtranetPricingTool = () => {
               textAlign: 'center', 
               py: 8,
               px: 3,
-              backgroundColor: 'grey.50'
+              backgroundColor: 'action.hover'
             }}
           >
             <Box
@@ -1905,7 +1911,7 @@ const ExtranetPricingTool = () => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: 'grey.200',
+                backgroundColor: 'action.selected',
                 mx: 'auto',
                 mb: 2
               }}
@@ -2074,7 +2080,7 @@ const ExtranetPricingTool = () => {
             <TableContainer component={Paper}>
               <Table size="small">
                 <TableHead>
-                  <TableRow sx={{ backgroundColor: 'grey.100' }}>
+                  <TableRow sx={{ backgroundColor: 'action.hover' }}>
                     <TableCell sx={{ width: 30 }}></TableCell>
                     <TableCell><strong>Type</strong></TableCell>
                     <TableCell><strong>Timestamp</strong></TableCell>
@@ -2197,12 +2203,27 @@ const ExtranetPricingTool = () => {
                             {/* Expanded bundle items */}
                             {isExpanded && log.items && log.items.map((item, idx) => {
                               const itemBreakdown = canManageLogs ? parseBreakdown(item.calculation_breakdown) : null;
+                              const itemBreakdownKey = `bd-${log.id}-${item.id ?? idx}`;
+                              const isItemBreakdownExpanded = canManageLogs && !!expandedBundles[itemBreakdownKey];
                               return (
                                 <React.Fragment key={`bundle-${log.id}-item-${item.id || idx}`}>
                                   <TableRow 
-                                    sx={{ backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.02) }}
+                                    hover={!!(canManageLogs && itemBreakdown)}
+                                    onClick={canManageLogs && itemBreakdown
+                                      ? () => setExpandedBundles(prev => ({ ...prev, [itemBreakdownKey]: !prev[itemBreakdownKey] }))
+                                      : undefined}
+                                    sx={{
+                                      backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.02),
+                                      cursor: canManageLogs && itemBreakdown ? 'pointer' : 'default'
+                                    }}
                                   >
-                                    <TableCell></TableCell>
+                                    <TableCell sx={{ width: 30, px: 1 }}>
+                                      {canManageLogs && itemBreakdown && (
+                                        <IconButton size="small" sx={{ p: 0 }}>
+                                          {isItemBreakdownExpanded ? <KeyboardArrowDownIcon fontSize="small" /> : <KeyboardArrowRightIcon fontSize="small" />}
+                                        </IconButton>
+                                      )}
+                                    </TableCell>
                                     <TableCell>
                                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                         <Box sx={{ width: 16, borderLeft: '2px solid', borderBottom: '2px solid', borderColor: 'divider', height: 12, ml: 1 }} />
@@ -2257,8 +2278,8 @@ const ExtranetPricingTool = () => {
                                     </TableCell>
                                     <TableCell></TableCell>
                                   </TableRow>
-                                  {/* Admin only: Inline calculation breakdown JSON */}
-                                  {canManageLogs && itemBreakdown && (
+                                  {/* Admin only: Calculation breakdown JSON — manual expand */}
+                                  {isItemBreakdownExpanded && itemBreakdown && (
                                     <TableRow sx={{ backgroundColor: (theme) => alpha(theme.palette.grey[500], 0.06) }}>
                                       <TableCell></TableCell>
                                       <TableCell colSpan={13}>
@@ -2270,9 +2291,9 @@ const ExtranetPricingTool = () => {
                                             component="pre"
                                             sx={{
                                               fontSize: '0.65rem',
-                                              backgroundColor: 'grey.100',
+                                              backgroundColor: 'action.hover',
                                               border: '1px solid',
-                                              borderColor: 'grey.300',
+                                              borderColor: 'divider',
                                               borderRadius: 1,
                                               p: 1.5,
                                               m: 0,
@@ -2400,9 +2421,9 @@ const ExtranetPricingTool = () => {
                                     component="pre"
                                     sx={{
                                       fontSize: '0.65rem',
-                                      backgroundColor: 'grey.100',
+                                      backgroundColor: 'action.hover',
                                       border: '1px solid',
-                                      borderColor: 'grey.300',
+                                      borderColor: 'divider',
                                       borderRadius: 1,
                                       p: 1.5,
                                       m: 0,
