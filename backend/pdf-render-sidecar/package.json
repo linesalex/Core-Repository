@@ -1,0 +1,14 @@
+{
+  "name": "network-inventory-pdf-render-sidecar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone HTML->PDF rendering service (Puppeteer/Chromium) for hosts where Chromium can't run natively, e.g. RHEL 7. Called by backend/pdfRenderClient.js via PDF_RENDER_SIDECAR_URL.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "puppeteer": "^23.11.1"
+  }
+}

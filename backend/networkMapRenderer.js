@@ -3,6 +3,7 @@ const path = require('path');
 const puppeteer = require('puppeteer');
 const { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY } = require('d3-force');
 const { formatBandwidth } = require('./utils/formatBandwidth');
+const { isSidecarConfigured, renderPdfViaSidecar } = require('./pdfRenderClient');
 
 // Fixed, always-on confidentiality label - never configurable from the export dialog.
 const CONFIDENTIALITY_LABEL = 'CONFIDENTIAL - NOT FOR DISTRIBUTION WITHOUT PERMISSION';
@@ -904,10 +905,14 @@ async function generateNetworkMapPdf(nodes, edges, options) {
   const partitionResult = partitionIntoPages(nodes, edges, options.regions);
   const { html, width, height } = renderMultiPageHtml(partitionResult, options);
 
-  // On RHEL 7 (glibc 2.17) the Chrome-for-Testing binary Puppeteer bundles/downloads
-  // requires glibc >=2.27 and will not launch. PUPPETEER_EXECUTABLE_PATH lets ops point
-  // this at an OS-provided, RHEL7-compatible Chromium (e.g. an EPEL7 chromium-headless
-  // RPM) instead - see RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md.
+  // On hosts where Puppeteer's own Chromium can't run natively (e.g. RHEL 7,
+  // glibc 2.17 vs the ~2.27 Chrome-for-Testing needs), delegate the actual
+  // HTML->PDF rendering to a containerized sidecar instead - see
+  // backend/pdf-render-sidecar/ and RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md.
+  if (isSidecarConfigured()) {
+    return renderPdfViaSidecar({ html, width, height });
+  }
+
   const browser = await puppeteer.launch({
     headless: true,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,

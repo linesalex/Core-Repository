@@ -239,16 +239,19 @@ An "Export Network Map" button is now available above the Network Routes table (
 - `backend/networkMapRenderer.js`
 - `backend/utils/formatBandwidth.js`
 - `backend/assets/ipc-logo.png`
+- `backend/pdfRenderClient.js` — HTTP client for the optional PDF-render sidecar
+- `backend/pdf-render-sidecar/` — standalone containerized HTML→PDF renderer (`Dockerfile`, `server.js`, `package.json`) for hosts where Chromium can't run natively
 - `frontend/src/NetworkMapExportDialog.js`
 
 **Files Modified:**
 - `backend/routes.js` — New `/network_routes_export_map` endpoint
-- `backend/package.json` — Added `puppeteer`, `d3-force`
+- `backend/package.json` — Added `puppeteer` (pinned `21.11.0` for Node 16 compatibility), `d3-force`
+- `ecosystem.config.js` — `PDF_RENDER_SIDECAR_URL` on `network-backend` env
 - `frontend/src/SearchExportBar.js` — "Export Network Map" button
 - `frontend/src/App.js` — Dialog wiring, export/download handler
 - `frontend/src/api.js` — `exportNetworkMapPDF()` helper
 
-**🚨 RHEL 7 Production Fix:** The initial `puppeteer@^23.11.1` pin requires Node.js ≥18 (its `puppeteer-core`/`@puppeteer/browsers` deps declare `engines.node >=18`), which throws a `SyntaxError` on the Node 16 runtime `RHEL_PRODUCTION_DEPLOYMENT_V3.3.3.md` mandates for RHEL 7's glibc 2.17. Fixed by pinning `"puppeteer": "21.11.0"` (last release supporting Node ≥16.13.2) and adding `executablePath: process.env.PUPPETEER_EXECUTABLE_PATH` in `networkMapRenderer.js` so production can point at an OS-native, glibc-2.17-compatible Chromium instead of Puppeteer's bundled "Chrome for Testing" (which requires glibc ≥2.27 and won't launch on RHEL 7 regardless of Node version). See `RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md`.
+**🚨 RHEL 7 Production Fix:** The initial `puppeteer@^23.11.1` pin requires Node.js ≥18 (its `puppeteer-core`/`@puppeteer/browsers` deps declare `engines.node >=18`), which throws a `SyntaxError` on the Node 16 runtime `RHEL_PRODUCTION_DEPLOYMENT_V3.3.3.md` mandates for RHEL 7's glibc 2.17. Fixed by pinning `"puppeteer": "21.11.0"` (last release supporting Node ≥16.13.2). Separately, Puppeteer's bundled "Chrome for Testing" binary requires glibc ≥2.27 regardless of npm version and cannot launch on RHEL 7's glibc 2.17 — since this host also has limited/broken yum channels (no subscription, EPEL 7 archive-only), rather than chasing an OS-native Chromium RPM's dependency chain, PDF rendering now delegates to a new containerized sidecar (`backend/pdf-render-sidecar/`, own modern base image) over HTTP via `PDF_RENDER_SIDECAR_URL` (`backend/pdfRenderClient.js`, wired into `backend/networkMapRenderer.js` and `ecosystem.config.js`), falling back to a local Puppeteer launch (optionally via `PUPPETEER_EXECUTABLE_PATH`) when unset. See `RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md`.
 
 ### 🗣️ **Voice - One Directory: Guest Login, Custom Growth %, Bandwidth Calculator & Pricing Log Fixes**
 

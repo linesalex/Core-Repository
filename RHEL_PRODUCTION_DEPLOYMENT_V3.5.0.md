@@ -12,9 +12,9 @@ v3.5.0 added the **Network Routes → PDF Network Map Export** feature (`backend
 
 1. **`puppeteer@23.x` (the version in `package.json` when this feature shipped) requires Node.js ≥18.** This guide still mandates **Node.js 16** for RHEL 7 (see below), so on Node 16 requiring `puppeteer` throws a **`SyntaxError`** the moment the backend loads `networkMapRenderer.js` — this is the "puppeteer-core syntax error on backend load" issue. **Fix:** `backend/package.json` now pins `"puppeteer": "21.11.0"` — the last Puppeteer release whose entire dependency chain (`puppeteer`, `puppeteer-core`, `@puppeteer/browsers`) declares `"engines": { "node": ">=16.13.2" } `, i.e. compatible with the Node 16.20.2 this guide installs. **Re-run `npm install` in `backend/` to pick this up.**
 
-2. **Even with a Node-16-compatible Puppeteer, the Chromium binary it bundles/downloads ("Chrome for Testing") requires glibc ≥2.27.** RHEL 7 ships glibc **2.17**, so the bundled Chromium will fail to launch with an error like `` version `GLIBC_2.27' not found ``. This is unrelated to Node.js and cannot be fixed by any Puppeteer npm version — Chromium itself dropped support for glibc that old. **Fix:** skip the bundled download and point Puppeteer at an OS-provided, RHEL7-compatible headless Chromium via the `PUPPETEER_EXECUTABLE_PATH` environment variable (Step 5b below). `networkMapRenderer.js` already reads this env var.
+2. **Even with a Node-16-compatible Puppeteer, the Chromium binary it bundles/downloads ("Chrome for Testing") requires glibc ≥2.27.** RHEL 7 ships glibc **2.17**, so the bundled Chromium will fail to launch with an error like `` version `GLIBC_2.27' not found ``. This is unrelated to Node.js and cannot be fixed by any Puppeteer npm version — Chromium itself dropped support for glibc that old, and this host's limited yum access (no subscription, EPEL 7 archive-only) makes chasing an OS-native Chromium RPM's dependency chain unreliable. **Fix:** render PDFs via a small containerized sidecar with its own modern base image instead (Step 5c below), reached over HTTP via the `PDF_RENDER_SIDECAR_URL` environment variable. `networkMapRenderer.js` already supports this (falling back to a local Puppeteer launch, optionally via `PUPPETEER_EXECUTABLE_PATH`, when the sidecar isn't configured).
 
-**⚠️ If you skip Step 5b, the backend may start fine but every "Export Network Map" request will fail (or the backend itself may fail to boot, if the Node-version fix above wasn't applied).**
+**⚠️ If you skip Steps 5b/5c, the backend may start fine but every "Export Network Map" request will fail (or the backend itself may fail to boot, if the Node-version fix in Step 5b wasn't applied).**
 
 ### **v3.3.3 Production Requirements (still apply)**
 
@@ -228,46 +228,65 @@ node index.js
 # Press Ctrl+C to stop
 ```
 
-### **🚨🆕 Step 5b: Puppeteer / Chromium Setup for PDF Network Map Export (REQUIRED for v3.5.0)**
-
-The bundled Chromium that `npm install puppeteer` downloads requires glibc ≥2.27 and **will not run on RHEL 7's glibc 2.17**, even though the npm package itself now installs cleanly on Node 16. You must supply an OS-native, RHEL7-compatible headless Chromium and point Puppeteer at it.
+### **🚨🆕 Step 5b: Puppeteer Node-version fix (REQUIRED for v3.5.0)**
 
 ```bash
-# Skip Puppeteer's own Chromium download entirely (avoids downloading a binary
-# that can't run on this OS, and saves ~280MB):
 cd /root/Core-Repository/backend
-PUPPETEER_SKIP_DOWNLOAD=true npm install
 
-# Install an EPEL7/Oracle-Linux "chromium-headless" build patched for glibc 2.17.
-# EPEL7 only published these up to ~chromium 115.x before Chromium's own build
-# toolchain dropped EL7 support entirely - use the newest available <=115.x build:
-sudo yum install -y chromium-headless
-# If chromium-headless isn't in your enabled repos, source a matching RPM from
-# the Oracle Linux EPEL7 developer repo instead, e.g.:
-# sudo yum install -y https://yum.oracle.com/repo/OracleLinux/OL7/developer_EPEL/x86_64/getPackage/chromium-headless-115.0.5735.198-1.el7.x86_64.rpm
+# Force a clean reinstall from the pinned lockfile whenever package.json /
+# package-lock.json / node_modules may be out of sync with the repo (e.g.
+# right after transferring updated files to this server):
+rm -rf node_modules
+PUPPETEER_SKIP_DOWNLOAD=true npm ci
+npm list puppeteer puppeteer-core @puppeteer/browsers
+# Expect: puppeteer@21.11.0, puppeteer-core@21.11.0, @puppeteer/browsers@1.9.1
+# If this still shows a v22+/v23 version, package.json on this server wasn't
+# actually updated - re-copy it from the repo before continuing.
 
-# Find where the binary landed (commonly /usr/lib64/chromium-browser/headless_shell)
-rpm -ql chromium-headless | grep -i headless_shell
-
-# Sanity-check it actually runs on this host BEFORE wiring it into PM2:
-/usr/lib64/chromium-browser/headless_shell --no-sandbox --disable-gpu \
-  --screenshot https://example.com
-# If this errors with "version `GLIBC_2.27' not found" the RPM you installed is
-# still too new for this host - try an older chromium-headless build, or fall
-# back to a container-based approach (see Troubleshooting below).
+node index.js
+# Should start cleanly now with no SyntaxError. Ctrl+C to stop.
 ```
 
-Set `PUPPETEER_EXECUTABLE_PATH` in `ecosystem.config.js` for the backend process (see Step 7) so `backend/networkMapRenderer.js` uses this binary instead of trying to launch the (missing/incompatible) bundled one:
+### **🚨🆕 Step 5c: PDF-render sidecar container (REQUIRED for v3.5.0 PDF Network Map Export)**
 
-```javascript
-env: {
-  NODE_ENV: 'production',
-  PORT: 4000,
-  JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production',
-  ENCRYPTION_KEY: 'your-encryption-key-here',
-  PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell'
-}
+Even with the Node fix above, the Chromium binary Puppeteer bundles/downloads requires glibc ≥2.27, and RHEL 7 only has glibc 2.17 — **no puppeteer npm version fixes this**, since it's the Chromium binary itself that's incompatible, not the Node.js package. This RHEL 7 host also has limited package-channel access (no subscription registered, EPEL 7 is archive-only, some third-party mirrors are dead), so chasing an OS-native `chromium-headless` RPM and its transitive dependencies (`libFLAC`, `libopus`, `libatomic`, ...) tends to cascade indefinitely.
+
+Instead, `backend/pdf-render-sidecar/` is a small standalone rendering service that runs in a container with its **own modern base image** (unaffected by the host's ancient glibc). The main backend calls it over a local HTTP port instead of launching Chromium itself, controlled by the `PDF_RENDER_SIDECAR_URL` env var (already wired into `backend/networkMapRenderer.js` and `ecosystem.config.js`).
+
+```bash
+# 1. Install Docker CE (last release line still packaged for EL7)
+sudo yum install -y yum-utils
+sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+sudo yum install -y docker-ce docker-ce-cli containerd.io
+sudo systemctl enable --now docker
+docker --version
+
+# 2. Build the sidecar image (pulls ghcr.io/puppeteer/puppeteer, which already
+#    bundles a working Chromium + all its shared-library dependencies - nothing
+#    to resolve against this host's yum repos)
+cd /root/Core-Repository/backend/pdf-render-sidecar
+docker build -t network-inventory-pdf-sidecar .
+
+# 3. Run it, bound to localhost only (never expose this port externally)
+docker run -d --name pdf-sidecar --restart unless-stopped \
+  -p 127.0.0.1:5051:5051 \
+  network-inventory-pdf-sidecar
+
+# 4. Verify it's up
+curl http://127.0.0.1:5051/health
+# Should return: {"status":"ok"}
 ```
+
+`ecosystem.config.js` already sets `PDF_RENDER_SIDECAR_URL: 'http://127.0.0.1:5051'` on `network-backend`'s env — restart PM2 to pick it up:
+
+```bash
+cd /root/Core-Repository
+pm2 restart network-backend
+```
+
+`--restart unless-stopped` makes Docker itself bring the container back up after a reboot (as long as the `docker` service is enabled, which Step 1 above already did via `systemctl enable`) — no separate systemd unit needed.
+
+**Alternative (not recommended unless Docker is unavailable):** it's still possible to install an OS-native `chromium-headless` RPM from EPEL and set `PUPPETEER_EXECUTABLE_PATH` instead of `PDF_RENDER_SIDECAR_URL` — `networkMapRenderer.js` supports both. In practice this tends to hit missing `libFLAC.so.8` / `libopus.so.0` (normally from RPMFusion, since EPEL avoids codec libs) and `libatomic.so.1` (normally from RHEL's subscription-gated "optional" channel) with no guarantee it stops there, which is why the container approach above is the primary path in this guide.
 
 ---
 
@@ -428,10 +447,11 @@ module.exports = {
         PORT: 4000,
         JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production',
         ENCRYPTION_KEY: 'your-encryption-key-here',
-        // v3.5.0: RHEL7-compatible headless Chromium for PDF Network Map Export
-        // (see Step 5b). Bundled Chrome-for-Testing needs glibc >=2.27 and will
-        // not launch on RHEL 7 - this MUST point at an OS-native binary instead.
-        PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell'
+        // v3.5.0: PDF Network Map Export renders via the containerized sidecar
+        // from Step 5c instead of launching Chromium natively (RHEL 7's glibc
+        // 2.17 can't run the Chrome build Puppeteer needs). Leave unset to fall
+        // back to a local Puppeteer launch (e.g. non-RHEL7 hosts).
+        PDF_RENDER_SIDECAR_URL: 'http://127.0.0.1:5051'
       },
       max_memory_restart: '1G',
       min_uptime: '10s',
@@ -478,8 +498,8 @@ EOF
 # Replace YOUR_SERVER_IP with actual IP
 sed -i 's/YOUR_SERVER_IP/172.30.252.118/g' ecosystem.config.js
 
-# If your chromium-headless binary landed somewhere else, update
-# PUPPETEER_EXECUTABLE_PATH above to match (see Step 5b).
+# PDF_RENDER_SIDECAR_URL above assumes the sidecar container from Step 5c is
+# running and bound to 127.0.0.1:5051 - update if you used a different port.
 ```
 
 **❌ WRONG (development server - will crash):**
@@ -564,15 +584,19 @@ curl http://localhost:4000/health
 
 ### **Test PDF Network Map Export (v3.5.0)**
 ```bash
+# Confirm the sidecar container is up first:
+docker ps --filter name=pdf-sidecar
+curl http://127.0.0.1:5051/health
+# Should return: {"status":"ok"}
+
 # From the frontend, log in and go to Network Routes Repository, then click
 # "Export Network Map" for any region. If it fails, check:
 pm2 logs network-backend --err --lines 50
-# "version `GLIBC_2.27' not found" -> chromium-headless binary is still too
-#   new for this host's glibc; try an older EPEL7 build (see Step 5b)
-# "Failed to launch the browser process" / "No usable sandbox" -> confirm
-#   PUPPETEER_EXECUTABLE_PATH in ecosystem.config.js points at a real,
-#   executable file, and that '--no-sandbox' is present in the launch args
-#   (already set in backend/networkMapRenderer.js)
+docker logs pdf-sidecar --tail 50
+# ECONNREFUSED to 127.0.0.1:5051 -> sidecar container isn't running; `docker ps`
+#   and `docker start pdf-sidecar` / re-run Step 5c
+# Timeout -> a very large export (many pages) may need PDF_RENDER_SIDECAR_TIMEOUT_MS
+#   raised in ecosystem.config.js (default 120000ms)
 ```
 
 ### **Test Frontend**
@@ -623,9 +647,21 @@ pm2 restart network-backend
 
 **Problem:** The backend starts fine, but "Export Network Map" fails, and `pm2 logs network-backend --err` shows a glibc version error referencing `libm.so.6` / `libc.so.6` and Chromium/`headless_shell`.
 
-**Cause:** Puppeteer's bundled "Chrome for Testing" binary requires glibc ≥2.27. RHEL 7 only has glibc 2.17 — no Puppeteer npm version fixes this, since it's the Chromium binary itself, not the Node.js package, that's incompatible.
+**Cause:** Puppeteer's bundled "Chrome for Testing" binary requires glibc ≥2.27. RHEL 7 only has glibc 2.17 — no Puppeteer npm version fixes this, since it's the Chromium binary itself, not the Node.js package, that's incompatible. This almost always means `PDF_RENDER_SIDECAR_URL` isn't set (or the sidecar container isn't running), so `networkMapRenderer.js` fell back to launching a local Puppeteer browser.
 
-**Solution:** Install an EPEL7/Oracle-Linux `chromium-headless` build (patched for glibc 2.17) and point Puppeteer at it via `PUPPETEER_EXECUTABLE_PATH` — see **Step 5b**. If no compatible RPM build can be sourced for your exact RHEL 7 minor version, run the PDF export path in a small containerized side-service (modern base image with its own glibc) instead of natively on the RHEL 7 host, and have the backend call that service over HTTP.
+**Solution:**
+```bash
+# Confirm the sidecar is actually running:
+docker ps --filter name=pdf-sidecar
+curl http://127.0.0.1:5051/health
+
+# Confirm ecosystem.config.js has the URL set for network-backend:
+grep -A1 PDF_RENDER_SIDECAR_URL /root/Core-Repository/ecosystem.config.js
+
+# If either is missing, redo Step 5c, then:
+pm2 restart network-backend
+```
+See **Step 5c** for the full container setup. Chasing an OS-native `chromium-headless` RPM instead is possible but not recommended on this host — see the "Alternative" note in Step 5c.
 
 ### **🚨 Frontend Crashes with "heap out of memory"**
 
@@ -886,8 +922,9 @@ pm2 save
 - [ ] Backend dependencies installed
 - [ ] `backend/package.json` has `"puppeteer": "21.11.0"` (NOT ^23.x/latest)
 - [ ] `PUPPETEER_SKIP_DOWNLOAD=true` used so no incompatible bundled Chromium was downloaded
-- [ ] RHEL7-compatible `chromium-headless` (or equivalent) installed and manually test-launched
-- [ ] `PUPPETEER_EXECUTABLE_PATH` set in `ecosystem.config.js` backend env, pointing at that binary
+- [ ] Docker CE installed and enabled (`systemctl enable --now docker`)
+- [ ] `pdf-render-sidecar` image built and running (`docker ps` shows `pdf-sidecar`, `curl http://127.0.0.1:5051/health` returns ok)
+- [ ] `PDF_RENDER_SIDECAR_URL` set in `ecosystem.config.js` backend env
 - [ ] Backend logs show no `SyntaxError` referencing puppeteer/puppeteer-core
 - [ ] "Export Network Map" produces a downloadable PDF (not a 500 error)
 - [ ] Frontend dependencies installed
@@ -918,7 +955,7 @@ If all checks pass, your Network Inventory v3.5.0 is successfully deployed!
 
 **Key Differences from v3.3.3:**
 1. ✅ `backend/package.json` pins `puppeteer@21.11.0` for Node 16 compatibility (newer Puppeteer requires Node 18+)
-2. ✅ RHEL7-compatible `chromium-headless` binary installed and wired up via `PUPPETEER_EXECUTABLE_PATH` (bundled Chrome-for-Testing needs glibc ≥2.27, RHEL 7 has 2.17)
+2. ✅ PDF Network Map Export renders via a Docker-based `pdf-render-sidecar` container (own modern glibc) called over `PDF_RENDER_SIDECAR_URL`, instead of launching Chromium natively (bundled Chrome-for-Testing needs glibc ≥2.27, RHEL 7 has 2.17)
 3. ✅ Everything else (Node 16, SQLite3 5.0.2, bcryptjs, Cesium, production frontend build, `serve`/PM2) is unchanged from v3.3.3
 
 **Next Steps:**
