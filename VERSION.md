@@ -248,6 +248,8 @@ An "Export Network Map" button is now available above the Network Routes table (
 - `frontend/src/App.js` — Dialog wiring, export/download handler
 - `frontend/src/api.js` — `exportNetworkMapPDF()` helper
 
+**🚨 RHEL 7 Production Fix:** The initial `puppeteer@^23.11.1` pin requires Node.js ≥18 (its `puppeteer-core`/`@puppeteer/browsers` deps declare `engines.node >=18`), which throws a `SyntaxError` on the Node 16 runtime `RHEL_PRODUCTION_DEPLOYMENT_V3.3.3.md` mandates for RHEL 7's glibc 2.17. Fixed by pinning `"puppeteer": "21.11.0"` (last release supporting Node ≥16.13.2) and adding `executablePath: process.env.PUPPETEER_EXECUTABLE_PATH` in `networkMapRenderer.js` so production can point at an OS-native, glibc-2.17-compatible Chromium instead of Puppeteer's bundled "Chrome for Testing" (which requires glibc ≥2.27 and won't launch on RHEL 7 regardless of Node version). See `RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md`.
+
 ### 🗣️ **Voice - One Directory: Guest Login, Custom Growth %, Bandwidth Calculator & Pricing Log Fixes**
 
 A no-credential "Voice Guest" login, a per-quote Growth % override, a standalone Bandwidth Calculator tab, and fixes to bundle discount reconciliation and historical CSV export in Pricing Logs.

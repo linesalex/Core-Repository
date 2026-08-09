@@ -904,8 +904,13 @@ async function generateNetworkMapPdf(nodes, edges, options) {
   const partitionResult = partitionIntoPages(nodes, edges, options.regions);
   const { html, width, height } = renderMultiPageHtml(partitionResult, options);
 
+  // On RHEL 7 (glibc 2.17) the Chrome-for-Testing binary Puppeteer bundles/downloads
+  // requires glibc >=2.27 and will not launch. PUPPETEER_EXECUTABLE_PATH lets ops point
+  // this at an OS-provided, RHEL7-compatible Chromium (e.g. an EPEL7 chromium-headless
+  // RPM) instead - see RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md.
   const browser = await puppeteer.launch({
     headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
   try {

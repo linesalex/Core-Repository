@@ -1,14 +1,22 @@
-# Network Inventory v3.3.3 - RHEL 7 Production Deployment Guide
+# Network Inventory v3.5.0 - RHEL 7 Production Deployment Guide
 
-> **⚠️ SUPERSEDED** - See `RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md` for current deployments. v3.5.0 added a `puppeteer` backend dependency (PDF Network Map Export) that requires additional RHEL 7 setup (Node-16-compatible Puppeteer pin + a glibc-compatible Chromium binary) not covered here.
-
-**✅ Updated for v3.3.3** - Includes production build fixes, Cesium setup, and memory optimization
+**✅ Updated for v3.5.0** - Supersedes `RHEL_PRODUCTION_DEPLOYMENT_V3.3.3.md`. Adds the Puppeteer/Chromium compatibility fix required for the new PDF Network Map Export feature; all other v3.3.3 guidance (Node 16, SQLite3, bcryptjs, Cesium, production frontend build, `serve`/PM2 setup) still applies unchanged.
 
 ---
 
 ## 🚨 **CRITICAL - Read This First**
 
-### **v3.3.3 Production Requirements**
+### **v3.5.0 New Production Requirement: Puppeteer / Chromium on RHEL 7**
+
+v3.5.0 added the **Network Routes → PDF Network Map Export** feature (`backend/networkMapRenderer.js`), which added a new backend dependency: **`puppeteer`**. This introduces **two separate RHEL-7-specific problems** that v3.3.3's guide never had to deal with:
+
+1. **`puppeteer@23.x` (the version in `package.json` when this feature shipped) requires Node.js ≥18.** This guide still mandates **Node.js 16** for RHEL 7 (see below), so on Node 16 requiring `puppeteer` throws a **`SyntaxError`** the moment the backend loads `networkMapRenderer.js` — this is the "puppeteer-core syntax error on backend load" issue. **Fix:** `backend/package.json` now pins `"puppeteer": "21.11.0"` — the last Puppeteer release whose entire dependency chain (`puppeteer`, `puppeteer-core`, `@puppeteer/browsers`) declares `"engines": { "node": ">=16.13.2" } `, i.e. compatible with the Node 16.20.2 this guide installs. **Re-run `npm install` in `backend/` to pick this up.**
+
+2. **Even with a Node-16-compatible Puppeteer, the Chromium binary it bundles/downloads ("Chrome for Testing") requires glibc ≥2.27.** RHEL 7 ships glibc **2.17**, so the bundled Chromium will fail to launch with an error like `` version `GLIBC_2.27' not found ``. This is unrelated to Node.js and cannot be fixed by any Puppeteer npm version — Chromium itself dropped support for glibc that old. **Fix:** skip the bundled download and point Puppeteer at an OS-provided, RHEL7-compatible headless Chromium via the `PUPPETEER_EXECUTABLE_PATH` environment variable (Step 5b below). `networkMapRenderer.js` already reads this env var.
+
+**⚠️ If you skip Step 5b, the backend may start fine but every "Export Network Map" request will fail (or the backend itself may fail to boot, if the Node-version fix above wasn't applied).**
+
+### **v3.3.3 Production Requirements (still apply)**
 
 Version 3.3.3 introduced Cesium.js for the KMZ 3D Globe Viewer, which requires:
 
@@ -84,7 +92,7 @@ make --version
 
 ### **⚠️ Use Node.js 16 (RHEL 7 Compatible)**
 
-Node.js 18+ will NOT work on RHEL 7 due to glibc requirements.
+Node.js 18+ will NOT work on RHEL 7 due to glibc requirements — this is exactly why the v3.5.0 Puppeteer dependency had to be pinned back to a Node-16-compatible release instead of upgrading Node itself.
 
 ```bash
 # Download Node.js 16 LTS
@@ -121,12 +129,12 @@ if [ -d "Core-Repository" ]; then
     mv Core-Repository Core-Repository.backup.$(date +%Y%m%d)
 fi
 
-# Download v3.3.3
-wget https://github.com/YOUR_USERNAME/YOUR_REPO/archive/refs/heads/v3.3.3.zip -O Core-Repository.zip
+# Download v3.5.0
+wget https://github.com/YOUR_USERNAME/YOUR_REPO/archive/refs/heads/v3.5.0.zip -O Core-Repository.zip
 
 # Unzip
 unzip Core-Repository.zip
-mv YOUR_REPO-v3.3.3 Core-Repository
+mv YOUR_REPO-v3.5.0 Core-Repository
 
 cd Core-Repository
 
@@ -194,6 +202,9 @@ grep "bcryptjs" auth.js
 cd /root/Core-Repository/backend
 
 # Install dependencies
+# NOTE: package.json pins "puppeteer": "21.11.0" (Node 16-compatible).
+# Do NOT `npm install puppeteer@latest` - later majors require Node 18+ and
+# will reintroduce the syntax error on this server.
 npm install
 
 # If npm install fails:
@@ -217,13 +228,54 @@ node index.js
 # Press Ctrl+C to stop
 ```
 
+### **🚨🆕 Step 5b: Puppeteer / Chromium Setup for PDF Network Map Export (REQUIRED for v3.5.0)**
+
+The bundled Chromium that `npm install puppeteer` downloads requires glibc ≥2.27 and **will not run on RHEL 7's glibc 2.17**, even though the npm package itself now installs cleanly on Node 16. You must supply an OS-native, RHEL7-compatible headless Chromium and point Puppeteer at it.
+
+```bash
+# Skip Puppeteer's own Chromium download entirely (avoids downloading a binary
+# that can't run on this OS, and saves ~280MB):
+cd /root/Core-Repository/backend
+PUPPETEER_SKIP_DOWNLOAD=true npm install
+
+# Install an EPEL7/Oracle-Linux "chromium-headless" build patched for glibc 2.17.
+# EPEL7 only published these up to ~chromium 115.x before Chromium's own build
+# toolchain dropped EL7 support entirely - use the newest available <=115.x build:
+sudo yum install -y chromium-headless
+# If chromium-headless isn't in your enabled repos, source a matching RPM from
+# the Oracle Linux EPEL7 developer repo instead, e.g.:
+# sudo yum install -y https://yum.oracle.com/repo/OracleLinux/OL7/developer_EPEL/x86_64/getPackage/chromium-headless-115.0.5735.198-1.el7.x86_64.rpm
+
+# Find where the binary landed (commonly /usr/lib64/chromium-browser/headless_shell)
+rpm -ql chromium-headless | grep -i headless_shell
+
+# Sanity-check it actually runs on this host BEFORE wiring it into PM2:
+/usr/lib64/chromium-browser/headless_shell --no-sandbox --disable-gpu \
+  --screenshot https://example.com
+# If this errors with "version `GLIBC_2.27' not found" the RPM you installed is
+# still too new for this host - try an older chromium-headless build, or fall
+# back to a container-based approach (see Troubleshooting below).
+```
+
+Set `PUPPETEER_EXECUTABLE_PATH` in `ecosystem.config.js` for the backend process (see Step 7) so `backend/networkMapRenderer.js` uses this binary instead of trying to launch the (missing/incompatible) bundled one:
+
+```javascript
+env: {
+  NODE_ENV: 'production',
+  PORT: 4000,
+  JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production',
+  ENCRYPTION_KEY: 'your-encryption-key-here',
+  PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell'
+}
+```
+
 ---
 
 ## 🌐 **Step 6: Frontend Setup (PRODUCTION BUILD)**
 
 ### **⚠️ CRITICAL: This is Different from v3.3.2**
 
-v3.3.3 **MUST** use production builds. The development server will crash.
+v3.3.3+ **MUST** use production builds. The development server will crash.
 
 ```bash
 cd /root/Core-Repository/frontend
@@ -263,7 +315,7 @@ du -sh public/cesium/
 
 ### **🏗️ Build Production Frontend (REQUIRED)**
 
-**⚠️ This step is NEW for v3.3.3 and is CRITICAL**
+**⚠️ This step is CRITICAL**
 
 ```bash
 cd /root/Core-Repository/frontend
@@ -286,7 +338,7 @@ ls -lh build/index.html
 unset NODE_OPTIONS
 ```
 
-### **📄 Create serve.json Configuration (REQUIRED for v3.3.3)**
+### **📄 Create serve.json Configuration (REQUIRED)**
 
 **⚠️ This file is CRITICAL - without it, you'll see directory listings instead of the app**
 
@@ -350,11 +402,9 @@ serve -p 3000
 
 ---
 
-## 🚀 **Step 7: Configure PM2 (Updated for v3.3.3)**
+## 🚀 **Step 7: Configure PM2 (Updated for v3.5.0)**
 
-### **⚠️ ecosystem.config.js Changes**
-
-Your `ecosystem.config.js` should look like this for v3.3.3:
+### **✅ Correct ecosystem.config.js for v3.5.0**
 
 ```bash
 cd /root/Core-Repository
@@ -364,34 +414,6 @@ if [ -f ecosystem.config.js ]; then
     cp ecosystem.config.js ecosystem.config.js.backup
 fi
 
-# Verify your ecosystem.config.js has the correct frontend configuration
-cat ecosystem.config.js
-```
-
-**The frontend section MUST have:**
-```javascript
-{
-  name: 'network-frontend',
-  cwd: './frontend',
-  script: 'npx',  // ← Uses npx to run serve
-  args: ['serve', '-p', '3000', '--no-clipboard'],  // ← Serves production build
-  // ... other settings
-}
-```
-
-**❌ WRONG (v3.3.2 and earlier - will crash):**
-```javascript
-{
-  script: 'npm',
-  args: 'start',  // ← Development server, crashes with v3.3.3
-}
-```
-
-### **✅ Correct ecosystem.config.js for v3.3.3**
-
-If your file doesn't match, here's the complete correct version:
-
-```bash
 cat > ecosystem.config.js << 'EOF'
 module.exports = {
   apps: [
@@ -405,7 +427,11 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 4000,
         JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production',
-        ENCRYPTION_KEY: 'your-encryption-key-here'
+        ENCRYPTION_KEY: 'your-encryption-key-here',
+        // v3.5.0: RHEL7-compatible headless Chromium for PDF Network Map Export
+        // (see Step 5b). Bundled Chrome-for-Testing needs glibc >=2.27 and will
+        // not launch on RHEL 7 - this MUST point at an OS-native binary instead.
+        PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell'
       },
       max_memory_restart: '1G',
       min_uptime: '10s',
@@ -451,6 +477,17 @@ EOF
 
 # Replace YOUR_SERVER_IP with actual IP
 sed -i 's/YOUR_SERVER_IP/172.30.252.118/g' ecosystem.config.js
+
+# If your chromium-headless binary landed somewhere else, update
+# PUPPETEER_EXECUTABLE_PATH above to match (see Step 5b).
+```
+
+**❌ WRONG (development server - will crash):**
+```javascript
+{
+  script: 'npm',
+  args: 'start',
+}
 ```
 
 ---
@@ -503,6 +540,10 @@ pm2 list
 
 ### **Check Logs**
 ```bash
+# View backend logs
+pm2 logs network-backend --lines 30
+# Should NOT see: "SyntaxError" from puppeteer/puppeteer-core
+
 # View frontend logs
 pm2 logs network-frontend --lines 30
 
@@ -519,6 +560,19 @@ pm2 logs network-frontend --lines 30
 ```bash
 curl http://localhost:4000/health
 # Should return: {"status":"ok"}
+```
+
+### **Test PDF Network Map Export (v3.5.0)**
+```bash
+# From the frontend, log in and go to Network Routes Repository, then click
+# "Export Network Map" for any region. If it fails, check:
+pm2 logs network-backend --err --lines 50
+# "version `GLIBC_2.27' not found" -> chromium-headless binary is still too
+#   new for this host's glibc; try an older EPEL7 build (see Step 5b)
+# "Failed to launch the browser process" / "No usable sandbox" -> confirm
+#   PUPPETEER_EXECUTABLE_PATH in ecosystem.config.js points at a real,
+#   executable file, and that '--no-sandbox' is present in the launch args
+#   (already set in backend/networkMapRenderer.js)
 ```
 
 ### **Test Frontend**
@@ -543,6 +597,35 @@ curl http://localhost:3000/ | head -20
 ---
 
 ## 🛠️ **Troubleshooting**
+
+### **🚨🆕 "SyntaxError" When Backend Loads (`puppeteer`/`puppeteer-core`)**
+
+**Problem:** `pm2 logs network-backend` shows a `SyntaxError` pointing into `node_modules/puppeteer-core` or `node_modules/@puppeteer/browsers`, right after startup (often as soon as any route requiring `networkMapRenderer.js` is hit, or immediately if it's required eagerly).
+
+**Cause:** `puppeteer` was installed at a version (v22+, e.g. the `^23.11.1` that originally shipped with the PDF Network Map Export feature) whose dependency chain requires **Node.js ≥18**. This RHEL 7 server runs Node 16 (required because of glibc 2.17), and Node 16's V8 cannot parse syntax used by newer Puppeteer releases.
+
+**Solution:**
+```bash
+cd /root/Core-Repository/backend
+
+# Confirm the pinned version in package.json
+grep '"puppeteer"' package.json
+# Should show: "puppeteer": "21.11.0"   (NOT ^23.x or "latest")
+
+# If it shows a newer version, fix it and reinstall:
+npm install puppeteer@21.11.0 puppeteer-core@21.11.0 --save-exact
+node --version  # confirm still 16.x
+
+pm2 restart network-backend
+```
+
+### **🚨🆕 PDF Export Fails: `version 'GLIBC_2.27' not found`**
+
+**Problem:** The backend starts fine, but "Export Network Map" fails, and `pm2 logs network-backend --err` shows a glibc version error referencing `libm.so.6` / `libc.so.6` and Chromium/`headless_shell`.
+
+**Cause:** Puppeteer's bundled "Chrome for Testing" binary requires glibc ≥2.27. RHEL 7 only has glibc 2.17 — no Puppeteer npm version fixes this, since it's the Chromium binary itself, not the Node.js package, that's incompatible.
+
+**Solution:** Install an EPEL7/Oracle-Linux `chromium-headless` build (patched for glibc 2.17) and point Puppeteer at it via `PUPPETEER_EXECUTABLE_PATH` — see **Step 5b**. If no compatible RPM build can be sourced for your exact RHEL 7 minor version, run the PDF export path in a small containerized side-service (modern base image with its own glibc) instead of natively on the RHEL 7 host, and have the backend call that service over HTTP.
 
 ### **🚨 Frontend Crashes with "heap out of memory"**
 
@@ -671,6 +754,8 @@ pm2 logs network-frontend --err --lines 50
 # 2. Wrong node version → Check: node --version (should be 16.x)
 # 3. Missing dependencies → Run: cd frontend && npm install
 # 4. Port conflict → Check: netstat -tulpn | grep 3000
+# 5. (Backend) puppeteer SyntaxError / GLIBC error → see the two new
+#    troubleshooting entries above
 ```
 
 ### **🚨 Build Process Fails with Memory Error**
@@ -703,7 +788,7 @@ unset NODE_OPTIONS
 - CPU: High (constant compilation)
 - Status: Unstable, restart loops
 
-### **v3.3.3 (Production Build)**
+### **v3.3.3+ (Production Build)**
 - Frontend memory: ~50MB (95% reduction!)
 - Startup time: <1 second
 - CPU: Minimal
@@ -782,6 +867,10 @@ cp Core-Repository.backup.*/network_routes.db Core-Repository/
 cd Core-Repository/frontend
 npm run build
 
+# Re-check backend puppeteer pin didn't get bumped by a fresh npm install
+cd ../backend
+grep '"puppeteer"' package.json   # must stay 21.11.0 on this host
+
 # Restart
 pm2 start ecosystem.config.js --env production
 pm2 save
@@ -795,6 +884,12 @@ pm2 save
 - [ ] SQLite3 5.0.2 installed
 - [ ] bcryptjs (not bcrypt) installed
 - [ ] Backend dependencies installed
+- [ ] `backend/package.json` has `"puppeteer": "21.11.0"` (NOT ^23.x/latest)
+- [ ] `PUPPETEER_SKIP_DOWNLOAD=true` used so no incompatible bundled Chromium was downloaded
+- [ ] RHEL7-compatible `chromium-headless` (or equivalent) installed and manually test-launched
+- [ ] `PUPPETEER_EXECUTABLE_PATH` set in `ecosystem.config.js` backend env, pointing at that binary
+- [ ] Backend logs show no `SyntaxError` referencing puppeteer/puppeteer-core
+- [ ] "Export Network Map" produces a downloadable PDF (not a 500 error)
 - [ ] Frontend dependencies installed
 - [ ] Cesium assets copied to `frontend/public/cesium/` (~387 files, 20-50MB)
 - [ ] `frontend/serve.json` configuration file created
@@ -814,20 +909,17 @@ pm2 save
 
 ## 🎉 **Deployment Complete!**
 
-If all checks pass, your Network Inventory v3.3.3 is successfully deployed!
+If all checks pass, your Network Inventory v3.5.0 is successfully deployed!
 
 **Access your application:**
 - Frontend: `http://YOUR_SERVER_IP:3000`
 - Backend API: `http://YOUR_SERVER_IP:4000`
 - Default login: `admin` / `admin123`
 
-**Key Differences from v3.3.2:**
-1. ✅ Production build required (not `npm start`)
-2. ✅ `serve.json` configuration file
-3. ✅ Updated `ecosystem.config.js` using `npx serve`
-4. ✅ 95% less memory usage
-5. ✅ Instant startup (not 60+ seconds)
-6. ✅ Stable operation (no crashes)
+**Key Differences from v3.3.3:**
+1. ✅ `backend/package.json` pins `puppeteer@21.11.0` for Node 16 compatibility (newer Puppeteer requires Node 18+)
+2. ✅ RHEL7-compatible `chromium-headless` binary installed and wired up via `PUPPETEER_EXECUTABLE_PATH` (bundled Chrome-for-Testing needs glibc ≥2.27, RHEL 7 has 2.17)
+3. ✅ Everything else (Node 16, SQLite3 5.0.2, bcryptjs, Cesium, production frontend build, `serve`/PM2) is unchanged from v3.3.3
 
 **Next Steps:**
 - Change default admin password
@@ -838,7 +930,7 @@ If all checks pass, your Network Inventory v3.3.3 is successfully deployed!
 
 ---
 
-**Documentation Version:** v3.3.3  
-**Last Updated:** November 16, 2024  
+**Documentation Version:** v3.5.0
+**Last Updated:** August 9, 2026
 **Tested On:** RHEL 7.9, Node.js 16.20.2
-
+**Supersedes:** `RHEL_PRODUCTION_DEPLOYMENT_V3.3.3.md`
