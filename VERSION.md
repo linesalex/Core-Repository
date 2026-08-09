@@ -245,13 +245,23 @@ An "Export Network Map" button is now available above the Network Routes table (
 
 **Files Modified:**
 - `backend/routes.js` — New `/network_routes_export_map` endpoint
-- `backend/package.json` — Added `puppeteer` (pinned `21.11.0` for Node 16 compatibility), `d3-force`
+- `backend/package.json` — Added `d3-force`; `puppeteer` pinned `21.11.0` and moved to `optionalDependencies`; `bcrypt` → `bcryptjs`
+- `backend/networkMapRenderer.js` — `puppeteer` loaded lazily via `loadPuppeteer()`, never at module scope
+- `backend/pdfRenderClient.js` — `PDF_RENDER_SIDECAR_TOKEN` support, readable sidecar error messages
+- `backend/auth.js`, `backend/migrations/045_add_voice_guest_account.js` — `bcrypt` → `bcryptjs`
 - `ecosystem.config.js` — `PDF_RENDER_SIDECAR_URL` on `network-backend` env
 - `frontend/src/SearchExportBar.js` — "Export Network Map" button
 - `frontend/src/App.js` — Dialog wiring, export/download handler
 - `frontend/src/api.js` — `exportNetworkMapPDF()` helper
 
 **🚨 RHEL 7 Production Fix:** The initial `puppeteer@^23.11.1` pin requires Node.js ≥18 (its `puppeteer-core`/`@puppeteer/browsers` deps declare `engines.node >=18`), which throws a `SyntaxError` on the Node 16 runtime `RHEL_PRODUCTION_DEPLOYMENT_V3.3.3.md` mandates for RHEL 7's glibc 2.17. Fixed by pinning `"puppeteer": "21.11.0"` (last release supporting Node ≥16.13.2). Separately, Puppeteer's bundled "Chrome for Testing" binary requires glibc ≥2.27 regardless of npm version and cannot launch on RHEL 7's glibc 2.17 — since this host also has limited/broken yum channels (no subscription, EPEL 7 archive-only), rather than chasing an OS-native Chromium RPM's dependency chain, PDF rendering now delegates to a new containerized sidecar (`backend/pdf-render-sidecar/`, own modern base image) over HTTP via `PDF_RENDER_SIDECAR_URL` (`backend/pdfRenderClient.js`, wired into `backend/networkMapRenderer.js` and `ecosystem.config.js`), falling back to a local Puppeteer launch (optionally via `PUPPETEER_EXECUTABLE_PATH`) when unset. See `RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md`.
+
+**🚨 RHEL 7 Production Fix (round 2 — actual host state):** Deployment revealed the production host was **not** on the Node 16 the v3.3.3 guide mandates; it runs **Node 14.21.3 / npm 6.14.18**, so `puppeteer@21.11.0` still crashed the entire backend on boot (`SyntaxError: Unexpected token '??='` — logical assignment needs Node ≥15), and `npm ci` failed outright (`Cannot read property 'adm-zip' of undefined`) because npm 6 cannot read `lockfileVersion: 3`. Three hardening changes so one export feature can never take the app down again:
+- **`puppeteer` is now lazily loaded** inside `loadPuppeteer()` in `networkMapRenderer.js` and declared an `optionalDependency`. The backend boots even when puppeteer is absent or unloadable; only the export path throws, with an actionable message pointing at `PDF_RENDER_SIDECAR_URL`. RHEL 7 can now install with `npm ci --no-optional` and skip a ~300MB package whose Chromium can never run there.
+- **`bcrypt` → `bcryptjs` repo-wide.** `bcrypt@6.0.0` requires Node ≥18 *and* compiles natively (`make: g++: Command not found` — the host has no `gcc-c++`). The old guide patched only `auth.js` with `sed`, missing `migrations/045_add_voice_guest_account.js`, which would have failed at runtime. `bcryptjs` verifies existing `$2b$` hashes, so **stored passwords and logins are unaffected**.
+- **`package-lock.json` regenerated as `lockfileVersion: 2`**, which npm 6 *and* npm 8+ can both read, so `npm ci` works before and after the Node upgrade.
+
+Docker CE also cannot install on this host (`container-selinux >= 2:2.74`, `fuse-overlayfs >= 0.7`, `slirp4netns >= 0.4` live in the RHEL 7 extras channel, and the system is unregistered), so the sidecar may be run on any other Docker/Node ≥18 host with `PDF_RENDER_SIDECAR_URL` pointed at it — optionally secured with the new `PDF_RENDER_SIDECAR_TOKEN` / `SIDECAR_AUTH_TOKEN` pair. `RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md` was fully rewritten against the real host state, including the Node 14 → 16.20.2 upgrade (Node 18+ is impossible on RHEL 7: it requires glibc ≥2.28, having moved its build host to RHEL 8).
 
 ### 🗣️ **Voice - One Directory: Guest Login, Custom Growth %, Bandwidth Calculator & Pricing Log Fixes**
 

@@ -5,7 +5,7 @@
 // all normal read_only restrictions/behaviour apply automatically.
 
 const db = require('../db');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
 const VOICE_GUEST_USERNAME = 'voice_guest';

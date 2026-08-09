@@ -11,11 +11,14 @@ module.exports = {
         PORT: 4000,
         JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production',
         ENCRYPTION_KEY: 'hidden',
-        // v3.5.0: PDF Network Map Export renders via a containerized sidecar
-        // instead of launching Chromium natively (RHEL 7's glibc 2.17 can't run
-        // the Chrome build Puppeteer needs). See backend/pdf-render-sidecar/ and
-        // RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md. Leave unset to fall back to a
-        // local Puppeteer launch (e.g. non-RHEL7 hosts).
+        // v3.5.0: PDF Network Map Export renders via the sidecar in
+        // backend/pdf-render-sidecar/ instead of launching Chromium natively
+        // (RHEL 7's glibc 2.17 can't run the Chrome build Puppeteer needs). The
+        // sidecar may run on any host reachable from here - use its IP instead of
+        // 127.0.0.1 when it lives elsewhere. Add PDF_RENDER_SIDECAR_TOKEN here to
+        // match the sidecar's SIDECAR_AUTH_TOKEN. Leave unset to fall back to a
+        // local Puppeteer launch, or to disable export entirely on hosts that
+        // can't run Chromium. See RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md.
         PDF_RENDER_SIDECAR_URL: 'http://127.0.0.1:5051'
       },
       env_production: {

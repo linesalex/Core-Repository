@@ -1,9 +1,25 @@
 const fs = require('fs');
 const path = require('path');
-const puppeteer = require('puppeteer');
 const { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY } = require('d3-force');
 const { formatBandwidth } = require('./utils/formatBandwidth');
 const { isSidecarConfigured, renderPdfViaSidecar } = require('./pdfRenderClient');
+
+// Loaded lazily, never at module scope: puppeteer is only needed for the local
+// rendering fallback, and requiring it on Node < 16 throws a SyntaxError from
+// puppeteer-core's use of `??=`, which would take the whole backend down over a
+// single export feature. Hosts that render via the sidecar (or don't use PDF
+// export at all) must still boot normally.
+function loadPuppeteer() {
+  try {
+    return require('puppeteer');
+  } catch (err) {
+    throw new Error(
+      `Local PDF rendering is unavailable on this host (${err.message}). Set ` +
+      'PDF_RENDER_SIDECAR_URL to render via the sidecar service instead - see ' +
+      'RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md.'
+    );
+  }
+}
 
 // Fixed, always-on confidentiality label - never configurable from the export dialog.
 const CONFIDENTIALITY_LABEL = 'CONFIDENTIAL - NOT FOR DISTRIBUTION WITHOUT PERMISSION';
@@ -913,6 +929,7 @@ async function generateNetworkMapPdf(nodes, edges, options) {
     return renderPdfViaSidecar({ html, width, height });
   }
 
+  const puppeteer = loadPuppeteer();
   const browser = await puppeteer.launch({
     headless: true,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
