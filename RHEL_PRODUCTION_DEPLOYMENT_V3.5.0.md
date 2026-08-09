@@ -31,13 +31,15 @@ free -h && df -h /root           # >=4GB RAM, >=15GB free
 
 ## 🚨 **What v3.5.0 changed, and why it broke**
 
-v3.5.0 added the **PDF Network Map Export** feature (`backend/networkMapRenderer.js`), which introduced `puppeteer`. That created **three independent problems** on this host:
+v3.5.0 added the **PDF Network Map Export** feature (`backend/networkMapRenderer.js`), which introduced `puppeteer` and `d3-force`. That created **four independent problems** on this host, each of which was masking the next — which is why the deployment appeared to fail repeatedly "for the same reason":
 
 1. **Node version.** `puppeteer@23.x` (originally pinned) requires Node ≥18; even the corrected `puppeteer@21.11.0` requires Node ≥16.13.2. This box runs **Node 14.21.3**, so `require('puppeteer')` threw `SyntaxError: Unexpected token '??='` and took the **whole backend** down over one export feature.
    **Fixed in code:** `puppeteer` is now pinned to `21.11.0`, moved to `optionalDependencies`, and **loaded lazily** — the backend now boots even if puppeteer is missing or unloadable.
 2. **Puppeteer's *bundled* Chromium can't run here.** "Chrome for Testing" needs **glibc ≥2.27**; RHEL 7 has **2.17**, and no npm version changes that. But a Chromium *compiled for el7* runs fine — EPEL ships one, and its install failed only on three missing leaf libraries, not on anything structural.
    **Two supported answers (Step 5):** point Puppeteer at EPEL's el7 Chromium via `PUPPETEER_EXECUTABLE_PATH` (recommended — stays on this box), or delegate rendering over HTTP to `backend/pdf-render-sidecar/` via `PDF_RENDER_SIDECAR_URL`.
-3. **`bcrypt@6.0.0`** requires Node ≥18 *and* compiles natively (needs `g++`, absent). The old guide worked around this with a `sed` on `auth.js` only — but `backend/migrations/045_add_voice_guest_account.js` also required `bcrypt`, so that migration would fail at runtime.
+3. **`d3-force@3.x` is ESM-only.** `require()` of an ES module only works from Node 22.12 onward, so on Node 16 the renderer threw `ERR_REQUIRE_ESM` at boot — again taking the whole backend down. This was invisible until the `puppeteer` require (one line earlier) stopped crashing first.
+   **Fixed in code:** pinned to **`d3-force@^2.1.1`**, the last CommonJS release, with an identical API for the forces used here. Verified end to end by generating a real multi-page PDF under Node-16 module semantics.
+4. **`bcrypt@6.0.0`** requires Node ≥18 *and* compiles natively (needs `g++`, absent). The old guide worked around this with a `sed` on `auth.js` only — but `backend/migrations/045_add_voice_guest_account.js` also required `bcrypt`, so that migration would fail at runtime.
    **Fixed in code:** the repo now uses **`bcryptjs`** (pure JS) in `package.json`, `auth.js`, **and** migration 045. **No `sed` step is needed anymore.**
 
 ---
@@ -163,7 +165,7 @@ cd /root/Core-Repository
 
 | File | Must contain |
 |---|---|
-| `backend/package.json` | `bcryptjs`, no `bcrypt`, `sqlite3` = `5.0.2`, `puppeteer` under `optionalDependencies` |
+| `backend/package.json` | `bcryptjs`, no `bcrypt`, `sqlite3` = `5.0.2`, `d3-force` = `^2.1.1` (**not** 3.x, which is ESM-only), `puppeteer` under `optionalDependencies` |
 | `backend/package-lock.json` | `lockfileVersion: 2` |
 | `backend/auth.js` | `require('bcryptjs')` |
 | `backend/migrations/045_add_voice_guest_account.js` | `require('bcryptjs')` — **missed by the old `sed` workaround** |
@@ -177,7 +179,7 @@ Verify all of it in one pass:
 
 ```bash
 cd /root/Core-Repository
-grep -E '"puppeteer"|"bcryptjs"|"bcrypt"|"sqlite3"' backend/package.json
+grep -E '"puppeteer"|"bcryptjs"|"bcrypt"|"sqlite3"|"d3-force"' backend/package.json
 grep lockfileVersion backend/package-lock.json      # 2 (npm 6 AND npm 8 can read this)
 grep -c bcryptjs backend/auth.js backend/migrations/045_add_voice_guest_account.js   # 1 and 1
 grep -n "require('puppeteer')" backend/networkMapRenderer.js   # must be INSIDE loadPuppeteer()
@@ -553,6 +555,23 @@ grep -n "require('puppeteer')" backend/networkMapRenderer.js
 # must appear INSIDE loadPuppeteer(), never at the top of the file
 ```
 
+### `Error [ERR_REQUIRE_ESM]: require() of ES Module .../d3-force/src/index.js not supported`
+
+**Cause:** `d3-force@3.x` is **ESM-only**, and `require()` of ESM only works from Node 22.12 onward. On Node 16 it throws at boot — and because `routes.js` requires `networkMapRenderer.js`, it takes the whole backend down, exactly like the `??=` crash did. This error was *hidden* until now: `puppeteer` was required one line earlier and crashed first, so fixing that exposed this.
+
+**Fix:** already fixed in the repo — `d3-force` is pinned to `^2.1.1`, the last CommonJS release, with an identical API for the forces this renderer uses. Verify the server has the fix:
+
+```bash
+grep '"d3-force"' backend/package.json     # ^2.1.1 - NOT ^3.x
+npm ls d3-force                            # 2.1.1
+```
+
+Never bump `d3-force` to 3.x while this host runs Node 16. To catch this class of bug on a newer machine before deploying, boot with ESM-require disabled to emulate Node 16 module resolution:
+
+```bash
+node --no-experimental-require-module index.js
+```
+
 ### `cp: cannot create regular file '/usr/local/./bin/node': Text file busy`
 
 **Cause:** the Node upgrade tried to overwrite a binary that running processes are executing (`ETXTBSY`). The PM2 daemon, the backend, and `npx serve` all run this exact file, and `pm2 stop all` leaves the daemon itself alive.
@@ -690,7 +709,7 @@ pm2 list && pm2 monit && pm2 logs --lines 50
 - [ ] Node 14 binary backed up at `/root/node-14.21.3.bak`
 
 **Backend**
-- [ ] `backend/package.json`: `bcryptjs` present, **no `bcrypt`**, `puppeteer` = `21.11.0` under `optionalDependencies`
+- [ ] `backend/package.json`: `bcryptjs` present, **no `bcrypt`**, `d3-force` = `^2.1.1` (**not** 3.x), `puppeteer` = `21.11.0` under `optionalDependencies`
 - [ ] `backend/package-lock.json`: `lockfileVersion` = **2**
 - [ ] `auth.js` **and** `migrations/045_add_voice_guest_account.js` both require `bcryptjs`
 - [ ] `require('puppeteer')` appears only inside `loadPuppeteer()`

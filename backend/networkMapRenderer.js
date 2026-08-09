@@ -1,5 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+// Must stay on d3-force 2.x: 3.x is ESM-only, so `require()` of it throws
+// ERR_REQUIRE_ESM on any Node before 22.12. Bumping to 3.x breaks the RHEL 7
+// production host (Node 16) at boot, not just PDF export.
 const { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY } = require('d3-force');
 const { formatBandwidth } = require('./utils/formatBandwidth');
 const { isSidecarConfigured, renderPdfViaSidecar } = require('./pdfRenderClient');
