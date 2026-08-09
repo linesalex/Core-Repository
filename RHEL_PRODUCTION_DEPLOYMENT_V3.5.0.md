@@ -59,8 +59,10 @@ Node 16 is the **newest Node that runs on RHEL 7**: releases up to v16 were buil
 
 Node 14 lives at `/usr/local`, and `pm2` / `serve` are installed as globals under `/usr/local/lib/node_modules`. Upgrading **in place at `/usr/local`** keeps those globals, their symlinks, and the PM2 systemd unit working — do **not** install to `/opt/nodejs` unless you're prepared to reinstall the global tools.
 
+**⚠️ Stop every Node process first.** Linux refuses to overwrite the binary of a running executable (`cp: cannot create regular file '/usr/local/./bin/node': Text file busy`). The PM2 daemon *is itself* a Node process, so `pm2 stop all` is **not** enough — you need `pm2 kill`. The apps have to restart under the new Node anyway, so plan on a short outage here.
+
 ```bash
-# Back up the current binary so you can roll back
+# Back up the current binary so you can roll back (reading a running binary is fine)
 cp -a /usr/local/bin/node /root/node-14.21.3.bak
 node -v > /root/node-version-before-upgrade.txt
 
@@ -68,24 +70,44 @@ cd /tmp
 wget https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz
 tar -xJf node-v16.20.2-linux-x64.tar.xz
 
+# Release the binary: stops both apps AND the PM2 daemon itself
+cd /root/Core-Repository
+pm2 kill
+pgrep -a node || echo "OK - no node processes running"
+
 # Overlay onto /usr/local (replaces bin/node, bin/npm, lib/node_modules/npm;
 # leaves lib/node_modules/pm2 and lib/node_modules/serve untouched)
+cd /tmp
 sudo cp -a node-v16.20.2-linux-x64/. /usr/local/
+echo "cp exit code: $?"        # must be 0
 
 hash -r
 node -v    # v16.20.2
 npm -v     # 8.x.x
 ```
 
-Then refresh the PM2 daemon so it runs under the new Node, and confirm the globals survived:
+Then bring the stack back up. Starting from the config file (rather than `pm2 resurrect`) also re-reads the v3.5.0 env changes:
 
 ```bash
-pm2 update          # restarts the PM2 daemon under Node 16
-pm2 -v
-serve --version
+cd /root/Core-Repository
+pm2 start ecosystem.config.js --env production
+pm2 save
+pm2 list && pm2 -v && serve --version
 ```
 
-**Rollback if anything goes wrong:** `sudo cp -a /root/node-14.21.3.bak /usr/local/bin/node && hash -r && pm2 update`
+**Rollback if anything goes wrong:** `pm2 kill && sudo cp -a /root/node-14.21.3.bak /usr/local/bin/node && hash -r && pm2 start ecosystem.config.js --env production`
+
+> **If you can't take the outage right now,** rename the binary instead of overwriting it — Linux allows renaming a running executable, just not writing into it. Running processes keep using the old inode until they restart:
+>
+> ```bash
+> sudo mv /usr/local/bin/node /usr/local/bin/node-14.21.3
+> sudo cp -a /tmp/node-v16.20.2-linux-x64/. /usr/local/
+> hash -r && node -v
+> pm2 update    # respawns the PM2 daemon under Node 16
+> pm2 restart ecosystem.config.js --env production
+> ```
+>
+> Any process spawned during the second or two between those first two commands will fail with "node: command not found", so prefer the `pm2 kill` path when you can.
 
 ---
 
@@ -407,6 +429,19 @@ grep -n "require('puppeteer')" backend/networkMapRenderer.js
 # must appear INSIDE loadPuppeteer(), never at the top of the file
 ```
 
+### `cp: cannot create regular file '/usr/local/./bin/node': Text file busy`
+
+**Cause:** the Node upgrade tried to overwrite a binary that running processes are executing (`ETXTBSY`). The PM2 daemon, the backend, and `npx serve` all run this exact file, and `pm2 stop all` leaves the daemon itself alive.
+
+**Fix:** `pm2 kill`, confirm with `pgrep -a node`, then re-run the copy (**Step 1**). To find any non-PM2 holders:
+
+```bash
+pgrep -a node
+fuser -v /usr/local/bin/node      # or: lsof /usr/local/bin/node
+```
+
+**Important:** `cp` copies what it can and only fails on the busy file, so a failed run leaves a **mixed install** — typically npm 8 from the new tarball alongside the old Node 14 binary. Always re-run the full `cp -a` to completion and confirm both `node -v` and `npm -v` afterwards; don't assume a partial copy did nothing.
+
 ### `npm ERR! Cannot read property 'adm-zip' of undefined` on `npm ci`
 
 **Cause:** npm 6 cannot read `lockfileVersion: 3` (it warns `read-shrinkwrap ... generated for lockfileVersion@3`). v3 is npm 7+ only.
@@ -504,8 +539,9 @@ pm2 list && pm2 monit && pm2 logs --lines 50
 
 **Host prep**
 - [ ] Dead IUS repo disabled; `yum repolist` is clean
-- [ ] `node -v` = **v16.20.2** (was 14.21.3); `npm -v` = 8.x
-- [ ] `pm2 update` run after the Node upgrade; `pm2 -v` and `serve --version` still work
+- [ ] `pm2 kill` run **before** overlaying Node (otherwise: "Text file busy"); `cp -a` finished with exit code 0
+- [ ] `node -v` = **v16.20.2** (was 14.21.3); `npm -v` = 8.x — both, to rule out a partial copy
+- [ ] `pm2 -v` and `serve --version` still work after the upgrade
 - [ ] Node 14 binary backed up at `/root/node-14.21.3.bak`
 
 **Backend**
