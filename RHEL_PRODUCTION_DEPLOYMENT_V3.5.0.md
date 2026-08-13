@@ -251,14 +251,16 @@ Puppeteer's **own bundled** Chromium can't run here (it needs glibc ≥2.27; thi
 | **3. Local Docker sidecar** | Register the subscription, enable `rhel-7-server-extras-rpms`, install Docker CE | RHEL entitlements | Medium — Docker won't install without them |
 | **4. Disabled** | Set neither variable | Nothing | None — export returns a clear error, everything else works |
 
-Whichever you pick, prove it with the bundled diagnostic **before** wiring it into PM2. It runs the exact same code path as the real export:
+**Do the setup for your chosen option below first**, then prove it with the bundled diagnostic before wiring anything into PM2. `checkPdfRender.js` runs the exact same code path as the real export, so a `PASS` means the feature works:
 
 ```bash
 cd /root/Core-Repository/backend
-PUPPETEER_EXECUTABLE_PATH=/usr/lib64/chromium-browser/headless_shell node checkPdfRender.js
+PUPPETEER_EXECUTABLE_PATH=<path from the setup below> node checkPdfRender.js
 # or:  PDF_RENDER_SIDECAR_URL=http://<host>:5051 node checkPdfRender.js
 # PASS -> wrote NNNNN bytes to /tmp/pdf-render-check.pdf
 ```
+
+> Running this **before** installing Chromium fails with `PUPPETEER_EXECUTABLE_PATH does not exist`. That's expected — the diagnostic will list any browsers it can find on the host, or the commands to install one. Don't guess the path; get it from `rpm -ql` as shown below.
 
 ### **Option 1 — native el7 Chromium (recommended)**
 
@@ -289,13 +291,25 @@ sudo yum --enablerepo=centos7-vault install -y libatomic flac-libs opus
 sudo yum install -y chromium-headless
 ```
 
-Find the binary and confirm it actually executes on this glibc:
+**Now find the actual binary path — do not assume it.** The exact filename varies between EPEL builds, so read it from the installed package rather than copying a path from this guide:
 
 ```bash
-rpm -ql chromium-headless | grep -E 'headless_shell|chrome$'
-# typically /usr/lib64/chromium-browser/headless_shell
+# 1. Confirm the package is actually installed (if this fails, the install above didn't work)
+rpm -q chromium-headless
 
-ldd /usr/lib64/chromium-browser/headless_shell | grep -i "not found" \
+# 2. List every executable file it shipped
+rpm -ql chromium-headless | while read f; do [ -f "$f" ] && [ -x "$f" ] && echo "$f"; done
+
+# 3. Widen the net if nothing obvious appears
+ls -la /usr/lib64/chromium-browser/ 2>/dev/null
+find /usr -name 'headless_shell' -o -name 'chrome-headless' -o -name 'chromium-browser' 2>/dev/null
+```
+
+Most builds use `/usr/lib64/chromium-browser/headless_shell`. If yours ships the full browser instead (`chromium-browser`), that works too — Puppeteer launches it with `headless: true`. Export whichever you found and confirm it resolves its libraries:
+
+```bash
+CHROME=/usr/lib64/chromium-browser/headless_shell     # <-- substitute YOUR path
+ldd "$CHROME" | grep -i "not found" \
   && echo "STILL MISSING LIBS (above)" || echo "OK - all libraries resolved"
 ```
 
@@ -305,12 +319,12 @@ Make sure Puppeteer itself is installed — **without** its unusable bundled bro
 cd /root/Core-Repository/backend
 npm ls puppeteer || PUPPETEER_SKIP_DOWNLOAD=true npm ci
 
-PUPPETEER_EXECUTABLE_PATH=/usr/lib64/chromium-browser/headless_shell node checkPdfRender.js
+PUPPETEER_EXECUTABLE_PATH="$CHROME" node checkPdfRender.js
 ```
 
 > Use `npm ci`, **not** `npm install puppeteer@21.11.0`. The latter would move `puppeteer` from `optionalDependencies` into `dependencies`, rewriting `package.json` and desyncing it from the lockfile — the same class of drift that broke the earlier attempts.
 
-A `PASS` means you're done — add it to `ecosystem.config.js` (both `env` and `env_production`) and **remove `PDF_RENDER_SIDECAR_URL`**, since a configured sidecar takes precedence over the local browser:
+A `PASS` means you're done — add **your** path to `ecosystem.config.js` (both `env` and `env_production`) and **remove `PDF_RENDER_SIDECAR_URL`**, since a configured sidecar takes precedence over the local browser:
 
 ```javascript
         PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell'
@@ -468,26 +482,38 @@ Only one v3.5.0 change is needed versus v3.3.3: the PDF render setting on `netwo
         JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production',
         ENCRYPTION_KEY: 'hidden',
 
-        // Option 1 (recommended on RHEL 7) - render with the local el7 Chromium:
-        PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell'
+        // Option 1 (recommended on RHEL 7) - the local el7 Chromium. Use YOUR path.
+        PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell',
 
-        // Options 2/3 instead - render via the sidecar (delete the line above):
+        // Options 2/3 instead - comment out the line above and uncomment these:
         // PDF_RENDER_SIDECAR_URL: 'http://<RENDER_HOST_IP>:5051',
-        // PDF_RENDER_SIDECAR_TOKEN: '<matches the sidecar SIDECAR_AUTH_TOKEN>'
+        // PDF_RENDER_SIDECAR_TOKEN: '<matches the sidecar SIDECAR_AUTH_TOKEN>',
 
-        // Option 4 - set neither; export reports itself unavailable.
+        // Option 4 - comment out all of the above; export reports itself unavailable.
       },
       env_production: {
         NODE_ENV: 'production',
         PORT: 4000,
         ENCRYPTION_KEY: 'hidden',
-        PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell'
+        PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell',
       },
       /* ...logging / restart settings unchanged... */
     },
 ```
 
-`env_production` must carry the same setting, because `--env production` makes PM2 use that block — a variable present only in `env` will be silently dropped.
+Two things that bite here:
+
+**Note every line ends with a comma**, including the last one before `}`. Trailing commas are valid JavaScript, and keeping them means you can comment or uncomment any single line without producing a malformed config. The usual failure is adding `PUPPETEER_EXECUTABLE_PATH` after a final property that has no comma.
+
+**`env_production` must carry the same setting.** `--env production` makes PM2 use that block, so a variable present only in `env` is silently dropped.
+
+This file is JavaScript, not JSON, so validate it before starting PM2 — this prints the exact line and column of any syntax error:
+
+```bash
+cd /root/Core-Repository
+node --check ecosystem.config.js && echo "syntax OK"
+node -e "const c=require('./ecosystem.config.js'); console.log(c.apps[0].env_production)"
+```
 
 The frontend app must keep using `npx serve` against the production build — **never** `npm start`:
 
@@ -554,6 +580,50 @@ npm ls puppeteer                           # 21.11.0, or absent with --no-option
 grep -n "require('puppeteer')" backend/networkMapRenderer.js
 # must appear INSIDE loadPuppeteer(), never at the top of the file
 ```
+
+### PM2: `File ecosystem.config.js malformed` after adding `PUPPETEER_EXECUTABLE_PATH`
+
+**Cause:** a JavaScript syntax error, virtually always a **missing comma** on the line *before* the one you added. `ecosystem.config.js` is JS, not JSON, and PM2's message doesn't name the line.
+
+**Fix:** get the real error, which includes the line and column:
+
+```bash
+cd /root/Core-Repository
+node --check ecosystem.config.js
+```
+
+Then check these, in order of likelihood:
+
+1. The property before your new line lacks a trailing comma (`ENCRYPTION_KEY: 'hidden'` → `ENCRYPTION_KEY: 'hidden',`).
+2. You added `PUPPETEER_EXECUTABLE_PATH` but left `PDF_RENDER_SIDECAR_URL` on the following line with no comma between them. Only one should be active anyway — a configured sidecar takes precedence, so the local browser would be ignored.
+3. A single-quoted path containing an apostrophe, or a smart quote (`'`) pasted from a document instead of a plain `'`.
+
+The shipped `ecosystem.config.js` already has the Option 1 setting in both `env` and `env_production`, with a trailing comma on every line so you can comment lines in and out safely. If you overwrite it with the repo copy, you only need to correct the path if yours differs. Confirm PM2 actually received it:
+
+```bash
+pm2 restart ecosystem.config.js --env production
+pm2 env network-backend | grep -E 'PUPPETEER_EXECUTABLE_PATH|PDF_RENDER_SIDECAR'
+```
+
+### `FAIL - PUPPETEER_EXECUTABLE_PATH does not exist: /usr/lib64/chromium-browser/headless_shell`
+
+**Cause:** either Chromium isn't installed yet, or it is installed but its binary has a different name/location in your EPEL build. The path in this guide is the common case, **not** a guarantee.
+
+**Fix:** determine the real path instead of guessing. `checkPdfRender.js` prints every browser it can find in standard locations; if it finds none, work through this:
+
+```bash
+# Is it installed at all?
+rpm -q chromium-headless || echo "NOT INSTALLED - do the Option 1 yum steps first"
+
+# What executables did it ship?
+rpm -ql chromium-headless | while read f; do [ -f "$f" ] && [ -x "$f" ] && echo "$f"; done
+
+# Anything Chromium-ish anywhere?
+ls -la /usr/lib64/chromium-browser/ 2>/dev/null
+find /usr /opt -name 'headless_shell' -o -name 'chromium-browser' -o -name 'chrome' 2>/dev/null
+```
+
+If the `yum install chromium-headless` step failed, the three library prerequisites are probably still missing — re-run `sudo yum --enablerepo=centos7-vault install -y libatomic flac-libs opus` and read its output carefully. If only the **full** browser is available (`chromium-browser` rather than `headless_shell`), use it: Puppeteer launches it with `headless: true` and it renders identically.
 
 ### `Error [ERR_REQUIRE_ESM]: require() of ES Module .../d3-force/src/index.js not supported`
 

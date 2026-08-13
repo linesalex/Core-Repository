@@ -4016,7 +4016,7 @@ router.get('/network_routes_export_map', authenticateToken, authorizeModulePermi
 
     const locationPlaceholders = locationCodes.map(() => '?').join(',');
     const locationsSql = `
-      SELECT location_code, region, city, country, datacenter_name, datacenter_address
+      SELECT location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude
       FROM location_reference
       WHERE status = 'Active' AND location_code IN (${locationPlaceholders})
     `;
@@ -4031,6 +4031,10 @@ router.get('/network_routes_export_map', authenticateToken, authorizeModulePermi
         country: loc.country,
         datacenterName: loc.datacenter_name,
         address: loc.datacenter_address,
+        // Manual lat/long from Manage Locations, if ever populated - the
+        // renderer falls back to an offline city/country lookup otherwise.
+        latitude: loc.latitude,
+        longitude: loc.longitude,
         inSelectedRegions: regions.includes(loc.region),
       }));
 
