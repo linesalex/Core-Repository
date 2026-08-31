@@ -18,8 +18,7 @@ import {
   Select,
   MenuItem,
   Button,
-  InputAdornment,
-  Tooltip
+  InputAdornment
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -258,13 +257,14 @@ const CrossConnectsPricing = () => {
                         <Typography variant="body2" color="text.secondary">-</Typography>
                       )}
                     </TableCell>
-                    <TableCell sx={{ maxWidth: 260 }}>
+                    <TableCell sx={{ maxWidth: 320, verticalAlign: 'top' }}>
                       {row.cross_connect_notes ? (
-                        <Tooltip title={row.cross_connect_notes}>
-                          <Typography variant="body2" noWrap sx={{ maxWidth: 240 }}>
-                            {row.cross_connect_notes}
-                          </Typography>
-                        </Tooltip>
+                        <Typography
+                          variant="body2"
+                          sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                        >
+                          {row.cross_connect_notes}
+                        </Typography>
                       ) : (
                         <Typography variant="body2" color="text.secondary">-</Typography>
                       )}

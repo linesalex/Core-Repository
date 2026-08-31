@@ -1,6 +1,122 @@
-# Network Inventory v3.5.0 — RHEL 7 Production Deployment Guide
+# Network Inventory v3.5.0 → v3.5.3 — RHEL 7 Production Deployment Guide
 
-**Supersedes `RHEL_PRODUCTION_DEPLOYMENT_V3.3.3.md`.** Rewritten against the **actual observed state** of `sni1-ipclon7`, not the assumptions the v3.3.3 guide carried forward. Several of those assumptions turned out to be wrong on the real box, which is what caused the v3.5.0 deployment failures.
+**Supersedes `RHEL_PRODUCTION_DEPLOYMENT_V3.3.3.md`.** Originally rewritten against the **actual observed state** of `sni1-ipclon7`, not the assumptions the v3.3.3 guide carried forward — several of those assumptions turned out to be wrong on the real box, which is what caused the v3.5.0 deployment failures documented below.
+
+**✅ v3.5.0 status: deployed and verified on `sni1-ipclon7`.** Every fix in this guide (Node 16.20.2, `bcryptjs`, `d3-force@2.1.1`, lazily-loaded `puppeteer@21.11.0`, and whichever PDF render option was chosen in Step 5) is live in production. Steps 0-8 and the Troubleshooting section below are kept as-is as the **historical record and reference** for that work — you should not need to repeat any of it.
+
+**🔁 Now updating to v3.5.2 / v3.5.3.** See the new section immediately below. Unlike the v3.5.0 jump, this update is **application code only** — it does not require upgrading Node, npm, Chromium, or any system package, and does not need `g++` or a subscription. Everything the v3.5.0 effort fixed stays exactly as configured.
+
+---
+
+## 🔁 **Updating this host to v3.5.2 / v3.5.3**
+
+### Why no system upgrade is needed this time
+
+v3.5.1, v3.5.2, and v3.5.3 are pure application-code releases. None of them touch any of the runtime requirements the v3.5.0 effort fixed:
+
+| | v3.5.1 | v3.5.2 | v3.5.3 |
+|---|---|---|---|
+| New npm dependency | No — reuses `all-the-cities`, already a `backend` dependency since before v3.5.0 | No | No |
+| New native/compiled module | No | No | No |
+| New DB migration | No | Yes — `051_add_latency_matrix_daily_low.js` (auto-applies at boot, tracked in the `migrations` table, no manual step) | No |
+| Node / Puppeteer / Chromium / glibc requirement | Unchanged | Unchanged | Unchanged |
+
+Confirm the host still matches what v3.5.0 left it in before you start — if any of these don't match, treat it as a regression and fix it first, not as an expected part of this update:
+
+```bash
+node -v                                    # still v16.20.2
+npm -v                                     # still 8.x
+grep '"d3-force"' backend/package.json    # still ^2.1.1, not 3.x
+grep '"bcryptjs"' backend/package.json    # still present; "bcrypt" absent
+npm ls puppeteer                          # still 21.11.0 (or absent if you run Option 2/3/4)
+grep lockfileVersion backend/package-lock.json   # still 2
+pm2 env network-backend | grep -E 'PUPPETEER_EXECUTABLE_PATH|PDF_RENDER_SIDECAR'   # still whichever Option 1-4 you set up
+```
+
+### What's actually changing (functional summary)
+
+**v3.5.1 — Network Map Export: geographic layout & full-text Route Schedule**
+- POP nodes are now positioned by real-world latitude/longitude (from `location_reference`, or auto-geocoded via the existing `all-the-cities` package) instead of pure force-directed physics, so diagrams read like an actual map instead of wherever the physics settled
+- Route Schedule switched from a truncating grid table to one full-text line per route, so long carrier/UCN values are never cut off
+- Several same-day rounds of spacing/curve/tag-placement tuning for dense clusters (per-edge bezier curves colored/weighted by bandwidth, badges that slide along their own line)
+- New file: `backend/utils/cityGeocoder.js`
+
+**v3.5.2 — Live Latency Matrix: 30-Day Low tab & customer-facing PDF export**
+- New **"30-Day Low (1Gb)"** tab on the Home page latency matrix, tracking a rolling 30-day minimum per source/destination pair
+- New **"Export PDF (Last 30 Days)"** button — renders through the **same** sidecar-or-local-Puppeteer pipeline (`backend/pdfRenderClient.js`) already set up for the Network Map export in Step 5 below, so whichever PDF option you already run needs **no reconfiguration** — just re-verification once this update is deployed
+- New migration: `backend/migrations/051_add_latency_matrix_daily_low.js`
+- New file: `backend/latencyMatrixPdfRenderer.js`
+
+**v3.5.3 — Network Map Export: export by specific POPs**
+- The Export Network Map dialog gets a **"By Region" / "By Specific POPs"** toggle — pick individual POPs via type-ahead search (POP code, datacenter name, or city) instead of whole regions, with off-page reference handling for routes that touch an unselected POP
+- New endpoint `GET /network_routes_pop_search`; the existing export logic was refactored into a shared `finishNetworkMapExport()` so both modes render through identical code
+- No new dependencies, no migration
+
+### Update procedure
+
+```bash
+# 1. Back up first
+cd /root
+pm2 save
+cp -a Core-Repository Core-Repository.backup.$(date +%Y%m%d)
+cp Core-Repository/network_routes.db /root/network_routes.db.backup.$(date +%Y%m%d)
+
+# 2. Deploy the new code (however you transfer it - git pull / scp / archive)
+cd /root/Core-Repository
+# git pull origin main
+
+# 3. Confirm the sync actually took - same class of check as Step 3 below
+grep '"version"' backend/package.json frontend/package.json    # both -> 3.5.3
+grep -c "051_add_latency_matrix_daily_low" backend/migrations/*.js 2>/dev/null | grep -v ':0' || echo "MISSING v3.5.2 migration - sync did not take"
+
+# 4. Backend deps - same install command family you used for v3.5.0; no g++/native build involved
+cd backend
+rm -rf node_modules
+PUPPETEER_SKIP_DOWNLOAD=true npm ci    # Option 1 hosts (native el7 Chromium)
+# npm ci --no-optional                 # Options 2/3/4 hosts (sidecar / disabled)
+
+# 5. Smoke test before touching PM2
+node index.js
+# Expected: starts on :4000 with no errors. Watch the console for the migration
+# runner applying 051_add_latency_matrix_daily_low.js - it only ever runs once
+# (tracked in the `migrations` table), so this is safe against production data
+# and safe to re-run if the process restarts mid-migration.
+# Ctrl+C once confirmed.
+
+# 6. Frontend rebuild - unchanged process from Step 6 below
+cd ../frontend
+npm install
+export NODE_OPTIONS="--max-old-space-size=2048"
+npm run build
+unset NODE_OPTIONS
+ls -lh build/index.html
+
+# 7. Restart both apps via the config file, not by app name - see Step 7's warning
+cd /root/Core-Repository
+pm2 restart ecosystem.config.js --env production
+pm2 save
+pm2 list    # both online, 0 unexpected restarts
+```
+
+### Verification
+
+```bash
+curl -s http://localhost:4000/health
+pm2 logs network-backend --lines 50 | grep -i "051_add_latency_matrix_daily_low"
+```
+
+- [ ] Home page shows the new **"30-Day Low (1Gb)"** tab next to the existing 1Gb/10Gb tabs
+- [ ] **"Export PDF (Last 30 Days)"** on the Live Latency Matrix produces a one-page PDF — this exercises the same Puppeteer/sidecar path as the Network Map export; if it fails, re-check your existing Option 1-4 setup (Step 5), it did **not** need to change
+- [ ] Network Routes Repository → Export Network Map dialog shows the new **"By Region" / "By Specific POPs"** toggle, and a specific-POPs export downloads correctly
+- [ ] `pm2 list` shows both apps `online` with 0 unexpected restarts a few minutes after the restart
+
+If anything fails, the **Troubleshooting** section further down still applies as-is — this update doesn't touch Node, Chromium, bcrypt, or d3-force, so none of those failure modes changed.
+
+---
+
+## 📜 v3.5.0 deployment reference (completed — kept for history & troubleshooting)
+
+Everything from here through the Success checklist documents the original v3.5.0 system setup on `sni1-ipclon7`. It's the reason Node, Chromium, and the native-module choices are what they are today — read it if something in the verification table above doesn't match, or if you land here from a troubleshooting link, but you do **not** need to re-run Steps 0-2 (repo cleanup, Node upgrade, system packages) for the v3.5.2/v3.5.3 update above.
 
 ---
 
@@ -807,8 +923,8 @@ pm2 list && pm2 monit && pm2 logs --lines 50
 
 ---
 
-**Documentation Version:** v3.5.0 (rewritten)
-**Last Updated:** August 9, 2026
+**Documentation Version:** v3.5.0 (rewritten) + v3.5.2/v3.5.3 update section (application-only, no system changes)
+**Last Updated:** August 31, 2026 — added the "Updating this host to v3.5.2 / v3.5.3" section; v3.5.0 system-setup content below is unchanged and historical
 **Target Host:** `sni1-ipclon7` — RHEL 7, kernel 3.10.0-1062.9.1.el7, glibc 2.17, unregistered
-**Node.js:** 16.20.2 (upgraded from 14.21.3; Node 18+ impossible — needs glibc ≥2.28)
+**Node.js:** 16.20.2 (upgraded from 14.21.3 for v3.5.0; Node 18+ impossible — needs glibc ≥2.28; unchanged through v3.5.3)
 **Supersedes:** `RHEL_PRODUCTION_DEPLOYMENT_V3.3.3.md`

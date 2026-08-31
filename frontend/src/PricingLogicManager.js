@@ -98,6 +98,7 @@ const PricingLogicManager = ({ hasPermission }) => {
     },
     promoPricing: {
       minimumMarginPercent: 35,
+      protectionMinimumMarginPercent: 40,
       discount24Month: 5,
       discount36Month: 10
     },
@@ -308,6 +309,7 @@ const PricingLogicManager = ({ hasPermission }) => {
       },
       promoPricing: {
         minimumMarginPercent: 35,
+        protectionMinimumMarginPercent: 40,
         discount24Month: 5,
         discount36Month: 10
       },
@@ -749,6 +751,21 @@ const PricingLogicManager = ({ hasPermission }) => {
                       }}
                       sx={numberInputSx}
                       helperText="Minimum margin required for promo pricing to be used (fallback to regular pricing if not met)"
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Protection Minimum Margin Percentage"
+                      type="number"
+                      inputProps={{ step: 0.1, min: 0, max: 100 }}
+                      value={config.promoPricing.protectionMinimumMarginPercent}
+                      onChange={(e) => updatePromoPricing('protectionMinimumMarginPercent', e.target.value)}
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>
+                      }}
+                      sx={numberInputSx}
+                      helperText="Minimum margin required on the protection pricing increment (checked against the diverse/secondary route's allocated cost only)"
                     />
                   </Grid>
                   <Grid item xs={12} sm={6}>

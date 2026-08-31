@@ -1,8 +1,59 @@
 # Network Inventory Management System
 
-## Current Version: **3.5.1**
+## Current Version: **3.5.3**
 
-**Release Date:** August 13, 2026
+**Release Date:** August 30, 2026
+
+---
+
+## What's New in v3.5.3
+
+### 📍 **Network Map Export: Export by Specific POPs**
+
+The PDF Network Map Export popup previously only let you export whole regions. It now offers a second, mutually-exclusive mode for exporting a hand-picked subset of POPs directly:
+
+- **New "By Region" / "By Specific POPs" toggle** at the top of the Export Network Map dialog. "By Region" is unchanged (AMERs/EMEA/APAC checkboxes, INTER routes auto-included wherever they touch a selected region)
+- **"By Specific POPs" mode** offers a type-ahead search (by POP code, datacenter name, or city) with selected POPs shown as removable chips - deliberately not a giant checkbox list, since easily-confused codes (e.g. `IPCSNG11` vs `IPCSNG1`) are much safer to pick from a searched, disambiguated dropdown than to eyeball in a long list
+- Only routes touching at least one selected POP are included. A route from a selected POP to one that wasn't picked still renders as an **off-page reference** - the far-end POP's code and address are still noted (in the annex and Route Schedule, marked "not included"/"(off-page reference)"), it just isn't drawn as a full node - reusing the exact same mechanism the export already used for out-of-region INTER connections, so context is never silently lost
+- The exported PDF's title/cover page notes the POP count, e.g. "IPC Network Map – EMEA / AMERs (4 selected POPs)", so it's obvious at a glance the export isn't a full-region map
+- Pages are still grouped/paginated by region under the hood (a multi-region POP selection produces one diagram+reference page pair per region touched, exactly as region-mode already does)
+
+**Files Added:**
+- None (extends existing `backend/networkMapRenderer.js` / `NetworkMapExportDialog.js`)
+
+**Files Modified:**
+- `backend/routes.js` - `/network_routes_export_map` now accepts `mode=region|pops`; in `pops` mode, `pops` (comma-separated location codes) replaces `regions` as the primary filter, effective region(s) are derived from the selected POPs' own regions, and only routes touching a selected POP are queried; shared location-lookup/edge-building/PDF-generation tail extracted into `finishNetworkMapExport()` so both modes funnel through identical logic; added `GET /network_routes_pop_search` (active-locations-only autocomplete, used by the new picker)
+- `backend/networkMapRenderer.js` - `renderCoverPageHtml`'s title now appends "(N selected POPs)" when `options.popSelectionCount` is set
+- `frontend/src/NetworkMapExportDialog.js` - added the By Region/By Specific POPs mode toggle and the POP search-and-chip picker (MUI `Autocomplete`, debounced search)
+- `frontend/src/api.js` - `exportNetworkMapPDF` now takes a single `{ mode, regions, pops, details }` options object; added `searchNetworkMapPops`
+- `frontend/src/App.js` - `handleExportNetworkMap` updated for the new options-object shape and mode-aware download filename
+
+---
+
+## What's New in v3.5.2
+
+### 📉 **Live Latency Matrix: 30-Day Low Tab & Customer-Facing PDF Export**
+
+The Home page's Live Latency Matrix now tracks, for every configured source/destination pair, the lowest 1Gb-tier latency measured at any point over the trailing 30 days - and lets that rolling snapshot be exported as a PDF suitable for sending directly to customers.
+
+- **New "30-Day Low (1Gb)" tab** alongside the existing "1Gb"/"10Gb" tabs. Every hourly matrix computation now also updates a running per-day low per pair (each day's value can only be lowered, never raised, as more hourly samples come in during that day), so once a UTC day ends its row is permanently frozen at that day's true minimum. The tab shows the lowest of the last 30 such daily rows per pair, and notes when the 30-day window hasn't fully filled in yet (e.g. shortly after this feature first ships)
+- **"Export PDF (Last 30 Days)" button** on the Live Latency Matrix panel generates a standalone PDF - header is the IPC logo plus the fixed title "IPC Live Network Latency Matrix" and "Produced on `<date>` - Values state minimum latency in last 30d" (the header text does not change based on how much of the 30-day window has filled in), followed by the full matrix, a POP Code → Datacenter Name reference list for every location shown, an explanatory note clarifying these are live production measurements (not synthetic RFC/ping test results), and a bold "For authorized recipient use only" NDA/redistribution notice on its own line beneath that note
+- Rendered via the same sidecar-or-local-Puppeteer pipeline already used for the Network Map export (`backend/pdfRenderClient.js`), so it works the same way in production (RHEL sidecar) and in local dev
+- Daily-low rows older than 30 days are pruned automatically on every matrix computation cycle, so the tracking table stays capped at roughly a 30-day window
+- **Follow-up fix (same day):** the PDF's page height was estimated from fixed per-row constants that turned out to be a bit too tight for the real two-line (city name + POP code) header/row-label cells, which could let content spill onto a second page at larger location counts. Row-height constants were increased to generous, deliberately-oversized upper bounds (same approach `networkMapRenderer.js` already uses), and the page `<div>` is now hard-clipped to the exact page size via CSS `overflow: hidden` as a backstop - so the export is now guaranteed to always render as exactly one PDF page, verified at 20 locations (380 pairs)
+- **Follow-up wording change (same day):** PDF title changed to "IPC Live Network Latency Matrix", with the produced-date line extended to "Produced on `<date>` - Values state minimum latency in last 30d". A bold, red "For authorized recipient use only - Distributed under NDA. Redistribution without IPC's prior written approval is prohibited." line was added directly beneath the customer-facing measurement note
+
+**Files Added:**
+- `backend/migrations/051_add_latency_matrix_daily_low.js` - creates `latency_matrix_daily_low`
+- `backend/latencyMatrixPdfRenderer.js` - builds and renders the 30-day low latency matrix PDF
+
+**Files Modified:**
+- `backend/latencyMatrixService.js` - added `recordDailyLow`, `pruneOldDailyLows`, `get30DayLowMatrix`, called from `computeMatrix()`
+- `backend/routes.js` - added `GET /api/latency-matrix/30d-low` and `GET /api/latency-matrix/30d-low/export`
+- `frontend/src/api.js` - added `latencyMatrixApi.get30DayLow`/`export30DayLowPDF`
+- `frontend/src/HomePage.js` - added the "30-Day Low (1Gb)" tab and the "Export PDF" button
+
+**Testing/cleanup note:** the regression test (`test_v352_latency_matrix_30d_low.js`, 17 passing cases covering daily-low tracking, 30-day aggregation, and pruning) and the one-off dev seed script that added 18 extra test POPs to `latency_matrix_locations` were both removed after verification as part of a general test-file cleanup - the 18 seeded locations themselves were left in place in the database
 
 ---
 
@@ -24,16 +75,13 @@ Production-scale feedback on the v3.5.0 PDF Network Map Export showed the force-
 
 **Files Added:**
 - `backend/utils/cityGeocoder.js` - resolves a POP's city/country to lat/long via `all-the-cities`, with manual lat/long from `location_reference` always taking priority when present
-- `backend/test_v351_network_map_geo_layout.js`
-- `backend/test_v351_network_map_tag_placement.js` - verifies every tag badge sits exactly on its own curve/ray and never overlaps a node or another badge, even in a deliberately dense same-city cluster
 
 **Files Modified:**
 - `backend/networkMapRenderer.js` - `computeLayout` now builds city clusters from resolved coordinates and projects them (independently rescaled per axis to fill the page) instead of a single weakly-anchored force-directed center; `resolveNodeCoordinates` resolves every node's coordinate once per export; a new relayout pass in `renderMultiPageHtml` re-runs `computeLayout` for any diagram smaller than the shared canvas; `buildScheduleTable` renders one text line per route instead of a grid; removed now-unused `forceLink`/`forceManyBody`; collision force padding doubled twice (26px→52px→104px per node) with `naturalWidth`/`naturalHeight` multipliers pulled back correspondingly (380/300→300/240→225/180) and simulation ticks increased (300→400→500) to offset it; local edges now drawn as per-edge-colored, bandwidth-weighted bezier curves (`edgeColor`/`edgeLineWeight`/`edgeCurveParams`/`edgeCurveGeometry`) instead of flat gray straight lines, with tag badges recolored to match their edge; replaced the free-form 2D `resolveTagCollisions` pass with `resolveLocalTagPosition`/`resolveStubTagPosition`, which only ever slide a badge along its own curve (via a new `edgeCurvePointAtT` parameterization) or ray, guaranteeing every badge stays exactly on-line while avoiding nodes and other badges
 - `backend/routes.js` - `/network_routes_export_map` now selects `latitude`/`longitude` from `location_reference` and passes them through to the renderer
 - `backend/utils/cityGeocoder.js` - added a `bangalore` → `bengaluru` alias
 
-**Local dev/test only (not part of the shipped app):**
-- `backend/seed_v351_network_map_test_data.js` - one-off script that seeds ~180 additional realistic locations and ~355 additional routes into the local `network_routes.db` for testing the map export at production scale
+**Testing/cleanup note:** the regression tests (`test_v351_network_map_geo_layout.js`, `test_v351_network_map_tag_placement.js`) and the one-off dev seed script (`seed_v351_network_map_test_data.js`, which had seeded ~180 additional locations and ~355 additional routes into the local `network_routes.db` for testing the map export at production scale) were all removed after verification as part of a general test-file cleanup
 
 ---
 
@@ -1308,6 +1356,7 @@ For new installations or updates:
 
 ## Version History
 
+- **v3.5.3** (Aug 30, 2026): Network Map Export — added "Export by Specific POPs" mode alongside the existing region-based export: search-and-pick individual POP codes (type-ahead autocomplete with chips, to avoid mixing up similarly-named codes), effective region(s) derived automatically from the selected POPs, only routes touching a selected POP are included, and any touched-but-unselected POP still shows as an off-page reference (code + address noted, not drawn as a full node) rather than being silently dropped
 - **v3.5.1** (Aug 13, 2026): Network Map Export — geographic layout (POPs positioned by real/looked-up city lat/long instead of pure force-directed physics, so diagrams read like an actual map), diagrams re-laid-out to fill the shared page instead of leaving large blank margins, Route Schedule reworked from a truncating grid table to one full-text line per route (max 2 columns); follow-up same-day tuning doubled the enforced minimum edge-to-edge gap between any two POP circles twice in a row (52px → 104px → 208px) for legibility at production density, then reworked route lines from flat gray straight lines into per-route-colored, bandwidth-weighted bezier curves (with matching tag-badge borders) so an individual line can be followed by eye through a crossing, then reworked tag-badge placement so a badge can only ever slide along its own line instead of drifting off it to dodge a collision
 - **v3.5.0** (Aug 9, 2026): Application Dark Mode (user-menu toggle, localStorage persistence, default dark, app-wide contrast fixes; email exports stay light); Network Routes Repository — Cross Connects Pricing submodule; Carrier Quote Repository — Site Validation (OSM/Nominatim map dialog), Datacenter/Retail building types, Quote Analytics page, horizontal bulk upload, Custom Locations management (bulk Building Type fix-up, purge unused, merge duplicates, fix address/geo location); Admin Live Latency API — search Configurations by Circuit ID; Network Routes — self-service Live Latency probe registration in Add/Edit Route (defaults-based, no admin access required); Network Routes — PDF Network Map Export (region-selectable, auto-laid-out diagram with POP-level nodes, address annex, and confidentiality-marked title block); Voice - One Directory — no-credential Guest login, customizable per-quote Growth %, standalone Bandwidth Calculator tab, bundle discount reconciliation + exact Pricing Log figures, per-bundle CSV re-export, and On Net minimum-bandwidth bug fix; Promo Pricing Manager — Excluded Circuit IDs (takes precedence over required circuits); CNX Ethernet Route Finder — "Find Promo Pricing" constrained-pathfind button that finds the cheapest margin-valid promo-eligible route for a chosen bandwidth; Manage Carriers database export includes `carrier_id` (upload accepts id for match); network route delete cascades `live_latency_config`; Colocation location available power excludes racks with no remaining RUs; Carrier Contacts export adds parent `region`; Allocated Cost Calculator — Circuit ID label + `POP Code - Datacenter Name` display; Extranet Pricing Logs — Calculation Breakdown JSON opens manually per item
 - **v3.4.7** (Feb 22, 2026): Home Page with live latency matrix (hourly Dijkstra using live latency, 1Gb/10Gb tabs, click-through to Route Finder); Extranet Pricing — role-based pricing logs access control

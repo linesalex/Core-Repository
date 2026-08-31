@@ -3961,20 +3961,106 @@ router.get('/network_routes_export', authenticateToken, authorizeModulePermissio
   });
 });
 
-// Generate a PDF network map diagram for the selected regions/detail fields.
+// Autocomplete search for the "Export by Specific POPs" picker - active
+// locations only (matching what the export itself can actually include),
+// so a user never selects a POP that then silently can't be found.
+// NOTE: intentionally a flat `/network_routes_pop_search` path (matching
+// `/network_routes_search`, `/network_routes_export_map`, etc.) rather than
+// `/network_routes/pop_search` - the latter would be shadowed by the
+// earlier `router.get('/network_routes/:circuit_id', ...)` route, which
+// Express would match first (treating "pop_search" as a circuit_id).
+router.get('/network_routes_pop_search', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
+  const q = (req.query.q || '').trim();
+  let query = `SELECT location_code, region, city, country, datacenter_name
+               FROM location_reference
+               WHERE status = 'Active'`;
+  const params = [];
+  if (q) {
+    query += ' AND (location_code LIKE ? OR datacenter_name LIKE ? OR city LIKE ?)';
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  query += ' ORDER BY location_code LIMIT 50';
+
+  db.all(query, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+// Shared tail end of both export modes below: given the matched route rows
+// and a way to decide which touched POP codes are "in scope" (get a full
+// node + address annex entry) vs merely referenced (off-page reference
+// stub), fetch every touched location and hand everything to the renderer.
+function finishNetworkMapExport(res, routeRows, { regions, details, isNodeInScope, popSelectionCount, filenamePart }) {
+  const locationCodes = Array.from(new Set(
+    routeRows.flatMap((r) => [r.location_a, r.location_b]).filter(Boolean)
+  ));
+
+  const locationPlaceholders = locationCodes.map(() => '?').join(',');
+  const locationsSql = `
+    SELECT location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude
+    FROM location_reference
+    WHERE status = 'Active' AND location_code IN (${locationPlaceholders})
+  `;
+
+  db.all(locationsSql, locationCodes, (err2, locationRows) => {
+    if (err2) return res.status(500).json({ error: err2.message });
+
+    const nodes = locationRows.map((loc) => ({
+      code: loc.location_code,
+      region: loc.region,
+      city: loc.city,
+      country: loc.country,
+      datacenterName: loc.datacenter_name,
+      address: loc.datacenter_address,
+      // Manual lat/long from Manage Locations, if ever populated - the
+      // renderer falls back to an offline city/country lookup otherwise.
+      latitude: loc.latitude,
+      longitude: loc.longitude,
+      inSelectedRegions: isNodeInScope(loc.location_code, loc.region),
+    }));
+
+    // Group routes by unordered (location_a, location_b) pair into a single edge.
+    const edgesByKey = new Map();
+    routeRows.forEach((r) => {
+      const key = [r.location_a, r.location_b].sort().join('|');
+      if (!edgesByKey.has(key)) {
+        edgesByKey.set(key, { locationA: r.location_a, locationB: r.location_b, routes: [] });
+      }
+      edgesByKey.get(key).routes.push({
+        circuit_id: r.circuit_id,
+        expected_latency: r.expected_latency,
+        bandwidth: r.bandwidth,
+        underlying_carrier: r.underlying_carrier,
+        region: r.region,
+      });
+    });
+    const edges = Array.from(edgesByKey.values());
+
+    generateNetworkMapPdf(nodes, edges, { regions, details, generatedAt: new Date(), popSelectionCount })
+      .then((pdfBuffer) => {
+        const filename = `network-map-${filenamePart}-${Date.now()}.pdf`;
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(pdfBuffer);
+      })
+      .catch((pdfErr) => {
+        console.error('Network map PDF generation failed:', pdfErr);
+        res.status(500).json({ error: 'Failed to generate network map PDF.' });
+      });
+  });
+}
+
+// Generate a PDF network map diagram, either for whole regions or for a
+// hand-picked set of specific POPs.
 // Query params:
-//   regions  - comma-separated subset of AMERs, EMEA, APAC (at least one required)
+//   mode     - 'region' (default) or 'pops'
+//   regions  - (mode=region) comma-separated subset of AMERs, EMEA, APAC (at least one required)
+//   pops     - (mode=pops) comma-separated location/POP codes (at least one required)
 //   details  - comma-separated subset of ucn, latency, bandwidth, carrier
 const VALID_MAP_REGIONS = ['AMERs', 'EMEA', 'APAC'];
 router.get('/network_routes_export_map', authenticateToken, authorizeModulePermission('network_routes', 'read_only'), (req, res) => {
-  const regions = (req.query.regions || '')
-    .split(',')
-    .map((r) => r.trim())
-    .filter((r) => VALID_MAP_REGIONS.includes(r));
-
-  if (regions.length === 0) {
-    return res.status(400).json({ error: 'At least one valid region (AMERs, EMEA, APAC) must be selected.' });
-  }
+  const mode = req.query.mode === 'pops' ? 'pops' : 'region';
 
   const detailKeys = (req.query.details || '')
     .split(',')
@@ -3986,6 +4072,75 @@ router.get('/network_routes_export_map', authenticateToken, authorizeModulePermi
     bandwidth: detailKeys.includes('bandwidth'),
     carrier: detailKeys.includes('carrier'),
   };
+
+  if (mode === 'pops') {
+    const requestedPops = Array.from(new Set(
+      (req.query.pops || '').split(',').map((p) => p.trim()).filter(Boolean)
+    ));
+    if (requestedPops.length === 0) {
+      return res.status(400).json({ error: 'At least one POP must be selected.' });
+    }
+
+    const popPlaceholders = requestedPops.map(() => '?').join(',');
+    db.all(
+      `SELECT location_code, region FROM location_reference WHERE status = 'Active' AND location_code IN (${popPlaceholders})`,
+      requestedPops,
+      (popErr, popRows) => {
+        if (popErr) return res.status(500).json({ error: popErr.message });
+        if (popRows.length === 0) {
+          return res.status(404).json({ error: 'None of the selected POPs were found among active locations.' });
+        }
+
+        const selectedPopCodes = popRows.map((r) => r.location_code);
+        const selectedPopCodeSet = new Set(selectedPopCodes);
+        const effectiveRegions = Array.from(new Set(popRows.map((r) => r.region))).filter((r) => VALID_MAP_REGIONS.includes(r));
+        if (effectiveRegions.length === 0) {
+          return res.status(400).json({ error: 'The selected POPs do not belong to a supported region (AMERs, EMEA, APAC).' });
+        }
+
+        // Only routes that touch at least one selected POP - a route between
+        // two POPs that were both left unselected is out of scope entirely.
+        const touchPlaceholders = selectedPopCodes.map(() => '?').join(',');
+        const routesSql = `
+          SELECT circuit_id, location_a, location_b, region, expected_latency, bandwidth, underlying_carrier
+          FROM network_routes
+          WHERE route_status = 'Active'
+            AND (location_a IN (${touchPlaceholders}) OR location_b IN (${touchPlaceholders}))
+        `;
+        const routesParams = [...selectedPopCodes, ...selectedPopCodes];
+
+        db.all(routesSql, routesParams, (err, routeRows) => {
+          if (err) return res.status(500).json({ error: err.message });
+          if (routeRows.length === 0) {
+            return res.status(404).json({ error: 'No active routes found touching the selected POP(s).' });
+          }
+
+          // Any touched POP that was NOT explicitly selected stays "out of
+          // scope" here - it still gets drawn as an off-page reference
+          // stub/annex entry (same mechanism as out-of-region INTER links),
+          // it just doesn't get its own full node on the diagram.
+          finishNetworkMapExport(res, routeRows, {
+            regions: effectiveRegions,
+            details,
+            isNodeInScope: (code) => selectedPopCodeSet.has(code),
+            popSelectionCount: selectedPopCodeSet.size,
+            filenamePart: 'pops',
+          });
+        });
+      }
+    );
+    return;
+  }
+
+  // mode === 'region' - export every POP in the selected region(s).
+  const regions = (req.query.regions || '')
+    .split(',')
+    .map((r) => r.trim())
+    .filter((r) => VALID_MAP_REGIONS.includes(r));
+
+  if (regions.length === 0) {
+    return res.status(400).json({ error: 'At least one valid region (AMERs, EMEA, APAC) must be selected.' });
+  }
 
   // Include routes whose own region is directly selected, plus INTER routes
   // that touch a selected region on either end (via each end's location region).
@@ -4010,62 +4165,11 @@ router.get('/network_routes_export_map', authenticateToken, authorizeModulePermi
       return res.status(404).json({ error: 'No active routes found for the selected region(s).' });
     }
 
-    const locationCodes = Array.from(new Set(
-      routeRows.flatMap((r) => [r.location_a, r.location_b]).filter(Boolean)
-    ));
-
-    const locationPlaceholders = locationCodes.map(() => '?').join(',');
-    const locationsSql = `
-      SELECT location_code, region, city, country, datacenter_name, datacenter_address, latitude, longitude
-      FROM location_reference
-      WHERE status = 'Active' AND location_code IN (${locationPlaceholders})
-    `;
-
-    db.all(locationsSql, locationCodes, (err2, locationRows) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-
-      const nodes = locationRows.map((loc) => ({
-        code: loc.location_code,
-        region: loc.region,
-        city: loc.city,
-        country: loc.country,
-        datacenterName: loc.datacenter_name,
-        address: loc.datacenter_address,
-        // Manual lat/long from Manage Locations, if ever populated - the
-        // renderer falls back to an offline city/country lookup otherwise.
-        latitude: loc.latitude,
-        longitude: loc.longitude,
-        inSelectedRegions: regions.includes(loc.region),
-      }));
-
-      // Group routes by unordered (location_a, location_b) pair into a single edge.
-      const edgesByKey = new Map();
-      routeRows.forEach((r) => {
-        const key = [r.location_a, r.location_b].sort().join('|');
-        if (!edgesByKey.has(key)) {
-          edgesByKey.set(key, { locationA: r.location_a, locationB: r.location_b, routes: [] });
-        }
-        edgesByKey.get(key).routes.push({
-          circuit_id: r.circuit_id,
-          expected_latency: r.expected_latency,
-          bandwidth: r.bandwidth,
-          underlying_carrier: r.underlying_carrier,
-          region: r.region,
-        });
-      });
-      const edges = Array.from(edgesByKey.values());
-
-      generateNetworkMapPdf(nodes, edges, { regions, details, generatedAt: new Date() })
-        .then((pdfBuffer) => {
-          const filename = `network-map-${regions.join('-')}-${Date.now()}.pdf`;
-          res.setHeader('Content-Type', 'application/pdf');
-          res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-          res.send(pdfBuffer);
-        })
-        .catch((pdfErr) => {
-          console.error('Network map PDF generation failed:', pdfErr);
-          res.status(500).json({ error: 'Failed to generate network map PDF.' });
-        });
+    finishNetworkMapExport(res, routeRows, {
+      regions,
+      details,
+      isNodeInScope: (code, region) => regions.includes(region),
+      filenamePart: regions.join('-'),
     });
   });
 });
@@ -6841,7 +6945,8 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
                   ruleId: promoPrice.ruleId,
                   ruleName: promoPrice.ruleName,
                   originalPriceUSD: promoPrice.price,
-                  priceField: promoPrice.priceField
+                  priceField: promoPrice.priceField,
+                  protectionPricingPercent: promoPrice.protectionPricingPercent
                 },
                 detailedCalculations: promoCalculations
               };
@@ -7031,101 +7136,79 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
       // Protection pricing = 100% primary + 100% secondary (full redundancy cost)
       const protectedAllocatedCost = primaryPricing.allocatedCost + secondaryPricing.allocatedCost;
       
-      // Check if promo pricing was used on either path (v3.4.2+)
+      // Check if promo pricing was used on the primary path, and whether its matched
+      // promo rule has a per-rule protection pricing % configured (v3.5.3+ - matches
+      // the Route Finder /route_finder/calculate-protected-promo model). The secondary
+      // path's cost is only used to validate margin on the protection increment - it
+      // does not need its own promo match.
       const primaryUsedPromo = primaryPricing.promoPricing?.used === true;
       const secondaryUsedPromo = secondaryPricing.promoPricing?.used === true;
-      const promoMinMargin = pricingConfig.promoPricing?.minimumMarginPercent || 35;
+      const primaryProtectionPct = parseFloat(primaryPricing.promoPricing?.protectionPricingPercent);
+      const hasValidProtectionPct = primaryUsedPromo && primaryProtectionPct > 0;
+      const protectionMinMargin = pricingConfig.promoPricing?.protectionMinimumMarginPercent ?? 40;
       
       let protectedMinPrice, protectedSuggestedPrice;
       let protectedPricingMethod = 'margin_based'; // Track which method was used
       let promoProtectedCalculation = null; // Store promo-specific calculation details
       
-      // Scenario 1: Both paths used promo pricing
-      if (primaryUsedPromo && secondaryUsedPromo) {
-        // Calculate protected price as Max(Primary Promo, Secondary Promo) × 1.7
-        const maxPromoPrice = Math.max(primaryPricing.minimumPrice, secondaryPricing.minimumPrice);
-        const promoBasedProtectedPrice = maxPromoPrice * 1.7;
+      if (hasValidProtectionPct) {
+        // Per-rule protection percentage model: Protected = Primary Promo Price × (1 + ProtectionPct/100)
+        const primaryPromoPrice = primaryPricing.minimumPrice;
+        const protectedPromoPrice = primaryPromoPrice * (1 + primaryProtectionPct / 100);
+        const increment = protectedPromoPrice - primaryPromoPrice;
         
-        // Check if this meets the minimum promo margin requirement (35%)
-        const promoProtectedMargin = ((promoBasedProtectedPrice - protectedAllocatedCost) / promoBasedProtectedPrice) * 100;
+        // Margin check applies only to the increment (the extra cost of adding protection),
+        // validated against the secondary/diverse path's allocated cost
+        const actualIncrementMargin = increment > 0
+          ? ((increment - secondaryPricing.allocatedCost) / increment) * 100
+          : 0;
+        const marginMet = increment > 0 && actualIncrementMargin >= protectionMinMargin;
         
-        if (promoProtectedMargin >= promoMinMargin) {
-          // Use promo-based calculation
-          protectedMinPrice = promoBasedProtectedPrice;
-          protectedSuggestedPrice = promoBasedProtectedPrice;
-          protectedPricingMethod = 'both_promo_1.7x';
+        if (marginMet) {
+          protectedMinPrice = protectedPromoPrice;
+          protectedSuggestedPrice = protectedPromoPrice;
+          protectedPricingMethod = 'per_rule_protection_percent';
           
           promoProtectedCalculation = {
-            method: 'both_promo_1.7x',
-            primaryPromoPrice: primaryPricing.minimumPrice,
-            secondaryPromoPrice: secondaryPricing.minimumPrice,
-            maxPromoPrice: maxPromoPrice,
-            multiplier: 1.7,
-            formula: `Max(Primary Promo, Secondary Promo) × 1.7`,
-            calculation: `Max(${primaryPricing.minimumPrice.toFixed(2)}, ${secondaryPricing.minimumPrice.toFixed(2)}) × 1.7 = ${maxPromoPrice.toFixed(2)} × 1.7 = ${promoBasedProtectedPrice.toFixed(2)} ${output_currency}`,
-            marginCheck: {
-              calculatedMargin: promoProtectedMargin,
-              requiredMargin: promoMinMargin,
+            method: 'per_rule_protection_percent',
+            primaryPromoPrice: primaryPromoPrice,
+            protectionPricingPercent: primaryProtectionPct,
+            formula: `Primary Promo Price × (1 + ProtectionPct/100)`,
+            calculation: `${primaryPromoPrice.toFixed(2)} × (1 + ${primaryProtectionPct}/100) = ${protectedPromoPrice.toFixed(2)} ${output_currency}`,
+            incrementMarginCheck: {
+              increment: Math.round(increment * 100) / 100,
+              protectionAllocatedCost: secondaryPricing.allocatedCost,
+              calculatedMargin: actualIncrementMargin,
+              requiredMargin: protectionMinMargin,
               passed: true
             }
           };
         } else {
-          // Promo-based price doesn't meet margin requirements, fall back to margin-based
-          const marginBasedMinPrice = protectedAllocatedCost / (1 - (minMarginPercent / 100));
-          const marginBasedSuggestedPrice = protectedAllocatedCost / (1 - (suggestedMarginPercent / 100));
-          protectedMinPrice = marginBasedMinPrice;
-          protectedSuggestedPrice = marginBasedSuggestedPrice;
+          // Increment doesn't meet the protection margin requirement, fall back to margin-based
           protectedPricingMethod = 'margin_based_fallback';
           
           promoProtectedCalculation = {
             method: 'margin_based_fallback',
-            reason: 'Promo-based 1.7x calculation did not meet minimum margin requirement',
-            primaryPromoPrice: primaryPricing.minimumPrice,
-            secondaryPromoPrice: secondaryPricing.minimumPrice,
-            maxPromoPrice: maxPromoPrice,
-            promoBasedPrice: promoBasedProtectedPrice,
-            marginCheck: {
-              calculatedMargin: promoProtectedMargin,
-              requiredMargin: promoMinMargin,
+            reason: 'Per-rule protection percentage price did not meet minimum increment margin requirement',
+            primaryPromoPrice: primaryPromoPrice,
+            protectionPricingPercent: primaryProtectionPct,
+            protectedPromoPrice: protectedPromoPrice,
+            incrementMarginCheck: {
+              increment: Math.round(increment * 100) / 100,
+              protectionAllocatedCost: secondaryPricing.allocatedCost,
+              calculatedMargin: actualIncrementMargin,
+              requiredMargin: protectionMinMargin,
               passed: false
             },
             fallbackToMarginBased: true
           };
         }
       }
-      // Scenario 2: Only Primary used promo pricing
-      else if (primaryUsedPromo && !secondaryUsedPromo) {
-        // Protected = Primary Promo Price + Secondary Regular Price
-        protectedMinPrice = primaryPricing.minimumPrice + secondaryPricing.minimumPrice;
-        protectedSuggestedPrice = primaryPricing.suggestedPrice + secondaryPricing.suggestedPrice;
-        protectedPricingMethod = 'primary_promo_only';
-        
-        promoProtectedCalculation = {
-          method: 'primary_promo_only',
-          primaryPromoPrice: primaryPricing.minimumPrice,
-          secondaryRegularPrice: secondaryPricing.minimumPrice,
-          formula: 'Primary Promo Price + Secondary Regular Price',
-          calculation: `${primaryPricing.minimumPrice.toFixed(2)} + ${secondaryPricing.minimumPrice.toFixed(2)} = ${protectedMinPrice.toFixed(2)} ${output_currency}`
-        };
-      }
-      // Scenario 3: Only Secondary used promo pricing
-      else if (!primaryUsedPromo && secondaryUsedPromo) {
-        // Protected = Primary Regular Price + Secondary Promo Price
-        protectedMinPrice = primaryPricing.minimumPrice + secondaryPricing.minimumPrice;
-        protectedSuggestedPrice = primaryPricing.suggestedPrice + secondaryPricing.suggestedPrice;
-        protectedPricingMethod = 'secondary_promo_only';
-        
-        promoProtectedCalculation = {
-          method: 'secondary_promo_only',
-          primaryRegularPrice: primaryPricing.minimumPrice,
-          secondaryPromoPrice: secondaryPricing.minimumPrice,
-          formula: 'Primary Regular Price + Secondary Promo Price',
-          calculation: `${primaryPricing.minimumPrice.toFixed(2)} + ${secondaryPricing.minimumPrice.toFixed(2)} = ${protectedMinPrice.toFixed(2)} ${output_currency}`
-        };
-      }
-      // Scenario 4: Neither path used promo pricing - use standard margin-based calculation
-      else {
-        // Calculate base prices with 12-month protected margins
+      
+      // Standard margin-based protected pricing - used when there's no promo on the primary
+      // path, its matched rule has no protection % configured, or the promo-based price above
+      // didn't meet the increment margin requirement
+      if (!hasValidProtectionPct || protectedPricingMethod === 'margin_based_fallback') {
         // Formula: Price = Allocated Cost / (1 - Margin%)
         const protectedMinPriceBase = protectedAllocatedCost / (1 - (minMarginPercent / 100));
         const protectedSuggestedPriceBase = protectedAllocatedCost / (1 - (suggestedMarginPercent / 100));
@@ -7138,11 +7221,13 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
         }
         protectedMinPrice = protectedMinPriceBase * (1 - contractDiscount / 100);
         protectedSuggestedPrice = protectedSuggestedPriceBase * (1 - contractDiscount / 100);
-        protectedPricingMethod = 'margin_based';
+        if (!hasValidProtectionPct) {
+          protectedPricingMethod = 'margin_based';
+        }
       }
       
-      // For promo-based scenarios (1, 2, 3), apply contract term discount if applicable
-      if (protectedPricingMethod !== 'margin_based' && protectedPricingMethod !== 'margin_based_fallback') {
+      // For the promo-based scenario, apply contract term discount if applicable
+      if (protectedPricingMethod === 'per_rule_protection_percent') {
         const termConfig = pricingConfig.protectedServiceMargins[contract_term];
         let contractDiscount = 0;
         if ((contract_term === 24 || contract_term === 36) && termConfig && termConfig.discountPercent !== undefined) {
@@ -7189,17 +7274,15 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           method: protectedPricingMethod,
           primaryUsedPromo: primaryUsedPromo,
           secondaryUsedPromo: secondaryUsedPromo,
-          description: protectedPricingMethod === 'both_promo_1.7x' ? 'Both paths used promo pricing - Protected = Max(Primary, Secondary) × 1.7' :
-                       protectedPricingMethod === 'primary_promo_only' ? 'Only primary path used promo pricing - Protected = Primary Promo + Secondary Regular' :
-                       protectedPricingMethod === 'secondary_promo_only' ? 'Only secondary path used promo pricing - Protected = Primary Regular + Secondary Promo' :
-                       protectedPricingMethod === 'margin_based_fallback' ? 'Promo calculation did not meet margin requirements - fell back to margin-based' :
+          description: protectedPricingMethod === 'per_rule_protection_percent' ? 'Primary path used promo pricing with a per-rule protection % - Protected = Primary Promo × (1 + ProtectionPct/100)' :
+                       protectedPricingMethod === 'margin_based_fallback' ? 'Per-rule protection percentage price did not meet the increment margin requirement - fell back to margin-based' :
                        'Standard margin-based protected pricing calculation'
         },
         promoProtectedCalculation: promoProtectedCalculation,
         marginEnforcement: {
           targetMinMargin: minMarginPercent,
           targetSuggestedMargin: suggestedMarginPercent,
-          description: protectedPricingMethod.includes('promo') ? 'Promo pricing applied to protected service' : 'Protected service margins applied based on bandwidth tier'
+          description: protectedPricingMethod === 'per_rule_protection_percent' ? 'Per-rule protection percentage pricing applied to protected service' : 'Protected service margins applied based on bandwidth tier'
         },
         allocatedCostBreakdown: {
           primaryAllocatedCost: primaryPricing.allocatedCost,
@@ -7214,7 +7297,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           allocatedCost: protectedAllocatedCost,
           calculatedPrice: protectedMinPrice,
           roundedToNearest10: roundUpToNearest10(protectedMinPrice),
-          description: protectedPricingMethod.includes('promo') ? 
+          description: protectedPricingMethod === 'per_rule_protection_percent' ? 
             `Minimum price calculated using ${protectedPricingMethod} method` :
             `Minimum price calculated to achieve ${minMarginPercent}% margin with ${contract_term}-month contract`
         },
@@ -7222,7 +7305,7 @@ router.post('/network_design/calculate_pricing', authenticateToken, async (req, 
           allocatedCost: protectedAllocatedCost,
           calculatedPrice: protectedSuggestedPrice,
           roundedToNearest10: roundUpToNearest10(protectedSuggestedPrice),
-          description: protectedPricingMethod.includes('promo') ? 
+          description: protectedPricingMethod === 'per_rule_protection_percent' ? 
             `Suggested price calculated using ${protectedPricingMethod} method` :
             `Suggested price calculated to achieve ${suggestedMarginPercent}% margin with ${contract_term}-month contract`
         },
@@ -12766,7 +12849,10 @@ const findPromoPrice = (sourceLocation, destinationLocation, bandwidth) => {
           ruleName: selectedRule.rule_name,
           price: lowestPrice,
           priceField: priceField,
-          createdAt: selectedRule.created_at
+          createdAt: selectedRule.created_at,
+          protectionPricingPercent: selectedRule.protection_pricing_percent !== null && selectedRule.protection_pricing_percent !== undefined
+            ? parseFloat(selectedRule.protection_pricing_percent)
+            : null
         });
       } else {
         resolve(null);
@@ -12822,6 +12908,7 @@ const getPricingLogicConfig = () => {
         },
         promoPricing: {
           minimumMarginPercent: 35,
+          protectionMinimumMarginPercent: 40,
           discount24Month: 5,
           discount36Month: 10
         },
@@ -13054,6 +13141,7 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
   const {
     rule_name, source_locations, destination_locations,
     price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
+    protection_pricing_percent,
     required_circuit_ids, excluded_circuit_ids
   } = req.body;
   
@@ -13141,13 +13229,18 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
     });
   };
 
+  // Protection pricing % is optional - null/blank disables protected pricing for this rule
+  const protectionPricingPercentValue = (protection_pricing_percent !== undefined && protection_pricing_percent !== null && protection_pricing_percent !== '')
+    ? parseFloat(protection_pricing_percent)
+    : null;
+
   // Insert the main rule
   db.run(
     `INSERT INTO promo_pricing_rules (rule_name, price_under_100mb, price_100_to_999mb, 
-     price_1000_to_2999mb, price_3000mb_plus, required_circuit_ids, excluded_circuit_ids, is_active, created_by) 
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+     price_1000_to_2999mb, price_3000mb_plus, protection_pricing_percent, required_circuit_ids, excluded_circuit_ids, is_active, created_by) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     [rule_name, parseFloat(price_under_100mb) || 0, parseFloat(price_100_to_999mb) || 0, 
-     parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, requiredCircuitsString, excludedCircuitsString, req.user.id],
+     parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, protectionPricingPercentValue, requiredCircuitsString, excludedCircuitsString, req.user.id],
     function(err) {
       if (err) {
         return res.status(500).json({ error: 'Promo pricing insert error: ' + err.message });
@@ -13181,6 +13274,7 @@ router.post('/promo-pricing', authenticateToken, authorizeRole('administrator'),
             logChange(req.user.id, 'promo_pricing_rules', ruleId, 'CREATE', null, {
               rule_name, source_locations, destination_locations, 
               price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
+              protection_pricing_percent: protectionPricingPercentValue,
               required_circuit_ids: requiredCircuitsString,
               excluded_circuit_ids: excludedCircuitsString
             }, req);
@@ -13199,6 +13293,7 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
   const {
     rule_name, source_locations, destination_locations,
     price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
+    protection_pricing_percent,
     required_circuit_ids, excluded_circuit_ids
   } = req.body;
   
@@ -13226,6 +13321,11 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
 
   const requiredCircuitsString = circuitIdsToStringForUpdate(required_circuit_ids);
   const excludedCircuitsString = circuitIdsToStringForUpdate(excluded_circuit_ids);
+
+  // Protection pricing % is optional - null/blank disables protected pricing for this rule
+  const protectionPricingPercentValue = (protection_pricing_percent !== undefined && protection_pricing_percent !== null && protection_pricing_percent !== '')
+    ? parseFloat(protection_pricing_percent)
+    : null;
   
   db.run('BEGIN TRANSACTION', (err) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -13245,9 +13345,9 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
       // Update the promo rule
       db.run(
         `UPDATE promo_pricing_rules SET rule_name = ?, price_under_100mb = ?, price_100_to_999mb = ?, 
-         price_1000_to_2999mb = ?, price_3000mb_plus = ?, required_circuit_ids = ?, excluded_circuit_ids = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+         price_1000_to_2999mb = ?, price_3000mb_plus = ?, protection_pricing_percent = ?, required_circuit_ids = ?, excluded_circuit_ids = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [rule_name, parseFloat(price_under_100mb) || 0, parseFloat(price_100_to_999mb) || 0, 
-         parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, requiredCircuitsString, excludedCircuitsString, req.user.id, ruleId],
+         parseFloat(price_1000_to_2999mb) || 0, parseFloat(price_3000mb_plus) || 0, protectionPricingPercentValue, requiredCircuitsString, excludedCircuitsString, req.user.id, ruleId],
         function(err) {
           if (err) {
             db.run('ROLLBACK');
@@ -13290,6 +13390,7 @@ router.put('/promo-pricing/:id', authenticateToken, authorizeRole('administrator
                   logChange(req.user.id, 'promo_pricing_rules', ruleId, 'UPDATE', oldRule, {
                     rule_name, source_locations, destination_locations,
                     price_under_100mb, price_100_to_999mb, price_1000_to_2999mb, price_3000mb_plus,
+                    protection_pricing_percent: protectionPricingPercentValue,
                     required_circuit_ids: requiredCircuitsString,
                     excluded_circuit_ids: excludedCircuitsString
                   }, req);
@@ -19332,6 +19433,7 @@ const getPromoRulesForSales = () => {
         pr.price_100_to_999mb,
         pr.price_1000_to_2999mb,
         pr.price_3000mb_plus,
+        pr.protection_pricing_percent,
         pr.required_circuit_ids,
         pr.excluded_circuit_ids,
         pr.created_at,
@@ -19407,6 +19509,7 @@ const getPromoRulesForSales = () => {
             price_100mb: rule.price_100_to_999mb || 0,
             price_1000mb: rule.price_1000_to_2999mb || 0,
             price_10gb: rule.price_3000mb_plus || 0,
+            protection_pricing_percent: rule.protection_pricing_percent ?? null,
             has_required_circuits: !!(rule.required_circuit_ids && rule.required_circuit_ids.trim()),
             has_excluded_circuits: !!(rule.excluded_circuit_ids && rule.excluded_circuit_ids.trim())
           };
@@ -19552,7 +19655,8 @@ router.post('/route_finder/check-promo-match', authenticateToken, authorizeModul
             price_100mb: bestRule.price_100_to_999mb || 0,
             price_1000mb: bestRule.price_1000_to_2999mb || 0,
             price_10gb: bestRule.price_3000mb_plus || 0
-          }
+          },
+          protectionPricingPercent: bestRule.protection_pricing_percent || null
         });
       }
       
@@ -19574,7 +19678,8 @@ router.post('/route_finder/check-promo-match', authenticateToken, authorizeModul
                 price_100mb: bestRule.price_100_to_999mb || 0,
                 price_1000mb: bestRule.price_1000_to_2999mb || 0,
                 price_10gb: bestRule.price_3000mb_plus || 0
-              }
+              },
+              protectionPricingPercent: bestRule.protection_pricing_percent || null
             });
           }
           
@@ -19591,7 +19696,8 @@ router.post('/route_finder/check-promo-match', authenticateToken, authorizeModul
                   price_100mb: bestRule.price_100_to_999mb || 0,
                   price_1000mb: bestRule.price_1000_to_2999mb || 0,
                   price_10gb: bestRule.price_3000mb_plus || 0
-                }
+                },
+                protectionPricingPercent: bestRule.protection_pricing_percent || null
               });
             }
             
@@ -19728,7 +19834,8 @@ router.post('/route_finder/check-promo-match', authenticateToken, authorizeModul
                 price_1000mb: validatedPrices.price_1000mb,
                 price_10gb: validatedPrices.price_10gb
               },
-              marginDetails: marginDetails
+              marginDetails: marginDetails,
+              protectionPricingPercent: bestRule.protection_pricing_percent || null
             });
           });
         }
@@ -19741,185 +19848,170 @@ router.post('/route_finder/check-promo-match', authenticateToken, authorizeModul
 });
 
 // Calculate protected promo pricing for Route Finder
-// Returns protected pricing when BOTH primary and secondary paths have valid promo pricing
+// Protection pricing is an optional, per-promo-rule feature: when the primary path matches
+// a promo rule that has a "protection_pricing_percent" configured, the protected price per
+// bandwidth tier = primaryPromoPrice x (1 + protectionPct/100). The secondary/diverse path does
+// NOT need its own promo match - it's only used to source cost data for the margin check on the
+// increment (e.g. the $70 in a $100 -> $170 example), which is validated against
+// promoPricing.protectionMinimumMarginPercent - independently of the primary path's own margin.
 router.post('/route_finder/calculate-protected-promo', authenticateToken, authorizeModulePermission('route_finder', 'read_only'), async (req, res) => {
   try {
-    const { 
+    const {
       source, destination, bandwidth,
-      primary_circuit_ids = [], secondary_circuit_ids = [],
-      primary_promo_prices, secondary_promo_prices 
+      secondary_circuit_ids = [],
+      primary_promo_prices, protection_pricing_percent
     } = req.body;
-    
+
     if (!source || !destination) {
       return res.status(400).json({ error: 'Source and destination are required' });
     }
-    
-    if (!primary_promo_prices || !secondary_promo_prices) {
-      return res.status(400).json({ error: 'Both primary and secondary promo prices are required' });
+
+    if (!primary_promo_prices) {
+      return res.status(400).json({ error: 'Primary promo prices are required' });
     }
-    
-    // Get pricing config for protected service margin validation (per-bandwidth-tier)
-    const pricingConfig = await getPricingLogicConfig();
-    const protectedMargins = pricingConfig.protectedServiceMargins?.[12]?.bandwidthTiers || {
-      under_100mb: { minMargin: 60 },
-      from_100_to_999mb: { minMargin: 50 },
-      from_1000_to_2999mb: { minMargin: 45 },
-      over_3000mb: { minMargin: 40 }
-    };
-    
-    // Map bandwidth tiers to their config keys and requested bandwidths
-    const tierConfig = [
-      { key: 'price_10mb', requestedBw: 10, marginKey: 'under_100mb' },
-      { key: 'price_100mb', requestedBw: 100, marginKey: 'from_100_to_999mb' },
-      { key: 'price_1000mb', requestedBw: 1000, marginKey: 'from_1000_to_2999mb' },
-      { key: 'price_10gb', requestedBw: 10000, marginKey: 'over_3000mb' }
-    ];
-    
-    // Calculate 1.7x base prices for each tier
-    // If either primary or secondary price is null for a tier, that tier is not eligible
-    const basePrices = {};
-    const tierEligible = {};
-    tierConfig.forEach(tier => {
-      const primaryPrice = primary_promo_prices[tier.key];
-      const secondaryPrice = secondary_promo_prices[tier.key];
-      
-      // Both paths must have a valid (non-null) price for this tier
-      if (primaryPrice === null || primaryPrice === undefined || secondaryPrice === null || secondaryPrice === undefined) {
-        basePrices[tier.key] = null;
-        tierEligible[tier.key] = false;
-      } else {
-        basePrices[tier.key] = Math.max(primaryPrice || 0, secondaryPrice || 0) * 1.7;
-        tierEligible[tier.key] = true;
-      }
-    });
-    
-    // Calculate allocated costs for BOTH paths combined (full redundancy cost)
-    const allPrimaryIds = primary_circuit_ids.filter(c => c);
-    const allSecondaryIds = secondary_circuit_ids.filter(c => c);
-    const allCircuitIds = [...new Set([...allPrimaryIds, ...allSecondaryIds])];
-    
-    if (allCircuitIds.length === 0) {
-      // No circuits - return 1.7x prices (no cost data to validate margins against)
+
+    const protectionPct = parseFloat(protection_pricing_percent);
+    if (!protectionPct || protectionPct <= 0) {
+      // No protection pricing % configured on the matched rule - nothing to calculate
       return res.json({
-        valid: true,
-        prices: basePrices,
-        method: 'both_promo_1.7x'
+        valid: false,
+        reason: 'no_protection_pricing_percent',
+        prices: null
       });
     }
-    
-    // Get costs for all circuits
-    const placeholders = allCircuitIds.map(() => '?').join(',');
-    
+
+    // Get pricing config for the protection margin check
+    const pricingConfig = await getPricingLogicConfig();
+    const protectionMinMargin = pricingConfig.promoPricing?.protectionMinimumMarginPercent ?? 40;
+
+    // Map bandwidth tiers to their requested bandwidths
+    const tierConfig = [
+      { key: 'price_10mb', requestedBw: 10 },
+      { key: 'price_100mb', requestedBw: 100 },
+      { key: 'price_1000mb', requestedBw: 1000 },
+      { key: 'price_10gb', requestedBw: 10000 }
+    ];
+
+    // Base protected price per tier: primaryPrice x (1 + protectionPct/100)
+    const protectedBasePrices = {};
+    tierConfig.forEach(tier => {
+      const primaryPrice = primary_promo_prices[tier.key];
+      protectedBasePrices[tier.key] = (primaryPrice === null || primaryPrice === undefined)
+        ? null
+        : primaryPrice * (1 + protectionPct / 100);
+    });
+
+    const allSecondaryIds = secondary_circuit_ids.filter(c => c);
+
+    if (allSecondaryIds.length === 0) {
+      // No diverse-path circuits - can't validate margin on the increment, return unvalidated
+      return res.json({
+        valid: true,
+        prices: protectedBasePrices,
+        method: 'per_rule_protection_percent',
+        marginDetails: null
+      });
+    }
+
+    // Get costs for the protection route's circuits
+    const placeholders = allSecondaryIds.map(() => '?').join(',');
+
     db.all(
       `SELECT circuit_id, cost, currency, bandwidth FROM network_routes WHERE circuit_id IN (${placeholders})`,
-      allCircuitIds,
-      async (costErr, routeCosts) => {
+      allSecondaryIds,
+      (costErr, routeCosts) => {
         if (costErr) {
           console.error('Error fetching route costs for protected promo:', costErr);
           return res.status(500).json({ error: 'Failed to fetch route costs' });
         }
-        
+
         // Get exchange rates
         db.all('SELECT * FROM exchange_rates WHERE status = "Active"', [], (rateErr, rates) => {
           if (rateErr) {
             console.error('Error fetching exchange rates:', rateErr);
             return res.status(500).json({ error: 'Failed to fetch exchange rates' });
           }
-          
+
           // Build exchange rate map
           const exchangeRates = {};
           rates.forEach(rate => {
             exchangeRates[rate.currency_code] = rate.exchange_rate;
           });
-          
-          // Utilization factors from config
-          const primaryUtilUnder = pricingConfig.utilizationFactors?.primaryUnder10000 || 0.9;
-          const primaryUtilOver = pricingConfig.utilizationFactors?.primaryOver10000 || 0.9;
+
+          // Utilization factors from config (protection path only)
           const protectionUtilUnder = pricingConfig.utilizationFactors?.protectionUnder10000 || 1.0;
           const protectionUtilOver = pricingConfig.utilizationFactors?.protectionOver10000 || 1.0;
-          
-          // Calculate allocated cost for a path at a specific requested bandwidth
-          const calculatePathCostForBw = (circuitIds, requestedBw, isProtection) => {
+
+          // Calculate allocated cost of the protection (secondary/diverse) route at a given requested bandwidth
+          const calculateProtectionCostForBw = (requestedBw) => {
             let totalCost = 0;
-            circuitIds.forEach(cid => {
+            allSecondaryIds.forEach(cid => {
               const route = routeCosts.find(r => r.circuit_id === cid);
               if (!route) return;
-              
+
               let routeCost = parseFloat(route.cost) || 0;
               const routeCurrency = route.currency || 'USD';
-              
+
               // Convert to USD
               if (routeCurrency !== 'USD' && exchangeRates[routeCurrency]) {
                 routeCost = routeCost / exchangeRates[routeCurrency];
               }
-              
+
               let routeBandwidth = parseFloat(route.bandwidth) || 1000;
               if (route.bandwidth && typeof route.bandwidth === 'string' && route.bandwidth.toLowerCase().includes('dark fiber')) {
                 routeBandwidth = 200000;
               }
-              
-              // Use appropriate utilization factor based on path type and bandwidth
-              let utilizationFactor;
-              if (isProtection) {
-                utilizationFactor = routeBandwidth <= 10000 ? protectionUtilUnder : protectionUtilOver;
-              } else {
-                utilizationFactor = routeBandwidth <= 10000 ? primaryUtilUnder : primaryUtilOver;
-              }
-              
+
+              const utilizationFactor = routeBandwidth <= 10000 ? protectionUtilUnder : protectionUtilOver;
               const allocationRatio = requestedBw / (routeBandwidth * utilizationFactor);
               totalCost += routeCost * allocationRatio;
             });
             return totalCost;
           };
-          
-          // For each bandwidth tier, calculate final price as max(1.7x, margin-based)
+
+          // For each tier, check the margin on just the protection increment against the
+          // protection route's allocated cost. If it fails, hide that tier's protected price.
           const finalPrices = {};
           const marginDetails = {};
-          
+
           tierConfig.forEach(tier => {
-            // Skip tiers where underlying promo prices were null (margin not met at individual path level)
-            if (!tierEligible[tier.key]) {
+            const protectedPrice = protectedBasePrices[tier.key];
+            if (protectedPrice === null || protectedPrice === undefined) {
               finalPrices[tier.key] = null;
-              marginDetails[tier.key] = { eligible: false, reason: 'underlying_promo_tier_not_valid' };
+              marginDetails[tier.key] = { eligible: false, reason: 'primary_promo_tier_not_valid' };
               return;
             }
-            
-            const primaryCost = calculatePathCostForBw(allPrimaryIds, tier.requestedBw, false);
-            const secondaryCost = calculatePathCostForBw(allSecondaryIds, tier.requestedBw, true);
-            const totalAllocatedCost = primaryCost + secondaryCost;
-            
-            // Get the minimum margin for this tier from protected service config
-            const tierMinMargin = protectedMargins[tier.marginKey]?.minMargin || 40;
-            
-            // Calculate margin-based price: allocatedCost / (1 - minMargin/100)
-            const marginBasedPrice = totalAllocatedCost > 0 
-              ? totalAllocatedCost / (1 - tierMinMargin / 100) 
+
+            const primaryPrice = primary_promo_prices[tier.key];
+            const increment = protectedPrice - primaryPrice;
+            const protectionAllocatedCost = calculateProtectionCostForBw(tier.requestedBw);
+
+            // Margin formula applied to the increment only: ((increment - allocatedCost) / increment) * 100
+            const actualMargin = increment > 0
+              ? ((increment - protectionAllocatedCost) / increment) * 100
               : 0;
-            
-            // Final price = max(1.7x price, margin-based price) - ensures both 1.7x minimum AND margin requirements
-            const price_1_7x = basePrices[tier.key];
-            finalPrices[tier.key] = Math.max(price_1_7x, marginBasedPrice);
-            
-            // Track margin details for debugging
-            const actualMargin = finalPrices[tier.key] > 0
-              ? ((finalPrices[tier.key] - totalAllocatedCost) / finalPrices[tier.key]) * 100
-              : 0;
+            const marginMet = actualMargin >= protectionMinMargin;
+
             marginDetails[tier.key] = {
               eligible: true,
-              allocatedCost: Math.round(totalAllocatedCost * 100) / 100,
-              price_1_7x: Math.round(price_1_7x * 100) / 100,
-              marginBasedPrice: Math.round(marginBasedPrice * 100) / 100,
-              requiredMargin: tierMinMargin,
+              primaryPrice,
+              protectedPrice: Math.round(protectedPrice * 100) / 100,
+              increment: Math.round(increment * 100) / 100,
+              protectionAllocatedCost: Math.round(protectionAllocatedCost * 100) / 100,
               actualMargin: Math.round(actualMargin * 100) / 100,
-              method: price_1_7x >= marginBasedPrice ? '1.7x' : 'margin_based'
+              requiredMargin: protectionMinMargin,
+              valid: marginMet
             };
+
+            finalPrices[tier.key] = marginMet ? protectedPrice : null;
           });
-          
-          // Always valid - we enforce minimum of 1.7x OR margin-based price
+
+          const hasAnyValidTier = Object.values(finalPrices).some(p => p !== null);
+
           res.json({
-            valid: true,
+            valid: hasAnyValidTier,
             prices: finalPrices,
-            method: 'both_promo_protected',
+            method: 'per_rule_protection_percent',
             marginDetails: marginDetails
           });
         });
@@ -24312,6 +24404,20 @@ router.delete('/voice/one-directory/logs', authenticateToken, authorizeRole(['ad
 // ========================================
 
 const latencyMatrixService = require('./latencyMatrixService');
+const { generateLatencyMatrix30dPdf } = require('./latencyMatrixPdfRenderer');
+
+// Shared by /api/latency-matrix/30d-low and its PDF export - same locations
+// join used by the live matrix endpoint below.
+function getMatrixLocationsForExport(callback) {
+  db.all(
+    `SELECT lml.*, lr.datacenter_name, lr.location_code
+     FROM latency_matrix_locations lml
+     LEFT JOIN location_reference lr ON lml.pop_code = lr.location_code
+     ORDER BY lml.display_order ASC, lml.city_name ASC`,
+    [],
+    callback
+  );
+}
 
 // Get latency matrix data (all authenticated users)
 router.get('/api/latency-matrix', authenticateToken, (req, res) => {
@@ -24348,6 +24454,59 @@ router.get('/api/latency-matrix', authenticateToken, (req, res) => {
       );
     }
   );
+});
+
+// Get the rolling 30-day lowest 1Gb latency per pair (all authenticated users)
+router.get('/api/latency-matrix/30d-low', authenticateToken, async (req, res) => {
+  try {
+    const { matrix, distinctDaysRecorded } = await latencyMatrixService.get30DayLowMatrix();
+
+    getMatrixLocationsForExport((err, locations) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      res.json({
+        locations: locations || [],
+        matrix,
+        windowDays: 30,
+        distinctDaysRecorded,
+        generatedAt: new Date().toISOString()
+      });
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Export the 30-day low latency matrix as a customer-facing PDF
+router.get('/api/latency-matrix/30d-low/export', authenticateToken, async (req, res) => {
+  try {
+    const { matrix } = await latencyMatrixService.get30DayLowMatrix();
+
+    getMatrixLocationsForExport(async (err, locations) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      if (!locations || locations.length < 2) {
+        return res.status(400).json({ error: 'At least two locations must be configured to export the latency matrix.' });
+      }
+
+      try {
+        const generatedAt = new Date();
+        const pdfBuffer = await generateLatencyMatrix30dPdf(locations, matrix, {
+          generatedAt
+        });
+
+        const filename = `ipc-live-latency-matrix-last-30-days-${generatedAt.toISOString().slice(0, 10)}.pdf`;
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(pdfBuffer);
+      } catch (pdfErr) {
+        console.error('30-day latency matrix PDF generation failed:', pdfErr);
+        res.status(500).json({ error: 'Failed to generate the latency matrix PDF.' });
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========================================

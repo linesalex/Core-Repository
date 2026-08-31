@@ -1237,8 +1237,10 @@ function pageSectionLabel(page) {
 }
 
 function renderCoverPageHtml(pages, options, diagramPageNumberByPageId, width, height) {
-  const { regions, generatedAt } = options;
-  const titleText = `IPC Network Map \u2013 ${regions.join(' / ')}`;
+  const { regions, generatedAt, popSelectionCount } = options;
+  const titleText = popSelectionCount
+    ? `IPC Network Map \u2013 ${regions.join(' / ')} (${popSelectionCount} selected POP${popSelectionCount === 1 ? '' : 's'})`
+    : `IPC Network Map \u2013 ${regions.join(' / ')}`;
   const generatedText = `Generated ${generatedAt.toISOString().replace('T', ' ').substring(0, 19)} UTC`;
 
   const indexRows = pages.map((page) => {

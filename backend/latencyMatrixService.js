@@ -12,6 +12,69 @@
 
 const db = require('./db');
 
+// Exported (pure, no DB access) so they can be unit tested directly.
+
+// Only rows with an actual computed 1Gb latency are worth tracking as part
+// of a day's running low (a null just means no path existed on that run).
+function filterRecordableRows(cacheRows) {
+  return (cacheRows || []).filter((row) => row.latency_1g !== null && row.latency_1g !== undefined);
+}
+
+// Reduces raw latency_matrix_daily_low rows (one per day per pair) down to
+// the lowest value per source/destination pair over the whole window, plus
+// how many distinct calendar days of data are behind that figure.
+function aggregateDailyLowRows(rows) {
+  const byPair = new Map();
+  const distinctDates = new Set();
+
+  (rows || []).forEach((row) => {
+    distinctDates.add(row.record_date);
+    const key = `${row.source_pop}|${row.destination_pop}`;
+    const existing = byPair.get(key);
+    if (!existing) {
+      byPair.set(key, {
+        source_pop: row.source_pop,
+        destination_pop: row.destination_pop,
+        source_city: row.source_city,
+        destination_city: row.destination_city,
+        latency_1g_low: row.lowest_latency_1g,
+        earliest_date: row.record_date,
+        days_recorded: 1
+      });
+    } else {
+      if (row.lowest_latency_1g < existing.latency_1g_low) {
+        existing.latency_1g_low = row.lowest_latency_1g;
+      }
+      if (row.record_date < existing.earliest_date) {
+        existing.earliest_date = row.record_date;
+      }
+      existing.days_recorded += 1;
+    }
+  });
+
+  return {
+    matrix: Array.from(byPair.values()),
+    distinctDaysRecorded: distinctDates.size
+  };
+}
+
+// Shared with the test suite so it verifies the exact SQL run in production,
+// not a re-implementation of it.
+const DAILY_LOW_UPSERT_SQL = `INSERT INTO latency_matrix_daily_low
+  (record_date, source_pop, destination_pop, source_city, destination_city, lowest_latency_1g, last_updated)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(record_date, source_pop, destination_pop) DO UPDATE SET
+    lowest_latency_1g = MIN(lowest_latency_1g, excluded.lowest_latency_1g),
+    source_city = excluded.source_city,
+    destination_city = excluded.destination_city,
+    last_updated = excluded.last_updated`;
+
+const DAILY_LOW_PRUNE_SQL = `DELETE FROM latency_matrix_daily_low WHERE record_date < date('now', '-30 days')`;
+
+const DAILY_LOW_SELECT_WINDOW_SQL = `SELECT record_date, source_pop, destination_pop, source_city, destination_city, lowest_latency_1g
+  FROM latency_matrix_daily_low
+  WHERE record_date >= date('now', '-30 days')`;
+
 class LatencyMatrixService {
   constructor() {
     this.isRunning = false;
@@ -287,6 +350,71 @@ class LatencyMatrixService {
     });
   }
 
+  /**
+   * Upsert today's (UTC) running-lowest 1Gb latency per source/destination
+   * pair. Called on every hourly computeMatrix() run - each call only ever
+   * lowers today's stored value (never raises it), so by the time the UTC
+   * date rolls over, that day's row is frozen at the true lowest latency
+   * measured at any point during that day.
+   */
+  recordDailyLow(cacheRows) {
+    return new Promise((resolve, reject) => {
+      const rows = filterRecordableRows(cacheRows);
+      if (rows.length === 0) return resolve();
+
+      const recordDate = new Date().toISOString().slice(0, 10); // UTC YYYY-MM-DD
+      const now = new Date().toISOString();
+
+      let completed = 0;
+      let hasError = false;
+
+      rows.forEach((row) => {
+        db.run(DAILY_LOW_UPSERT_SQL, [
+          recordDate, row.source_pop, row.destination_pop,
+          row.source_city, row.destination_city,
+          row.latency_1g, now
+        ], (err) => {
+          if (err && !hasError) {
+            hasError = true;
+            return reject(err);
+          }
+          completed++;
+          if (completed === rows.length && !hasError) resolve();
+        });
+      });
+    });
+  }
+
+  /**
+   * Drop daily-low rows older than the 30-day retention window, keeping
+   * latency_matrix_daily_low capped at roughly 30 days per pair.
+   */
+  pruneOldDailyLows() {
+    return new Promise((resolve, reject) => {
+      db.run(DAILY_LOW_PRUNE_SQL, [], (err) => {
+        if (err) return reject(err);
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * Computes the lowest 1Gb latency observed for each source/destination
+   * pair over the last 30 days, i.e. "the lowest latency available within
+   * the last 30 days" - used by the Home page's 30-Day Low tab and its PDF
+   * export. Also reports how many distinct days of data back each pair's
+   * value, so the UI can note when the rolling window hasn't fully filled
+   * in yet (e.g. shortly after this feature first ships).
+   */
+  get30DayLowMatrix() {
+    return new Promise((resolve, reject) => {
+      db.all(DAILY_LOW_SELECT_WINDOW_SQL, [], (err, rows) => {
+        if (err) return reject(err);
+        resolve(aggregateDailyLowRows(rows));
+      });
+    });
+  }
+
   async computeMatrix() {
     if (this.isComputing) {
       console.log('⚠️  Latency matrix computation already in progress, skipping');
@@ -354,6 +482,16 @@ class LatencyMatrixService {
       // Upsert all results
       await this.upsertCache(cacheRows);
 
+      // Track each day's lowest 1Gb-tier latency per pair (rolling 30-day
+      // window) for the Home page's 30-Day Low tab / PDF export.
+      try {
+        await this.recordDailyLow(cacheRows);
+        await this.pruneOldDailyLows();
+      } catch (dailyLowErr) {
+        console.error('⚠️  Failed to update 30-day low latency tracking:', dailyLowErr.message);
+        // Don't fail the whole matrix computation over this secondary tracking step.
+      }
+
       const elapsed = Date.now() - startTime;
       console.log(`✅ Latency matrix computed: ${cacheRows.length} pairs in ${elapsed}ms`);
     } catch (err) {
@@ -376,3 +514,12 @@ class LatencyMatrixService {
 
 const latencyMatrixService = new LatencyMatrixService();
 module.exports = latencyMatrixService;
+
+// Exposed for the 30-day low latency regression test only (pure helpers +
+// the exact SQL used above, so the test verifies real production behavior
+// instead of a re-implementation of it).
+module.exports.filterRecordableRows = filterRecordableRows;
+module.exports.aggregateDailyLowRows = aggregateDailyLowRows;
+module.exports.DAILY_LOW_UPSERT_SQL = DAILY_LOW_UPSERT_SQL;
+module.exports.DAILY_LOW_PRUNE_SQL = DAILY_LOW_PRUNE_SQL;
+module.exports.DAILY_LOW_SELECT_WINDOW_SQL = DAILY_LOW_SELECT_WINDOW_SQL;

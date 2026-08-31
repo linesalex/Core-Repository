@@ -91,6 +91,7 @@ import DarkFiberModal from './DarkFiberModal';
 import NetworkMapExportDialog from './NetworkMapExportDialog';
 import KMZMapViewer from './KMZMapViewer';
 import RouteFinder from './RouteFinder';
+import AssistantChat from './AssistantChat';
 import RouteChanges from './RouteChanges';
 import ForcedPasswordChange from './ForcedPasswordChange';
 import HomePage from './HomePage';
@@ -502,14 +503,14 @@ function AuthenticatedApp() {
     setMapExportOpen(true);
   };
 
-  const handleExportNetworkMap = async (regions, details) => {
+  const handleExportNetworkMap = async ({ mode, regions, pops, details }) => {
     try {
-      const response = await exportNetworkMapPDF(regions, details);
+      const response = await exportNetworkMapPDF({ mode, regions, pops, details });
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `network-map-${regions.join('-')}.pdf`;
+      a.download = mode === 'pops' ? `network-map-pops-${pops.length}.pdf` : `network-map-${regions.join('-')}.pdf`;
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (err) {
@@ -2003,6 +2004,17 @@ function AuthenticatedApp() {
           {error}
         </Alert>
       </Snackbar>
+
+      {/* Assistant "Ask" chat - route finding + promo pricing (V1) */}
+      {/* TEMP: restricted to admin users only while this is still in progress. */}
+      {hasRole('administrator') && hasModuleAccess('route_finder') && (
+        <AssistantChat
+          onOpenRouteFinder={(routeData) => {
+            setMatrixRouteData(routeData);
+            setCurrentTab('route-finder');
+          }}
+        />
+      )}
     </Box>
   );
 }

@@ -8,6 +8,7 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 4000;
 const routes = require('./routes');
+const assistantRouter = require('./assistant/router');
 const { handleDatabaseError } = require('./dbErrorHandler');
 const { runAllMigrations } = require('./runMigrations');
 const db = require('./db');
@@ -62,6 +63,7 @@ app.get('/', (req, res) => {
 });
 
 app.use('/', routes);
+app.use('/', assistantRouter);
 
 // Database error handling middleware (must be after routes)
 app.use(handleDatabaseError);

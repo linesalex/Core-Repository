@@ -10,13 +10,16 @@ export const fetchRoutes = () => api.get(`${API_BASE_URL}/network_routes`).then(
 export const fetchRoutesWithKMZ = () => api.get(`${API_BASE_URL}/network_routes_with_kmz`).then(res => res.data);
 export const searchRoutes = (filters) => api.get(`${API_BASE_URL}/network_routes_search`, { params: filters }).then(res => res.data);
 export const exportRoutesCSV = () => api.get(`${API_BASE_URL}/network_routes_export`, { responseType: 'blob' });
-export const exportNetworkMapPDF = (regions, details) => api.get(`${API_BASE_URL}/network_routes_export_map`, {
+export const exportNetworkMapPDF = ({ mode = 'region', regions = [], pops = [], details }) => api.get(`${API_BASE_URL}/network_routes_export_map`, {
   responseType: 'blob',
   params: {
-    regions: regions.join(','),
+    mode,
+    ...(mode === 'pops' ? { pops: pops.join(',') } : { regions: regions.join(',') }),
     details: Object.keys(details).filter((key) => details[key]).join(','),
   },
 });
+// Autocomplete search for the "Export by Specific POPs" picker (active locations only).
+export const searchNetworkMapPops = (query) => api.get(`${API_BASE_URL}/network_routes_pop_search`, { params: { q: query } }).then(res => res.data);
 export const addRoute = (data) => api.post(`${API_BASE_URL}/network_routes`, data);
 export const editRoute = (id, data) => api.put(`${API_BASE_URL}/network_routes/${id}`, data);
 export const deleteRoute = (id) => api.delete(`${API_BASE_URL}/network_routes/${id}`);
@@ -714,16 +717,17 @@ export const checkPromoMatch = (source, destination, bandwidth, primaryCircuitId
   }).then(res => res.data);
 };
 
-// Calculate protected promo pricing for Route Finder (both paths must have valid promo)
-export const calculateProtectedPromo = (source, destination, bandwidth, primaryCircuitIds, secondaryCircuitIds, primaryPromoPrices, secondaryPromoPrices) => {
+// Calculate protected promo pricing for Route Finder.
+// Protection pricing is driven by the primary path's matched promo rule (protectionPricingPercent) -
+// the secondary/diverse path only supplies cost data for the margin check on the increment.
+export const calculateProtectedPromo = (source, destination, bandwidth, secondaryCircuitIds, primaryPromoPrices, protectionPricingPercent) => {
   return api.post(`${API_BASE_URL}/route_finder/calculate-protected-promo`, {
     source,
     destination,
     bandwidth,
-    primary_circuit_ids: primaryCircuitIds,
     secondary_circuit_ids: secondaryCircuitIds,
     primary_promo_prices: primaryPromoPrices,
-    secondary_promo_prices: secondaryPromoPrices
+    protection_pricing_percent: protectionPricingPercent
   }).then(res => res.data);
 };
 
@@ -737,6 +741,17 @@ export const saveRouteFinderSearchLog = (data) => {
 // than just checking whether the default shortest-latency route qualifies).
 export const findPromoRoute = (searchParams) => {
   return api.post(`${API_BASE_URL}/route_finder/find_promo_route`, searchParams).then(res => res.data);
+};
+
+// ====================================
+// ASSISTANT ("ASK") CHAT - V1: route finding + promo pricing
+// ====================================
+
+// `conversation` is the opaque object returned on the previous turn (or
+// undefined for a fresh conversation) - pass it back unchanged so the
+// backend can resolve follow-ups and PoP clarification answers.
+export const assistantApi = {
+  query: (message, conversation) => api.post(`${API_BASE_URL}/assistant/query`, { message, conversation }).then(res => res.data)
 };
 
 // ====================================
@@ -925,6 +940,8 @@ export const carrierQuoteApi = {
 // Latency Matrix
 export const latencyMatrixApi = {
   getMatrix: () => api.get(`${API_BASE_URL}/api/latency-matrix`).then(res => res.data),
+  get30DayLow: () => api.get(`${API_BASE_URL}/api/latency-matrix/30d-low`).then(res => res.data),
+  export30DayLowPDF: () => api.get(`${API_BASE_URL}/api/latency-matrix/30d-low/export`, { responseType: 'blob' }),
 };
 
 export const latencyMatrixAdminApi = {

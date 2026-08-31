@@ -309,6 +309,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
     let protectedMarginDetails = null;
     let primaryPromoReason = null;
     let secondaryPromoReason = null;
+    let protectionPricingPercent = null;
 
     // Check Primary Path
     if (results.primaryPath?.route) {
@@ -326,6 +327,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
         primaryMarginDetails = result.marginDetails || null;
         if (result.hasPromo && result.valid) {
           primaryPromoResult = result.prices;
+          protectionPricingPercent = result.protectionPricingPercent || null;
           setPrimaryPromo(result.prices);
         } else {
           primaryPromoReason = result.reason || (result.hasPromo ? 'margin_not_met' : 'no_promo_rule');
@@ -372,26 +374,25 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
       setSecondaryPromo(null);
     }
 
-    // Calculate Protected Promo via backend (only if BOTH paths have valid promo AND route mode is standard)
+    // Calculate Protected Promo via backend - only when the primary path's matched promo rule
+    // has an optional "Protection Pricing %" configured, a diverse secondary path exists (used
+    // purely as the protection route for the margin check), and route mode is standard.
     // Protected pricing is not applicable for fastest route mode since it uses ULL/Cisco-only paths.
-    // Backend calculates Max(Primary, Secondary) x 1.7 per tier, then validates against
-    // per-bandwidth-tier protected service minimum margins from PricingLogicManager.
-    // If 1.7x doesn't meet the tier's minimum margin, the margin-based price is used instead.
+    // Backend calculates primaryPromoPrice x (1 + protectionPct/100) per tier, then validates the
+    // margin on just the increment against the protection route's allocated cost.
     let protectedPromoResult = null;
     let protectedMethod = null;
-    if (primaryPromoResult && secondaryPromoResult && formData.routeMode !== 'fastest') {
+    if (primaryPromoResult && protectionPricingPercent > 0 && results.diversePath?.route && formData.routeMode !== 'fastest') {
       try {
-        const primaryCircuitIds = results.primaryPath.route.map(seg => seg.circuit_id).filter(Boolean);
         const secondaryCircuitIds = results.diversePath.route.map(seg => seg.circuit_id).filter(Boolean);
         
         const protectedResult = await calculateProtectedPromo(
           formData.source,
           formData.destination,
           formData.bandwidth || 10,
-          primaryCircuitIds,
           secondaryCircuitIds,
           primaryPromoResult,
-          secondaryPromoResult
+          protectionPricingPercent
         );
         
         protectedMarginDetails = protectedResult.marginDetails || null;
@@ -887,7 +888,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
       if (protectedPromo) {
         emailBody += `<hr style="margin-top: 20px; margin-bottom: 20px; border: none; border-top: 2px solid #1565C0;">`;
         emailBody += `<h3 style="color: #1565C0; margin-top: 15px; margin-bottom: 10px; font-family: Arial, sans-serif;">PROTECTED SERVICE - PROMO PRICING</h3>`;
-        emailBody += `<p style="font-family: Arial, sans-serif; font-size: 13px; color: #555; margin-bottom: 10px;">Protected pricing based on Max(Primary, Secondary) × 1.7 formula. Subject to margin requirements.</p>`;
+        emailBody += `<p style="font-family: Arial, sans-serif; font-size: 13px; color: #555; margin-bottom: 10px;">Protected pricing includes the diverse secondary route, based on the promo's Protection Pricing %. Subject to margin requirements.</p>`;
         emailBody += `<table style="${tableStyle}">`;
         emailBody += `<thead><tr>`;
         emailBody += `<th style="${thStyle}">Bandwidth</th>`;
@@ -1450,8 +1451,8 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
                 </Grid>
               )}
 
-              {/* Protected Service Promo Pricing - Only when BOTH paths have promo */}
-              {protectedPromo && primaryPromo && secondaryPromo && (
+              {/* Protected Service Promo Pricing - Only when the primary promo rule has a Protection Pricing % configured */}
+              {protectedPromo && primaryPromo && (
                 <Grid item xs={12}>
                   <Card sx={{ border: 2, borderColor: 'primary.main', bgcolor: 'primary.50' }}>
                     <CardHeader 
@@ -1467,7 +1468,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
                           />
                         </Box>
                       }
-                      subheader="Protected pricing available — Both primary and secondary paths qualify for promo pricing"
+                      subheader="Protected pricing available for this promo — includes the diverse secondary route"
                     />
                     <CardContent>
                       <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 2 }}>

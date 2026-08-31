@@ -63,8 +63,11 @@ const NetworkDesignTool = () => {
   // Check if user can view pricing logs (all authenticated users with network_design access can view)
   const canViewPricingLogs = user !== null && networkDesignPermission !== null;
   
+  // Check if user is an administrator (gates admin-only views, e.g. Enhanced Pricing Results)
+  const isAdmin = user && user.role === 'administrator';
+
   // Check if user can manage logs (admin only)
-  const canManageLogs = user && user.role === 'administrator';
+  const canManageLogs = isAdmin;
   
   // Check if user is read-only (limited access to logs)
   const isReadOnly = networkDesignPermission === 'read_only';
@@ -3429,6 +3432,13 @@ const NetworkDesignTool = () => {
     }
   };
 
+  // Promo-only pricing view for non-admin users (mirrors Route Finder: only ever
+  // shown when promo pricing actually succeeded for a given path/protection)
+  const primaryPromoResult = pricingResults?.results?.find(r => r.pathType === 'primary' && r.pricing?.promoPricing?.used);
+  const secondaryPromoResult = pricingResults?.results?.find(r => r.pathType === 'protection' && r.pricing?.promoPricing?.used);
+  const protectionPromoUsed = pricingResults?.protectionPricing?.pricingMethod === 'per_rule_protection_percent';
+  const hasPromoPricingSuccess = !!primaryPromoResult || !!secondaryPromoResult || protectionPromoUsed;
+
   return (
     <Box sx={{ width: '100%' }}>
       {/* Tab Navigation */}
@@ -4186,8 +4196,8 @@ const NetworkDesignTool = () => {
           </Accordion>
         )}
 
-        {/* Enhanced Pricing Results */}
-        {pricingResults && (
+        {/* Enhanced Pricing Results - Admin only for now (module will be re-enabled for all users later) */}
+        {isAdmin && pricingResults && (
           <Accordion expanded={expandedAccordion === 'pricing'} onChange={() => setExpandedAccordion(expandedAccordion === 'pricing' ? '' : 'pricing')} sx={{ mt: 2 }}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -4510,6 +4520,87 @@ const NetworkDesignTool = () => {
                               </Typography>
                             </Box>
                           )}
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                )}
+              </Grid>
+            </AccordionDetails>
+          </Accordion>
+        )}
+
+        {/* Promo Pricing Results - shown to all users, but only when promo pricing succeeded (mirrors Route Finder) */}
+        {!isAdmin && pricingResults && hasPromoPricingSuccess && (
+          <Accordion expanded={expandedAccordion === 'pricing'} onChange={() => setExpandedAccordion(expandedAccordion === 'pricing' ? '' : 'pricing')} sx={{ mt: 2 }}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <LocalOfferIcon sx={{ mr: 1 }} color="success" />
+                <Typography variant="h6">Promo Pricing Results</Typography>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Grid container spacing={3}>
+                {primaryPromoResult && (
+                  <Grid item xs={12} md={6}>
+                    <Card sx={{ height: '100%', border: 2, borderColor: 'success.main' }}>
+                      <CardHeader
+                        avatar={<LocalOfferIcon color="success" />}
+                        title="Primary Path - Promo Pricing Available"
+                        subheader={`${primaryPromoResult.hops} hops, ${formatLatency(primaryPromoResult.totalLatency)}ms latency, ${primaryPromoResult.pricing.bandwidth}Mb Bandwidth`}
+                      />
+                      <CardContent>
+                        <Box sx={{ bgcolor: 'success.50', p: 2, borderRadius: 1 }}>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body2" color="success.main">Monthly Price ({primaryPromoResult.pricing.contractTerm}-month term):</Typography>
+                            <Typography variant="body2" fontWeight="bold" color="success.main">
+                              {formatCurrency(primaryPromoResult.pricing.suggestedPrice, primaryPromoResult.pricing.currency)}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                )}
+
+                {secondaryPromoResult && (
+                  <Grid item xs={12} md={6}>
+                    <Card sx={{ height: '100%', border: 2, borderColor: 'success.main' }}>
+                      <CardHeader
+                        avatar={<LocalOfferIcon color="success" />}
+                        title="Secondary Path - Promo Pricing Available"
+                        subheader={`${secondaryPromoResult.hops} hops, ${formatLatency(secondaryPromoResult.totalLatency)}ms latency, ${secondaryPromoResult.pricing.bandwidth}Mb Bandwidth`}
+                      />
+                      <CardContent>
+                        <Box sx={{ bgcolor: 'success.50', p: 2, borderRadius: 1 }}>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body2" color="success.main">Monthly Price ({secondaryPromoResult.pricing.contractTerm}-month term):</Typography>
+                            <Typography variant="body2" fontWeight="bold" color="success.main">
+                              {formatCurrency(secondaryPromoResult.pricing.suggestedPrice, secondaryPromoResult.pricing.currency)}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                )}
+
+                {protectionPromoUsed && pricingResults.protectionPricing && (
+                  <Grid item xs={12}>
+                    <Card sx={{ height: '100%', bgcolor: 'primary.50', border: 2, borderColor: 'primary.main' }}>
+                      <CardHeader
+                        avatar={<LocalOfferIcon color="primary" />}
+                        title="Protected Service - Promo Pricing Available"
+                        subheader={`${pricingResults.protectionPricing.contractTerm}-month term`}
+                      />
+                      <CardContent>
+                        <Box sx={{ bgcolor: 'background.paper', p: 2, borderRadius: 1 }}>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body2" color="primary.main">Monthly Price:</Typography>
+                            <Typography variant="body2" fontWeight="bold" color="primary.main">
+                              {formatCurrency(pricingResults.protectionPricing.suggestedPrice, pricingResults.protectionPricing.currency)}
+                            </Typography>
+                          </Box>
                         </Box>
                       </CardContent>
                     </Card>

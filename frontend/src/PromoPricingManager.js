@@ -38,7 +38,8 @@ import {
   AttachMoney as AttachMoneyIcon,
   Route as RouteIcon,
   Warning as WarningIcon,
-  Block as BlockIcon
+  Block as BlockIcon,
+  Security as SecurityIcon
 } from '@mui/icons-material';
 import { api, locationDataApi, networkDesignApi } from './api';
 import { API_BASE_URL } from './config';
@@ -65,6 +66,7 @@ const PromoPricingManager = ({ hasPermission }) => {
     price_100_to_999mb: '',
     price_1000_to_2999mb: '',
     price_3000mb_plus: '',
+    protection_pricing_percent: '',
     required_circuit_ids: [],
     excluded_circuit_ids: []
   });
@@ -222,6 +224,7 @@ const PromoPricingManager = ({ hasPermission }) => {
         price_100_to_999mb: rule.price_100_to_999mb || '',
         price_1000_to_2999mb: rule.price_1000_to_2999mb || '',
         price_3000mb_plus: rule.price_3000mb_plus || '',
+        protection_pricing_percent: rule.protection_pricing_percent ?? '',
         required_circuit_ids: rule.required_circuit_ids || [],
         excluded_circuit_ids: rule.excluded_circuit_ids || []
       });
@@ -235,6 +238,7 @@ const PromoPricingManager = ({ hasPermission }) => {
         price_100_to_999mb: '',
         price_1000_to_2999mb: '',
         price_3000mb_plus: '',
+        protection_pricing_percent: '',
         required_circuit_ids: [],
         excluded_circuit_ids: []
       });
@@ -280,6 +284,9 @@ const PromoPricingManager = ({ hasPermission }) => {
         price_100_to_999mb: parseFloat(formData.price_100_to_999mb) || 0,
         price_1000_to_2999mb: parseFloat(formData.price_1000_to_2999mb) || 0,
         price_3000mb_plus: parseFloat(formData.price_3000mb_plus) || 0,
+        protection_pricing_percent: formData.protection_pricing_percent !== '' && formData.protection_pricing_percent !== null
+          ? parseFloat(formData.protection_pricing_percent)
+          : null,
         required_circuit_ids: formData.required_circuit_ids || [],
         excluded_circuit_ids: formData.excluded_circuit_ids || []
       };
@@ -433,6 +440,7 @@ const PromoPricingManager = ({ hasPermission }) => {
                 <TableCell><strong>100-999Mb (USD)</strong></TableCell>
                 <TableCell><strong>1000-2999Mb (USD)</strong></TableCell>
                 <TableCell><strong>3000Mb+ (USD)</strong></TableCell>
+                <TableCell><strong>Protection %</strong></TableCell>
                 <TableCell><strong>Required Circuits</strong></TableCell>
                 <TableCell><strong>Excluded Circuits</strong></TableCell>
                 <TableCell><strong>Created</strong></TableCell>
@@ -442,11 +450,11 @@ const PromoPricingManager = ({ hasPermission }) => {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={11} align="center">Loading...</TableCell>
+                  <TableCell colSpan={12} align="center">Loading...</TableCell>
                 </TableRow>
               ) : filteredRules.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} align="center">
+                  <TableCell colSpan={12} align="center">
                     {searchQuery ? 'No promo rules found matching your search' : 'No promo pricing rules configured'}
                   </TableCell>
                 </TableRow>
@@ -488,6 +496,19 @@ const PromoPricingManager = ({ hasPermission }) => {
                     <TableCell>{formatCurrency(rule.price_100_to_999mb)}</TableCell>
                     <TableCell>{formatCurrency(rule.price_1000_to_2999mb)}</TableCell>
                     <TableCell>{formatCurrency(rule.price_3000mb_plus)}</TableCell>
+                    <TableCell>
+                      {rule.protection_pricing_percent !== null && rule.protection_pricing_percent !== undefined ? (
+                        <Chip
+                          label={`+${rule.protection_pricing_percent}%`}
+                          size="small"
+                          variant="outlined"
+                          color="info"
+                          icon={<SecurityIcon />}
+                        />
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">—</Typography>
+                      )}
+                    </TableCell>
                     <TableCell>
                       {rule.required_circuit_ids && rule.required_circuit_ids.length > 0 ? (
                         <Box display="flex" flexWrap="wrap" gap={0.5}>
@@ -988,6 +1009,29 @@ const PromoPricingManager = ({ hasPermission }) => {
                 }}
                 inputProps={{ min: 0, step: 1 }}
                 helperText="Price for bandwidth 3000+ Mbps"
+              />
+            </Grid>
+
+            {/* Protection Pricing */}
+            <Grid item xs={12}>
+              <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
+                <SecurityIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
+                Protection Pricing (Optional)
+              </Typography>
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+              <TextField
+                fullWidth
+                label="Protection Pricing %"
+                type="number"
+                value={formData.protection_pricing_percent}
+                onChange={(e) => handleFormChange('protection_pricing_percent', e.target.value)}
+                InputProps={{
+                  endAdornment: <InputAdornment position="end">%</InputAdornment>
+                }}
+                inputProps={{ min: 0, step: 1 }}
+                helperText="Optional — additional % added to the promo price on each bandwidth tier for protected (diverse-route) pricing in Route Finder. Leave blank to disable protected pricing for this rule."
               />
             </Grid>
           </Grid>
