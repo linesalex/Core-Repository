@@ -1,8 +1,30 @@
 # Network Inventory Management System
 
-## Current Version: **3.5.3**
+## Current Version: **3.5.4**
 
-**Release Date:** August 30, 2026
+**Release Date:** September 2, 2026
+
+---
+
+## What's New in v3.5.4
+
+### 🔧 **Latency Matrix → Route Finder Click-Through Fix**
+
+Clicking a cell in the Home page Live Latency Matrix to jump into Route Finder previously built a fake result entirely on the frontend instead of running a real search - this caused two customer-visible bugs: promo pricing could be wrong, and the secondary/diverse path was **always** reported as unavailable, no matter what capacity actually existed.
+
+- **Root cause:** the click-through handler fabricated a `synthetic` results object client-side using only the single path the matrix already knew about. `diversePath` was hardcoded to `null` (the real diverse-path Dijkstra pass, which removes the primary path's POPs/circuits and re-solves, was never invoked), and the bandwidth used for promo matching was never set from the clicked tier - it silently fell back to whatever was already in the form (or a hardcoded 10 Mbps default)
+- **Fix:** a matrix click-through now triggers the exact same `/route_finder/find_routes` backend search a manual search runs, using the clicked tier mapped to its real bandwidth (1Gb → 1000 Mbps, 10Gb → 10000 Mbps), **"Fastest Route" mode** (matching the matrix's own latency-first nature), and protection/diverse-path search requested by default - so the primary path, diverse/secondary path, and all promo pricing are now always fully and correctly computed, and match what an equivalent manual search would show
+- **Follow-up (same day):** protected promo pricing eligibility no longer blocks on route mode being "fastest" outright. "Fastest Route" mode only *permits* Cisco/ULL circuits into the search - it doesn't force them - so whether a specific found path is actually ineligible for protected pricing now depends on whether its resolved segments (primary **and** diverse path) contain a Cisco-equipment or ULL/special circuit, not on which route mode was selected. A fastest-mode search whose winning path happens to be Cisco/ULL-free is now eligible for protected pricing, same as a standard-mode search would be. `backend/routes.js`'s `/route_finder/find_routes` now returns `equipment_type`/`is_special` on every route segment so the frontend can make this per-path determination
+- Search/promo logic was refactored so bandwidth/source/destination are always passed explicitly rather than read from React state inside async callbacks, removing a stale-state race that could otherwise cause a freshly-set matrix bandwidth to not yet be visible to the promo check that ran right after it
+- **Known, unchanged limitation (by design, for now):** the Latency Matrix's own path computation and the Route Finder's search still use different route-eligibility rules (matrix: route bandwidth ≥ 1x the tier, prefers live probe latency; Route Finder: route bandwidth ≥ 2x requested, MTU/equipment-type/ULL filters, expected latency only) - so the *specific path/latency* shown on the matrix and a manual Route Finder search can still legitimately differ even though promo pricing and diverse-path detection are now both correct for whichever path Route Finder actually finds
+
+**Files Modified:**
+- `frontend/src/RouteFinder.js` - replaced the client-side "synthetic results" construction with a real call to `/route_finder/find_routes` on matrix click-through (using "Fastest Route" mode); extracted `performSearch(source, destination, bandwidthMbps, options)` out of `handleSearch` so both the manual Search button and the matrix click-through share identical search/promo logic; `checkPromoForRoute` now takes `source`/`destination`/`bandwidthMbps` as explicit parameters instead of reading `formData`; added `matrixContext` state for the "viewing from latency matrix" banner (previously carried on the now-removed synthetic result's `matrixTier`/`matrixSourceCity`/`matrixDestCity` fields); protected-promo eligibility now checks the resolved primary/diverse path segments for `equipment_type === 'Cisco'`/`is_special` instead of gating on `routeMode !== 'fastest'`
+- `backend/routes.js` - `/route_finder/find_routes` now carries `equipment_type`/`is_special` through the graph edges and into both `primaryPath.route` and `diversePath.route` segments in the response
+
+### 🔢 **App Version Display Fix**
+
+The version shown in the app bar had been hardcoded and was still stuck on "v3.5.0" through the entire v3.5.1 → v3.5.3 range. Updated to v3.5.4 (`frontend/src/App.js`), and all `package.json` version fields bumped to match.
 
 ---
 

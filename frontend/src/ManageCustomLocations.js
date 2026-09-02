@@ -22,7 +22,7 @@ const PAGE_SIZE = 100;
 // locations: fix Building Type without touching address, purge locations
 // that aren't referenced by any quote, merge duplicates into one canonical
 // record, and re-verify an address's geographic location against Nominatim.
-const ManageCustomLocations = () => {
+const ManageCustomLocations = ({ onViewQuotes }) => {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -382,7 +382,15 @@ const ManageCustomLocations = () => {
                 </TableCell>
                 <TableCell>
                   {row.quote_count > 0 ? (
-                    <Chip size="small" color="success" label={`${row.quote_count} quote${row.quote_count !== 1 ? 's' : ''}`} />
+                    <Tooltip title="View these quotes in the Quote Repository">
+                      <Chip
+                        size="small"
+                        color="success"
+                        clickable
+                        onClick={() => onViewQuotes && onViewQuotes(row)}
+                        label={`${row.quote_count} quote${row.quote_count !== 1 ? 's' : ''}`}
+                      />
+                    </Tooltip>
                   ) : (
                     <Chip size="small" color="default" label="Unused" />
                   )}

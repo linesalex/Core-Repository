@@ -71,6 +71,12 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
 
   // Pre-computed route display mode (from latency matrix click-through)
   const [displayMode, setDisplayMode] = useState(false);
+  const [matrixContext, setMatrixContext] = useState(null); // { tier, sourceCity, destinationCity }
+
+  // The Latency Matrix only labels a pair by tier ('1Gb'/'10Gb'), not an actual
+  // requested bandwidth - map that label to the same Mbps value a manual search
+  // would use so a matrix click-through runs the identical backend search.
+  const MATRIX_TIER_BANDWIDTH_MBPS = { '1Gb': 1000, '10Gb': 10000 };
 
   // Load locations, promo rules, and exchange rates on mount
   useEffect(() => {
@@ -81,37 +87,41 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
     loadExchangeRates();
   }, []);
 
-  // Handle pre-computed route from latency matrix
+  // Handle click-through from the Home page Latency Matrix. Runs the exact same
+  // backend search a manual Route Finder search would (same bandwidth-derived-
+  // from-tier) instead of fabricating a result client-side - this guarantees
+  // promo pricing and the diverse/secondary path are always fully and
+  // correctly computed, never faked or skipped. Always uses 'fastest' route
+  // mode, since the matrix itself is a latency-first view (this also means
+  // ULL/Cisco-only routes are included, and protected promo pricing does not
+  // apply - same as a manual "fastest" search).
   useEffect(() => {
     if (!preComputedRoute) return;
 
-    const syntheticResults = {
-      primaryPath: {
-        path: preComputedRoute.route.map(seg => seg.from).concat(preComputedRoute.route.length > 0 ? [preComputedRoute.route[preComputedRoute.route.length - 1].to] : []),
-        totalLatency: preComputedRoute.totalLatency,
-        hops: preComputedRoute.route.length,
-        route: preComputedRoute.route
-      },
-      diversePath: null,
-      matrixTier: preComputedRoute.tier,
-      matrixSourceCity: preComputedRoute.sourceCity,
-      matrixDestCity: preComputedRoute.destinationCity
-    };
+    const bandwidthMbps = MATRIX_TIER_BANDWIDTH_MBPS[preComputedRoute.tier] || undefined;
 
     setFormData(prev => ({
       ...prev,
       source: preComputedRoute.source,
       destination: preComputedRoute.destination,
+      bandwidth: bandwidthMbps ? String(bandwidthMbps) : prev.bandwidth,
+      mtuRequired: '',
+      routeMode: 'fastest',
       outputCurrency: prev.outputCurrency || 'USD'
     }));
 
-    setSearchResults(syntheticResults);
-    setExpandedAccordion('results');
+    setMatrixContext({
+      tier: preComputedRoute.tier,
+      sourceCity: preComputedRoute.sourceCity,
+      destinationCity: preComputedRoute.destinationCity
+    });
     setDisplayMode(true);
     setCurrentTab(0);
 
-    checkPromoForRoute(syntheticResults);
-    loadCrossConnects(preComputedRoute.source, preComputedRoute.destination);
+    performSearch(preComputedRoute.source, preComputedRoute.destination, bandwidthMbps, {
+      mtuRequired: 1500,
+      routeMode: 'fastest'
+    });
 
     if (onClearPreComputed) onClearPreComputed();
   }, [preComputedRoute]);
@@ -301,7 +311,11 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
     return results;
   };
 
-  const checkPromoForRoute = async (results) => {
+  // source/destination/bandwidthMbps are passed explicitly (rather than read
+  // from formData) so this can be called immediately after setFormData
+  // without hitting a stale-state race - both the manual Search button and the
+  // Latency Matrix click-through funnel through this same function.
+  const checkPromoForRoute = async (results, source, destination, bandwidthMbps) => {
     let primaryPromoResult = null;
     let secondaryPromoResult = null;
     let primaryMarginDetails = null;
@@ -317,9 +331,9 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
         const primaryCircuitIds = results.primaryPath.route.map(seg => seg.circuit_id).filter(Boolean);
         
         const result = await checkPromoMatch(
-          formData.source,
-          formData.destination,
-          formData.bandwidth || 10,
+          source,
+          destination,
+          bandwidthMbps || 10,
           primaryCircuitIds,
           []
         );
@@ -349,9 +363,9 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
         const secondaryCircuitIds = results.diversePath.route.map(seg => seg.circuit_id).filter(Boolean);
         
         const result = await checkPromoMatch(
-          formData.source,
-          formData.destination,
-          formData.bandwidth || 10,
+          source,
+          destination,
+          bandwidthMbps || 10,
           secondaryCircuitIds,
           []
         );
@@ -375,21 +389,29 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
     }
 
     // Calculate Protected Promo via backend - only when the primary path's matched promo rule
-    // has an optional "Protection Pricing %" configured, a diverse secondary path exists (used
-    // purely as the protection route for the margin check), and route mode is standard.
-    // Protected pricing is not applicable for fastest route mode since it uses ULL/Cisco-only paths.
+    // has an optional "Protection Pricing %" configured, and a diverse secondary path exists
+    // (used purely as the protection route for the margin check).
+    // Protected pricing isn't applicable to Cisco/ULL circuits - but "fastest" route mode only
+    // *permits* those (it doesn't force them), so eligibility is based on whether the actual
+    // resolved path(s) contain one, not on which route mode was selected.
     // Backend calculates primaryPromoPrice x (1 + protectionPct/100) per tier, then validates the
     // margin on just the increment against the protection route's allocated cost.
+    const routeUsesCiscoOrUll = (route) => (route || []).some(
+      (seg) => seg.equipment_type === 'Cisco' || seg.is_special
+    );
+    const protectionEligibleRoute = !routeUsesCiscoOrUll(results.primaryPath?.route)
+      && !routeUsesCiscoOrUll(results.diversePath?.route);
+
     let protectedPromoResult = null;
     let protectedMethod = null;
-    if (primaryPromoResult && protectionPricingPercent > 0 && results.diversePath?.route && formData.routeMode !== 'fastest') {
+    if (primaryPromoResult && protectionPricingPercent > 0 && results.diversePath?.route && protectionEligibleRoute) {
       try {
         const secondaryCircuitIds = results.diversePath.route.map(seg => seg.circuit_id).filter(Boolean);
         
         const protectedResult = await calculateProtectedPromo(
-          formData.source,
-          formData.destination,
-          formData.bandwidth || 10,
+          source,
+          destination,
+          bandwidthMbps || 10,
           secondaryCircuitIds,
           primaryPromoResult,
           protectionPricingPercent
@@ -494,19 +516,12 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
     }));
   };
 
-  const handleSearch = async () => {
-    if (!formData.source || !formData.destination) {
-      setError('Please select both source and destination locations');
-      return;
-    }
-
-    // Validate bandwidth range
-    const bandwidth = parseFloat(formData.bandwidth);
-    if (bandwidth && (bandwidth < 10 || bandwidth > 10000)) {
-      setError('Bandwidth must be between 10 and 10000 Mbps');
-      return;
-    }
-
+  // Core search + promo-check logic, parameterized so both the manual Search
+  // button and the Latency Matrix click-through funnel through the exact same
+  // backend call (/route_finder/find_routes) and promo logic - this is what
+  // guarantees a matrix click-through and an equivalent manual search always
+  // produce identical primary/diverse paths and promo pricing.
+  const performSearch = async (source, destination, bandwidthMbps, { mtuRequired = 1500, routeMode = 'standard' } = {}) => {
     setLoading(true);
     setError(null);
     setSearchResults(null);
@@ -518,19 +533,19 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
 
     try {
       const token = localStorage.getItem('authToken');
-      
+
       const searchParams = {
-        source: formData.source,
-        destination: formData.destination,
-        bandwidth: formData.bandwidth ? parseFloat(formData.bandwidth) : undefined,
+        source,
+        destination,
+        bandwidth: bandwidthMbps,
         bandwidth_unit: 'Mbps',
-        mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500,
-        route_mode: formData.routeMode,
-        include_ull: formData.routeMode === 'fastest',
-        use_cisco_only_routes: formData.routeMode === 'fastest',
+        mtu_required: mtuRequired,
+        route_mode: routeMode,
+        include_ull: routeMode === 'fastest',
+        use_cisco_only_routes: routeMode === 'fastest',
         constraints: {
           protection_required: true,
-          mtu_required: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500
+          mtu_required: mtuRequired
         }
       };
 
@@ -557,21 +572,21 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
       setExpandedAccordion('results');
       
       // Check for matching promo pricing (includes protected promo check)
-      const promoResults = await checkPromoForRoute(results);
+      const promoResults = await checkPromoForRoute(results, source, destination, bandwidthMbps);
       
       // Auto-load cross connect data
-      const xcResults = await loadCrossConnects(formData.source, formData.destination);
+      const xcResults = await loadCrossConnects(source, destination);
 
       // Save search log to pricing logs (fire-and-forget, don't block UI)
       const executionTime = Date.now() - searchStartTime;
       try {
         await saveRouteFinderSearchLog({
           searchParameters: {
-            source: formData.source,
-            destination: formData.destination,
-            bandwidth: formData.bandwidth || null,
-            routeMode: formData.routeMode,
-            mtuRequired: formData.mtuRequired || null,
+            source,
+            destination,
+            bandwidth: bandwidthMbps || null,
+            routeMode,
+            mtuRequired: mtuRequired || null,
             outputCurrency: formData.outputCurrency || 'USD'
           },
           searchResults: results,
@@ -586,12 +601,40 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
         console.error('Failed to save search log (non-blocking):', logErr);
       }
 
+      return results;
     } catch (err) {
       console.error('Search error:', err);
       setError('Search failed: ' + err.message);
+      return null;
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSearch = async () => {
+    if (!formData.source || !formData.destination) {
+      setError('Please select both source and destination locations');
+      return;
+    }
+
+    // Validate bandwidth range
+    const bandwidth = parseFloat(formData.bandwidth);
+    if (bandwidth && (bandwidth < 10 || bandwidth > 10000)) {
+      setError('Bandwidth must be between 10 and 10000 Mbps');
+      return;
+    }
+
+    setMatrixContext(null); // this is a fresh manual search, not a matrix click-through
+
+    await performSearch(
+      formData.source,
+      formData.destination,
+      formData.bandwidth ? parseFloat(formData.bandwidth) : undefined,
+      {
+        mtuRequired: formData.mtuRequired ? parseFloat(formData.mtuRequired) : 1500,
+        routeMode: formData.routeMode
+      }
+    );
   };
 
   const handleRefresh = () => {
@@ -613,6 +656,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
     setSuccess(null);
     setExpandedAccordion('search');
     setDisplayMode(false);
+    setMatrixContext(null);
   };
 
   // Actively searches for the best route between the selected source/destination
@@ -990,7 +1034,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
       </Typography>
 
       {/* Latency Matrix Display Mode Banner */}
-      {displayMode && searchResults && (
+      {displayMode && matrixContext && (
         <Alert
           severity="info"
           sx={{ mb: 2 }}
@@ -1000,7 +1044,7 @@ const RouteFinder = ({ onViewMap, savedState, onStateChange, preComputedRoute, o
             </Button>
           }
         >
-          Viewing pre-computed {searchResults.matrixTier} route from latency matrix: {searchResults.matrixSourceCity} → {searchResults.matrixDestCity}
+          Full route search for the {matrixContext.tier} pair selected from the latency matrix: {matrixContext.sourceCity} → {matrixContext.destinationCity}
         </Alert>
       )}
 

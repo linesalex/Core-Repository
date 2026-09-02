@@ -170,6 +170,9 @@ function AuthenticatedApp() {
   const [carrierQuoteOpen, setCarrierQuoteOpen] = useState(false);
   const [editQuoteId, setEditQuoteId] = useState(null);
   const [duplicateQuoteData, setDuplicateQuoteData] = useState(null);
+  // Set when jumping from the Custom Locations "N quotes" chip to the Quote
+  // Repository, pre-filtered to just that location's quotes.
+  const [quoteRepoLocationFilter, setQuoteRepoLocationFilter] = useState(null);
   
   // User menu state
   const [userMenuAnchor, setUserMenuAnchor] = useState(null);
@@ -1015,6 +1018,8 @@ function AuthenticatedApp() {
               setDuplicateQuoteData(data);
               setCurrentTab('add-carrier-quote');
             }}
+            initialCustomLocationFilter={quoteRepoLocationFilter}
+            onCustomLocationFilterConsumed={() => setQuoteRepoLocationFilter(null)}
           />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
@@ -1044,7 +1049,12 @@ function AuthenticatedApp() {
 
       case 'carrier-quote-custom-locations':
         return hasModuleAccess('carrier_quote_repository') ? (
-          <ManageCustomLocations />
+          <ManageCustomLocations
+            onViewQuotes={(row) => {
+              setQuoteRepoLocationFilter({ id: row.id, name: row.location_name });
+              setCurrentTab('carrier-quote-repository');
+            }}
+          />
         ) : (
           <Alert severity="error">You don't have permission to view this module</Alert>
         );
@@ -1082,7 +1092,7 @@ function AuthenticatedApp() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.5.0
+              v3.5.4
             </Typography>
           </Typography>
           
@@ -1760,7 +1770,11 @@ function AuthenticatedApp() {
       </Drawer>
 
       {/* Main Content */}
-      <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
+      {/* minWidth: 0 is required here — without it, flex items refuse to shrink
+          below their content's intrinsic width, so a wide table (e.g. the
+          Permission Matrix) stretches this entire panel (and the page) instead
+          of scrolling horizontally within its own container. */}
+      <Box component="main" sx={{ flexGrow: 1, minWidth: 0, p: 3 }}>
         <Toolbar />
         
         {/* Connection Error Alert */}

@@ -3,7 +3,7 @@ import {
   Box, Paper, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, IconButton, Chip,
   Alert, Snackbar, Grid, FormControl, InputLabel, Select, MenuItem, Tooltip, 
-  Switch, FormControlLabel, Divider, Tabs, Tab
+  Switch, FormControlLabel, Divider, Tabs, Tab, Checkbox
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -14,12 +14,19 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import LockResetIcon from '@mui/icons-material/LockReset';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
+import SyncIcon from '@mui/icons-material/Sync';
+import GridViewIcon from '@mui/icons-material/GridView';
 import InputAdornment from '@mui/material/InputAdornment';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { API_BASE_URL } from './config';
 import { ValidatedTextField, ValidatedSelect, createValidator, scrollToFirstError } from './components/FormValidation';
-import { getPendingUsers, approveUser, rejectUser, getUserModulePermissions, updateUserModulePermissions, getModulePermissionTemplates, createModulePermissionTemplate, updateModulePermissionTemplate, deleteModulePermissionTemplate, applyTemplateToUser } from './api';
+import {
+  getPendingUsers, approveUser, rejectUser, getUserModulePermissions, updateUserModulePermissions,
+  getModulePermissionTemplates, createModulePermissionTemplate, updateModulePermissionTemplate,
+  deleteModulePermissionTemplate, applyTemplateToUser, getModulePermissionsMatrix,
+  applyTemplateToUsersBulk, resyncTemplateUsers
+} from './api';
 
 const UserManagement = () => {
   const [users, setUsers] = useState([]);
@@ -52,6 +59,19 @@ const UserManagement = () => {
   const [templateToApply, setTemplateToApply] = useState(null);
   const [selectedTemplateInPermissions, setSelectedTemplateInPermissions] = useState('');
   const [selectedTemplateInApproval, setSelectedTemplateInApproval] = useState('');
+
+  // Permission Matrix state (overview grid + bulk template apply + drift detection)
+  const [matrixUsers, setMatrixUsers] = useState([]);
+  const [matrixLoading, setMatrixLoading] = useState(false);
+  const [matrixSearchTerm, setMatrixSearchTerm] = useState('');
+  const [matrixTemplateFilter, setMatrixTemplateFilter] = useState('all'); // 'all' | 'none' | <templateId>
+  const [selectedMatrixUserIds, setSelectedMatrixUserIds] = useState([]);
+  const [bulkApplyDialogOpen, setBulkApplyDialogOpen] = useState(false);
+  const [bulkApplyTemplateId, setBulkApplyTemplateId] = useState('');
+  const [resyncingTemplateId, setResyncingTemplateId] = useState(null);
+  // Tracks which template was loaded into the approval form (if any), so that
+  // approving the user can properly link them to it (see handleConfirmApproval)
+  const [lastLoadedApprovalTemplateId, setLastLoadedApprovalTemplateId] = useState(null);
   const [templateFormData, setTemplateFormData] = useState({
     template_name: '',
     permissions: {}
@@ -127,8 +147,17 @@ const UserManagement = () => {
       loadUsers();
       loadPendingUsers();
       loadTemplates();
+      loadMatrix();
     }
   }, [isAuthenticated, currentUser]);
+
+  // Always refresh the Permission Matrix when it's opened, so it never shows
+  // stale data after users/templates were added or changed on other tabs
+  useEffect(() => {
+    if (isAuthenticated && currentUser && currentTab === 3) {
+      loadMatrix();
+    }
+  }, [currentTab, isAuthenticated, currentUser]);
 
   const loadUsers = async () => {
     try {
@@ -159,6 +188,19 @@ const UserManagement = () => {
     } catch (err) {
       console.error('Failed to load templates:', err);
       setTemplates([]);
+    }
+  };
+
+  const loadMatrix = async () => {
+    try {
+      setMatrixLoading(true);
+      const data = await getModulePermissionsMatrix();
+      setMatrixUsers(data);
+    } catch (err) {
+      console.error('Failed to load permission matrix:', err);
+      setMatrixUsers([]);
+    } finally {
+      setMatrixLoading(false);
     }
   };
 
@@ -258,6 +300,7 @@ const UserManagement = () => {
       setDialogOpen(false);
       setFormErrors({}); // Clear validation errors on success
       await loadUsers();
+      await loadMatrix(); // Keep the Permission Matrix in sync with the new/updated user
 
     } catch (err) {
       setError('Failed to save user: ' + (err.response?.data?.error || err.message));
@@ -270,6 +313,7 @@ const UserManagement = () => {
       setSuccess('User deleted successfully');
       setDeleteDialogOpen(false);
       await loadUsers();
+      await loadMatrix();
     } catch (err) {
       setError('Failed to delete user: ' + (err.response?.data?.error || err.message));
     }
@@ -311,6 +355,7 @@ const UserManagement = () => {
       await updateUserModulePermissions(selectedUser.id, modulePermissions);
       setSuccess('Module permissions updated successfully');
       setPermissionsDialogOpen(false);
+      await loadMatrix();
     } catch (err) {
       setError('Failed to update module permissions: ' + (err.response?.data?.error || err.message));
     }
@@ -349,6 +394,7 @@ const UserManagement = () => {
       });
     }
     setApprovalModulePermissions(defaultPermissions);
+    setLastLoadedApprovalTemplateId(null); // Reset template linkage tracking for this fresh approval
     setApprovalDialogOpen(true);
   };
 
@@ -361,14 +407,38 @@ const UserManagement = () => {
       
       // If non-admin, set their module permissions
       if (selectedRole !== 'administrator') {
-        await updateUserModulePermissions(pendingUserForApproval.id, approvalModulePermissions);
+        if (lastLoadedApprovalTemplateId) {
+          // A template was loaded during approval - apply it via the template
+          // endpoint so the user is properly LINKED to it (powers the Permission
+          // Matrix "Matches/Diverged from Template" status). Without this, loading
+          // a template into the approval form only copied values and never
+          // recorded which template was used.
+          await applyTemplateToUser(lastLoadedApprovalTemplateId, pendingUserForApproval.id);
+
+          const template = templates.find(t => t.id === lastLoadedApprovalTemplateId);
+          const templatePermissions = template?.permissions || {};
+          const keys = new Set([...Object.keys(templatePermissions), ...Object.keys(approvalModulePermissions)]);
+          const matchesTemplate = [...keys].every(
+            key => (templatePermissions[key] || '') === (approvalModulePermissions[key] || '')
+          );
+
+          // If the admin tweaked permissions after loading the template, persist
+          // those final values on top (the template link is kept for provenance/drift tracking)
+          if (!matchesTemplate) {
+            await updateUserModulePermissions(pendingUserForApproval.id, approvalModulePermissions);
+          }
+        } else {
+          await updateUserModulePermissions(pendingUserForApproval.id, approvalModulePermissions);
+        }
       }
       
       setSuccess(`User ${pendingUserForApproval.username} approved successfully with role: ${selectedRole}`);
       loadPendingUsers(); // Refresh pending users list
       loadUsers(); // Refresh main users list
+      loadMatrix(); // Refresh the Permission Matrix so the new user + template link show up immediately
       setApprovalDialogOpen(false);
       setPendingUserForApproval(null);
+      setLastLoadedApprovalTemplateId(null);
     } catch (err) {
       setError('Failed to approve user: ' + (err.response?.data?.error || err.message));
     }
@@ -481,6 +551,7 @@ const UserManagement = () => {
         const response = await getUserModulePermissions(selectedUser.id);
         setModulePermissions(response.permissions || {});
       }
+      await loadMatrix();
     } catch (err) {
       setError('Failed to apply template: ' + (err.response?.data?.error || err.message));
     }
@@ -507,6 +578,7 @@ const UserManagement = () => {
         const response = await getUserModulePermissions(selectedUser.id);
         setModulePermissions(response.permissions || {});
         setSelectedTemplateInPermissions('');
+        await loadMatrix();
       } catch (err) {
         setError('Failed to apply template: ' + (err.response?.data?.error || err.message));
       }
@@ -521,12 +593,113 @@ const UserManagement = () => {
     
     // Apply template permissions to approval state
     setApprovalModulePermissions(template.permissions);
+    setLastLoadedApprovalTemplateId(template.id); // Remember which template was used (see handleConfirmApproval)
     setSelectedTemplateInApproval('');
     setSuccess(`Template "${template.template_name}" loaded`);
   };
 
   const handleTabChange = (event, newValue) => {
     setCurrentTab(newValue);
+  };
+
+  // ----- Permission Matrix handlers -----
+
+  // Compare a user's current permissions against the template they were last
+  // set from (if any) so admins can see at a glance whether it still matches
+  // or has drifted (via manual edits or the template itself changing).
+  const getTemplateStatus = (matrixUser) => {
+    if (matrixUser.isAdmin) return null;
+    if (!matrixUser.applied_template_id) return null;
+
+    const template = templates.find(t => t.id === matrixUser.applied_template_id);
+    if (!template) return { label: 'Template deleted', color: 'default' };
+
+    const keys = new Set([
+      ...Object.keys(template.permissions || {}),
+      ...Object.keys(matrixUser.permissions || {})
+    ]);
+    const matches = [...keys].every(key =>
+      (template.permissions?.[key] || '') === (matrixUser.permissions?.[key] || '')
+    );
+
+    return matches
+      ? { label: `Matches: ${template.template_name}`, color: 'success' }
+      : { label: `Diverged from: ${template.template_name}`, color: 'warning' };
+  };
+
+  const handleMatrixCellChange = async (matrixUser, moduleKey, newLevel) => {
+    const updatedPermissions = { ...matrixUser.permissions, [moduleKey]: newLevel };
+
+    // Optimistic UI update
+    setMatrixUsers(prev => prev.map(u => u.id === matrixUser.id ? { ...u, permissions: updatedPermissions } : u));
+
+    try {
+      await updateUserModulePermissions(matrixUser.id, updatedPermissions);
+    } catch (err) {
+      setError('Failed to update permission: ' + (err.response?.data?.error || err.message));
+      loadMatrix(); // Revert to server state on failure
+    }
+  };
+
+  const toggleMatrixUserSelected = (userId) => {
+    setSelectedMatrixUserIds(prev =>
+      prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]
+    );
+  };
+
+  const filteredMatrixUsers = matrixUsers.filter(u => {
+    if (!u.username.toLowerCase().includes(matrixSearchTerm.toLowerCase())) return false;
+    if (matrixTemplateFilter === 'all') return true;
+    if (matrixTemplateFilter === 'none') return !u.applied_template_id;
+    return String(u.applied_template_id) === matrixTemplateFilter;
+  });
+
+  const selectableMatrixUsers = filteredMatrixUsers.filter(u => !u.isAdmin);
+
+  const handleToggleSelectAllMatrix = () => {
+    const allSelected = selectableMatrixUsers.length > 0 &&
+      selectableMatrixUsers.every(u => selectedMatrixUserIds.includes(u.id));
+
+    if (allSelected) {
+      setSelectedMatrixUserIds(prev => prev.filter(id => !selectableMatrixUsers.some(u => u.id === id)));
+    } else {
+      setSelectedMatrixUserIds(prev => [...new Set([...prev, ...selectableMatrixUsers.map(u => u.id)])]);
+    }
+  };
+
+  const handleOpenBulkApplyDialog = () => {
+    setBulkApplyTemplateId('');
+    setBulkApplyDialogOpen(true);
+  };
+
+  const handleConfirmBulkApply = async () => {
+    if (!bulkApplyTemplateId) return;
+    try {
+      const result = await applyTemplateToUsersBulk(bulkApplyTemplateId, selectedMatrixUserIds);
+      let message = result.message;
+      if (result.skipped && result.skipped.length > 0) {
+        message += ` (skipped administrators: ${result.skipped.join(', ')})`;
+      }
+      setSuccess(message);
+      setBulkApplyDialogOpen(false);
+      setSelectedMatrixUserIds([]);
+      await loadMatrix();
+    } catch (err) {
+      setError('Failed to apply template in bulk: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleResyncTemplate = async (template) => {
+    try {
+      setResyncingTemplateId(template.id);
+      const result = await resyncTemplateUsers(template.id);
+      setSuccess(result.message);
+      await loadMatrix();
+    } catch (err) {
+      setError('Failed to resync users: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setResyncingTemplateId(null);
+    }
   };
 
   const getRoleChip = (role) => {
@@ -613,6 +786,7 @@ const UserManagement = () => {
             sx={{ color: pendingUsers.length > 0 ? 'error.main' : 'inherit' }}
           />
           <Tab label="Module Permission Templates" />
+          <Tab label="Permission Matrix" icon={<GridViewIcon fontSize="small" />} iconPosition="start" />
         </Tabs>
       </Box>
 
@@ -834,6 +1008,18 @@ const UserManagement = () => {
                               <EditIcon />
                             </IconButton>
                           </Tooltip>
+                          <Tooltip title="Re-sync all users linked to this template (fixes drift after edits)">
+                            <span>
+                              <IconButton
+                                onClick={() => handleResyncTemplate(template)}
+                                size="small"
+                                color="primary"
+                                disabled={resyncingTemplateId === template.id}
+                              >
+                                <SyncIcon />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
                           <Tooltip title="Delete Template">
                             <IconButton onClick={() => handleDeleteTemplate(template)} size="small" color="error">
                               <DeleteIcon />
@@ -849,6 +1035,237 @@ const UserManagement = () => {
           )}
         </Box>
       )}
+
+      {/* Permission Matrix Tab - overview grid of every user x every module, */}
+      {/* editable in place, with bulk template apply and drift indicators */}
+      {currentTab === 3 && (
+        <Box>
+          <Typography variant="body2" sx={{ fontSize: '0.75rem' }} color="text.secondary" sx={{ mb: 2 }}>
+            See and edit every user's module access in one view. Administrators always have full access and aren't shown as editable columns.
+          </Typography>
+
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, gap: 2, flexWrap: 'wrap' }}>
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+              <TextField
+                size="small"
+                placeholder="Search username..."
+                value={matrixSearchTerm}
+                onChange={(e) => setMatrixSearchTerm(e.target.value)}
+                sx={{ width: 220 }}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon fontSize="small" color="action" />
+                    </InputAdornment>
+                  )
+                }}
+              />
+              <FormControl size="small" sx={{ width: 220 }}>
+                <InputLabel id="matrix-template-filter-label">Filter by Template</InputLabel>
+                <Select
+                  labelId="matrix-template-filter-label"
+                  label="Filter by Template"
+                  value={matrixTemplateFilter}
+                  onChange={(e) => setMatrixTemplateFilter(e.target.value)}
+                >
+                  <MenuItem value="all">All Users</MenuItem>
+                  <MenuItem value="none">No Template Applied</MenuItem>
+                  {templates.map((template) => (
+                    <MenuItem key={template.id} value={String(template.id)}>
+                      {template.template_name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              {matrixTemplateFilter !== 'all' && (
+                <Chip
+                  size="small"
+                  label={matrixTemplateFilter === 'none'
+                    ? 'No Template Applied'
+                    : (templates.find(t => String(t.id) === matrixTemplateFilter)?.template_name || 'Template')}
+                  onDelete={() => setMatrixTemplateFilter('all')}
+                  color="primary"
+                  variant="outlined"
+                />
+              )}
+            </Box>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              {selectedMatrixUserIds.length > 0 && (
+                <Chip
+                  label={`${selectedMatrixUserIds.length} selected`}
+                  onDelete={() => setSelectedMatrixUserIds([])}
+                  color="primary"
+                  size="small"
+                />
+              )}
+              <Button
+                variant="contained"
+                size="small"
+                disabled={selectedMatrixUserIds.length === 0}
+                onClick={handleOpenBulkApplyDialog}
+              >
+                Apply Template to Selected
+              </Button>
+              <Tooltip title="Refresh matrix">
+                <IconButton size="small" onClick={loadMatrix}>
+                  <RefreshIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          </Box>
+
+          {matrixLoading ? (
+            <Paper sx={{ p: 3, textAlign: 'center' }}>
+              <Typography color="text.secondary">Loading permission matrix...</Typography>
+            </Paper>
+          ) : (
+            <TableContainer component={Paper} sx={{ maxHeight: '65vh', maxWidth: '100%', overflowX: 'auto' }}>
+              <Table stickyHeader size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell padding="checkbox" sx={{ position: 'sticky', left: 0, zIndex: 3, backgroundColor: 'background.paper' }}>
+                      <Checkbox
+                        size="small"
+                        indeterminate={selectedMatrixUserIds.length > 0 && selectableMatrixUsers.some(u => !selectedMatrixUserIds.includes(u.id))}
+                        checked={selectableMatrixUsers.length > 0 && selectableMatrixUsers.every(u => selectedMatrixUserIds.includes(u.id))}
+                        onChange={handleToggleSelectAllMatrix}
+                      />
+                    </TableCell>
+                    <TableCell sx={{ position: 'sticky', left: 42, zIndex: 3, backgroundColor: 'background.paper', minWidth: 160 }}>
+                      User
+                    </TableCell>
+                    <TableCell sx={{ minWidth: 190 }}>Template Status</TableCell>
+                    {availableModules.map(module => (
+                      <TableCell key={module.key} sx={{ minWidth: 130 }}>
+                        {module.label.includes('—') ? module.label.split('—')[1].trim() : module.label}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {filteredMatrixUsers.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={availableModules.length + 3} align="center" sx={{ py: 4 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          No users match the current search/template filter
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {filteredMatrixUsers.map(matrixUser => {
+                    const status = getTemplateStatus(matrixUser);
+                    return (
+                      <TableRow key={matrixUser.id} hover>
+                        <TableCell padding="checkbox" sx={{ position: 'sticky', left: 0, zIndex: 2, backgroundColor: 'background.paper' }}>
+                          <Checkbox
+                            size="small"
+                            disabled={matrixUser.isAdmin}
+                            checked={selectedMatrixUserIds.includes(matrixUser.id)}
+                            onChange={() => toggleMatrixUserSelected(matrixUser.id)}
+                          />
+                        </TableCell>
+                        <TableCell sx={{ position: 'sticky', left: 42, zIndex: 2, backgroundColor: 'background.paper' }}>
+                          <Typography variant="body2" fontWeight="bold">{matrixUser.username}</Typography>
+                          {getRoleChip(matrixUser.user_role)}
+                        </TableCell>
+                        <TableCell>
+                          {matrixUser.isAdmin ? (
+                            <Chip label="Full Access (Admin)" color="error" size="small" />
+                          ) : status ? (
+                            <Chip label={status.label} color={status.color} size="small" />
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">No template applied</Typography>
+                          )}
+                        </TableCell>
+                        {availableModules.map(module => {
+                          if (matrixUser.isAdmin) {
+                            return (
+                              <TableCell key={module.key}>
+                                <Typography variant="caption" color="text.secondary">Full</Typography>
+                              </TableCell>
+                            );
+                          }
+                          const hasSalesOption = ['network_routes', 'locations'].includes(module.key);
+                          const value = matrixUser.permissions?.[module.key] || '';
+                          return (
+                            <TableCell key={module.key}>
+                              <Select
+                                variant="standard"
+                                fullWidth
+                                value={value}
+                                displayEmpty
+                                sx={{ fontSize: '0.75rem' }}
+                                onChange={(e) => handleMatrixCellChange(matrixUser, module.key, e.target.value)}
+                                renderValue={(selected) => {
+                                  if (!selected) return <span style={{ color: '#9e9e9e' }}>No Access</span>;
+                                  if (selected === 'sales') return 'Sales';
+                                  return selected === 'read_only' ? 'Read-Only' : 'Provisioner';
+                                }}
+                              >
+                                <MenuItem value="">No Access</MenuItem>
+                                {hasSalesOption && <MenuItem value="sales">Sales</MenuItem>}
+                                <MenuItem value="read_only">Read-Only</MenuItem>
+                                <MenuItem value="provisioner">Provisioner</MenuItem>
+                              </Select>
+                            </TableCell>
+                          );
+                        })}
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Box>
+      )}
+
+      {/* Bulk Apply Template Dialog */}
+      <Dialog
+        open={bulkApplyDialogOpen}
+        onClose={() => setBulkApplyDialogOpen(false)}
+        disableRestoreFocus
+        maxWidth="sm"
+        fullWidth
+        aria-labelledby="bulk-apply-dialog-title"
+      >
+        <DialogTitle id="bulk-apply-dialog-title">
+          Apply Template to {selectedMatrixUserIds.length} User(s)
+        </DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            This will overwrite any existing module permissions for the selected users.
+          </Alert>
+          <FormControl fullWidth size="small">
+            <InputLabel shrink>Template</InputLabel>
+            <Select
+              value={bulkApplyTemplateId}
+              onChange={(e) => setBulkApplyTemplateId(e.target.value)}
+              label="Template"
+              displayEmpty
+              notched
+            >
+              <MenuItem value="">-- Select a template --</MenuItem>
+              {templates.map((template) => (
+                <MenuItem key={template.id} value={template.id}>
+                  {template.template_name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBulkApplyDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={handleConfirmBulkApply}
+            variant="contained"
+            color="primary"
+            disabled={!bulkApplyTemplateId}
+          >
+            Apply Template
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Add/Edit Dialog */}
       <Dialog 

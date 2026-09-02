@@ -922,6 +922,41 @@ router.put('/users/:id/module-permissions', authenticateToken, authorizeModulePe
   });
 });
 
+// Get module permissions for ALL users in a single call (powers the Permission
+// Matrix overview so admins can audit access without opening each user individually)
+router.get('/users/module-permissions-matrix', authenticateToken, authorizeModulePermission('user_management', 'read_only'), (req, res) => {
+  db.all(
+    'SELECT id, username, full_name, user_role, status, applied_template_id FROM users ORDER BY username',
+    [],
+    (usersErr, users) => {
+      if (usersErr) return res.status(500).json({ error: usersErr.message });
+
+      db.all('SELECT user_id, module_name, permission_level FROM user_module_permissions', [], (permErr, rows) => {
+        if (permErr) return res.status(500).json({ error: permErr.message });
+
+        const permsByUser = {};
+        rows.forEach(row => {
+          if (!permsByUser[row.user_id]) permsByUser[row.user_id] = {};
+          permsByUser[row.user_id][row.module_name] = row.permission_level;
+        });
+
+        const result = users.map(u => ({
+          id: u.id,
+          username: u.username,
+          full_name: u.full_name,
+          user_role: u.user_role,
+          status: u.status,
+          isAdmin: u.user_role === 'administrator',
+          applied_template_id: u.applied_template_id || null,
+          permissions: u.user_role === 'administrator' ? {} : (permsByUser[u.id] || {})
+        }));
+
+        res.json(result);
+      });
+    }
+  );
+});
+
 // ====================================
 // MODULE PERMISSION TEMPLATES ENDPOINTS
 // ====================================
@@ -1208,6 +1243,12 @@ router.post('/module-permission-templates/:templateId/apply/:userId', authentica
         
         Promise.all(operations)
           .then(() => {
+            // Track which template this user was last set from (powers drift
+            // detection / resync in the Permission Matrix view)
+            db.run('UPDATE users SET applied_template_id = ? WHERE id = ?', [templateId, userId], (linkErr) => {
+              if (linkErr) console.error('Error linking user to template:', linkErr);
+            });
+
             // Log the template application
             logChange(req.user.id, 'user_module_permissions', userId, 'UPDATE', null, {
               applied_template: template.template_name,
@@ -1226,6 +1267,160 @@ router.post('/module-permission-templates/:templateId/apply/:userId', authentica
           });
       });
     });
+  });
+});
+
+// Apply a template to MULTIPLE users at once (bulk operation for the
+// Permission Matrix / Users table "Apply Template to Selected" action)
+router.post('/module-permission-templates/:templateId/apply-bulk', authenticateToken, authorizeModulePermission('user_management', 'provisioner'), (req, res) => {
+  const { templateId } = req.params;
+  const { userIds } = req.body;
+
+  if (!Array.isArray(userIds) || userIds.length === 0) {
+    return res.status(400).json({ error: 'userIds array is required' });
+  }
+
+  db.get('SELECT * FROM module_permission_templates WHERE id = ?', [templateId], (templateErr, template) => {
+    if (templateErr) {
+      console.error('Error fetching template:', templateErr);
+      return res.status(500).json({ error: templateErr.message });
+    }
+    if (!template) return res.status(404).json({ error: 'Template not found' });
+
+    const permissions = JSON.parse(template.permissions);
+
+    db.all(
+      `SELECT id, username, user_role FROM users WHERE id IN (${userIds.map(() => '?').join(',')})`,
+      userIds,
+      (usersErr, foundUsers) => {
+        if (usersErr) return res.status(500).json({ error: usersErr.message });
+
+        const skipped = foundUsers.filter(u => u.user_role === 'administrator').map(u => u.username);
+        const applicable = foundUsers.filter(u => u.user_role !== 'administrator');
+
+        if (applicable.length === 0) {
+          return res.status(400).json({ error: 'No eligible (non-administrator) users to apply the template to', skipped });
+        }
+
+        const applyToOne = (userId) => new Promise((resolve, reject) => {
+          db.run('DELETE FROM user_module_permissions WHERE user_id = ?', [userId], (delErr) => {
+            if (delErr) return reject(delErr);
+
+            const inserts = Object.entries(permissions)
+              .filter(([, level]) => !!level)
+              .map(([moduleName, permissionLevel]) => new Promise((res2, rej2) => {
+                db.run(
+                  `INSERT INTO user_module_permissions
+                   (user_id, module_name, permission_level, created_by, updated_by, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                  [userId, moduleName, permissionLevel, req.user.id, req.user.id],
+                  (insErr) => insErr ? rej2(insErr) : res2()
+                );
+              }));
+
+            Promise.all(inserts)
+              .then(() => db.run('UPDATE users SET applied_template_id = ? WHERE id = ?', [templateId, userId], (linkErr) => {
+                if (linkErr) return reject(linkErr);
+                resolve();
+              }))
+              .catch(reject);
+          });
+        });
+
+        Promise.all(applicable.map(u => applyToOne(u.id)))
+          .then(() => {
+            applicable.forEach(u => {
+              logChange(req.user.id, 'user_module_permissions', u.id, 'UPDATE', null, {
+                applied_template: template.template_name,
+                template_id: templateId,
+                permissions,
+                bulk: true
+              }, req);
+            });
+
+            res.json({
+              message: `Template applied to ${applicable.length} user(s)`,
+              template_name: template.template_name,
+              applied_count: applicable.length,
+              skipped
+            });
+          })
+          .catch(err => {
+            console.error('Error bulk applying template:', err);
+            res.status(500).json({ error: 'Failed to bulk apply template' });
+          });
+      }
+    );
+  });
+});
+
+// Re-sync every user currently linked to a template back to that template's
+// current permission set (fixes drift after a template is edited, or after
+// someone manually tweaked a linked user's permissions)
+router.post('/module-permission-templates/:templateId/resync', authenticateToken, authorizeModulePermission('user_management', 'provisioner'), (req, res) => {
+  const { templateId } = req.params;
+
+  db.get('SELECT * FROM module_permission_templates WHERE id = ?', [templateId], (templateErr, template) => {
+    if (templateErr) {
+      console.error('Error fetching template:', templateErr);
+      return res.status(500).json({ error: templateErr.message });
+    }
+    if (!template) return res.status(404).json({ error: 'Template not found' });
+
+    db.all(
+      "SELECT id FROM users WHERE applied_template_id = ? AND user_role != 'administrator'",
+      [templateId],
+      (linkedErr, linkedUsers) => {
+        if (linkedErr) return res.status(500).json({ error: linkedErr.message });
+
+        if (linkedUsers.length === 0) {
+          return res.json({ message: 'No users are currently linked to this template', resynced_count: 0 });
+        }
+
+        const permissions = JSON.parse(template.permissions);
+
+        const resyncOne = (userId) => new Promise((resolve, reject) => {
+          db.run('DELETE FROM user_module_permissions WHERE user_id = ?', [userId], (delErr) => {
+            if (delErr) return reject(delErr);
+
+            const inserts = Object.entries(permissions)
+              .filter(([, level]) => !!level)
+              .map(([moduleName, permissionLevel]) => new Promise((res2, rej2) => {
+                db.run(
+                  `INSERT INTO user_module_permissions
+                   (user_id, module_name, permission_level, created_by, updated_by, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                  [userId, moduleName, permissionLevel, req.user.id, req.user.id],
+                  (insErr) => insErr ? rej2(insErr) : res2()
+                );
+              }));
+
+            Promise.all(inserts).then(resolve).catch(reject);
+          });
+        });
+
+        Promise.all(linkedUsers.map(u => resyncOne(u.id)))
+          .then(() => {
+            linkedUsers.forEach(u => {
+              logChange(req.user.id, 'user_module_permissions', u.id, 'UPDATE', null, {
+                applied_template: template.template_name,
+                template_id: templateId,
+                permissions,
+                resync: true
+              }, req);
+            });
+
+            res.json({
+              message: `Resynced ${linkedUsers.length} user(s) to template "${template.template_name}"`,
+              resynced_count: linkedUsers.length
+            });
+          })
+          .catch(err => {
+            console.error('Error resyncing template users:', err);
+            res.status(500).json({ error: 'Failed to resync template users' });
+          });
+      }
+    );
   });
 });
 
@@ -19146,7 +19341,13 @@ router.post('/route_finder/find_routes', authenticateToken, authorizeModulePermi
             bandwidth: routeBandwidthDisplay,
             carrier: underlying_carrier,
             circuit_id,
-            cable_system: cable_system || null
+            cable_system: cable_system || null,
+            // Carried through to the route segments returned to the frontend so
+            // "fastest" mode (which permits, but doesn't force, Cisco/ULL
+            // circuits) can tell whether a specific found path actually used
+            // one - needed for the protected-promo eligibility check below.
+            equipment_type: equipType,
+            is_special: !!is_special
           };
           
           graph[location_a][location_b] = routeData;
@@ -19259,7 +19460,9 @@ router.post('/route_finder/find_routes', authenticateToken, authorizeModulePermi
           bandwidth: edge.bandwidth,
           carrier: edge.carrier,
           circuit_id: edge.circuit_id,
-          cable_system: edge.cable_system
+          cable_system: edge.cable_system,
+          equipment_type: edge.equipment_type,
+          is_special: edge.is_special
         });
       }
       
@@ -19314,7 +19517,9 @@ router.post('/route_finder/find_routes', authenticateToken, authorizeModulePermi
                 bandwidth: edge.bandwidth,
                 carrier: edge.carrier,
                 circuit_id: edge.circuit_id,
-                cable_system: edge.cable_system
+                cable_system: edge.cable_system,
+                equipment_type: edge.equipment_type,
+                is_special: edge.is_special
               });
             }
             
@@ -20960,6 +21165,7 @@ function generateQuoteReference(callback) {
 // Get all carrier quotes (with search/filter support)
 router.get('/carrier_quotes', authenticateToken, authorizeModulePermission('carrier_quote_repository', 'read_only'), (req, res) => {
   const { search, carrier, region, service_type, location, location_a, location_b,
+          custom_location_id,
           date_from, date_to,
           protection, bandwidth_unit, currency, contract_term, cable_system,
           transit_countries, transit_cities,
@@ -21034,6 +21240,15 @@ router.get('/carrier_quotes', authenticateToken, authorizeModulePermission('carr
   if (location_b) {
     conditions.push('(cq.location_b_pop_code LIKE ? OR loc_b.location_name LIKE ? OR loc_b.city LIKE ? OR pop_b.city LIKE ? OR pop_b.datacenter_name LIKE ?)');
     params.push(`%${location_b}%`, `%${location_b}%`, `%${location_b}%`, `%${location_b}%`, `%${location_b}%`);
+  }
+
+  // Exact match on a custom location's id — matches either side. Used by the
+  // "Manage Custom Locations" screen's quote-count chip, which links here to
+  // show precisely the quotes counted (kept in sync with that count query:
+  // cq.location_a_custom_id = qcl.id OR cq.location_b_custom_id = qcl.id).
+  if (custom_location_id) {
+    conditions.push('(cq.location_a_custom_id = ? OR cq.location_b_custom_id = ?)');
+    params.push(custom_location_id, custom_location_id);
   }
   
   if (protection) {

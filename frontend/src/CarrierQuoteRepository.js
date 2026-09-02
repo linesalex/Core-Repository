@@ -36,7 +36,7 @@ const BANDWIDTH_UNITS = ['Mbps', 'Gbps', 'Dark Fiber'];
 const PROTECTION_TYPES = ['Unprotected', 'Protected'];
 const CONTRACT_TERMS = [12, 24, 36];
 
-const CarrierQuoteRepository = ({ onNavigateToAddQuote, onDuplicateQuote }) => {
+const CarrierQuoteRepository = ({ onNavigateToAddQuote, onDuplicateQuote, initialCustomLocationFilter, onCustomLocationFilterConsumed }) => {
   const { user, modulePermissions } = useAuth();
   const permission = modulePermissions?.carrier_quote_repository;
   const canEdit = permission === 'provisioner' || user?.role === 'administrator';
@@ -72,6 +72,10 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote, onDuplicateQuote }) => {
   const [filterMaxMrc, setFilterMaxMrc] = useState('');
   const [filterMinNrc, setFilterMinNrc] = useState('');
   const [filterMaxNrc, setFilterMaxNrc] = useState('');
+  // Set when arriving here via the "N quotes" chip on the Custom Locations screen —
+  // filters to exactly the quotes referencing that custom location (either side).
+  const [filterCustomLocationId, setFilterCustomLocationId] = useState(initialCustomLocationFilter?.id || null);
+  const [filterCustomLocationName, setFilterCustomLocationName] = useState(initialCustomLocationFilter?.name || '');
 
   // Reference data
   const [currencies, setCurrencies] = useState([]);
@@ -112,13 +116,29 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote, onDuplicateQuote }) => {
     carrierQuoteApi.getCurrencies().then(data => setCurrencies(data || [])).catch(() => {});
   }, []);
 
+  // Consume the incoming custom-location filter once on mount so remounting this
+  // screen later (e.g. after navigating away and back) doesn't keep re-applying it
+  // once the user has cleared it.
+  // Intentionally runs once on mount only (not on every prop change) — see comment above.
+  useEffect(() => {
+    if (initialCustomLocationFilter) {
+      onCustomLocationFilterConsumed && onCustomLocationFilterConsumed();
+    }
+  }, []);
+
   // Count active filters
   const activeFilterCount = [
     filterRegion, filterServiceType, filterCarrier, filterDateFrom, filterDateTo,
     filterLocation, filterLocationA, filterLocationB, filterProtection, filterBandwidthUnit, filterCurrency,
     filterContractTerm, filterCableSystem, filterTransitCountries, filterTransitCities,
-    filterMinMrc, filterMaxMrc, filterMinNrc, filterMaxNrc
+    filterMinMrc, filterMaxMrc, filterMinNrc, filterMaxNrc, filterCustomLocationId
   ].filter(Boolean).length;
+
+  const handleClearCustomLocationFilter = () => {
+    setFilterCustomLocationId(null);
+    setFilterCustomLocationName('');
+    setPage(0);
+  };
 
   // Load quotes
   const loadQuotes = useCallback(async () => {
@@ -134,6 +154,7 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote, onDuplicateQuote }) => {
         location: filterLocation || undefined,
         location_a: filterLocationA || undefined,
         location_b: filterLocationB || undefined,
+        custom_location_id: filterCustomLocationId || undefined,
         protection: filterProtection || undefined,
         bandwidth_unit: filterBandwidthUnit || undefined,
         currency: filterCurrency || undefined,
@@ -159,7 +180,7 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote, onDuplicateQuote }) => {
       setLoading(false);
     }
   }, [searchTerm, filterCarrier, filterRegion, filterServiceType, filterDateFrom, filterDateTo,
-      filterLocation, filterLocationA, filterLocationB, filterProtection, filterBandwidthUnit, filterCurrency,
+      filterLocation, filterLocationA, filterLocationB, filterCustomLocationId, filterProtection, filterBandwidthUnit, filterCurrency,
       filterContractTerm, filterCableSystem, filterTransitCountries, filterTransitCities,
       filterMinMrc, filterMaxMrc, filterMinNrc, filterMaxNrc, orderBy, order, page, rowsPerPage]);
 
@@ -184,6 +205,8 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote, onDuplicateQuote }) => {
     setFilterLocation('');
     setFilterLocationA('');
     setFilterLocationB('');
+    setFilterCustomLocationId(null);
+    setFilterCustomLocationName('');
     setFilterProtection('');
     setFilterBandwidthUnit('');
     setFilterCurrency('');
@@ -376,6 +399,7 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote, onDuplicateQuote }) => {
         region: filterRegion,
         service_type: filterServiceType,
         location: filterLocation,
+        custom_location_id: filterCustomLocationId || undefined,
         protection: filterProtection,
         bandwidth_unit: filterBandwidthUnit,
         currency: filterCurrency,
@@ -424,6 +448,16 @@ const CarrierQuoteRepository = ({ onNavigateToAddQuote, onDuplicateQuote }) => {
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         Search and browse carrier network bandwidth quotes with historical data
       </Typography>
+
+      {filterCustomLocationId && (
+        <Alert
+          severity="info"
+          sx={{ mb: 2 }}
+          onClose={handleClearCustomLocationFilter}
+        >
+          Showing quotes for location: <strong>{filterCustomLocationName || `#${filterCustomLocationId}`}</strong>
+        </Alert>
+      )}
 
       {/* Search & Primary Filters */}
       <Paper sx={{ p: 2, mb: 2 }}>

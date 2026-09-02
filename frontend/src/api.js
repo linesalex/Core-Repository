@@ -411,6 +411,9 @@ export const createModulePermissionTemplate = (data) => api.post(`${API_BASE_URL
 export const updateModulePermissionTemplate = (templateId, data) => api.put(`${API_BASE_URL}/module-permission-templates/${templateId}`, data);
 export const deleteModulePermissionTemplate = (templateId) => api.delete(`${API_BASE_URL}/module-permission-templates/${templateId}`);
 export const applyTemplateToUser = (templateId, userId) => api.post(`${API_BASE_URL}/module-permission-templates/${templateId}/apply/${userId}`);
+export const getModulePermissionsMatrix = () => api.get(`${API_BASE_URL}/users/module-permissions-matrix`).then(res => res.data);
+export const applyTemplateToUsersBulk = (templateId, userIds) => api.post(`${API_BASE_URL}/module-permission-templates/${templateId}/apply-bulk`, { userIds }).then(res => res.data);
+export const resyncTemplateUsers = (templateId) => api.post(`${API_BASE_URL}/module-permission-templates/${templateId}/resync`).then(res => res.data);
 
 // Locations
 export const getLocations = () => api.get(`${API_BASE_URL}/locations`).then(res => res.data);
