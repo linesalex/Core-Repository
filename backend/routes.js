@@ -4261,11 +4261,15 @@ router.get('/network_routes_export_map', authenticateToken, authorizeModulePermi
     .split(',')
     .map((d) => d.trim().toLowerCase())
     .filter(Boolean);
+  // Carrier names may only be included on the exported map for administrator
+  // users - enforced server-side so non-admins can't bypass the hidden
+  // frontend checkbox by calling this endpoint directly with details=carrier.
+  const isAdminUser = req.user.role === 'administrator';
   const details = {
     ucn: detailKeys.includes('ucn'),
     latency: detailKeys.includes('latency'),
     bandwidth: detailKeys.includes('bandwidth'),
-    carrier: detailKeys.includes('carrier'),
+    carrier: isAdminUser && detailKeys.includes('carrier'),
   };
 
   if (mode === 'pops') {

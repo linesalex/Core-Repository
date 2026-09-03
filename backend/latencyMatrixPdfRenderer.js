@@ -23,7 +23,7 @@ const LOGO_PATH = path.join(__dirname, 'assets', 'ipc-logo.png');
 const CUSTOMER_NOTE = 'Latency values reflect live production network measurements, not synthetic '
   + 'RFC/ping tests, and represent real-world expected performance between these locations. '
   + 'RFC-based tests typically report lower latency values than production traffic experiences, '
-  + 'and are available upon request.';
+  + 'and are available upon request.  SLA figures will differ and dependant on exact route selected.';
 
 const CONFIDENTIALITY_NOTE = 'For authorized recipient use only - Distributed under NDA. '
   + "Redistribution without IPC's prior written approval is prohibited.";

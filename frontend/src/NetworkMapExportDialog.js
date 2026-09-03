@@ -13,15 +13,17 @@ const REGION_OPTIONS = [
   { key: 'APAC', label: 'APAC' },
 ];
 
-const DETAIL_OPTIONS = [
+const ALL_DETAIL_OPTIONS = [
   { key: 'ucn', label: 'UCN' },
   { key: 'latency', label: 'Expected Latency' },
   { key: 'bandwidth', label: 'Bandwidth' },
-  { key: 'carrier', label: 'Carrier' },
+  // Carrier names are restricted to administrator users - filtered out of
+  // DETAIL_OPTIONS below for everyone else, and enforced again server-side.
+  { key: 'carrier', label: 'Carrier', adminOnly: true },
 ];
 
 const initialRegions = { AMERs: false, EMEA: false, APAC: false };
-const initialDetails = { ucn: true, latency: true, bandwidth: true, carrier: true };
+const getInitialDetails = (isAdmin) => ({ ucn: true, latency: true, bandwidth: true, carrier: isAdmin });
 
 /**
  * Popup for configuring and exporting a PDF network map diagram from the
@@ -36,13 +38,17 @@ const initialDetails = { ucn: true, latency: true, bandwidth: true, carrier: tru
  *    INTER connections are already handled.
  * Either way, the user picks which detail fields appear on each route label.
  */
-function NetworkMapExportDialog({ open, onClose, onExport }) {
+function NetworkMapExportDialog({ open, onClose, onExport, userRole }) {
+  const isAdmin = userRole === 'administrator';
+  // Non-admins never see (or can select) the Carrier detail checkbox.
+  const DETAIL_OPTIONS = ALL_DETAIL_OPTIONS.filter((d) => !d.adminOnly || isAdmin);
+
   const [mode, setMode] = useState('region');
   const [regions, setRegions] = useState(initialRegions);
   const [selectedPops, setSelectedPops] = useState([]);
   const [popOptions, setPopOptions] = useState([]);
   const [popSearchLoading, setPopSearchLoading] = useState(false);
-  const [details, setDetails] = useState(initialDetails);
+  const [details, setDetails] = useState(getInitialDetails(isAdmin));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const searchDebounceRef = useRef(null);
@@ -58,7 +64,7 @@ function NetworkMapExportDialog({ open, onClose, onExport }) {
     setRegions(initialRegions);
     setSelectedPops([]);
     setPopOptions([]);
-    setDetails(initialDetails);
+    setDetails(getInitialDetails(isAdmin));
     setError('');
     onClose();
   };
@@ -75,6 +81,9 @@ function NetworkMapExportDialog({ open, onClose, onExport }) {
   };
 
   const toggleDetail = (key) => {
+    // Defense in depth: non-admins can never toggle Carrier on, even if
+    // this were somehow invoked without the checkbox being rendered.
+    if (key === 'carrier' && !isAdmin) return;
     setDetails((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 

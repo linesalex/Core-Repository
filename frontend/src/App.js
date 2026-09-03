@@ -501,8 +501,8 @@ function AuthenticatedApp() {
   };
 
   const handleOpenMapExport = () => {
+    // Export Network Map is available to all permissioned users, including Sales
     if (!hasPermission('network_routes', 'view')) return;
-    if (modulePermissions?.network_routes === 'sales') return;
     setMapExportOpen(true);
   };
 
@@ -1092,7 +1092,7 @@ function AuthenticatedApp() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.5.4
+              v3.5.5
             </Typography>
           </Typography>
           
@@ -1818,6 +1818,7 @@ function AuthenticatedApp() {
         open={mapExportOpen}
         onClose={() => setMapExportOpen(false)}
         onExport={handleExportNetworkMap}
+        userRole={user?.role}
       />
 
               <Dialog 

@@ -1,8 +1,30 @@
 # Network Inventory Management System
 
-## Current Version: **3.5.4**
+## Current Version: **3.5.5**
 
-**Release Date:** September 2, 2026
+**Release Date:** September 3, 2026
+
+---
+
+## What's New in v3.5.5
+
+### 🗺️ **Export Network Map opened up to Sales, Carrier names restricted to Admins**
+
+"Export Network Map" was previously hidden/blocked for Sales-permission users on the Network Routes tab, matching the existing "Export CSV" restriction. It is now available to **all** permissioned users (including Sales) - only the Carrier detail checkbox is now restricted, and only to **administrator** users.
+
+- **Export Network Map access:** removed the Sales-only block so any user with `view` permission on the `network_routes` module can open and use the Export Network Map dialog. (The unrelated "Export CSV" button/handler Sales restriction was intentionally left unchanged.)
+- **Carrier detail restricted to Admins:** the "Carrier" checkbox in the Export Network Map dialog (which controls whether underlying carrier names are printed on the exported PDF route labels) is now only rendered/selectable for `administrator` users. Non-admins (including Sales) no longer see the checkbox at all and cannot include carrier names on the exported map.
+- **Server-side enforcement:** the `/network_routes_export_map` backend endpoint now ignores a `carrier` detail request unless the calling user's role is `administrator`, so the restriction can't be bypassed by calling the API directly.
+
+**Files Modified:**
+- `frontend/src/SearchExportBar.js` - "Export Network Map" button is no longer hidden for Sales-permission users
+- `frontend/src/App.js` - `handleOpenMapExport` no longer blocks Sales users; passes `userRole` into `NetworkMapExportDialog`
+- `frontend/src/NetworkMapExportDialog.js` - Carrier detail option is filtered out of the rendered checkbox list (and forced off/un-toggleable) for non-administrator users
+- `backend/routes.js` - `/network_routes_export_map` now forces `details.carrier` to `false` unless `req.user.role === 'administrator'`
+
+### 🔢 **Version Bump**
+
+Version incremented to 3.5.5 per `rules.txt` tracking requirement. No functional changes in this release; `package.json` (root, `backend/`, `frontend/`) and the app bar version string in `frontend/src/App.js` were updated to match.
 
 ---
 

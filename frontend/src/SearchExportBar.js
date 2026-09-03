@@ -230,14 +230,12 @@ function SearchExportBar({ onSearch, onExport, onExportMap, onRefresh, hasPermis
             </Button>
           </Grid>
         )}
-        {/* Hide Export Network Map button for Sales permission users */}
-        {modulePermission !== 'sales' && (
-          <Grid item>
-            <Button variant="outlined" color="secondary" startIcon={<MapIcon />} onClick={onExportMap}>
-              Export Network Map
-            </Button>
-          </Grid>
-        )}
+        {/* Export Network Map is available to all permissioned users, including Sales */}
+        <Grid item>
+          <Button variant="outlined" color="secondary" startIcon={<MapIcon />} onClick={onExportMap}>
+            Export Network Map
+          </Button>
+        </Grid>
       </Grid>
     </Box>
   );
