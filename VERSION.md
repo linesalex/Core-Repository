@@ -1,8 +1,55 @@
 # Network Inventory Management System
 
-## Current Version: **3.5.5**
+## Current Version: **3.5.7**
 
-**Release Date:** September 3, 2026
+**Release Date:** September 13, 2026
+
+---
+
+## What's New in v3.5.7
+
+### 🔍 **Admin: Inspect & Prune Daily Values Behind the 30-Day Low**
+
+Instead of (or in addition to) a full reset, admins can now drill into exactly which daily readings produced a given pair's 30-Day Low figure, and delete individual bad ones in place.
+
+- **Clicking a 30-Day Low cell (admin users only)** now opens a popup listing every recorded day (UTC date + that day's lowest 1Gb latency) for that specific source/destination pair, instead of doing nothing (non-admins still see no click behavior on this tab, since the historical low doesn't necessarily reflect the current live route).
+- **Per-row delete button** in the popup permanently removes a single day's value (with a confirmation step) - e.g. to strip out a physically-impossible reading without wiping the other ~29 days for that pair. The 30-day figure for that pair is recalculated immediately from the remaining days and the underlying matrix is refreshed so the table/tooltip reflect the change.
+- Deletions are audit-logged the same way the full reset is.
+
+### 🛡️ **30-Day Low Latency: Automatic Bad-Data Protection**
+
+Two automated safeguards were also added so the customer-facing 30-Day Low figure stays clean without relying solely on an admin manually spotting and deleting bad readings.
+
+- **Source-level sanity floor:** when computing the live matrix, a `live_latency` reading that comes in below 50% of that same circuit's own `expected_latency` baseline (e.g. a "faster than physically possible" value) is now treated as implausible/corrupt data and rejected - the matrix falls back to `expected_latency` for that circuit instead, exactly as it already does when no live reading exists at all. This stops a bad monitoring sample from ever being computed into the live matrix (1Gb/10Gb tabs) or the 30-day tracking derived from it, in the first place. Rejections are logged (`⚠️ Rejected implausible live_latency for circuit ...`) with a per-run summary count, deduplicated per circuit per hourly run.
+- **Statistical outlier protection at the 30-day rollup:** `get30DayLowMatrix` now runs each pair's recorded daily values through a median/MAD-based "modified z-score" check (a robust-statistics method that, unlike a mean/stddev z-score, isn't itself skewed by the outlier it's trying to detect) and excludes any day that's a statistical low-outlier *for that specific pair's own recent values* before taking the minimum. This is adaptive (not a fixed "drop the N lowest" rule) - it only excludes a day if it's a genuine anomaly, requires at least 5 days of data before filtering activates (so a pair's window can fill in without being over-filtered), and never excludes every day for a pair. The 30-Day Low figure keeps its existing "minimum" meaning - it's just now a minimum of the *plausible* days.
+- **Transparency:** cells with excluded days now say so in their tooltip (e.g. "... (1 anomalous reading auto-excluded)"), and the admin "inspect & prune" popup above now flags which specific day(s) were auto-excluded with an "Auto-excluded" chip, so an admin can see at a glance what the automatic filter already handled versus what might still need a manual delete.
+
+**Files Modified:**
+- `backend/latencyMatrixService.js` - added `getDailyLowsForPair()` and `deleteDailyLowRow()`; added `MIN_LIVE_LATENCY_RATIO_OF_EXPECTED` sanity check in `buildGraph()`; added `excludeLowOutlierDays()`/`median()`/`OUTLIER_MIN_SAMPLES`/`OUTLIER_MODIFIED_Z_THRESHOLD` and wired them into `aggregateDailyLowRows()` (adds a new `days_excluded_outliers` field per pair) and `getDailyLowsForPair()` (adds `is_excluded_outlier` per row)
+- `backend/routes.js` - added `GET` and `DELETE /api/admin/latency-matrix/30d-low/:sourcePop/:destinationPop[/:recordDate]` (admin-only, audit-logged)
+- `frontend/src/api.js` - added `latencyMatrixAdminApi.getDailyLowDetail()` / `.deleteDailyLowRow()`
+- `frontend/src/HomePage.js` - 30-Day Low cells are now clickable for admins (opens the daily-values popup instead of Route Finder); added the popup + per-row delete confirmation dialog; tooltip mentions auto-excluded days; popup shows an "Auto-excluded" chip per flagged row
+
+---
+
+## What's New in v3.5.6
+
+### 🧹 **Admin: Reset 30-Day Low Latency Data**
+
+Added an admin-only control to clear the Home page's 30-Day Low (1Gb) latency history, for use if bad/anomalous data (e.g. a transient live-latency measurement glitch) gets baked into the rolling 30-day minimum.
+
+- **New "Reset 30-Day Data" button:** shown only to `administrator` users, next to the "Based on the last N days of data" chip on the 30-Day Low (1Gb) tab. Opens a confirmation dialog (destructive/irreversible action) before proceeding.
+- **New backend endpoint:** `DELETE /api/admin/latency-matrix/30d-low` (admin-only) wipes every row from `latency_matrix_daily_low`, so the rolling window starts re-accumulating cleanly from the next hourly `computeMatrix()` run. The action is written to the change log (`logChange`) for auditability.
+- **New service method:** `latencyMatrixService.resetDailyLows()` performs the delete and returns the number of rows removed.
+
+**Files Modified:**
+- `backend/latencyMatrixService.js` - added `DAILY_LOW_RESET_SQL` and `resetDailyLows()`
+- `backend/routes.js` - added `DELETE /api/admin/latency-matrix/30d-low` (admin-only, audit-logged)
+- `frontend/src/api.js` - added `latencyMatrixAdminApi.reset30DayLow()`
+- `frontend/src/HomePage.js` - added admin-only "Reset 30-Day Data" button + confirmation dialog on the 30-Day Low tab
+- `frontend/src/App.js` - passes `isAdmin={hasRole('administrator')}` into `HomePage`
+
+**Note:** this release does **not** yet change the underlying 30-day aggregation logic (still a pure rolling minimum) - see open discussion with the user on hardening it against outlier/anomalous low readings before implementing.
 
 ---
 

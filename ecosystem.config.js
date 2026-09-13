@@ -11,25 +11,33 @@ module.exports = {
         PORT: 4000,
         JWT_SECRET: 'your-super-secure-jwt-secret-change-this-in-production',
         ENCRYPTION_KEY: 'hidden',
-        // v3.5.0 PDF Network Map Export - set EXACTLY ONE of these two, since a
-        // configured sidecar takes precedence over the local browser. Puppeteer's
-        // own bundled Chromium can't run on RHEL 7 (glibc 2.17 vs the >=2.27 it
-        // needs), so either:
-        //   PUPPETEER_EXECUTABLE_PATH - a glibc-compatible Chromium already on
-        //     this host, e.g. EPEL's el7 build at
-        //     /usr/lib64/chromium-browser/headless_shell (preferred on RHEL 7)
-        //   PDF_RENDER_SIDECAR_URL - backend/pdf-render-sidecar/ running on any
-        //     reachable host; add PDF_RENDER_SIDECAR_TOKEN to match its
-        //     SIDECAR_AUTH_TOKEN
-        // Leave both unset to disable export cleanly. Validate any choice with
-        // `node backend/checkPdfRender.js`. See RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md.
-        PDF_RENDER_SIDECAR_URL: 'http://127.0.0.1:5051'
+        // v3.5.0 PDF Network Map Export - set EXACTLY ONE render path below.
+        // Puppeteer's own bundled Chromium can't run on RHEL 7 (glibc 2.17 vs the
+        // >=2.27 it needs), so point it at a glibc-compatible browser already on
+        // the host - confirm YOUR path with:
+        //     rpm -ql chromium-headless | grep -i headless
+        // Every line here ends with a comma so you can comment/uncomment freely
+        // without producing a malformed config. Validate any change with:
+        //     node -e "require('./ecosystem.config.js')"
+        //     cd backend && PUPPETEER_EXECUTABLE_PATH=<path> node checkPdfRender.js
+        // See RHEL_PRODUCTION_DEPLOYMENT_V3.5.0.md, Step 5.
+        PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell',
+
+        // Alternative - render via backend/pdf-render-sidecar/ on any reachable
+        // host. Comment out PUPPETEER_EXECUTABLE_PATH above if you use this, since
+        // a configured sidecar takes precedence over the local browser.
+        // PDF_RENDER_SIDECAR_URL: 'http://127.0.0.1:5051',
+        // PDF_RENDER_SIDECAR_TOKEN: 'must match the sidecar SIDECAR_AUTH_TOKEN',
       },
       env_production: {
         NODE_ENV: 'production',
         PORT: 4000,
         ENCRYPTION_KEY: 'hidden',
-        PDF_RENDER_SIDECAR_URL: 'http://127.0.0.1:5051'
+        // Must mirror the env block above: `--env production` uses THIS block, so
+        // a render path set only in `env` is silently ignored.
+        PUPPETEER_EXECUTABLE_PATH: '/usr/lib64/chromium-browser/headless_shell',
+        // PDF_RENDER_SIDECAR_URL: 'http://127.0.0.1:5051',
+        // PDF_RENDER_SIDECAR_TOKEN: 'must match the sidecar SIDECAR_AUTH_TOKEN',
       },
       max_memory_restart: '1G',
       min_uptime: '10s',

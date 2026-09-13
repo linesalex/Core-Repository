@@ -953,6 +953,13 @@ export const latencyMatrixAdminApi = {
   updateLocation: (id, data) => api.put(`${API_BASE_URL}/api/admin/latency-matrix/locations/${id}`, data).then(res => res.data),
   deleteLocation: (id) => api.delete(`${API_BASE_URL}/api/admin/latency-matrix/locations/${id}`).then(res => res.data),
   refreshMatrix: () => api.post(`${API_BASE_URL}/api/admin/latency-matrix/refresh`).then(res => res.data),
+  reset30DayLow: () => api.delete(`${API_BASE_URL}/api/admin/latency-matrix/30d-low`).then(res => res.data),
+  getDailyLowDetail: (sourcePop, destinationPop) => api.get(
+    `${API_BASE_URL}/api/admin/latency-matrix/30d-low/${encodeURIComponent(sourcePop)}/${encodeURIComponent(destinationPop)}`
+  ).then(res => res.data),
+  deleteDailyLowRow: (sourcePop, destinationPop, recordDate) => api.delete(
+    `${API_BASE_URL}/api/admin/latency-matrix/30d-low/${encodeURIComponent(sourcePop)}/${encodeURIComponent(destinationPop)}/${encodeURIComponent(recordDate)}`
+  ).then(res => res.data),
 };
 
 // Export the base api object for direct use

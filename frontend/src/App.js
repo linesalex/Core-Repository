@@ -1074,6 +1074,7 @@ function AuthenticatedApp() {
       default:
         return (
           <HomePage
+            isAdmin={hasRole('administrator')}
             onRouteClick={(routeData) => {
               setMatrixRouteData(routeData);
               setCurrentTab('route-finder');
@@ -1092,7 +1093,7 @@ function AuthenticatedApp() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Network Inventory
             <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
-              v3.5.5
+              v3.5.7
             </Typography>
           </Typography>
           

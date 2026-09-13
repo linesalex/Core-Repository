@@ -24853,6 +24853,53 @@ router.post('/api/admin/latency-matrix/refresh', authenticateToken, authorizeRol
   }
 });
 
+// Admin: wipe the entire 30-day daily-low tracking table. Used to clear out
+// bad data (e.g. from a transient live-latency measurement glitch that got
+// baked into the rolling minimum) so it starts re-accumulating cleanly from
+// the next hourly computeMatrix() run.
+router.delete('/api/admin/latency-matrix/30d-low', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    const rowsDeleted = await latencyMatrixService.resetDailyLows();
+    logChange(req.user.id, 'latency_matrix_daily_low', null, 'BULK_DELETE', null, { rows_deleted: rowsDeleted }, req);
+    res.json({ success: true, rowsDeleted, message: `Cleared ${rowsDeleted} recorded daily-low row(s). The 30-day table will re-accumulate from the next hourly computation.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: list every recorded daily-low row for a specific source/destination
+// pair (used by the "inspect & prune" popup on the 30-Day Low tab).
+router.get('/api/admin/latency-matrix/30d-low/:sourcePop/:destinationPop', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    const { sourcePop, destinationPop } = req.params;
+    const rows = await latencyMatrixService.getDailyLowsForPair(sourcePop, destinationPop);
+    res.json({ rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: delete a single day's recorded low-latency value for a pair (e.g. a
+// value that looks physically impossible).
+router.delete('/api/admin/latency-matrix/30d-low/:sourcePop/:destinationPop/:recordDate', authenticateToken, authorizeRole(['administrator']), async (req, res) => {
+  try {
+    const { sourcePop, destinationPop, recordDate } = req.params;
+    const rowsDeleted = await latencyMatrixService.deleteDailyLowRow(sourcePop, destinationPop, recordDate);
+    logChange(
+      req.user.id,
+      'latency_matrix_daily_low',
+      `${sourcePop}->${destinationPop}:${recordDate}`,
+      'DELETE',
+      null,
+      { source_pop: sourcePop, destination_pop: destinationPop, record_date: recordDate },
+      req
+    );
+    res.json({ success: true, rowsDeleted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Market Data & Extranet contacts (merged module)
 router.use(require('./marketDataRoutes'));
 
