@@ -28,12 +28,60 @@ async function renderViaSidecar() {
   return renderPdfViaSidecar({ html: HTML, width: 800, height: 600 });
 }
 
+// Where distro packages put a usable Chromium/Chrome. EPEL's chromium-headless
+// normally lands in /usr/lib64/chromium-browser/, but the exact name varies by
+// build, so probe rather than assume.
+const CANDIDATE_BROWSERS = [
+  '/usr/lib64/chromium-browser/headless_shell',
+  '/usr/lib64/chromium-browser/chrome-headless',
+  '/usr/lib64/chromium-browser/chromium-browser',
+  '/usr/lib64/chromium-browser/chrome',
+  '/usr/bin/chromium-headless',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/chromium',
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/google-chrome',
+  '/opt/google/chrome/chrome',
+];
+
+function findInstalledBrowsers() {
+  return CANDIDATE_BROWSERS.filter((p) => {
+    try {
+      return fs.statSync(p).isFile();
+    } catch (_) {
+      return false;
+    }
+  });
+}
+
+function reportBrowserSearch() {
+  const found = findInstalledBrowsers();
+  if (found.length) {
+    console.error('\nBrowsers found on this host - try one of these:');
+    found.forEach((p) => console.error(`  PUPPETEER_EXECUTABLE_PATH=${p}`));
+  } else {
+    console.error('\nNo Chromium/Chrome found in any standard location. To install it on RHEL 7:');
+    console.error('  sudo yum --enablerepo=centos7-vault install -y libatomic flac-libs opus');
+    console.error('  sudo yum install -y chromium-headless');
+    console.error('  rpm -ql chromium-headless | grep -iE "headless|chrom" | grep -v "\\."');
+  }
+}
+
 async function renderLocally() {
   const execPath = process.env.PUPPETEER_EXECUTABLE_PATH;
   console.log(`Mode: LOCAL Chromium (${execPath || 'puppeteer bundled browser'})`);
 
   if (execPath && !fs.existsSync(execPath)) {
+    reportBrowserSearch();
     throw new Error(`PUPPETEER_EXECUTABLE_PATH does not exist: ${execPath}`);
+  }
+  if (!execPath) {
+    const found = findInstalledBrowsers();
+    if (found.length) {
+      console.log('  Note: PUPPETEER_EXECUTABLE_PATH is unset, so Puppeteer will use its own');
+      console.log('  bundled Chromium, which cannot run on RHEL 7 (needs glibc >=2.27).');
+      console.log(`  A usable browser appears to be installed at: ${found[0]}`);
+    }
   }
 
   const puppeteer = require('puppeteer');

@@ -129,7 +129,8 @@ const ChangeLogsViewer = () => {
       'UPDATE': 'warning',
       'DELETE': 'error',
       'LOGIN': 'info',
-      'PASSWORD_CHANGE': 'secondary'
+      'PASSWORD_CHANGE': 'secondary',
+      'EXPORT': 'primary'
     };
     return <Chip label={action} color={colors[action] || 'default'} size="small" />;
   };
@@ -163,6 +164,10 @@ const ChangeLogsViewer = () => {
     'bulk_updates': {
       name: 'Bulk Updates',
       tables: ['bulk_upload', 'bulk_upload_templates', 'bulk_upload_database']
+    },
+    'latency_matrix': {
+      name: 'Latency Matrix',
+      tables: ['latency_matrix_locations', 'latency_matrix_daily_low', 'latency_matrix_export', 'custom_latency_report_export']
     }
   };
 
@@ -189,7 +194,11 @@ const ChangeLogsViewer = () => {
       'bulk_upload_templates': 'Bulk Upload Templates',
       'bulk_upload_database': 'Bulk Upload Database',
       'audit_logs': 'Audit Logs',
-      'change_logs': 'Change Logs'
+      'change_logs': 'Change Logs',
+      'latency_matrix_locations': 'Latency Matrix Locations',
+      'latency_matrix_daily_low': 'Latency Matrix Daily Lows',
+      'latency_matrix_export': '30-Day Latency Matrix Export',
+      'custom_latency_report_export': 'Custom Latency Report Export'
     };
     return nameMap[tableName] || tableName;
   };

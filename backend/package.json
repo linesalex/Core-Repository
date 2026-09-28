@@ -1,6 +1,6 @@
 {
   "name": "network-inventory-backend",
-  "version": "3.5.7",
+  "version": "3.5.8",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

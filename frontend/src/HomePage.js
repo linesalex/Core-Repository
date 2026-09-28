@@ -7,7 +7,9 @@ import {
 import DownloadIcon from '@mui/icons-material/Download';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import DeleteIcon from '@mui/icons-material/Delete';
+import AssessmentIcon from '@mui/icons-material/Assessment';
 import { latencyMatrixApi, latencyMatrixAdminApi } from './api';
+import CustomLatencyReportDialog from './CustomLatencyReportDialog';
 
 const AUTO_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -37,6 +39,8 @@ function HomePage({ onRouteClick, isAdmin }) {
   const [dailyDetailPair, setDailyDetailPair] = useState(null); // { sourcePop, destinationPop, sourceCity, destinationCity }
   const [deleteRowTarget, setDeleteRowTarget] = useState(null); // record_date pending delete confirmation
   const [deletingRow, setDeletingRow] = useState(false);
+
+  const [customReportOpen, setCustomReportOpen] = useState(false);
 
   const fetchMatrix = useCallback(async () => {
     try {
@@ -214,15 +218,25 @@ function HomePage({ onRouteClick, isAdmin }) {
               Minimum latency between key locations, refreshed hourly using live network data.
             </Typography>
           </Box>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={exporting ? <CircularProgress size={16} /> : <DownloadIcon />}
-            onClick={handleExportPdf}
-            disabled={exporting || matrixData.locations.length < 2}
-          >
-            {exporting ? 'Generating PDF…' : 'Export PDF (Last 30 Days)'}
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<AssessmentIcon />}
+              onClick={() => setCustomReportOpen(true)}
+            >
+              Custom Latency Report
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={exporting ? <CircularProgress size={16} /> : <DownloadIcon />}
+              onClick={handleExportPdf}
+              disabled={exporting || matrixData.locations.length < 2}
+            >
+              {exporting ? 'Generating PDF…' : 'Export PDF (Last 30 Days)'}
+            </Button>
+          </Box>
         </Box>
 
         {exportError && (
@@ -546,6 +560,8 @@ function HomePage({ onRouteClick, isAdmin }) {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <CustomLatencyReportDialog open={customReportOpen} onClose={() => setCustomReportOpen(false)} />
     </Box>
   );
 }

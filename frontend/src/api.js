@@ -947,6 +947,14 @@ export const latencyMatrixApi = {
   export30DayLowPDF: () => api.get(`${API_BASE_URL}/api/latency-matrix/30d-low/export`, { responseType: 'blob' }),
 };
 
+// Custom Latency Report (user-driven: any locations, bandwidth tier,
+// Expected-vs-Live mode, ULL/Special inclusion) - all authenticated users.
+export const customLatencyReportApi = {
+  searchLocations: (q) => api.get(`${API_BASE_URL}/api/latency-matrix/location-search`, { params: { q } }).then(res => res.data),
+  computeReport: (payload) => api.post(`${API_BASE_URL}/api/latency-matrix/custom-report`, payload).then(res => res.data),
+  exportReportPDF: (payload) => api.post(`${API_BASE_URL}/api/latency-matrix/custom-report/export`, payload, { responseType: 'blob' }),
+};
+
 export const latencyMatrixAdminApi = {
   getLocations: () => api.get(`${API_BASE_URL}/api/admin/latency-matrix/locations`).then(res => res.data),
   addLocation: (data) => api.post(`${API_BASE_URL}/api/admin/latency-matrix/locations`, data).then(res => res.data),

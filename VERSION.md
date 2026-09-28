@@ -1,8 +1,55 @@
 # Network Inventory Management System
 
-## Current Version: **3.5.7**
+## Current Version: **3.5.8**
 
-**Release Date:** September 13, 2026
+**Release Date:** September 28, 2026
+
+---
+
+## What's New in v3.5.8
+
+### 📡 **Hourly Live-Latency Sampling: Typical-Reading Filter**
+
+Root-cause fix for the 30-Day Low table still occasionally showing erroneous results traced to intermittent outages. `live_latency` is computed from the last 24 hourly samples pulled from the monitoring API - previously this just averaged every non-zero hourly reading, so a handful of bad hours from an intermittent/partial outage could still skew the whole day's figure even after the v3.5.7 downstream protections.
+
+- **`liveLatencyService.js` now keeps only the "typical" half of a circuit's 24 hourly readings** - the readings closest to that circuit's own median for the window - and averages just those, discarding whichever half deviates most (spiking high *or* dropping low). With a full 24-hour window this keeps 12 readings, matching the "12 most common hourly numbers" idea, but generalizes correctly to however many valid samples are actually available.
+- Only activates with at least 8 valid hourly readings (`MIN_SAMPLES_FOR_TYPICAL_FILTER`); with fewer, falls back to the previous plain-average behavior so sparse data isn't over-filtered.
+- **Applied at the source** (`processApiResponse()`, which writes `network_routes.live_latency`), so every consumer of that column benefits - not just the Home page matrix, but Route Finder, cost calculators, and anything else that reads live latency.
+- Logs when filtering actually excluded readings (`📊 Circuit ...: using X/Y most-typical hourly readings...`).
+
+**Files Modified:**
+- `backend/liveLatencyService.js` - added `median()`/`selectTypicalReadings()`/`MIN_SAMPLES_FOR_TYPICAL_FILTER`; `processApiResponse()` now averages only the typical half of non-zero hourly readings instead of all of them
+
+### 🌐 **Custom Latency Report Export**
+
+New self-service report, available to all authenticated users from the Home page, alongside the existing fixed latency matrix - pick any locations/datacenters (not just the curated Home page set), a bandwidth tier, Expected-vs-Live mode, and whether to include ULL/Special routes, then preview on-screen or export a PDF.
+
+- **Location picker** searches the full `location_reference` table (POP code, datacenter name, or city), same UX pattern as the Network Map Export's "By Specific POPs" picker - up to 25 locations per report.
+- **Bandwidth**: dropdown of 1Gb/10Gb tiers (same two tiers as the existing matrix), using the same eligibility rule the Home page matrix already uses (route capacity >= selected tier).
+- **Mode toggle - Expected vs Live** (mutually exclusive, not shown together): "Live" prefers live-measured latency (with the same implausible-reading sanity check as the main matrix); "Expected" shows each route's designed/provisioned baseline latency and, being a capacity-planning view, ignores live probe data entirely - including momentary live outages.
+- **ULL/Special routes toggle** - include or exclude entirely, independent of mode. This is an internal filtering control only - the exported PDF itself is customer-facing and never mentions "ULL/Special" by name.
+- **On-screen preview table** plus a **PDF export** (reuses the same visual style, POP Code Reference section, confidentiality notice, and single-page-guarantee sizing as the 30-Day Low PDF), with wording (title/subtitle/caption/customer note) that adapts to the chosen mode/bandwidth.
+
+**Files Modified:**
+- `backend/latencyMatrixService.js` - `buildGraph()` now takes an `options` param (`mode: 'live'|'expected'`, `excludeUllSpecial`); added `computeCustomMatrix()` for on-demand matrices over an arbitrary POP list
+- `backend/latencyMatrixPdfRenderer.js` - generalized `buildMatrixTableHtml()` to take a value-field name; added `generateCustomLatencyReportPdf()` and `CUSTOMER_NOTE_EXPECTED`
+- `backend/routes.js` - added `GET /api/latency-matrix/location-search`, `POST /api/latency-matrix/custom-report` (JSON preview), `POST /api/latency-matrix/custom-report/export` (PDF) - all authenticated users
+- `frontend/src/api.js` - added `customLatencyReportApi`
+- `frontend/src/CustomLatencyReportDialog.js` - new dialog (location picker, bandwidth/mode/ULL controls, preview table, PDF export)
+- `frontend/src/HomePage.js` - added "Custom Latency Report" button that opens the new dialog
+
+### 🗒️ **Change Log: Latency Matrix Exports Now Audited**
+
+Both the 30-Day Low PDF export and the new Custom Latency Report PDF export are now recorded in the system's Change Logs, including a full copy of the exported matrix data - not just the fact that an export happened.
+
+- **`GET /api/latency-matrix/30d-low/export`** logs an `EXPORT` entry (`latency_matrix_export`) with the filename, generated-at timestamp, the location list, and the complete 30-day-low matrix that was rendered into the PDF.
+- **`POST /api/latency-matrix/custom-report/export`** logs an `EXPORT` entry (`custom_latency_report_export`) with the filename, mode (Expected/Live), bandwidth tier, the ULL/Special inclusion setting, the location list, and the complete custom matrix that was rendered into the PDF.
+- Viewable the same way as any other change log entry: open **Change Logs**, find the row (filterable under the new "Latency Matrix" module group), and click **View** - the full matrix JSON is in the "New Values" section.
+- Exports are logged after the PDF is successfully streamed to the user, and logging failures never block or fail the export itself (same fire-and-forget pattern as all other change logging in the app).
+
+**Files Modified:**
+- `backend/routes.js` - added `logChange(...)` calls to both export endpoints, including the full matrix payload in `new_values`
+- `frontend/src/ChangeLogsViewer.js` - added a "Latency Matrix" module filter group and display-name mappings for the new `latency_matrix_export`/`custom_latency_report_export` table names, plus an `EXPORT` action chip color
 
 ---
 

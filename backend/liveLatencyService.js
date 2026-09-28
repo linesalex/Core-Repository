@@ -3,6 +3,46 @@ const db = require('./db');
 const { encrypt, decrypt } = require('./encryption');
 const { logUserActivity } = require('./auth');
 
+// A circuit needs at least this many valid hourly readings in its 24h
+// window before "typical half" filtering (see selectTypicalReadings below)
+// is trusted over a plain average - with too few samples there isn't enough
+// signal to safely separate normal readings from anomalies caused by a
+// brief/intermittent outage.
+const MIN_SAMPLES_FOR_TYPICAL_FILTER = 8;
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Given a circuit's hourly latency readings for its trailing 24h window,
+ * returns just the "typical" half - the readings closest to that circuit's
+ * own median for the window - discarding whichever half deviates most
+ * (whether spiking high or dropping low, e.g. during a brief/intermittent
+ * outage). This half is what actually gets averaged into live_latency,
+ * instead of blindly averaging all 24 hours, so an hour or two of bad data
+ * from a partial outage can no longer drag the whole day's figure down (or
+ * up). Exported (pure, no I/O) so it can be unit tested directly.
+ *
+ * Falls back to returning every reading unfiltered when there are too few
+ * samples (MIN_SAMPLES_FOR_TYPICAL_FILTER) to safely tell "typical" apart
+ * from ordinary variance.
+ */
+function selectTypicalReadings(values) {
+  if (values.length < MIN_SAMPLES_FOR_TYPICAL_FILTER) {
+    return values;
+  }
+
+  const med = median(values);
+  const withDistance = values.map((value) => ({ value, distance: Math.abs(value - med) }));
+  withDistance.sort((a, b) => a.distance - b.distance);
+
+  const keepCount = Math.max(1, Math.ceil(values.length / 2)); // e.g. 12 of 24
+  return withDistance.slice(0, keepCount).map((v) => v.value);
+}
+
 /**
  * Live Latency Service for External API Integration
  * Handles configuration-based API calls to fetch latency data
@@ -372,9 +412,12 @@ class LiveLatencyService {
 
     // Implement the latency calculation logic:
     // If latest value is 0, return 0 immediately (circuit down)
-    // Otherwise, calculate average of all non-zero values
+    // Otherwise, average only the "typical" half of the window's non-zero
+    // readings (closest to this circuit's own median - see
+    // selectTypicalReadings above), not blindly every hour
     let finalLatencyValue;
     let calculatedAverage;
+    let typicalReadingCount = null;
 
     if (latestValue === 0) {
       finalLatencyValue = 0;
@@ -388,8 +431,14 @@ class LiveLatencyService {
         finalLatencyValue = 0; // All historical values were 0
         calculatedAverage = 0;
       } else {
-        calculatedAverage = nonZeroValues.reduce((sum, val) => sum + val.value, 0) / nonZeroValues.length;
+        const typicalValues = selectTypicalReadings(nonZeroValues.map(val => val.value));
+        typicalReadingCount = typicalValues.length;
+        calculatedAverage = typicalValues.reduce((sum, v) => sum + v, 0) / typicalValues.length;
         finalLatencyValue = Math.round(calculatedAverage * 100) / 100; // Round to 2 decimal places
+
+        if (typicalValues.length < nonZeroValues.length) {
+          console.log(`📊 Circuit ${circuitId}: using ${typicalValues.length}/${nonZeroValues.length} most-typical hourly readings (closest to the circuit's own median) to compute live_latency`);
+        }
       }
     }
 
@@ -398,6 +447,7 @@ class LiveLatencyService {
       latestValue,
       calculatedAverage,
       finalLatencyValue,
+      typicalReadingCount,
       averageQuality: Math.round(averageQuality)
     };
   }
@@ -598,3 +648,9 @@ class LiveLatencyService {
 }
 
 module.exports = LiveLatencyService;
+
+// Exposed (pure, no I/O) so the hourly typical-reading filter can be unit
+// tested directly.
+module.exports.selectTypicalReadings = selectTypicalReadings;
+module.exports.median = median;
+module.exports.MIN_SAMPLES_FOR_TYPICAL_FILTER = MIN_SAMPLES_FOR_TYPICAL_FILTER;

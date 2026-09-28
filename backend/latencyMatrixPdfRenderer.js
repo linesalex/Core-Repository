@@ -25,6 +25,15 @@ const CUSTOMER_NOTE = 'Latency values reflect live production network measuremen
   + 'RFC-based tests typically report lower latency values than production traffic experiences, '
   + 'and are available upon request.  SLA figures will differ and dependant on exact route selected.';
 
+// Used on the Custom Latency Report when the user picks "Expected" mode -
+// deliberately different wording from CUSTOMER_NOTE above, since an expected
+// value is the opposite of a live measurement and shouldn't be described as
+// one.
+const CUSTOMER_NOTE_EXPECTED = "Latency values reflect each route's designed/provisioned baseline "
+  + 'latency, not live production measurements, and may not reflect current real-world performance. '
+  + 'For current live-measured latency, refer to the Live Latency Matrix instead. SLA figures will '
+  + 'differ and are dependant on exact route selected.';
+
 const CONFIDENTIALITY_NOTE = 'For authorized recipient use only - Distributed under NDA. '
   + "Redistribution without IPC's prior written approval is prohibited.";
 
@@ -126,14 +135,14 @@ function styles(width, height) {
   `;
 }
 
-function buildMatrixTableHtml(locations, matrixByPair) {
+function buildMatrixTableHtml(locations, matrixByPair, valueField = 'latency_1g_low') {
   const headerCells = locations.map((loc) => `<th>${escapeHtml(loc.city_name)}<br/><span style="font-weight:400;color:#757575;">${escapeHtml(loc.pop_code)}</span></th>`).join('');
 
   const bodyRows = locations.map((srcLoc) => {
     const cells = locations.map((dstLoc) => {
       if (srcLoc.pop_code === dstLoc.pop_code) return '<td class="diagonal">&mdash;</td>';
       const entry = matrixByPair.get(`${srcLoc.pop_code}|${dstLoc.pop_code}`);
-      const val = entry ? entry.latency_1g_low : null;
+      const val = entry ? entry[valueField] : null;
       if (val === null || val === undefined) return '<td class="na">N/A</td>';
       return `<td class="value">${formatLatency(val)}</td>`;
     }).join('');
@@ -258,9 +267,122 @@ async function generateLatencyMatrix30dPdf(locations, matrix, options) {
   }
 }
 
+const BANDWIDTH_TIER_LABELS = { '1Gb': '1Gb', '10Gb': '10Gb' };
+
+/**
+ * Custom Latency Report - a user-driven equivalent of generateLatencyMatrix30dPdf
+ * above, for an arbitrary, user-chosen set of locations/datacenters, a
+ * user-chosen bandwidth tier, an Expected-vs-Live mode toggle, and an
+ * optional ULL/Special routes inclusion toggle. Shares the same visual
+ * language, single-page-guarantee sizing approach, and POP reference/
+ * confidentiality-note sections as the 30-day export.
+ *
+ * @param {Array} locations  [{ pop_code, city_name, datacenter_name }]
+ * @param {Array} matrix     [{ source_pop, destination_pop, latency }]
+ * @param {Object} options   { generatedAt, mode: 'expected'|'live', bandwidthTier: '1Gb'|'10Gb' }
+ *   (includeUllSpecial is accepted by the caller/API for filtering purposes
+ *   but deliberately not surfaced anywhere in this customer-facing document
+ *   - "ULL/Special" is internal terminology)
+ */
+async function generateCustomLatencyReportPdf(locations, matrix, options) {
+  const { generatedAt, mode, bandwidthTier } = options;
+
+  const matrixByPair = new Map();
+  matrix.forEach((row) => {
+    matrixByPair.set(`${row.source_pop}|${row.destination_pop}`, row);
+  });
+
+  const tableHtml = buildMatrixTableHtml(locations, matrixByPair, 'latency');
+  const popReference = buildPopReferenceHtml(locations);
+
+  const tableWidth = LABEL_COL_WIDTH + (locations.length * DATA_COL_WIDTH);
+  const width = Math.max(MIN_CONTENT_WIDTH, tableWidth + (OUTER_MARGIN * 2));
+  const tableHeight = HEADER_ROW_HEIGHT + (locations.length * DATA_ROW_HEIGHT);
+  const titleBlockHeight = TITLE_BLOCK_HEIGHT + 20;
+  const sectionTitleHeight = 34;
+
+  const height = (OUTER_MARGIN * 2)
+    + titleBlockHeight
+    + tableHeight
+    + CAPTION_HEIGHT
+    + SECTION_GAP + sectionTitleHeight
+    + popReference.height
+    + SECTION_GAP + NOTE_SECTION_HEIGHT
+    + CONFIDENTIALITY_LINE_HEIGHT
+    + HEIGHT_SAFETY_MARGIN;
+
+  const TITLE_TEXT = 'IPC Custom Latency Report';
+  const modeLabel = mode === 'expected' ? 'Expected' : 'Live';
+  const bandwidthLabel = BANDWIDTH_TIER_LABELS[bandwidthTier] || bandwidthTier;
+  // Note: includeUllSpecial still controls which routes are actually used
+  // (see resolveCustomReportRequest/buildGraph) - it's just not called out
+  // by name anywhere in this customer-facing document, since "ULL/Special"
+  // is internal terminology.
+  const subtitle = `Produced on ${escapeHtml(formatProducedDate(generatedAt))} - ${escapeHtml(modeLabel)} latency at ${escapeHtml(bandwidthLabel)}`;
+  const captionText = mode === 'expected'
+    ? `All values in milliseconds (ms), round-trip delay. Each figure is the designed/expected latency of the best available route at or above ${bandwidthLabel} capacity between the two locations.`
+    : `All values in milliseconds (ms), round-trip delay. Each figure is the current live-measured latency of the best available route at or above ${bandwidthLabel} capacity between the two locations.`;
+  const noteText = mode === 'expected' ? CUSTOMER_NOTE_EXPECTED : CUSTOMER_NOTE;
+
+  const logoDataUri = getLogoDataUri();
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>${styles(width, height)}</style>
+</head>
+<body>
+  <div class="page">
+    <div class="title-block">
+      ${logoDataUri ? `<img class="logo" src="${logoDataUri}" />` : ''}
+      <div>
+        <div class="title-main">${escapeHtml(TITLE_TEXT)}</div>
+        <div class="title-sub">${subtitle}</div>
+      </div>
+    </div>
+
+    ${tableHtml}
+    <div class="caption">${escapeHtml(captionText)}</div>
+
+    <div class="section-title">POP Code Reference</div>
+    ${popReference.html}
+
+    <div class="note">${escapeHtml(noteText)}</div>
+    <div class="confidentiality-note">${escapeHtml(CONFIDENTIALITY_NOTE)}</div>
+  </div>
+</body>
+</html>`;
+
+  if (isSidecarConfigured()) {
+    return renderPdfViaSidecar({ html, width, height });
+  }
+
+  const puppeteer = loadPuppeteer();
+  const browser = await puppeteer.launch({
+    headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'load' });
+    const pdfBytes = await page.pdf({
+      width: `${width}px`,
+      height: `${height}px`,
+      printBackground: true,
+      margin: { top: '0px', right: '0px', bottom: '0px', left: '0px' },
+    });
+    return Buffer.from(pdfBytes);
+  } finally {
+    await browser.close();
+  }
+}
+
 module.exports = {
   CUSTOMER_NOTE,
+  CUSTOMER_NOTE_EXPECTED,
   CONFIDENTIALITY_NOTE,
   generateLatencyMatrix30dPdf,
+  generateCustomLatencyReportPdf,
   formatProducedDate,
 };

@@ -24623,7 +24623,7 @@ router.delete('/voice/one-directory/logs', authenticateToken, authorizeRole(['ad
 // ========================================
 
 const latencyMatrixService = require('./latencyMatrixService');
-const { generateLatencyMatrix30dPdf } = require('./latencyMatrixPdfRenderer');
+const { generateLatencyMatrix30dPdf, generateCustomLatencyReportPdf } = require('./latencyMatrixPdfRenderer');
 
 // Shared by /api/latency-matrix/30d-low and its PDF export - same locations
 // join used by the live matrix endpoint below.
@@ -24718,6 +24718,16 @@ router.get('/api/latency-matrix/30d-low/export', authenticateToken, async (req, 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.send(pdfBuffer);
+
+        // Log the export, including the exact matrix data that was rendered
+        // into the PDF, so admins can later see what a user exported.
+        logChange(null, 'latency_matrix_export', null, 'EXPORT', null, {
+          report_type: '30_day_low',
+          filename,
+          generated_at: generatedAt.toISOString(),
+          locations: locations.map((l) => ({ pop_code: l.pop_code, city_name: l.city_name, datacenter_name: l.datacenter_name })),
+          matrix
+        }, req);
       } catch (pdfErr) {
         console.error('30-day latency matrix PDF generation failed:', pdfErr);
         res.status(500).json({ error: 'Failed to generate the latency matrix PDF.' });
@@ -24726,6 +24736,150 @@ router.get('/api/latency-matrix/30d-low/export', authenticateToken, async (req, 
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ========================================
+// CUSTOM LATENCY REPORT
+// (user-driven: any locations, a bandwidth tier, Expected-vs-Live mode, and
+// an optional ULL/Special routes toggle - unlike the curated Home page
+// matrix above, this runs on demand for exactly what's requested)
+// ========================================
+
+const CUSTOM_REPORT_BANDWIDTH_MBPS = { '1Gb': 1000, '10Gb': 10000 };
+const CUSTOM_REPORT_MAX_LOCATIONS = 25;
+
+// Search locations for the Custom Latency Report's location picker. All
+// authenticated users (unlike /network_routes_pop_search, this isn't gated
+// by the network_routes module permission, since the report itself is
+// available to everyone from the Home page).
+router.get('/api/latency-matrix/location-search', authenticateToken, (req, res) => {
+  const q = (req.query.q || '').trim();
+  let query = `SELECT location_code AS pop_code, city AS city_name, datacenter_name, country, region
+               FROM location_reference
+               WHERE status = 'Active'`;
+  const params = [];
+  if (q) {
+    query += ' AND (location_code LIKE ? OR datacenter_name LIKE ? OR city LIKE ?)';
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  query += ' ORDER BY location_code LIMIT 50';
+
+  db.all(query, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+// Shared validation + location resolution for both the JSON preview and PDF
+// export endpoints below.
+function resolveCustomReportRequest(body, callback) {
+  const { locations, bandwidthTier, includeUllSpecial, mode } = body || {};
+
+  if (!Array.isArray(locations) || locations.length < 2) {
+    return callback({ status: 400, error: 'Select at least two locations.' });
+  }
+  if (locations.length > CUSTOM_REPORT_MAX_LOCATIONS) {
+    return callback({ status: 400, error: `Select at most ${CUSTOM_REPORT_MAX_LOCATIONS} locations per report.` });
+  }
+  const minBandwidthMbps = CUSTOM_REPORT_BANDWIDTH_MBPS[bandwidthTier];
+  if (!minBandwidthMbps) {
+    return callback({ status: 400, error: 'Invalid bandwidth tier - must be "1Gb" or "10Gb".' });
+  }
+  if (mode !== 'expected' && mode !== 'live') {
+    return callback({ status: 400, error: 'Invalid mode - must be "expected" or "live".' });
+  }
+
+  const uniquePops = Array.from(new Set(locations));
+  const placeholders = uniquePops.map(() => '?').join(',');
+  db.all(
+    `SELECT location_code AS pop_code, city AS city_name, datacenter_name, country, region
+     FROM location_reference
+     WHERE status = 'Active' AND location_code IN (${placeholders})
+     ORDER BY city_name ASC`,
+    uniquePops,
+    (err, locationRows) => {
+      if (err) return callback({ status: 500, error: err.message });
+      if (!locationRows || locationRows.length < 2) {
+        return callback({ status: 400, error: 'Could not find at least two valid, active locations for the selection made.' });
+      }
+      callback(null, {
+        locations: locationRows,
+        minBandwidthMbps,
+        mode,
+        excludeUllSpecial: !includeUllSpecial
+      });
+    }
+  );
+}
+
+// Compute a custom latency report matrix (JSON preview - all authenticated users)
+router.post('/api/latency-matrix/custom-report', authenticateToken, (req, res) => {
+  resolveCustomReportRequest(req.body, async (validationErr, resolved) => {
+    if (validationErr) return res.status(validationErr.status).json({ error: validationErr.error });
+
+    try {
+      const matrix = await latencyMatrixService.computeCustomMatrix(
+        resolved.locations.map((l) => l.pop_code),
+        { minBandwidthMbps: resolved.minBandwidthMbps, mode: resolved.mode, excludeUllSpecial: resolved.excludeUllSpecial }
+      );
+      res.json({
+        locations: resolved.locations,
+        matrix,
+        mode: resolved.mode,
+        includeUllSpecial: !resolved.excludeUllSpecial,
+        generatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+});
+
+// Export a custom latency report as a customer-facing PDF (all authenticated users)
+router.post('/api/latency-matrix/custom-report/export', authenticateToken, (req, res) => {
+  const { bandwidthTier } = req.body || {};
+  resolveCustomReportRequest(req.body, async (validationErr, resolved) => {
+    if (validationErr) return res.status(validationErr.status).json({ error: validationErr.error });
+
+    try {
+      const matrix = await latencyMatrixService.computeCustomMatrix(
+        resolved.locations.map((l) => l.pop_code),
+        { minBandwidthMbps: resolved.minBandwidthMbps, mode: resolved.mode, excludeUllSpecial: resolved.excludeUllSpecial }
+      );
+
+      const generatedAt = new Date();
+      // Note: includeUllSpecial is deliberately not passed here - it's
+      // already baked into which routes were used to compute `matrix`
+      // above, and the PDF itself never names "ULL/Special" (internal
+      // terminology not meant for a customer-facing document).
+      const pdfBuffer = await generateCustomLatencyReportPdf(resolved.locations, matrix, {
+        generatedAt,
+        mode: resolved.mode,
+        bandwidthTier
+      });
+
+      const filename = `ipc-custom-latency-report-${generatedAt.toISOString().slice(0, 10)}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(pdfBuffer);
+
+      // Log the export, including the exact matrix data and report options
+      // that were used, so admins can later see what a user exported.
+      logChange(null, 'custom_latency_report_export', null, 'EXPORT', null, {
+        report_type: 'custom_latency_report',
+        filename,
+        generated_at: generatedAt.toISOString(),
+        mode: resolved.mode,
+        bandwidth_tier: bandwidthTier,
+        include_ull_special: !resolved.excludeUllSpecial,
+        locations: resolved.locations.map((l) => ({ pop_code: l.pop_code, city_name: l.city_name, datacenter_name: l.datacenter_name })),
+        matrix
+      }, req);
+    } catch (err) {
+      console.error('Custom latency report PDF generation failed:', err);
+      res.status(500).json({ error: 'Failed to generate the custom latency report PDF.' });
+    }
+  });
 });
 
 // ========================================

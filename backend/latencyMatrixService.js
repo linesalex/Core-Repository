@@ -268,14 +268,31 @@ class LatencyMatrixService {
    * This stops a single bad monitoring sample from ever being computed into
    * the live matrix (and therefore into the 30-day-low tracking derived from
    * it) in the first place.
+   *
+   * @param {Array} routes
+   * @param {number} minBandwidthMbps
+   * @param {Object} [options]
+   * @param {'live'|'expected'} [options.mode='live'] - 'live' (default, used
+   *   by the Home page matrix/30-day tracking) prefers live_latency with the
+   *   sanity check above, falling back to expected_latency, and excludes
+   *   circuits currently in a live outage. 'expected' (used by the Custom
+   *   Latency Report's "Expected" mode) ignores live_latency entirely and
+   *   uses only each circuit's designed/provisioned expected_latency
+   *   baseline - a capacity-planning view, so a momentary live outage does
+   *   NOT exclude the circuit.
+   * @param {boolean} [options.excludeUllSpecial=false] - when true, skips
+   *   any circuit flagged is_special (ULL/Special) entirely, regardless of
+   *   mode.
    */
-  buildGraph(routes, minBandwidthMbps) {
+  buildGraph(routes, minBandwidthMbps, options = {}) {
+    const { mode = 'live', excludeUllSpecial = false } = options;
     const graph = {};
 
     routes.forEach(route => {
       const { location_a, location_b, expected_latency, live_latency, bandwidth, circuit_id, underlying_carrier, cable_system, equipment_type, is_special, route_status } = route;
 
       if (route_status === 'Under Decommission') return;
+      if (excludeUllSpecial && is_special) return;
 
       let routeBandwidthMbps = bandwidth;
       let routeBandwidthDisplay = bandwidth;
@@ -286,32 +303,38 @@ class LatencyMatrixService {
 
       if (parseFloat(routeBandwidthMbps) < minBandwidthMbps) return;
 
-      // Determine edge weight using live latency preference
-      const liveVal = parseFloat(live_latency);
       const estimatedVal = parseFloat(expected_latency);
-
-      if (!isNaN(liveVal) && liveVal === 0) return; // outage - exclude
-
-      const hasValidLive = !isNaN(liveVal) && liveVal > 0;
-      const hasValidEstimate = !isNaN(estimatedVal) && estimatedVal > 0;
-      const liveLooksImplausible = hasValidLive && hasValidEstimate
-        && liveVal < estimatedVal * MIN_LIVE_LATENCY_RATIO_OF_EXPECTED;
-
       let weight;
-      if (hasValidLive && !liveLooksImplausible) {
-        weight = liveVal;
-      } else if (hasValidEstimate) {
-        weight = estimatedVal;
-      } else if (hasValidLive) {
-        // Implausible live reading but no expected_latency baseline to fall
-        // back to - a suspect real reading still beats an arbitrary constant.
-        weight = liveVal;
-      } else {
-        weight = 100; // fallback
-      }
 
-      if (liveLooksImplausible) {
-        if (!this._warnedImplausibleCircuits.has(circuit_id)) {
+      if (mode === 'expected') {
+        // Capacity-planning view: designed/provisioned baseline only,
+        // ignoring live probe data entirely (so a momentary outage doesn't
+        // exclude the circuit).
+        weight = (!isNaN(estimatedVal) && estimatedVal > 0) ? estimatedVal : 100;
+      } else {
+        // Determine edge weight using live latency preference
+        const liveVal = parseFloat(live_latency);
+
+        if (!isNaN(liveVal) && liveVal === 0) return; // outage - exclude
+
+        const hasValidLive = !isNaN(liveVal) && liveVal > 0;
+        const hasValidEstimate = !isNaN(estimatedVal) && estimatedVal > 0;
+        const liveLooksImplausible = hasValidLive && hasValidEstimate
+          && liveVal < estimatedVal * MIN_LIVE_LATENCY_RATIO_OF_EXPECTED;
+
+        if (hasValidLive && !liveLooksImplausible) {
+          weight = liveVal;
+        } else if (hasValidEstimate) {
+          weight = estimatedVal;
+        } else if (hasValidLive) {
+          // Implausible live reading but no expected_latency baseline to fall
+          // back to - a suspect real reading still beats an arbitrary constant.
+          weight = liveVal;
+        } else {
+          weight = 100; // fallback
+        }
+
+        if (liveLooksImplausible && !this._warnedImplausibleCircuits.has(circuit_id)) {
           this._warnedImplausibleCircuits.add(circuit_id);
           console.warn(`⚠️  Rejected implausible live_latency for circuit ${circuit_id} (${location_a}↔${location_b}): live=${liveVal}ms is below ${Math.round(MIN_LIVE_LATENCY_RATIO_OF_EXPECTED * 100)}% of expected=${estimatedVal}ms - using expected_latency instead`);
         }
@@ -700,6 +723,42 @@ class LatencyMatrixService {
     } finally {
       this.isComputing = false;
     }
+  }
+
+  /**
+   * Computes a full latency matrix for an arbitrary, user-chosen set of
+   * locations - powers the "Custom Latency Report" export. Unlike
+   * computeMatrix(), this is not cached/scheduled: it always runs against
+   * the current network_routes table on demand, for exactly the POPs and
+   * options requested (bandwidth tier, Expected-vs-Live mode, ULL/Special
+   * inclusion).
+   *
+   * @param {string[]} popCodes
+   * @param {Object} params
+   * @param {number} params.minBandwidthMbps
+   * @param {'live'|'expected'} [params.mode='live']
+   * @param {boolean} [params.excludeUllSpecial=false]
+   * @returns {Promise<Array>} [{ source_pop, destination_pop, latency, route }]
+   */
+  async computeCustomMatrix(popCodes, { minBandwidthMbps, mode = 'live', excludeUllSpecial = false }) {
+    const routes = await this.getRoutes();
+    const graph = this.buildGraph(routes, minBandwidthMbps, { mode, excludeUllSpecial });
+
+    const matrix = [];
+    for (const sourcePop of popCodes) {
+      for (const destinationPop of popCodes) {
+        if (sourcePop === destinationPop) continue;
+        const result = this.dijkstra(graph, sourcePop, destinationPop);
+        matrix.push({
+          source_pop: sourcePop,
+          destination_pop: destinationPop,
+          latency: result ? result.totalLatency : null,
+          route: result ? result.route : null
+        });
+      }
+    }
+
+    return matrix;
   }
 
   getStatus() {
